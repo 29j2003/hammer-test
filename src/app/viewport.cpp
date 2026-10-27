@@ -22,6 +22,7 @@
 #include <sme/csg.h>
 #include <sme/map_tools.h>
 #include <sme/shapes.h>
+#include <sme/soundscape_area.h>
 #include <sme/text.h>
 
 namespace sme::app {
@@ -516,6 +517,7 @@ void Viewport::paintGL() {
 	lines.clear();
 	drawToolLines(lines);
 	drawRoomBox(lines);
+	drawSoundscapeSphere(lines);
 	drawConnections(lines);
 	drawGizmo(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
@@ -645,6 +647,59 @@ void Viewport::drawRoomBox(std::vector<LineVertex>& lines) const {
 			square.add(p - Vec3{hs, hs, hs});
 			square.add(p + Vec3{hs, hs, hs});
 			boxLines(lines, square, (m_hover == h || m_dragHandle == h) ? HOVER_COLOR : QVector4D(0.3f, 0.85f, 1.0f, 1.0f));
+		}
+	}
+}
+
+const Entity* Viewport::selectedSoundscapeSphere() const {
+	const auto& selection = m_editor->selection();
+	const auto tool = m_editor->tool();
+	if (selection.entities.size() != 1 || !selection.solids.empty() ||
+	    (tool != Editor::Tool::Select && tool != Editor::Tool::Move && tool != Editor::Tool::Rotate && tool != Editor::Tool::Scale)) {
+		return nullptr;
+	}
+	const Entity* entity = m_editor->doc().findEntity(selection.entities.front());
+	if (!entity || !isSoundscapeEntity(*entity) || soundscapeRadius(*entity) <= 0 || soundscapeTrigger(m_editor->doc(), *entity)) {
+		return nullptr;   // unlimited radius or a block: nothing round to show
+	}
+	return entity;
+}
+
+void Viewport::drawSoundscapeSphere(std::vector<LineVertex>& lines) const {
+	// Where the soundscape is heard: a pink wire sphere (three great circles) with a square on
+	// each side to drag the radius, like the cubemap room box.
+	const Entity* entity = selectedSoundscapeSphere();
+	if (!entity) {
+		return;
+	}
+	const bool dragging = m_drag == Drag::Gizmo && m_dragHandle >= Handle::RadiusMinX && m_dragHandle <= Handle::RadiusMaxZ;
+	const double radius = dragging ? m_dragRadius : soundscapeRadius(*entity);
+	const Vec3 center = entity->origin();
+	const QVector4D color(1.0f, 0.55f, 0.85f, 0.9f);
+	constexpr int SEGMENTS = 64;
+	for (int plane = 0; plane < 3; ++plane) {
+		const int a = plane == 0 ? 0 : (plane == 1 ? 0 : 1), b = plane == 0 ? 1 : 2;
+		Vec3 previous;
+		for (int i = 0; i <= SEGMENTS; ++i) {
+			const double angle = i * 2 * M_PI / SEGMENTS;
+			Vec3 p = center;
+			p[a] += std::cos(angle) * radius;
+			p[b] += std::sin(angle) * radius;
+			if (i > 0) line(lines, previous, p, color);
+			previous = p;
+		}
+	}
+	const double hs = gizmoSize() * 0.035;
+	for (int axis = 0; axis < 3; ++axis) {
+		if (m_camera.is2D() && axis == viewAxis()) continue;
+		for (int side = 0; side < 2; ++side) {
+			const Handle h = static_cast<Handle>(static_cast<int>(Handle::RadiusMinX) + axis * 2 + side);
+			Vec3 p = center;
+			p[axis] += side == 0 ? -radius : radius;
+			Bounds square;
+			square.add(p - Vec3{hs, hs, hs});
+			square.add(p + Vec3{hs, hs, hs});
+			boxLines(lines, square, (m_hover == h || m_dragHandle == h) ? HOVER_COLOR : QVector4D(1.0f, 0.55f, 0.85f, 1.0f));
 		}
 	}
 }
@@ -815,10 +870,13 @@ void Viewport::drawOverlay() {
 	} else if (m_editor->tool() == Editor::Tool::Polygon) {
 		hint(tr("Polygon: click the corners of the base (%1), Enter or double-click makes the brush, Backspace removes a corner").arg(m_polygon.size()));
 	}
-	if (m_drag == Drag::Gizmo && m_editor->tool() == Editor::Tool::Rotate) {
+	if (m_drag == Drag::Gizmo && m_dragHandle >= Handle::RadiusMinX && m_dragHandle <= Handle::RadiusMaxZ) {
+		p.drawText(QRectF(8, height() - 26, 300, 20), QColor(255, 170, 220), tr("Soundscape radius %1").arg(m_dragRadius));
+	} else if (m_drag == Drag::Gizmo && m_editor->tool() == Editor::Tool::Rotate) {
 		p.drawText(QRectF(8, height() - 26, 200, 20), tr("%1°").arg(m_dragAngle), QColor(255, 220, 120));
 	}
-	if (m_drag == Drag::Gizmo && (m_editor->tool() == Editor::Tool::Move || m_camera.is2D())) {
+	const bool areaHandle = m_dragHandle >= Handle::RoomMinX && m_dragHandle <= Handle::RadiusMaxZ;
+	if (m_drag == Drag::Gizmo && !areaHandle && (m_editor->tool() == Editor::Tool::Move || m_camera.is2D())) {
 		p.drawText(QRectF(8, height() - 26, 400, 20), QColor(255, 220, 120), tr("Move %1 %2 %3%4")
 		                                                  .arg(m_dragDelta.x)
 		                                                  .arg(m_dragDelta.y)
@@ -962,6 +1020,20 @@ Viewport::Handle Viewport::hitHandle(const QPointF& pos) const {
 				QPointF q;
 				if (m_camera.project(p, width(), height(), q) && QLineF(q, pos).length() < 9) {
 					return static_cast<Handle>(static_cast<int>(Handle::RoomMinX) + axis * 2 + side);
+				}
+			}
+		}
+	}
+	if (const Entity* scape = selectedSoundscapeSphere()) {
+		const double radius = soundscapeRadius(*scape);
+		for (int axis = 0; axis < 3; ++axis) {
+			if (m_camera.is2D() && axis == viewAxis()) continue;
+			for (int side = 0; side < 2; ++side) {
+				Vec3 p = scape->origin();
+				p[axis] += side == 0 ? -radius : radius;
+				QPointF q;
+				if (m_camera.project(p, width(), height(), q) && QLineF(q, pos).length() < 9) {
+					return static_cast<Handle>(static_cast<int>(Handle::RadiusMinX) + axis * 2 + side);
 				}
 			}
 		}
@@ -1636,6 +1708,13 @@ void Viewport::beginGizmoDrag(Handle handle, const QPointF& pos) {
 		m_dragBounds = m_dragNewBounds = selectedRoomBox().value_or(m_dragBounds);
 		m_dragCenter = m_dragBounds.center();
 		m_dragStartParam = closestOnAxis(m_dragCenter, axisVector(axis), ray);
+	} else if (handle >= Handle::RadiusMinX && handle <= Handle::RadiusMaxZ) {
+		const int axis = (static_cast<int>(handle) - static_cast<int>(Handle::RadiusMinX)) / 2;
+		if (const Entity* scape = selectedSoundscapeSphere()) {
+			m_dragCenter = scape->origin();
+			m_dragStartRadius = m_dragRadius = soundscapeRadius(*scape);
+		}
+		m_dragStartParam = closestOnAxis(m_dragCenter, axisVector(axis), ray);
 	} else if (handle == Handle::Corner) {
 		// The corner under the cursor, and every corner it could snap to.
 		double best = 1e9;
@@ -1714,6 +1793,16 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		} else {
 			m_dragNewBounds.min[axis] = std::min(m_dragBounds.max[axis] - minimumSize, snap(m_dragBounds.min[axis] + t, grid));
 		}
+		update();
+		return;
+	} else if (handle >= Handle::RadiusMinX && handle <= Handle::RadiusMaxZ) {
+		// The square follows the mouse along its axis; the radius grows outward on both sides.
+		const int index = static_cast<int>(handle) - static_cast<int>(Handle::RadiusMinX);
+		const int axis = index / 2;
+		const double t = m_camera.is2D() ? viewPlanePoint(pos)[axis] - viewPlanePoint(m_pressPos)[axis]
+		                                 : closestOnAxis(m_dragCenter, axisVector(axis), ray) - m_dragStartParam;
+		const double outward = index % 2 == 1 ? t : -t;
+		m_dragRadius = std::max(minimumSize, snap(m_dragStartRadius + outward, grid));
 		update();
 		return;
 	} else if (handle == Handle::Corner) {
@@ -1882,6 +1971,11 @@ void Viewport::finishGizmoDrag(bool clone) {
 		int cubemapId = 0;
 		if (selectedRoomBox(&cubemapId) && !(m_dragNewBounds.min == m_dragBounds.min && m_dragNewBounds.max == m_dragBounds.max)) {
 			m_editor->setCubemapRoomBox(cubemapId, m_dragNewBounds);
+		}
+	} else if (handle >= Handle::RadiusMinX && handle <= Handle::RadiusMaxZ) {
+		// One undo step for the whole drag.
+		if (std::abs(m_dragRadius - m_dragStartRadius) > 1e-6 && selection.entities.size() == 1) {
+			m_editor->commit(edit::setSoundscapeRadius(doc, selection.entities.front(), m_dragRadius));
 		}
 	} else if (handle >= Handle::RingX && handle <= Handle::RingZ) {
 		if (std::abs(m_dragAngle) > 1e-6) {

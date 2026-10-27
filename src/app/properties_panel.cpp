@@ -18,8 +18,11 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QButtonGroup>
 #include <QLabel>
+#include <QMessageBox>
 #include <QSettings>
+#include <QSlider>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -46,7 +49,9 @@
 #include <sme/brush.h>
 #include <sme/game.h>
 #include <sme/history.h>
+#include <sme/map_tools.h>
 #include <sme/sky_presets.h>
+#include <sme/soundscape_area.h>
 #include <sme/text.h>
 #include <sme/texture.h>
 
@@ -625,6 +630,9 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	if (entityIds.size() == 1 && iequals(classname, "env_cubemap")) {
 		buildCubemapBox(layout, *first);
 	}
+	if (entityIds.size() == 1 && isSoundscapeEntity(*first)) {
+		buildSoundscapeArea(layout, *first);
+	}
 
 	// Tabs: Keyvalues / Outputs / Inputs with their counts (outputs and inputs for one entity).
 	const bool single = entityIds.size() == 1 && !world;
@@ -971,6 +979,152 @@ void PropertiesPanel::buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap
 	row->addWidget(select);
 	row->addWidget(remove);
 	v->addLayout(row);
+	layout->addWidget(box);
+}
+
+void PropertiesPanel::buildSoundscapeArea(QVBoxLayout* layout, const Entity& soundscape) {
+	auto* box = new QGroupBox(tr("Soundscape area"));
+	box->setObjectName("soundscapeArea");
+	auto* v = new QVBoxLayout(box);
+	const int id = soundscape.id;
+
+	// Which soundscape plays, with a way to open it in the Sounds page.
+	const QString name = qs(soundscape.get("soundscape"));
+	auto* nameRow = new QHBoxLayout;
+	auto* nameLabel = new QLabel(name.isEmpty() ? tr("No soundscape chosen yet") : QStringLiteral("<b>%1</b>").arg(name.toHtmlEscaped()));
+	nameLabel->setObjectName("soundscapeName");
+	auto* edit = new QPushButton(tr("Edit soundscape"));
+	edit->setObjectName("editSoundscape");
+	edit->setEnabled(!name.isEmpty());
+	connect(edit, &QPushButton::clicked, this, [this, name] { emit editSoundscapeRequested(name); });
+	nameRow->addWidget(nameLabel, 1);
+	nameRow->addWidget(edit);
+	v->addLayout(nameRow);
+
+	// Shape: sphere (radius) or block (trigger_soundscape).
+	const Entity* trigger = soundscapeTrigger(m_editor->doc(), soundscape);
+	auto* shapeRow = new QHBoxLayout;
+	shapeRow->addWidget(new QLabel(tr("Shape")));
+	auto* sphere = new QPushButton(tr("Sphere"));
+	sphere->setObjectName("soundscapeSphere");
+	auto* block = new QPushButton(tr("Block"));
+	block->setObjectName("soundscapeBlock");
+	auto* group = new QButtonGroup(box);
+	for (auto* b : {sphere, block}) {
+		b->setCheckable(true);
+		group->addButton(b);
+		shapeRow->addWidget(b);
+	}
+	shapeRow->addStretch(1);
+	(trigger ? block : sphere)->setChecked(true);
+	if (iequals(soundscape.classname(), "env_soundscape_proxy") && !trigger) {
+		block->setEnabled(false);   // a proxy plays another entity's soundscape; triggers need env_soundscape_triggerable
+		block->setToolTip(tr("Only env_soundscape can get a block (it becomes env_soundscape_triggerable)"));
+	}
+	v->addLayout(shapeRow);
+	const bool hasBlock = trigger != nullptr;
+	connect(block, &QPushButton::clicked, this, [this, id, hasBlock] {
+		if (hasBlock) return;
+		const auto* triggerClass = m_editor->entities() ? m_editor->entities()->find("trigger_soundscape") : nullptr;
+		auto [change, triggerId] = edit::makeSoundscapeBlock(m_editor->doc(), id, {}, triggerClass);
+		if (triggerId != 0) m_editor->commit(std::move(change));
+	});
+	connect(sphere, &QPushButton::clicked, this, [this, id, hasBlock, block] {
+		if (!hasBlock) return;
+		const auto answer = QMessageBox::question(this, tr("Soundscape area"),
+		                                          tr("Remove the trigger_soundscape block? The soundscape is then heard in a sphere around the entity again."));
+		if (answer != QMessageBox::Yes) {
+			block->setChecked(true);
+			return;
+		}
+		m_editor->commit(edit::removeSoundscapeBlock(m_editor->doc(), id));
+	});
+
+	if (!trigger) {
+		// Sphere: whole map, or a radius with a field and a slider (the view's squares do the same).
+		const double radius = soundscapeRadius(soundscape);
+		const bool everywhere = radius < 0;
+		auto* wholeRow = new QHBoxLayout;
+		auto* whole = new ToggleSwitch;
+		whole->setObjectName("soundscapeEverywhere");
+		whole->setChecked(everywhere);
+		wholeRow->addWidget(whole);
+		wholeRow->addWidget(new QLabel(tr("Whole map (heard everywhere the entity can see)")), 1);
+		v->addLayout(wholeRow);
+		auto* radiusRow = new QHBoxLayout;
+		radiusRow->addWidget(new QLabel(tr("Radius")));
+		auto* spin = new QSpinBox;
+		spin->setObjectName("soundscapeRadius");
+		spin->setRange(1, 32768);
+		spin->setSingleStep(16);
+		spin->setSuffix(tr(" units"));
+		spin->setKeyboardTracking(false);
+		spin->setValue(everywhere ? int(DEFAULT_SOUNDSCAPE_RADIUS) : int(radius));
+		auto* slider = new QSlider(Qt::Horizontal);
+		slider->setObjectName("soundscapeRadiusSlider");
+		slider->setRange(16, 4096);
+		slider->setValue(spin->value());
+		for (QWidget* w : std::initializer_list<QWidget*>{spin, slider}) w->setEnabled(!everywhere);
+		radiusRow->addWidget(spin);
+		radiusRow->addWidget(slider, 1);
+		v->addLayout(radiusRow);
+		connect(whole, &QCheckBox::toggled, this, [this, id, spin](bool on) {
+			m_editor->commit(edit::setSoundscapeRadius(m_editor->doc(), id, on ? SOUNDSCAPE_EVERYWHERE : spin->value()));
+		});
+		connect(spin, &QSpinBox::valueChanged, this, [this, id](int value) { m_editor->commit(edit::setSoundscapeRadius(m_editor->doc(), id, value)); });
+		// The slider shows the value while it moves and changes the map once when let go (the panel
+		// is rebuilt after every change, which would take the slider away mid-drag).
+		connect(slider, &QSlider::sliderMoved, spin, [spin](int value) {
+			const QSignalBlocker quiet(spin);
+			spin->setValue(value);
+		});
+		connect(slider, &QSlider::sliderReleased, this, [this, id, slider] {
+			m_editor->commit(edit::setSoundscapeRadius(m_editor->doc(), id, slider->value()));
+		});
+		v->addWidget(descriptionLabel(tr("Drag the pink squares on the sphere in the view to change the radius.")));
+	} else {
+		// Block: the trigger's size, and a way to select it for the resize squares.
+		Bounds bounds;
+		for (const auto& solid : trigger->solids) bounds.add(buildBrushGeometry(solid).bounds);
+		v->addWidget(descriptionLabel(tr("A trigger_soundscape switches to this soundscape when a player walks into the block. "
+		                                 "Select the block to move it or drag its sides.")));
+		auto* form = new QFormLayout;
+		const Vec3 size = bounds.size();
+		const Vec3 center = bounds.center();
+		const char* names[3] = {QT_TR_NOOP("Width (X)"), QT_TR_NOOP("Depth (Y)"), QT_TR_NOOP("Height (Z)")};
+		for (int axis = 0; axis < 3; ++axis) {
+			auto* spin = new QDoubleSpinBox;
+			spin->setObjectName(QStringLiteral("soundscapeBlockSize%1").arg(axis));
+			spin->setRange(1, 32768);
+			spin->setDecimals(0);
+			spin->setSingleStep(16);
+			spin->setValue(size[axis]);
+			spin->setKeyboardTracking(false);
+			connect(spin, &QDoubleSpinBox::valueChanged, this, [this, id, bounds, axis, center](double value) {
+				Bounds resized = bounds;
+				if (axis == 2) {
+					resized.max.z = bounds.min.z + value;   // height grows upward from the floor
+				} else {
+					resized.min[axis] = center[axis] - value / 2;
+					resized.max[axis] = center[axis] + value / 2;
+				}
+				const auto* triggerClass = m_editor->entities() ? m_editor->entities()->find("trigger_soundscape") : nullptr;
+				auto [change, triggerId] = edit::makeSoundscapeBlock(m_editor->doc(), id, resized, triggerClass);
+				if (triggerId != 0) m_editor->commit(std::move(change));
+			});
+			form->addRow(tr(names[axis]), spin);
+		}
+		v->addLayout(form);
+		auto* select = new QPushButton(tr("Select the block"));
+		select->setObjectName("selectSoundscapeBlock");
+		const int triggerId = trigger->id;
+		connect(select, &QPushButton::clicked, this, [this, triggerId] {
+			Selection selection;
+			selection.entities.push_back(triggerId);
+			m_editor->setSelection(std::move(selection));
+		});
+		v->addWidget(select);
+	}
 	layout->addWidget(box);
 }
 
