@@ -6,10 +6,13 @@
 #include <sme/brush.h>
 #include <sme/csg.h>
 #include <sme/editing.h>
+#include <sme/entity_catalog.h>
 #include <sme/map_tools.h>
 #include <sme/shapes.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 
 using namespace sme;
 
@@ -337,4 +340,27 @@ TEST_CASE("brush entities drawn with the entity tool") {
 	CHECK(entity.solids.front().id != entity.id);
 	CHECK(change.name == "Create trigger_once");
 	CHECK(doc.world.solids.empty());
+}
+
+TEST_CASE("editor sprites of entities") {
+	const auto dir = std::filesystem::temp_directory_path() / "sme-sprite-test";
+	std::filesystem::create_directories(dir);
+	const auto fgd = dir / "sprites.fgd";
+	{
+		std::ofstream out(fgd);
+		out << "@PointClass iconsprite(\"editor/Light.vmt\") = light : \"Light\" []\n"
+		       "@PointClass sprite() = env_sprite : \"Sprite\" [ model(sprite) : \"Sprite\" : \"sprites/glow01.spr\" ]\n"
+		       "@PointClass studio(\"models/editor/playerstart.mdl\") = info_player_start : \"Start\" []\n";
+	}
+	EntityCatalog catalog;
+	REQUIRE(catalog.load({fgd}));
+	CHECK(edit::classSprite(*catalog.find("light")) == "editor/light");
+	Entity glow;
+	glow.set("classname", "env_sprite");
+	glow.set("model", "sprites/glow01.spr");
+	CHECK(edit::entitySprite(glow, &catalog) == "sprites/glow01");
+	Entity start;
+	start.set("classname", "info_player_start");
+	CHECK(edit::entitySprite(start, &catalog).empty());   // shown with its model instead
+	std::filesystem::remove_all(dir);
 }

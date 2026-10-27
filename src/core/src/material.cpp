@@ -102,7 +102,7 @@ std::string normalizeMaterialName(std::string_view name) {
 	if (normalized.starts_with("materials/")) {
 		normalized.erase(0, 10);
 	}
-	for (const char* extension : {".vmt", ".vtf"}) {
+	for (const char* extension : {".vmt", ".vtf", ".spr"}) {   // .spr: old sprite names map to the .vmt
 		if (normalized.ends_with(extension)) {
 			normalized.erase(normalized.size() - 4);
 		}

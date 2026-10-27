@@ -167,6 +167,11 @@ void ModelThumbnails::clear() {
 	m_waitingForMaterial.clear();
 }
 
+bool ModelThumbnails::hasPreview(const QString& path) const {
+	const auto it = m_done.find(path);
+	return it != m_done.end() && it->cacheKey() != m_broken.cacheKey() && it->cacheKey() != m_animationsOnly.cacheKey();
+}
+
 QPixmap ModelThumbnails::get(const QString& path) {
 	if (const auto it = m_done.constFind(path); it != m_done.constEnd()) {
 		return *it;

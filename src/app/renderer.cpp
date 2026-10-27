@@ -730,14 +730,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			pick.bounds = box;
 			m_pickItems.push_back(std::move(pick));
 		} else {
-			QString sprite;
-			if (const auto* definition = catalog ? catalog->find(classname) : nullptr) {
-				sprite = QString::fromStdString(definition->helper("iconsprite")).remove('"').trimmed();
-				if (!sprite.isEmpty()) {
-					sprite = normalizedMaterialName(sprite);
-				}
-			}
-			boxes.push_back({entity.id, box, color, sprite});
+			boxes.push_back({entity.id, box, color, QString::fromStdString(edit::entitySprite(entity, catalog))});
 		}
 
 		// Lights for the lighting preview.

@@ -346,6 +346,15 @@ void createDemo(Fixture& f) {
 	                                  {-5, -5, 60, 6, 5, 72}},                            // head
 	                                 {"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"}, "models/humans/male_shared.mdl", "male_sheet",
 	                                 "models/humans/"));
+	// Hammer's green player start figure (info_player_start: studio("models/editor/playerstart.mdl")).
+	writeBytes(mat / "models/editor/playerstart.vtf", makeTexture(32, [](double u, double v) {
+		return Rgba{0.15, 0.75 - v * 0.2, 0.2 + u * 0.05};
+	}));
+	writeText(mat / "models/editor/playerstart.vmt", vmt("VertexLitGeneric", "\t\"$basetexture\" \"models/editor/playerstart\"\n"));
+	writeStudioModel(f.mod / "models/editor/playerstart.mdl",
+	                 makeStudioModel({{-7, -10, 0, 7, -2, 34}, {-7, 2, 0, 7, 10, 34}, {-8, -12, 34, 8, 12, 60}, {-6, -18, 36, 6, -12, 58},
+	                                  {-6, 12, 36, 6, 18, 58}, {-5, -5, 60, 6, 5, 72}, {6, -2, 62, 12, 2, 66}},   // nose: shows the facing
+	                                 {"idle"}, "", "playerstart", "models/editor/"));
 	writeStudioModel(f.mod / "models/props_demo/crate01.mdl",
 	                 makeStudioModel({{-24, -24, 0, 24, 24, 48}}, {"idle"}, "", "wood001", "demo/"));
 	writeStudioModel(f.mod / "models/props_demo/barrel01.mdl",

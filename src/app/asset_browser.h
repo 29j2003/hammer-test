@@ -119,6 +119,7 @@ public:
 	[[nodiscard]] const std::vector<ParticleSystem>& particles() const { return m_particles; }
 	void showMaterials();
 	void showModels();
+	[[nodiscard]] ModelThumbnails* modelThumbnails() const { return m_modelThumbnails; }
 	[[nodiscard]] QListView* modelView() const { return m_modelView; }
 
 signals:

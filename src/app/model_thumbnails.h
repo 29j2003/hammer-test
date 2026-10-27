@@ -37,6 +37,8 @@ public:
 
 	/// The preview if ready, otherwise a placeholder (thumbnailReady follows).
 	[[nodiscard]] QPixmap get(const QString& path);
+	/// A real picture is ready (not the placeholder, "cannot load" or "animations only").
+	[[nodiscard]] bool hasPreview(const QString& path) const;
 	void clear();
 
 signals:

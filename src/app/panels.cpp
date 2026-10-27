@@ -66,6 +66,11 @@ Outliner::Outliner(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(
 	rebuild();
 }
 
+void Outliner::setIconProvider(std::function<QIcon(const QString&)> provider) {
+	m_icons = std::move(provider);
+	rebuild();
+}
+
 void Outliner::rebuild() {
 	const QString filter = m_filter->text();
 	m_tree->clear();
@@ -87,6 +92,9 @@ void Outliner::rebuild() {
 		auto& group = groups[entity.classname()];
 		if (!group) {
 			group = new QTreeWidgetItem(m_tree, {cls, QString()});
+			if (m_icons) {
+				group->setIcon(0, m_icons(cls));
+			}
 		}
 		auto* item = new QTreeWidgetItem(group, {name.isEmpty() ? tr("(unnamed %1)").arg(entity.id) : name, cls});
 		item->setData(0, Qt::UserRole, entity.id);

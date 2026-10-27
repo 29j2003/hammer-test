@@ -67,6 +67,12 @@ namespace edit {
 
 [[nodiscard]] std::pair<Change, SolidRef> createBlock(MapDocument& doc, const Bounds& box, const std::string& material);
 
+/// Editor sprite of a class (FGD iconsprite("editor/info_target.vmt")) as a material name; empty if none.
+[[nodiscard]] std::string classSprite(const EntityClass& cls);
+/// Sprite shown for an entity: its class sprite, or for sprite() / iconsprite() without a file
+/// the entity's own "model" (env_sprite, env_glow). Empty if it has none.
+[[nodiscard]] std::string entitySprite(const Entity& entity, const EntityCatalog* catalog);
+
 /// Places a point entity; keys with FGD defaults are filled in like Hammer does.
 /// `keys` are set after the FGD defaults (e.g. the model of a dropped prop).
 [[nodiscard]] std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classname, const Vec3& origin, const EntityClass* definition,

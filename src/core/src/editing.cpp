@@ -4,6 +4,7 @@
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/material.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -130,6 +131,32 @@ Bounds entityBounds(const Entity& entity, const EntityCatalog* catalog) {
 	box.add(origin + mins);
 	box.add(origin + maxs);
 	return box;
+}
+
+std::string classSprite(const EntityClass& cls) {
+	auto sprite = cls.helper("iconsprite");
+	if (sprite.size() >= 2 && sprite.front() == '"' && sprite.back() == '"') {
+		sprite = sprite.substr(1, sprite.size() - 2);
+	}
+	return sprite.empty() ? std::string() : normalizeMaterialName(sprite);
+}
+
+std::string entitySprite(const Entity& entity, const EntityCatalog* catalog) {
+	const auto* definition = catalog ? catalog->find(entity.classname()) : nullptr;
+	if (!definition || !entity.solids.empty()) {
+		return {};
+	}
+	if (auto sprite = classSprite(*definition); !sprite.empty()) {
+		return sprite;
+	}
+	const bool usesOwnModel = std::any_of(definition->helpers.begin(), definition->helpers.end(), [](const EntityHelper& helper) {
+		return helper.name == "sprite" || (helper.name == "iconsprite" && helper.arguments.empty());
+	});
+	const auto model = entity.get("model");
+	if (usesOwnModel && (endsWithI(model, ".vmt") || endsWithI(model, ".spr"))) {
+		return normalizeMaterialName(model);
+	}
+	return {};
 }
 
 std::string entityModel(const Entity& entity, const EntityCatalog* catalog) {

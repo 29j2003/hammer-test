@@ -4,6 +4,7 @@
 
 #include "editor.h"
 #include "material_cache.h"
+#include "model_thumbnails.h"
 
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -27,6 +28,7 @@
 #include <functional>
 #include <memory>
 
+#include <sme/editing.h>
 #include <sme/entity_catalog.h>
 #include <sme/shapes.h>
 #include <sme/game.h>
@@ -81,14 +83,19 @@ namespace {
 
 constexpr int ICON_SIZE = 20;
 
-/// "editor/info_target.vmt" / "materials/editor/x.spr" -> "editor/info_target".
 QString spriteMaterial(const EntityClass& cls) {
-	QString sprite = QString::fromStdString(cls.helper("iconsprite")).trimmed();
-	sprite.remove('"');
-	if (sprite.isEmpty()) {
-		return {};
+	return QString::fromStdString(edit::classSprite(cls));
+}
+
+/// Editor model of a class without sprite: studio("models/editor/playerstart.mdl").
+QString editorModel(const EntityClass& cls) {
+	for (const char* helper : {"studio", "studioprop"}) {
+		QString model = QString::fromStdString(cls.helper(helper)).remove('"').trimmed();
+		if (model.endsWith(".mdl", Qt::CaseInsensitive)) {
+			return QString::fromStdString(normalizePath(model.toStdString()));
+		}
 	}
-	return normalizedMaterialName(sprite);
+	return {};
 }
 
 QColor classColor(const EntityClass& cls) {
@@ -262,6 +269,9 @@ QIcon EntityPicker::iconFor(const QString& classname) {
 	if (!sprite.isEmpty() && m_spriteIcons.contains(sprite)) {
 		return m_spriteIcons.value(sprite);
 	}
+	if (const QString model = QStringLiteral("model:") + editorModel(*cls); m_spriteIcons.contains(model)) {
+		return m_spriteIcons.value(model);
+	}
 	return colorIcon(*cls);
 }
 
@@ -281,8 +291,38 @@ QTreeWidgetItem* EntityPicker::addClassItem(QTreeWidgetItem* parent, const Entit
 				spriteReady(sprite);   // already loaded
 			}
 		}
+		return item;
+	}
+	// No sprite: the editor model Hammer shows for it (player start, nodes, ...).
+	const QString model = editorModel(cls);
+	if (!model.isEmpty() && m_thumbnails) {
+		m_modelItems[model].push_back(item);
+		(void)m_thumbnails->get(model);   // starts drawing it
+		if (m_thumbnails->hasPreview(model)) {
+			modelReady(model);
+		}
 	}
 	return item;
+}
+
+void EntityPicker::setModelThumbnails(ModelThumbnails* thumbnails) {
+	m_thumbnails = thumbnails;
+	connect(thumbnails, &ModelThumbnails::thumbnailReady, this, &EntityPicker::modelReady);
+	reload();
+}
+
+void EntityPicker::modelReady(const QString& path) {
+	if (!m_modelItems.contains(path) || !m_thumbnails || !m_thumbnails->hasPreview(path)) {
+		m_modelItems.remove(path);   // missing model: the color square stays
+		return;
+	}
+	const QIcon icon(m_thumbnails->get(path).scaled(ICON_SIZE, ICON_SIZE, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	m_spriteIcons.insert(QStringLiteral("model:") + path, icon);
+	// Kept: the picture is drawn again once the model's textures arrive.
+	for (auto* item : m_modelItems.value(path)) {
+		item->setIcon(0, icon);
+	}
+	showArmed();
 }
 
 void EntityPicker::spriteReady(const QString& material) {
@@ -308,6 +348,7 @@ void EntityPicker::spriteReady(const QString& material) {
 void EntityPicker::reload() {
 	m_tree->clear();
 	m_spriteItems.clear();
+	m_modelItems.clear();
 	m_recent = nullptr;
 	const auto* catalog = m_editor->entities();
 	if (!catalog || catalog->size() == 0) {
@@ -484,6 +525,9 @@ void EntityPicker::remember(const QString& name) {
 	if (m_recent && catalog) {
 		for (auto* child : m_recent->takeChildren()) {
 			for (auto& list : m_spriteItems) {
+				list.removeAll(child);
+			}
+			for (auto& list : m_modelItems) {
 				list.removeAll(child);
 			}
 			delete child;

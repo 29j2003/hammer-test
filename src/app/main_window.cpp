@@ -220,6 +220,8 @@ void MainWindow::createDocks() {
 	m_log = new LogPanel;
 	m_toolPanel = new ToolPanel(m_editor);
 	m_toolPanel->entityPicker()->setMaterialCache(m_materials);
+	m_toolPanel->entityPicker()->setModelThumbnails(m_assets->modelThumbnails());
+	m_outliner->setIconProvider([picker = m_toolPanel->entityPicker()](const QString& cls) { return picker->iconFor(cls); });
 	m_sounds = new SoundBrowser(m_editor);
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);

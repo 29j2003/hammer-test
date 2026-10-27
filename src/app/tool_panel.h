@@ -24,6 +24,7 @@ namespace sme::app {
 
 class Editor;
 class MaterialCache;
+class ModelThumbnails;
 
 /// Entity classes of the game's FGDs, like XBLAH's "New objects": point and brush entities with
 /// their editor icons, a search, and the class that is "armed" (placed by the next click, or
@@ -35,6 +36,8 @@ public:
 	explicit EntityPicker(Editor* editor, QWidget* parent = nullptr);
 	/// Materials for the editor sprites (iconsprite in the FGD); without it classes get color squares.
 	void setMaterialCache(MaterialCache* materials);
+	/// Model previews for classes that show an editor model instead of a sprite (info_player_start).
+	void setModelThumbnails(ModelThumbnails* thumbnails);
 	void focusSearch();
 	[[nodiscard]] QTreeWidget* tree() const { return m_tree; }
 	/// Icon of a class: its editor sprite once loaded, else a square in the class color.
@@ -48,6 +51,7 @@ private:
 	void remember(const QString& name);
 	QTreeWidgetItem* addClassItem(QTreeWidgetItem* parent, const EntityClass& cls);
 	void spriteReady(const QString& material);
+	void modelReady(const QString& path);
 
 	Editor* m_editor;
 	MaterialCache* m_materials = nullptr;
@@ -63,6 +67,8 @@ private:
 	QLabel* m_summary;
 	QHash<QString, QList<QTreeWidgetItem*>> m_spriteItems;   ///< sprite material -> items waiting for it
 	QHash<QString, QIcon> m_spriteIcons;
+	ModelThumbnails* m_thumbnails = nullptr;
+	QHash<QString, QList<QTreeWidgetItem*>> m_modelItems;     ///< editor model -> items waiting for its preview
 };
 
 class ToolPanel : public QWidget {

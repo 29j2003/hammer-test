@@ -296,6 +296,21 @@ TEST_CASE("editing with the mouse in the real window") {
 			settle();
 		}
 		CHECK(middle.blue() > 230);   // the class color square would be yellow
+		// Classes without a sprite show their editor model (the green player start).
+		const auto start = tree->findItems("info_player_start", Qt::MatchExactly | Qt::MatchRecursive);
+		REQUIRE_FALSE(start.isEmpty());
+		bool green = false;
+		for (int i = 0; i < 200 && !green; ++i) {
+			const QImage icon = start.back()->icon(0).pixmap(20, 20).toImage();
+			for (int y = 0; y < icon.height() && !green; ++y) {
+				for (int x = 0; x < icon.width() && !green; ++x) {
+					const QColor c = icon.pixelColor(x, y);
+					green = c.alpha() > 200 && c.green() > 100 && c.green() > c.red() * 2 && c.green() > c.blue() * 2;
+				}
+			}
+			settle();
+		}
+		CHECK(green);   // the class color square would be magenta
 	}
 	{
 		// Entity tool with a brush class armed: the dragged box becomes that entity (trigger texture).
