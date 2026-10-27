@@ -1031,7 +1031,7 @@ void MainWindow::compile() {
 		return;
 	}
 	const QString gameDir = QString::fromStdString(displayPath(m_editor->game()->entry.gameDir));
-	CompileDialog dialog(m_editor->filePath(), gameDir, m_editor->gameSettings(), this);
+	CompileDialog dialog(m_editor->filePath(), gameDir, m_editor->gameSettings(), this, m_editor->gameKey());
 	if (dialog.exec() != QDialog::Accepted) {
 		return;
 	}

@@ -100,8 +100,17 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
 - **Problem check with autofix**: broken brushes, misspelled materials or entity classes ("did you mean …?"), outputs
   to entities that do not exist, unknown inputs, missing player start, zero texture scale, … Each problem has a
   **Select** button and, where the fix is obvious, a fix button.
-- **Compile & run** (F9): VBSP → VVIS → VRAD → copy to the game → start the game, with Fast/Normal/Final presets. The
-  **Compile** panel shows every step with time and progress, the warnings and errors with a plain explanation, and a
+- **Compile & run** (F9): VBSP → VVIS → VRAD → copy to the game → cubemaps → start the game. The compile dialog has two
+  views, and both change the same settings, which are kept per game:
+  - **Simple**: one card per step. Geometry (detail brushes, water), Visibility (Fast / Full), Lighting (LDR / HDR /
+    Both, Fast / Normal / Final), Cubemaps (the game builds them and closes again; LDR / HDR / Both), After compiling
+    (copy to the game's maps folder, run the game) and the Game window. The game starts with the console, in a window,
+    at 1920 × 1080 and without the intro video by default, and you can change each of these. The presets Fast, Normal
+    and Final set the quality in one go.
+  - **Advanced**: switch each step on or off and add any parameter the tool knows (searchable, with a short
+    explanation). You can also add your own parameter.
+
+  The command lines are shown at the bottom (with *Copy*). The **Compile** panel shows every step with time and progress, the warnings and errors with a plain explanation, and a
   summary. A leak is shown as a red line in the 3D view. **Cordons** compile only a part of the map.
 - **Export** the map as glTF or OBJ (meters, Y up, textures as PNG, props included) for Blender, Unity or Unreal.
 - **Status bar**: what is selected, its size (width, length, height) and center, where the mouse points in the 3D

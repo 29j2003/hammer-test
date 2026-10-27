@@ -16,6 +16,10 @@
 #include <QLabel>
 #include <QGroupBox>
 #include <QComboBox>
+#include <QStyle>
+#include <QPalette>
+#include <QListWidget>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -57,6 +61,7 @@
 #include "material_preview.h"
 #include "material_editor.h"
 #include "panels.h"
+#include "style.h"
 #include "sound_browser.h"
 #include "tool_panel.h"
 #include "updater.h"
@@ -1165,6 +1170,75 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(compile->errorCount() == 1);
 	}
 #endif
+
+	{
+		// Compile dialog: simple cards and advanced parameters change the same settings; the
+		// command lines below follow. Defaults: console, windowed, 1920x1080.
+		GameSettings tools;
+		tools.vbsp = "vbsp.exe";
+		tools.vvis = "vvis.exe";
+		tools.vrad = "vrad.exe";
+		tools.gameExe = "hl2.exe";
+		QSettings().remove("compile/test_game");
+		CompileDialog dialog(home.filePath("arena.vmf"), home.filePath("game"), tools, &window, "test_game");
+		dialog.setAdvanced(false);
+		dialog.show();
+		settle();
+		CHECK(dialog.commandText().contains("-console -windowed -w 1920 -h 1080 -novid"));
+		CHECK(dialog.findChild<QComboBox*>("preset")->currentText().startsWith("Normal"));
+		auto* detail = dialog.findChild<QCheckBox*>("detail");
+		REQUIRE(detail);
+		detail->click();
+		CHECK(dialog.commandText().contains("-nodetail"));
+		CHECK_FALSE(dialog.options().detail);
+		// Preset Fast: VVIS -fast and quick light.
+		auto* preset = dialog.findChild<QComboBox*>("preset");
+		preset->setCurrentIndex(0);
+		emit preset->activated(0);
+		CHECK(dialog.commandText().contains("-fast"));
+		CHECK(dialog.commandText().contains("-bounce 2 -noextra"));
+		// Advanced: VRAD gets -StaticPropLighting from the list; switching VVIS off leaves it out.
+		dialog.findChild<QPushButton*>("advancedView")->click();
+		auto* processes = dialog.findChild<QListWidget*>("processes");
+		REQUIRE(processes);
+		processes->setCurrentRow(2);
+		auto* parameters = dialog.findChild<QTreeWidget*>("parameters");
+		REQUIRE(parameters);
+		auto* search = dialog.findChild<QLineEdit*>("parameterSearch");
+		search->setText("StaticPropLighting");
+		REQUIRE(parameters->topLevelItemCount() == 1);
+		emit parameters->itemDoubleClicked(parameters->topLevelItem(0), 0);
+		CHECK(dialog.commandText().contains("-StaticPropLighting"));
+		processes->item(1)->setCheckState(Qt::Unchecked);
+		CHECK_FALSE(dialog.options().vvis);
+		CHECK_FALSE(dialog.commandText().contains("vvis.exe"));
+		CHECK_FALSE(dialog.findChild<QCheckBox*>("vvis")->isChecked());   // the simple view follows
+		if (qEnvironmentVariableIsSet("SME_COMPILE_SHOTS")) {
+			// Pictures with the editor's own look.
+			const QString sheet = qApp->styleSheet();
+			const QPalette palette = qApp->palette();
+			const QString styleName = qApp->style()->name();
+			applyDarkStyle(*qApp);
+			dialog.resize(1100, 720);
+			search->clear();
+			settle();
+			dialog.grab().save(qEnvironmentVariable("SME_COMPILE_SHOTS") + "/advanced.png");
+			dialog.findChild<QPushButton*>("simpleView")->click();
+			settle();
+			dialog.grab().save(qEnvironmentVariable("SME_COMPILE_SHOTS") + "/simple.png");
+			qApp->setStyleSheet(sheet);
+			qApp->setPalette(palette);
+			qApp->setStyle(styleName);
+		}
+		// Compile saves the settings for the game; the next dialog starts with them.
+		dialog.accept();
+		emit dialog.findChild<QDialogButtonBox*>()->accepted();
+		CompileDialog again(home.filePath("arena.vmf"), home.filePath("game"), tools, &window, "test_game");
+		CHECK_FALSE(again.options().detail);
+		CHECK_FALSE(again.options().vvis);
+		CHECK(again.commandText().contains("-StaticPropLighting"));
+		QSettings().remove("compile/test_game");
+	}
 
 	{
 		// Shapes: an arch from the block tool, changed afterwards in the Tool panel (live, one undo step).
