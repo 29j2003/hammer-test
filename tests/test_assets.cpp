@@ -57,6 +57,11 @@ TEST_CASE("material categories") {
 	nodraw.name = "tools/toolsnodraw";
 	nodraw.shader = "LightmappedGeneric";
 	CHECK(classifyMaterial(nodraw).tool);
+
+	Material sprite;   // editor icon (iconsprite), not a wall texture
+	sprite.name = "editor/light_spot";
+	sprite.shader = "UnlitGeneric";
+	CHECK_FALSE(classifyMaterial(sprite).brush);
 }
 
 TEST_CASE("model header: sequences, activities, includes, materials") {

@@ -49,6 +49,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_shapeOptions.addHeight = settings.value("shape/addHeight", m_shapeOptions.addHeight).toDouble();
 	m_shapeOptions.steps = settings.value("shape/steps", m_shapeOptions.steps).toInt();
 	m_rotationSnap = settings.value("editor/rotationSnap", 15.0).toDouble();
+	m_randomYaw = settings.value("entities/randomYaw", false).toBool();
 }
 
 Editor::~Editor() = default;
@@ -477,6 +478,37 @@ void Editor::setCurrentMaterial(const QString& material) {
 void Editor::setCurrentEntityClass(const QString& classname) {
 	m_currentEntityClass = classname;
 	emit settingsChanged();
+}
+
+bool Editor::armedBrushEntity() const {
+	const auto* definition = entities() && !m_currentEntityClass.isEmpty() ? entities()->find(m_currentEntityClass.toStdString()) : nullptr;
+	return definition && definition->isSolid();
+}
+
+void Editor::setRandomYaw(bool on) {
+	m_randomYaw = on;
+	QSettings().setValue("entities/randomYaw", on);
+	emit settingsChanged();
+}
+
+void Editor::createBrushEntity(const Bounds& box) {
+	const std::string classname = m_currentEntityClass.toStdString();
+	const auto* definition = entities() ? entities()->find(classname) : nullptr;
+	// Triggers, area portals ... get their tool texture, everything else the current material.
+	std::string material = QString::fromStdString(edit::brushEntityMaterial(classname)).toUpper().toStdString();
+	if (material.empty()) {
+		material = m_currentMaterial.toStdString();
+	}
+	auto [change, id] = edit::createBrushEntity(m_doc, box, m_shapeOptions, classname, definition, material);
+	if (id == 0) {
+		emit message(tr("The %1 does not fit into this box - make it bigger or change the settings in the Tool panel")
+		                 .arg(QString::fromStdString(shapeName(m_shapeOptions.kind))));
+		return;
+	}
+	commit(std::move(change));
+	Selection selection;
+	selection.entities.push_back(id);
+	setSelection(std::move(selection));
 }
 
 void Editor::deleteSelection() {

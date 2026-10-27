@@ -3,8 +3,14 @@
 #include "tool_panel.h"
 
 #include "editor.h"
+#include "material_cache.h"
 
+#include <QCheckBox>
+#include <QHBoxLayout>
 #include <QHeaderView>
+#include <QPainter>
+#include <QRegularExpression>
+#include <QToolButton>
 #include <QSpinBox>
 #include <QFormLayout>
 #include <QComboBox>
@@ -17,6 +23,8 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <functional>
 #include <memory>
 
 #include <sme/entity_catalog.h>
@@ -69,26 +77,116 @@ protected:
 
 // --- Entity picker -------------------------------------------------------------------
 
+namespace {
+
+constexpr int ICON_SIZE = 20;
+
+/// "editor/info_target.vmt" / "materials/editor/x.spr" -> "editor/info_target".
+QString spriteMaterial(const EntityClass& cls) {
+	QString sprite = QString::fromStdString(cls.helper("iconsprite")).trimmed();
+	sprite.remove('"');
+	if (sprite.isEmpty()) {
+		return {};
+	}
+	return normalizedMaterialName(sprite);
+}
+
+QColor classColor(const EntityClass& cls) {
+	const QStringList parts = QString::fromStdString(cls.helper("color")).split(' ', Qt::SkipEmptyParts);
+	if (parts.size() >= 3) {
+		return QColor(parts[0].toInt(), parts[1].toInt(), parts[2].toInt());
+	}
+	return cls.isSolid() ? QColor(90, 160, 255) : QColor(220, 30, 220);   // Hammer's defaults
+}
+
+/// Square in the class color; brush entities get a frame like a brush.
+QIcon colorIcon(const EntityClass& cls) {
+	QPixmap pixmap(ICON_SIZE, ICON_SIZE);
+	pixmap.fill(Qt::transparent);
+	QPainter p(&pixmap);
+	p.setRenderHint(QPainter::Antialiasing);
+	const QColor color = classColor(cls);
+	if (cls.isSolid()) {
+		p.setPen(QPen(color.lighter(130), 1.5));
+		p.setBrush(QColor(color.red(), color.green(), color.blue(), 90));
+		p.drawRect(QRectF(3.5, 3.5, ICON_SIZE - 7, ICON_SIZE - 7));
+	} else {
+		p.setPen(Qt::NoPen);
+		p.setBrush(color);
+		p.drawRoundedRect(QRectF(4, 4, ICON_SIZE - 8, ICON_SIZE - 8), 2, 2);
+	}
+	return QIcon(pixmap);
+}
+
+/// Editor sprite as an icon. Additive sprites have black backgrounds: their brightness becomes alpha.
+QIcon spriteIcon(const MaterialInfo& info) {
+	if (info.image.isNull()) {
+		return {};
+	}
+	QImage image = info.image.convertToFormat(QImage::Format_RGBA8888);
+	if (info.kind == MaterialInfo::Kind::Additive || !image.hasAlphaChannel()) {
+		for (int y = 0; y < image.height(); ++y) {
+			auto* row = reinterpret_cast<uchar*>(image.scanLine(y));
+			for (int x = 0; x < image.width(); ++x) {
+				uchar* px = row + x * 4;
+				px[3] = std::max({px[0], px[1], px[2]});
+			}
+		}
+	}
+	return QIcon(QPixmap::fromImage(image.scaled(ICON_SIZE, ICON_SIZE, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+}
+
+} // namespace
+
 EntityPicker::EntityPicker(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
 	auto* v = new QVBoxLayout(this);
 	v->setContentsMargins(4, 4, 4, 4);
+	v->setSpacing(4);
+	auto* top = new QHBoxLayout;
 	m_search = new QLineEdit;
-	m_search->setPlaceholderText(tr("Search entities (e.g. light, door, citizen) ..."));
+	m_search->setPlaceholderText(tr("Find an entity class (e.g. light, door, global light) ..."));
 	m_search->setClearButtonEnabled(true);
-	v->addWidget(m_search);
+	top->addWidget(m_search, 1);
+	m_grouped = new QToolButton;
+	m_grouped->setText(tr("Groups"));
+	m_grouped->setToolTip(tr("Sort the classes into groups (NPCs, triggers, lights ...) instead of A-Z"));
+	m_grouped->setCheckable(true);
+	m_grouped->setChecked(QSettings().value("entities/grouped", false).toBool());
+	top->addWidget(m_grouped);
+	v->addLayout(top);
 	m_tree = new EntityTree;
 	m_tree->setHeaderHidden(true);
 	m_tree->setDragEnabled(true);
 	m_tree->setDragDropMode(QAbstractItemView::DragOnly);
 	m_tree->setUniformRowHeights(true);
+	m_tree->setIconSize(QSize(ICON_SIZE, ICON_SIZE));
 	v->addWidget(m_tree, 1);
 	m_info = new QLabel;
 	m_info->setWordWrap(true);
 	m_info->setTextFormat(Qt::RichText);
 	m_info->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	m_info->setMinimumHeight(60);
 	m_info->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+	m_info->setMaximumHeight(120);
 	v->addWidget(m_info);
+
+	// The armed class: what the next click (point entity) or box (brush entity) becomes.
+	auto* armedRow = new QHBoxLayout;
+	m_armedIcon = new QLabel;
+	m_armedIcon->setFixedSize(ICON_SIZE, ICON_SIZE);
+	armedRow->addWidget(m_armedIcon);
+	m_armed = new QLabel;
+	m_armed->setWordWrap(true);
+	m_armed->setTextFormat(Qt::RichText);
+	armedRow->addWidget(m_armed, 1);
+	m_disarm = new QToolButton;
+	m_disarm->setText(QStringLiteral("✕"));
+	m_disarm->setToolTip(tr("Disarm: clicks in the view select again"));
+	armedRow->addWidget(m_disarm);
+	v->addLayout(armedRow);
+	m_randomYaw = new QCheckBox(tr("Random yaw (3D placement)"));
+	m_randomYaw->setToolTip(tr("Every point entity placed in the 3D view gets a random turn - props and debris look less repeated"));
+	m_randomYaw->setChecked(editor->randomYaw());
+	v->addWidget(m_randomYaw);
 	m_summary = new QLabel;
 	m_summary->setStyleSheet("color: #8a90a0;");
 	m_summary->setWordWrap(true);
@@ -96,7 +194,7 @@ EntityPicker::EntityPicker(Editor* editor, QWidget* parent) : QWidget(parent), m
 
 	connect(m_search, &QLineEdit::textChanged, this, &EntityPicker::filter);
 	connect(m_search, &QLineEdit::returnPressed, this, [this] {
-		// Enter takes the first match.
+		// Enter arms the first match.
 		for (QTreeWidgetItemIterator it(m_tree, QTreeWidgetItemIterator::NotHidden | QTreeWidgetItemIterator::NoChildren); *it; ++it) {
 			if (!(*it)->data(0, Qt::UserRole).toString().isEmpty()) {
 				m_tree->setCurrentItem(*it);
@@ -104,13 +202,15 @@ EntityPicker::EntityPicker(Editor* editor, QWidget* parent) : QWidget(parent), m
 			}
 		}
 	});
+	connect(m_grouped, &QToolButton::toggled, this, [this](bool on) {
+		QSettings().setValue("entities/grouped", on);
+		reload();
+	});
 	connect(m_tree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* item) {
-		if (item && item->childCount() == 0) {
-			const QString name = item->data(0, Qt::UserRole).toString();
-			if (!name.isEmpty()) {
-				m_editor->setCurrentEntityClass(name);
-				showClass(name);
-			}
+		const QString name = item ? item->data(0, Qt::UserRole).toString() : QString();
+		if (!name.isEmpty()) {
+			m_editor->setCurrentEntityClass(name);   // arms it
+			showClass(name);
 		}
 	});
 	connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item) {
@@ -120,7 +220,14 @@ EntityPicker::EntityPicker(Editor* editor, QWidget* parent) : QWidget(parent), m
 			m_editor->setTool(Editor::Tool::Entity);
 		}
 	});
-	connect(editor, &Editor::gameChanged, this, &EntityPicker::reload);
+	connect(m_disarm, &QToolButton::clicked, this, [this] {
+		m_tree->setCurrentItem(nullptr);
+		m_editor->setCurrentEntityClass({});
+	});
+	connect(m_randomYaw, &QCheckBox::toggled, editor, &Editor::setRandomYaw);
+	connect(editor, &Editor::settingsChanged, this, &EntityPicker::showArmed);
+	// Queued: the material cache gets the new game's files in the same signal.
+	connect(editor, &Editor::gameChanged, this, &EntityPicker::reload, Qt::QueuedConnection);
 	connect(editor, &Editor::documentChanged, this, [this] {
 		// Classes that were just placed move to "Recently used".
 		const auto& entities = m_editor->doc().entities;
@@ -134,48 +241,126 @@ EntityPicker::EntityPicker(Editor* editor, QWidget* parent) : QWidget(parent), m
 	reload();
 }
 
+void EntityPicker::setMaterialCache(MaterialCache* materials) {
+	m_materials = materials;
+	connect(materials, &MaterialCache::materialReady, this, &EntityPicker::spriteReady);
+	reload();
+}
+
 void EntityPicker::focusSearch() {
 	m_search->setFocus();
 	m_search->selectAll();
 }
 
+QIcon EntityPicker::iconFor(const QString& classname) {
+	const auto* catalog = m_editor->entities();
+	const EntityClass* cls = catalog ? catalog->find(classname.toStdString()) : nullptr;
+	if (!cls) {
+		return {};
+	}
+	const QString sprite = spriteMaterial(*cls);
+	if (!sprite.isEmpty() && m_spriteIcons.contains(sprite)) {
+		return m_spriteIcons.value(sprite);
+	}
+	return colorIcon(*cls);
+}
+
+QTreeWidgetItem* EntityPicker::addClassItem(QTreeWidgetItem* parent, const EntityClass& cls) {
+	const QString name = QString::fromStdString(cls.name);
+	auto* item = new QTreeWidgetItem(parent, QStringList(name));
+	item->setData(0, Qt::UserRole, name);
+	item->setToolTip(0, QString::fromStdString(cls.description).left(300));
+	item->setIcon(0, colorIcon(cls));
+	const QString sprite = spriteMaterial(cls);
+	if (!sprite.isEmpty()) {
+		if (m_spriteIcons.contains(sprite)) {
+			item->setIcon(0, m_spriteIcons.value(sprite));
+		} else if (m_materials) {
+			m_spriteItems[sprite].push_back(item);
+			if (const auto info = m_materials->get(sprite)) {
+				spriteReady(sprite);   // already loaded
+			}
+		}
+	}
+	return item;
+}
+
+void EntityPicker::spriteReady(const QString& material) {
+	if (!m_spriteItems.contains(material) || !m_materials) {
+		return;
+	}
+	const auto info = m_materials->get(material);
+	if (!info) {
+		return;
+	}
+	const QIcon icon = info->found ? spriteIcon(*info) : QIcon();
+	if (!icon.isNull()) {
+		m_spriteIcons.insert(material, icon);
+	}
+	for (auto* item : m_spriteItems.take(material)) {
+		if (!icon.isNull()) {
+			item->setIcon(0, icon);
+		}
+	}
+	showArmed();
+}
+
 void EntityPicker::reload() {
 	m_tree->clear();
+	m_spriteItems.clear();
 	m_recent = nullptr;
 	const auto* catalog = m_editor->entities();
 	if (!catalog || catalog->size() == 0) {
 		m_summary->setText(tr("No entity definitions (FGD) loaded - see Game settings (⚙)."));
+		showArmed();
 		return;
 	}
-	QMap<QString, QTreeWidgetItem*> groups;
-	int count = 0;
+	const bool grouped = m_grouped->isChecked();
+	auto* points = new QTreeWidgetItem(QStringList(tr("Point entities")));
+	auto* brushes = new QTreeWidgetItem(QStringList(tr("Brush entities")));
+	QMap<QString, QTreeWidgetItem*> groups[2];
 	for (const auto* cls : catalog->placeable()) {
-		const QString name = QString::fromStdString(cls->name);
-		const QString group = groupOf(name);
-		if (!groups.contains(group)) {
-			groups.insert(group, new QTreeWidgetItem(QStringList(group)));
+		const int kind = cls->isSolid() ? 1 : 0;
+		QTreeWidgetItem* parent = kind ? brushes : points;
+		if (grouped) {
+			const QString group = groupOf(QString::fromStdString(cls->name));
+			if (!groups[kind].contains(group)) {
+				groups[kind].insert(group, new QTreeWidgetItem(parent, QStringList(group)));
+			}
+			parent = groups[kind][group];
 		}
-		auto* item = new QTreeWidgetItem(groups[group], QStringList(name));
-		item->setData(0, Qt::UserRole, name);
-		item->setToolTip(0, QString::fromStdString(cls->description).left(300));
-		if (cls->isSolid()) {
-			item->setForeground(0, QColor(120, 180, 255));   // brush entity
+		addClassItem(parent, *cls);
+	}
+	const auto finishGroup = [](QTreeWidgetItem* group) {
+		group->setFlags(group->flags() & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsSelectable);
+		QFont font = group->font(0);
+		font.setBold(true);
+		group->setFont(0, font);
+	};
+	for (auto* top : {points, brushes}) {
+		int count = 0;
+		for (int i = 0; i < top->childCount(); ++i) {
+			auto* child = top->child(i);
+			if (child->childCount() > 0) {
+				child->setText(0, QStringLiteral("%1 (%2)").arg(child->text(0)).arg(child->childCount()));
+				finishGroup(child);
+				count += child->childCount();
+			} else {
+				++count;
+			}
 		}
-		++count;
+		top->setText(0, QStringLiteral("%1 (%2)").arg(top->text(0)).arg(count));
+		finishGroup(top);
+		m_tree->addTopLevelItem(top);
 	}
-	for (auto* group : groups) {
-		group->setText(0, QStringLiteral("%1 (%2)").arg(group->text(0)).arg(group->childCount()));
-		group->setFlags(group->flags() & ~Qt::ItemIsDragEnabled);
-		m_tree->addTopLevelItem(group);
-	}
+	points->setExpanded(true);
 	// Recently used classes on top.
 	m_recent = new QTreeWidgetItem(QStringList(tr("Recently used")));
-	m_recent->setFlags(m_recent->flags() & ~Qt::ItemIsDragEnabled);
+	finishGroup(m_recent);
 	m_tree->insertTopLevelItem(0, m_recent);
 	for (const auto& name : QSettings().value("entities/recent").toStringList()) {
-		if (catalog->find(name.toStdString())) {
-			auto* item = new QTreeWidgetItem(m_recent, QStringList(name));
-			item->setData(0, Qt::UserRole, name);
+		if (const auto* cls = catalog->find(name.toStdString())) {
+			addClassItem(m_recent, *cls);
 		}
 	}
 	m_recent->setHidden(m_recent->childCount() == 0);
@@ -185,44 +370,103 @@ void EntityPicker::reload() {
 	for (const auto& file : catalog->files()) {
 		files << QString::fromStdString(displayPath(file.filename()));
 	}
-	m_summary->setText(tr("%1 classes from %2 - blue = brush entity").arg(count).arg(files.join(", ")));
+	m_summary->setText(tr("%1 classes from %2").arg(catalog->placeable().size()).arg(files.join(", ")));
 	showClass(m_editor->currentEntityClass());
+	showArmed();
 	filter(m_search->text());
 }
 
 void EntityPicker::filter(const QString& text) {
-	const QStringList words = text.toLower().split(' ', Qt::SkipEmptyParts);
-	for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
-		auto* group = m_tree->topLevelItem(i);
-		int visible = 0;
-		for (int j = 0; j < group->childCount(); ++j) {
-			auto* item = group->child(j);
-			const QString haystack = item->text(0).toLower() + ' ' + item->toolTip(0).toLower();
-			bool show = true;
-			for (const auto& word : words) {
-				// Class names must match; descriptions count only for longer words.
-				show = show && (item->text(0).contains(word) || (word.size() >= 4 && haystack.contains(word)));
+	// "global light" finds env_global_light: words match the class name (also across "_"),
+	// longer words the description too.
+	const QStringList words = text.toLower().split(QRegularExpression("[\\s_]+"), Qt::SkipEmptyParts);
+	int matches = 0;
+	const std::function<bool(QTreeWidgetItem*)> apply = [&](QTreeWidgetItem* item) -> bool {
+		const QString name = item->data(0, Qt::UserRole).toString();
+		if (name.isEmpty()) {
+			// A group: visible when a child is.
+			bool any = false;
+			for (int i = 0; i < item->childCount(); ++i) {
+				any = apply(item->child(i)) || any;
 			}
-			item->setHidden(!show);
-			visible += show ? 1 : 0;
+			item->setHidden(!any);
+			item->setExpanded(any && (!words.isEmpty() || item == m_recent || item->isExpanded()));
+			return any;
 		}
-		group->setHidden(visible == 0);
-		group->setExpanded(!words.isEmpty() || group == m_recent);
+		const QString lower = name.toLower();
+		const QString haystack = lower + ' ' + item->toolTip(0).toLower();
+		bool show = true;
+		for (const auto& word : words) {
+			show = show && (lower.contains(word) || (word.size() >= 4 && haystack.contains(word)));
+		}
+		item->setHidden(!show);
+		if (show && item->parent() != m_recent) {
+			++matches;
+		}
+		return show;
+	};
+	for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
+		apply(m_tree->topLevelItem(i));
+	}
+	if (words.isEmpty()) {
+		if (m_tree->topLevelItemCount() > 1) {
+			m_tree->topLevelItem(1)->setExpanded(true);   // point entities
+		}
+		return;
+	}
+	if (matches == 0) {
+		const auto* catalog = m_editor->entities();
+		QStringList files;
+		if (catalog) {
+			for (const auto& file : catalog->files()) {
+				files << QString::fromStdString(displayPath(file.filename()));
+			}
+		}
+		const auto* entry = m_editor->gameEntry();
+		QString hint = tr("No class matches \"%1\" in %2.").arg(text.toHtmlEscaped(), files.isEmpty() ? tr("the loaded FGDs") : files.join(", "));
+		if (entry && !entry->usesMapbase) {
+			hint += tr("<br>Mapbase classes (env_global_light, logic_script ...) need a Mapbase game or mod and its FGD.");
+		}
+		if (entry && entry->baseContent) {
+			hint += tr("<br>%1 is only base content - choose %2's own folder in the game list.")
+			            .arg(QString::fromStdString(entry->folder()), QString::fromStdString(entry->appName));
+		}
+		m_info->setText(hint);
 	}
 }
 
 void EntityPicker::showClass(const QString& name) {
 	const auto* catalog = m_editor->entities();
-	const EntityClass* cls = catalog ? catalog->find(name.toStdString()) : nullptr;
+	const EntityClass* cls = catalog && !name.isEmpty() ? catalog->find(name.toStdString()) : nullptr;
 	if (!cls) {
-		m_info->setText(tr("<b>%1</b>").arg(name.toHtmlEscaped()));
+		m_info->setText(name.isEmpty() ? QString() : tr("<b>%1</b>").arg(name.toHtmlEscaped()));
 		return;
 	}
-	const QString how = cls->isSolid() ? tr("Brush entity: select brushes, then Ctrl+T (Tie to entity).")
-	                                   : tr("Click in the 3D view to place it (or drag it in).");
-	m_info->setText(QStringLiteral("<b>%1</b> <span style='color:#8a90a0'>(%2)</span><br>%3<br><i>%4</i>")
+	m_info->setText(QStringLiteral("<b>%1</b> <span style='color:#8a90a0'>(%2)</span><br>%3")
 	                    .arg(name.toHtmlEscaped(), QString::fromStdString(displayPath(cls->sourceFile.filename())).toHtmlEscaped(),
-	                         QString::fromStdString(cls->description).left(400).toHtmlEscaped(), how));
+	                         QString::fromStdString(cls->description).left(400).toHtmlEscaped()));
+}
+
+void EntityPicker::showArmed() {
+	const QString name = m_editor->currentEntityClass();
+	const auto* catalog = m_editor->entities();
+	const EntityClass* cls = catalog && !name.isEmpty() ? catalog->find(name.toStdString()) : nullptr;
+	if (name.isEmpty()) {
+		m_armedIcon->setText(QStringLiteral("⚡"));
+		m_armedIcon->setPixmap({});
+		m_armed->setText(tr("<span style='color:#8a90a0'>Nothing armed. Pick a class to arm it - the next click (or box for a brush "
+		                    "entity) becomes it.</span>"));
+		m_disarm->setVisible(false);
+		return;
+	}
+	m_armedIcon->setPixmap(iconFor(name).pixmap(ICON_SIZE, ICON_SIZE));
+	const QString how = cls && cls->isSolid() ? tr("drag a box in the view (or select brushes and Ctrl+T)")
+	                                          : tr("click in the view or drag it in");
+	m_armed->setText(tr("Armed: <b>%1</b> - %2").arg(name.toHtmlEscaped(), how));
+	m_disarm->setVisible(true);
+	if (m_randomYaw->isChecked() != m_editor->randomYaw()) {
+		m_randomYaw->setChecked(m_editor->randomYaw());
+	}
 }
 
 void EntityPicker::remember(const QString& name) {
@@ -236,11 +480,18 @@ void EntityPicker::remember(const QString& name) {
 		recent.removeLast();
 	}
 	QSettings().setValue("entities/recent", recent);
-	if (m_recent) {
-		qDeleteAll(m_recent->takeChildren());
+	const auto* catalog = m_editor->entities();
+	if (m_recent && catalog) {
+		for (auto* child : m_recent->takeChildren()) {
+			for (auto& list : m_spriteItems) {
+				list.removeAll(child);
+			}
+			delete child;
+		}
 		for (const auto& entry : recent) {
-			auto* item = new QTreeWidgetItem(m_recent, QStringList(entry));
-			item->setData(0, Qt::UserRole, entry);
+			if (const auto* cls = catalog->find(entry.toStdString())) {
+				addClassItem(m_recent, *cls);
+			}
 		}
 		m_recent->setHidden(false);
 		m_recent->setExpanded(true);

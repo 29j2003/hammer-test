@@ -145,6 +145,7 @@ private:
 	SceneRenderer m_renderer;
 	Camera m_camera;
 	bool m_glReady = false;
+	bool m_blockForEntity = false;   ///< The block drag belongs to the entity tool (brush entity)
 	bool m_needsRebuild = true;
 	bool m_selectionDirty = true;
 	QString m_glError;

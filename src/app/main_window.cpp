@@ -219,11 +219,13 @@ void MainWindow::createDocks() {
 	m_problems = new ProblemsPanel(m_editor, m_assets);
 	m_log = new LogPanel;
 	m_toolPanel = new ToolPanel(m_editor);
+	m_toolPanel->entityPicker()->setMaterialCache(m_materials);
 	m_sounds = new SoundBrowser(m_editor);
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
 
-	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::RightDockWidgetArea);
+	// Tool options on the left next to the tool bar (like XBLAH's "New objects"), properties on the right.
+	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::LeftDockWidgetArea);
 	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
 	auto* outliner = addDock(tr("Outliner"), m_outliner, Qt::RightDockWidgetArea);
 	auto* problems = addDock(tr("Problems"), m_problems, Qt::RightDockWidgetArea);
@@ -246,8 +248,8 @@ void MainWindow::createDocks() {
 		raiseDock("Problems");
 	});
 	assets->raise();
-	resizeDocks({properties}, {420}, Qt::Horizontal);
-	resizeDocks({tool, properties, outliner}, {260, 460, 220}, Qt::Vertical);
+	resizeDocks({properties, tool}, {420, 300}, Qt::Horizontal);
+	resizeDocks({properties, outliner}, {560, 260}, Qt::Vertical);
 	resizeDocks({assets}, {290}, Qt::Vertical);
 	connect(m_toolPanel, &ToolPanel::wantsAttention, this, [tool] {
 		tool->show();

@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QMimeData>
+#include <QLineEdit>
 #include <QListView>
 #include <QPixmap>
 #include <QTreeWidget>
@@ -271,6 +272,70 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(tree->isVisible());
 		CHECK_FALSE(tree->findItems("info_player_start", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
 		CHECK_FALSE(tree->findItems("npc_citizen", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+		// Point and brush entities in their own branches.
+		const auto trigger = tree->findItems("trigger_once", Qt::MatchExactly | Qt::MatchRecursive);
+		REQUIRE_FALSE(trigger.isEmpty());
+		CHECK(trigger.front()->parent()->text(0).startsWith("Brush entities"));
+		// "global light" finds Mapbase's env_global_light (words match across the underscore).
+		auto* search = window.toolPanel()->entityPicker()->findChild<QLineEdit*>();
+		REQUIRE(search);
+		search->setText("global light");
+		const auto global = tree->findItems("env_global_light", Qt::MatchExactly | Qt::MatchRecursive);
+		REQUIRE(global.size() == 1);
+		CHECK_FALSE(global.front()->isHidden());
+		CHECK(tree->findItems("npc_citizen", Qt::MatchExactly | Qt::MatchRecursive).front()->isHidden());
+		search->clear();
+		// Editor sprites become the icons (light_spot: white dot inside its ring).
+		const auto spot = tree->findItems("light_spot", Qt::MatchExactly | Qt::MatchRecursive);
+		REQUIRE_FALSE(spot.isEmpty());
+		QColor middle;
+		for (int i = 0; i < 100; ++i) {
+			const QImage icon = spot.front()->icon(0).pixmap(20, 20).toImage();
+			middle = icon.pixelColor(icon.width() / 2, icon.height() / 2);
+			if (middle.red() > 230 && middle.green() > 230 && middle.blue() > 230) break;
+			settle();
+		}
+		CHECK(middle.blue() > 230);   // the class color square would be yellow
+	}
+	{
+		// Entity tool with a brush class armed: the dragged box becomes that entity (trigger texture).
+		const std::size_t before = editor.doc().entities.size();
+		editor.setCurrentEntityClass("trigger_once");
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {-320, -320, 0}));
+		QTest::mouseMove(view, screen(view, {-192, -224, 0}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {-192, -224, 0}));
+		QTest::mouseMove(view, screen(view, {-256, -272, 64}));
+		settle();
+		QTest::keyClick(view, Qt::Key_Return);
+		settle();
+		REQUIRE(editor.doc().entities.size() == before + 1);
+		const auto& trigger = editor.doc().entities.back();
+		CHECK(trigger.classname() == "trigger_once");
+		REQUIRE(trigger.solids.size() == 1);
+		CHECK(trigger.solids.front().sides.front().material == "TOOLS/TOOLSTRIGGER");
+		CHECK(editor.selection().entities == std::vector<int>{trigger.id});
+		editor.undo();
+		CHECK(editor.doc().entities.size() == before);
+
+		// Random yaw for point entities placed in 3D.
+		editor.setRandomYaw(true);
+		editor.setCurrentEntityClass("light_spot");
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {-256, -256, 0}));
+		settle();
+		REQUIRE(editor.doc().entities.size() == before + 1);
+		Vec3 angles{-1, -1, -1};
+		CHECK(parseVec3(editor.doc().entities.back().get("angles"), angles));
+		CHECK(angles.y >= 0);
+		CHECK(angles.y < 360);
+		editor.undo();
+		editor.setRandomYaw(false);
+
+		// Nothing armed: a click places nothing.
+		editor.setCurrentEntityClass({});
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {-256, -256, 0}));
+		settle();
+		CHECK(editor.doc().entities.size() == before);
+		editor.setCurrentEntityClass("info_player_start");
 	}
 
 	{

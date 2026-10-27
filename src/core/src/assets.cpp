@@ -118,7 +118,8 @@ MaterialCategory classifyMaterial(const Material& m) {
 	c.translucent = m.flag("$translucent") || m.flag("$alphatest") || m.flag("$additive") || c.water;
 	c.decal = m.flag("$decal") || m.name.starts_with("decals/") || m.name.starts_with("overlays/");
 	c.sky = m.name.starts_with("skybox/");
-	c.brush = !c.model && !c.sky && !c.decal && shader != "sprite" && shader != "spritecard" && shader != "refract" && shader != "unlittwotexture";
+	// materials/editor/ holds the editor's own sprites and helpers, not wall textures.
+	c.brush = !c.model && !c.sky && !c.decal && !m.name.starts_with("editor/") && shader != "sprite" && shader != "spritecard" && shader != "refract" && shader != "unlittwotexture";
 	return c;
 }
 

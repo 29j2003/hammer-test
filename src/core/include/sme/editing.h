@@ -107,6 +107,14 @@ template<typename F>
 [[nodiscard]] Change setKeyValue(MapDocument& doc, const std::vector<int>& entityIds, const std::string& key, const std::optional<std::string>& value);
 // --- Shapes and brush tools (csg.h, shapes.h) -------------------------------------------
 
+/// Tool material a new brush entity of this class usually gets (trigger_* -> tools/toolstrigger,
+/// func_areaportal -> tools/toolsareaportal, ...); empty when it takes the normal material.
+[[nodiscard]] std::string brushEntityMaterial(std::string_view classname);
+/// A new brush entity made of a shape fitted into `box` (entity tool with a brush class armed),
+/// one undo step "Create <class>". Returns the entity id (0 if the shape does not fit).
+[[nodiscard]] std::pair<Change, int> createBrushEntity(MapDocument& doc, const Bounds& box, const ShapeOptions& options, const std::string& classname,
+                                                       const EntityClass* definition, const std::string& material);
+
 /// Brushes of a shape fitted into `box` (block tool). Undo name "Create <shape>".
 [[nodiscard]] std::pair<Change, std::vector<SolidRef>> createShape(MapDocument& doc, const Bounds& box, const ShapeOptions& options, const std::string& material);
 /// Removes `remove` and adds `add` in the same entity as the first removed brush (world if none).

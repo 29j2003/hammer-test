@@ -308,6 +308,33 @@ void createDemo(Fixture& f) {
 	writeText(mat / "demo/blend_grass_dirt.vmt",
 	          vmt("WorldVertexTransition", "\t\"$basetexture\" \"demo/grass001\"\n\t\"$basetexture2\" \"demo/dirt001\"\n\t\"$surfaceprop\" \"dirt\"\n"));
 	writeText(mat / "demo/glass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glass\"\n"));
+	// Editor sprites (iconsprite in the FGD): a ring in the class color around a small symbol.
+	struct Sprite {
+		const char* name;
+		Rgba color;
+		int symbol;   // 0 dot, 1 square, 2 waves, 3 star
+	};
+	for (const auto& sprite : {Sprite{"light", {1, 0.9, 0.3}, 0}, Sprite{"light_spot", {1, 0.85, 0.2}, 0}, Sprite{"light_env", {1, 0.7, 0.2}, 3},
+	                           Sprite{"logic_relay", {0.2, 0.85, 0.5}, 1}, Sprite{"ambient_generic", {0.35, 0.75, 1}, 2},
+	                           Sprite{"env_soundscape", {1, 0.55, 0.15}, 2}, Sprite{"info_particle_system", {1, 0.6, 0.25}, 3},
+	                           Sprite{"scripted_sequence", {1, 0.3, 1}, 1}}) {
+		writeBytes(mat / "editor" / (std::string(sprite.name) + ".vtf"), makeTexture(64, [sprite](double u, double v) {
+			const double dx = u - 0.5, dy = v - 0.5, r = std::sqrt(dx * dx + dy * dy);
+			bool inner = false;
+			switch (sprite.symbol) {
+				case 0: inner = r < 0.17; break;
+				case 1: inner = std::abs(dx) < 0.15 && std::abs(dy) < 0.15; break;
+				case 2: inner = std::abs(std::fmod(r * 12, 2.0) - 1) < 0.35 && dx > -0.05 && r < 0.3; break;
+				case 3: inner = r < 0.12 + 0.08 * std::cos(std::atan2(dy, dx) * 5); break;
+			}
+			if (r > 0.47) return Rgba{0, 0, 0, 0};
+			if (r > 0.38) return Rgba{sprite.color.r, sprite.color.g, sprite.color.b, 1};
+			if (inner) return Rgba{1, 1, 1, 1};
+			return Rgba{0.12, 0.13, 0.16, 0.85};
+		}, true));
+		writeText(mat / "editor" / (std::string(sprite.name) + ".vmt"),
+		          vmt("UnlitGeneric", "\t\"$basetexture\" \"editor/" + std::string(sprite.name) + "\"\n\t\"$translucent\" \"1\"\n"));
+	}
 	writeText(mat / "models/humans/male_sheet.vmt", vmt("VertexLitGeneric", "\t\"$basetexture\" \"models/humans/male_sheet\"\n"));
 
 	// Model with animations (sequences shared through an include model, like HL2's citizens).

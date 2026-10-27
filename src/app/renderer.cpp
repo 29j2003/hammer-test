@@ -229,6 +229,57 @@ void main() {
 }
 )";
 
+// Editor sprites: one instance per entity, the quad corners come from gl_VertexID.
+const char* SPRITE_VS = R"(#version 330 core
+layout(location = 0) in vec4 a_center;     // xyz, size
+layout(location = 1) in vec3 a_color;
+layout(location = 2) in float a_face;
+uniform mat4 u_viewProj;
+uniform vec3 u_right;
+uniform vec3 u_up;
+uniform usampler2D u_flags;
+uniform int u_hideSelected;
+out vec2 v_uv;
+out vec3 v_color;
+flat out uint v_flag;
+void main() {
+	vec2 corner = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));
+	v_uv = vec2(corner.x, 1.0 - corner.y);
+	vec3 p = a_center.xyz + (u_right * (corner.x - 0.5) + u_up * (corner.y - 0.5)) * a_center.w;
+	int id = int(a_face + 0.5);
+	uint f = texelFetch(u_flags, ivec2(id % 4096, id / 4096), 0).r;
+	v_flag = f;
+	v_color = a_color;
+	gl_Position = u_viewProj * vec4(p, 1.0);
+	if ((f & 2u) != 0u || (u_hideSelected == 1 && (f & 1u) != 0u)) {
+		gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+	}
+}
+)";
+
+const char* SPRITE_FS = R"(#version 330 core
+in vec2 v_uv;
+in vec3 v_color;
+flat in uint v_flag;
+uniform sampler2D u_tex;
+uniform int u_textured;
+uniform int u_additive;        // black background: brightness is the alpha
+out vec4 fragColor;
+void main() {
+	vec4 c = u_textured == 1 ? texture(u_tex, v_uv) : vec4(v_color, 1.0);
+	if (u_additive == 1) {
+		c.a = max(c.r, max(c.g, c.b));
+	}
+	if (c.a < 0.4) {
+		discard;
+	}
+	if ((v_flag & 1u) != 0u) {
+		c.rgb = mix(c.rgb, vec3(1.0, 0.25, 0.15), 0.45);
+	}
+	fragColor = vec4(c.rgb, 1.0);
+}
+)";
+
 // Full-screen quad for the text overlay (painted on the CPU, premultiplied alpha).
 const char* OVERLAY_VS = R"(#version 330 core
 out vec2 v_uv;
@@ -365,7 +416,7 @@ bool SceneRenderer::initialize(MaterialCache* materials, QString* error) {
 		return true;
 	};
 	if (!build(m_program, SCENE_VS, SCENE_FS) || !build(m_edgeProgram, EDGE_VS, COLOR_FS) || !build(m_lineProgram, LINE_VS, COLOR_FS) ||
-	    !build(m_overlayProgram, OVERLAY_VS, OVERLAY_FS)) {
+	    !build(m_overlayProgram, OVERLAY_VS, OVERLAY_FS) || !build(m_spriteProgram, SPRITE_VS, SPRITE_FS)) {
 		return false;
 	}
 	if (!initShadows(error)) {
@@ -432,6 +483,10 @@ bool SceneRenderer::initialize(MaterialCache* materials, QString* error) {
 	glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(LineVertex), reinterpret_cast<void*>(sizeof(QVector3D)));
 	glBindVertexArray(0);
 
+	glGenVertexArrays(1, &m_emptyVao);
+	glGenVertexArrays(1, &m_spriteVao);
+	glGenBuffers(1, &m_spriteVbo);
+
 	glGenTextures(1, &m_whiteTexture);
 	glBindTexture(GL_TEXTURE_2D, m_whiteTexture);
 	const quint32 white = 0xffffffff;
@@ -466,6 +521,9 @@ void SceneRenderer::release() {
 	glDeleteBuffers(1, &m_vbo);
 	glDeleteBuffers(1, &m_edgeVbo);
 	glDeleteBuffers(1, &m_lineVbo);
+	glDeleteBuffers(1, &m_spriteVbo);
+	glDeleteVertexArrays(1, &m_spriteVao);
+	glDeleteVertexArrays(1, &m_emptyVao);
 	glDeleteBuffers(1, &m_previewVbo);
 	glDeleteBuffers(1, &m_previewEdgeVbo);
 	glDeleteVertexArrays(1, &m_previewVao);
@@ -478,6 +536,7 @@ void SceneRenderer::release() {
 	m_edgeProgram.reset();
 	m_lineProgram.reset();
 	m_overlayProgram.reset();
+	m_spriteProgram.reset();
 	if (m_overlayTexture) {
 		glDeleteTextures(1, &m_overlayTexture);
 		m_overlayTexture = 0;
@@ -624,6 +683,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		int id;
 		Bounds box;
 		QVector3D color;
+		QString sprite;   ///< Editor sprite material (drawn instead of the box in 3D)
 	};
 	std::vector<BoxEntity> boxes;
 	for (const auto& entity : doc.entities) {
@@ -670,7 +730,14 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			pick.bounds = box;
 			m_pickItems.push_back(std::move(pick));
 		} else {
-			boxes.push_back({entity.id, box, color});
+			QString sprite;
+			if (const auto* definition = catalog ? catalog->find(classname) : nullptr) {
+				sprite = QString::fromStdString(definition->helper("iconsprite")).remove('"').trimmed();
+				if (!sprite.isEmpty()) {
+					sprite = normalizedMaterialName(sprite);
+				}
+			}
+			boxes.push_back({entity.id, box, color, sprite});
 		}
 
 		// Lights for the lighting preview.
@@ -732,6 +799,40 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		m_sunColor = m_lights.empty() ? QVector3D(0.25f, 0.24f, 0.22f) : QVector3D(0, 0, 0);
 		m_sunDirection = QVector3D(-0.4f, -0.3f, -0.85f).normalized();
 	}
+
+	// Entities with an editor sprite go last: the 3D views draw their sprites instead of these boxes.
+	std::stable_partition(boxes.begin(), boxes.end(), [](const BoxEntity& b) { return b.sprite.isEmpty(); });
+	std::vector<float> spriteData;
+	m_spriteBatches.clear();
+	{
+		std::vector<std::size_t> order;
+		for (std::size_t i = 0; i < boxes.size(); ++i) {
+			if (!boxes[i].sprite.isEmpty()) order.push_back(i);
+		}
+		std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return boxes[a].sprite < boxes[b].sprite; });
+		const int firstSpriteFace = faceIndex + static_cast<int>(boxes.size() - order.size());
+		const std::size_t firstSprite = boxes.size() - order.size();
+		for (const std::size_t i : order) {
+			const auto& b = boxes[i];
+			const Vec3 c = b.box.center(), size = b.box.size();
+			// Hammer's sprites are 16 units; bigger boxes get a bigger sprite (up to 32).
+			const double extent = std::clamp(std::max(size.x, size.y), 16.0, 32.0);
+			const int face = firstSpriteFace + static_cast<int>(i - firstSprite);
+			if (m_spriteBatches.empty() || m_spriteBatches.back().material != b.sprite) {
+				m_spriteBatches.push_back({b.sprite, static_cast<GLint>(spriteData.size() / 8), 0});
+				texture(b.sprite);   // request loading early
+			}
+			++m_spriteBatches.back().count;
+			for (const float v : {float(c.x), float(c.y), float(c.z), float(extent), b.color.x(), b.color.y(), b.color.z(), float(face)}) {
+				spriteData.push_back(v);
+			}
+		}
+		m_spriteBoxVertices = static_cast<GLsizei>(order.size() * 36);
+	}
+	glBindVertexArray(m_spriteVao);
+	glBindBuffer(GL_ARRAY_BUFFER, m_spriteVbo);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(spriteData.size() * sizeof(float)), spriteData.data(), GL_STATIC_DRAW);
+	glBindVertexArray(0);
 
 	for (const auto& b : boxes) {
 		const int base = faceIndex;
@@ -906,6 +1007,7 @@ void SceneRenderer::uploadTexture(GpuTexture& tex, const MaterialInfo& info) {
 	tex.kind = info.kind;
 	tex.isTool = info.isTool;
 	tex.isSky = info.isSky;
+	tex.found = info.found && !info.image.isNull();
 	tex.ready = true;
 }
 
@@ -1060,10 +1162,13 @@ void SceneRenderer::render(const Params& params) {
 		m_program->setUniformValue("u_alphaTest", 0);
 		m_program->setUniformValue("u_fullbright", 1);
 		m_program->setUniformValue("u_opacity", 1.f);
-		glDrawArrays(GL_TRIANGLES, m_entityFirst, m_entityCount);
+		glDrawArrays(GL_TRIANGLES, m_entityFirst, m_entityCount - m_spriteBoxVertices);
 		++m_drawCalls;
 		m_program->setUniformValue("u_useColor", 0);
 	}
+	drawSprites(params);
+	m_program->bind();
+	glBindVertexArray(m_vao);
 
 	// Translucent materials (water, glass, tool textures like triggers).
 	glEnable(GL_BLEND);
@@ -1083,6 +1188,43 @@ void SceneRenderer::render(const Params& params) {
 	glDrawArrays(GL_LINES, 0, m_edgeCount);
 	glEnable(GL_DEPTH_TEST);
 	++m_drawCalls;
+	glBindVertexArray(0);
+}
+
+void SceneRenderer::drawSprites(const Params& params) {
+	if (m_spriteBatches.empty()) {
+		return;
+	}
+	m_spriteProgram->bind();
+	m_spriteProgram->setUniformValue("u_viewProj", params.projection * params.view);
+	const QMatrix4x4& v = params.view;
+	m_spriteProgram->setUniformValue("u_right", QVector3D(v(0, 0), v(0, 1), v(0, 2)));
+	m_spriteProgram->setUniformValue("u_up", QVector3D(v(1, 0), v(1, 1), v(1, 2)));
+	m_spriteProgram->setUniformValue("u_flags", 2);
+	m_spriteProgram->setUniformValue("u_tex", 0);
+	m_spriteProgram->setUniformValue("u_hideSelected", m_hideSelected ? 1 : 0);
+	glDisable(GL_CULL_FACE);
+	glBindVertexArray(m_spriteVao);
+	glBindBuffer(GL_ARRAY_BUFFER, m_spriteVbo);
+	constexpr GLsizei stride = 8 * sizeof(float);
+	for (GLuint i = 0; i < 3; ++i) {
+		glEnableVertexAttribArray(i);
+		glVertexAttribDivisor(i, 1);
+	}
+	for (const auto& batch : m_spriteBatches) {
+		const auto& tex = texture(batch.material);
+		const bool textured = tex.ready && tex.found;
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, textured ? tex.id : m_whiteTexture);
+		m_spriteProgram->setUniformValue("u_textured", textured ? 1 : 0);
+		m_spriteProgram->setUniformValue("u_additive", tex.kind == MaterialInfo::Kind::Additive ? 1 : 0);
+		const auto offset = static_cast<std::uintptr_t>(batch.first) * stride;
+		glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offset));
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offset + 4 * sizeof(float)));
+		glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offset + 7 * sizeof(float)));
+		glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, batch.count);
+		++m_drawCalls;
+	}
 	glBindVertexArray(0);
 }
 
@@ -1398,7 +1540,7 @@ void SceneRenderer::drawOverlay(const QImage& image, bool changed) {
 	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-	glBindVertexArray(m_lineVao);   // any VAO; the quad comes from gl_VertexID
+	glBindVertexArray(m_emptyVao);   // the quad comes from gl_VertexID
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glBindVertexArray(0);
 	glDisable(GL_BLEND);

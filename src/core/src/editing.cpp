@@ -531,11 +531,12 @@ std::vector<FaceRef> coplanarConnectedFaces(const MapDocument& doc, const FaceRe
 	return out;
 }
 
-std::pair<Change, int> tieToEntity(MapDocument& doc, const Selection& selection, const std::string& classname, const EntityClass* definition) {
-	Transaction t(doc, "Tie to " + classname);
+namespace {
+
+/// Brush entity with the FGD's default key values (like Hammer's "Tie to Entity").
+Entity newBrushEntity(MapDocument& doc, const std::string& classname, const EntityClass* definition) {
 	Entity entity;
 	entity.id = doc.newEntityId();
-	t.touchEntity(entity.id);
 	entity.set("classname", classname);
 	if (definition) {
 		for (const auto& property : definition->properties) {
@@ -544,6 +545,52 @@ std::pair<Change, int> tieToEntity(MapDocument& doc, const Selection& selection,
 			}
 		}
 	}
+	return entity;
+}
+
+} // namespace
+
+std::string brushEntityMaterial(std::string_view classname) {
+	const auto name = toLower(classname);
+	if (name.starts_with("trigger_") || name == "func_buyzone" || name == "func_bomb_target" || name == "func_hostage_rescue") {
+		return "tools/toolstrigger";
+	}
+	if (name.starts_with("func_areaportal")) {
+		return "tools/toolsareaportal";
+	}
+	if (name == "func_occluder") {
+		return "tools/toolsoccluder";
+	}
+	if (name == "func_viscluster") {
+		return "tools/toolsskip";
+	}
+	if (name == "func_ladder") {
+		return "tools/toolsinvisibleladder";
+	}
+	if (name == "func_clip_vphysics" || name == "func_playerclip") {
+		return "tools/toolsclip";
+	}
+	return {};
+}
+
+std::pair<Change, int> createBrushEntity(MapDocument& doc, const Bounds& box, const ShapeOptions& options, const std::string& classname,
+                                         const EntityClass* definition, const std::string& material) {
+	Transaction t(doc, "Create " + classname);
+	Entity entity = newBrushEntity(doc, classname, definition);
+	t.touchEntity(entity.id);
+	entity.solids = makeShape(doc, box, options, material);
+	if (entity.solids.empty()) {
+		return {Change{}, 0};
+	}
+	const int id = entity.id;
+	doc.entities.push_back(std::move(entity));
+	return {t.finish(), id};
+}
+
+std::pair<Change, int> tieToEntity(MapDocument& doc, const Selection& selection, const std::string& classname, const EntityClass* definition) {
+	Transaction t(doc, "Tie to " + classname);
+	Entity entity = newBrushEntity(doc, classname, definition);
+	t.touchEntity(entity.id);
 	for (const auto& ref : selection.solids) {
 		if (ref.entityId != 0) {
 			continue;

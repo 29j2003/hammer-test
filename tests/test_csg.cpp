@@ -319,3 +319,22 @@ TEST_CASE("cordons, track chains, drop to floor") {
 	const auto landed = buildBrushGeometry(*doc.findSolid(crate)).bounds;
 	CHECK(landed.min.z == doctest::Approx(64));
 }
+
+TEST_CASE("brush entities drawn with the entity tool") {
+	MapDocument doc;
+	CHECK(edit::brushEntityMaterial("trigger_multiple") == "tools/toolstrigger");
+	CHECK(edit::brushEntityMaterial("func_areaportal") == "tools/toolsareaportal");
+	CHECK(edit::brushEntityMaterial("func_door").empty());
+	ShapeOptions options;
+	auto [change, id] = edit::createBrushEntity(doc, box({0, 0, 0}, {128, 64, 96}), options, "trigger_once", nullptr, "tools/toolstrigger");
+	REQUIRE(id != 0);
+	REQUIRE(doc.entities.size() == 1);
+	const auto& entity = doc.entities.front();
+	CHECK(entity.classname() == "trigger_once");
+	REQUIRE(entity.solids.size() == 1);
+	CHECK(solidVolume(entity.solids.front()) == doctest::Approx(128 * 64 * 96));
+	CHECK(entity.solids.front().sides.front().material == "tools/toolstrigger");
+	CHECK(entity.solids.front().id != entity.id);
+	CHECK(change.name == "Create trigger_once");
+	CHECK(doc.world.solids.empty());
+}

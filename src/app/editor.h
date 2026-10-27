@@ -109,8 +109,14 @@ public:
 	void setCurrentMaterial(const QString& material);
 	/// Most recently used materials, newest first (shown at the top of the material browser).
 	[[nodiscard]] const QStringList& recentMaterials() const { return m_recentMaterials; }
+	/// Entity class the entity tool places ("armed"); empty = nothing armed.
 	[[nodiscard]] QString currentEntityClass() const { return m_currentEntityClass; }
 	void setCurrentEntityClass(const QString& classname);
+	/// The armed class is a brush entity: the entity tool drags a box like the block tool.
+	[[nodiscard]] bool armedBrushEntity() const;
+	/// Point entities placed in the 3D view get a random yaw (props, foliage, debris).
+	[[nodiscard]] bool randomYaw() const { return m_randomYaw; }
+	void setRandomYaw(bool on);
 
 	// --- Shapes (block tool) --------------------------------------------------
 	[[nodiscard]] const ShapeOptions& shapeOptions() const { return m_shapeOptions; }
@@ -119,6 +125,8 @@ public:
 	void setShapeOptions(const ShapeOptions& options);
 	/// Creates the current shape in `box` with the current material and selects it.
 	void createShape(const Bounds& box);
+	/// Creates the armed brush entity class from the current shape in `box` and selects it.
+	void createBrushEntity(const Bounds& box);
 	/// The shape created last can still be changed through setShapeOptions().
 	[[nodiscard]] bool shapeEditable() const;
 
@@ -180,6 +188,7 @@ private:
 	QString m_currentMaterial = "DEV/DEV_MEASUREGENERIC01";
 	QStringList m_recentMaterials;
 	QString m_currentEntityClass = "info_player_start";
+	bool m_randomYaw = false;
 	ShapeOptions m_shapeOptions;
 	bool m_footerModified = false;   ///< Cordons changed (not part of undo, like in Hammer)
 	struct LastShape {

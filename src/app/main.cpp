@@ -9,12 +9,14 @@
 //   --camera "x y z yaw pitch"
 //   --render lit|unlit|wire
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
+//   --tool NAME          start with a tool (block, entity, ...)
 //   --check              run the problem checks after loading
 //   --screenshot FILE    save a picture of the window after loading and quit
 //   --no-update-check    do not ask GitHub for a newer version at start
 //   FILE.vmf             map to open
 
 #include <QApplication>
+#include <QMap>
 #include <QCommandLineParser>
 #include <QSettings>
 #include <QSurfaceFormat>
@@ -57,6 +59,7 @@ int main(int argc, char** argv) {
 	parser.addOption({"camera", "Camera \"x y z yaw pitch\".", "camera"});
 	parser.addOption({"render", "lit, unlit or wire.", "mode"});
 	parser.addOption({"dock", "Raise a dock.", "name"});
+	parser.addOption({"tool", "Start with a tool (select, move, rotate, scale, block, entity, clip, vertex, polygon).", "tool"});
 	parser.addOption({"check", "Run the problem checks."});
 	parser.addOption({"screenshot", "Save a screenshot and quit.", "file"});
 	parser.addOption({"wait", "Milliseconds before the screenshot.", "ms", "2500"});
@@ -122,6 +125,14 @@ int main(int argc, char** argv) {
 		}
 		if (parser.isSet("dock")) {
 			window.raiseDock(parser.value("dock"));
+		}
+		if (parser.isSet("tool")) {
+			static const QMap<QString, Editor::Tool> TOOLS = {
+				{"select", Editor::Tool::Select}, {"move", Editor::Tool::Move},     {"rotate", Editor::Tool::Rotate},
+				{"scale", Editor::Tool::Scale},   {"block", Editor::Tool::Block},   {"entity", Editor::Tool::Entity},
+				{"clip", Editor::Tool::Clip},     {"vertex", Editor::Tool::Vertex}, {"polygon", Editor::Tool::Polygon},
+			};
+			editor.setTool(TOOLS.value(parser.value("tool").toLower(), Editor::Tool::Select));
 		}
 	});
 	// Newer version on GitHub? Asked once at start (Help > Check for updates at start turns it off).

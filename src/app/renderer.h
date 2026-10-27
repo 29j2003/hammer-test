@@ -111,7 +111,13 @@ private:
 		MaterialInfo::Kind kind = MaterialInfo::Kind::Opaque;
 		bool isTool = false;
 		bool isSky = false;
+		bool found = false;    ///< The VMT exists (otherwise the checkerboard is shown)
 		bool ready = false;
+	};
+	struct SpriteBatch {
+		QString material;
+		GLint first = 0;       ///< First instance
+		GLsizei count = 0;
 	};
 	struct PickItem {
 		SolidRef solid;
@@ -157,6 +163,8 @@ private:
 	void drawDepth(const QMatrix4x4& viewProjection);
 	/// Draws model instances; `preview` set: only the selected ones, moved by the matrix.
 	void drawModels(QOpenGLShaderProgram& program, bool flat, const QMatrix4x4* preview);
+	/// Editor sprites (iconsprite) of point entities as camera-facing quads (3D views).
+	void drawSprites(const Params& params);
 
 	MaterialCache* m_materials = nullptr;
 	ModelCache* m_models = nullptr;
@@ -165,6 +173,11 @@ private:
 	std::unique_ptr<QOpenGLShaderProgram> m_program;
 	std::unique_ptr<QOpenGLShaderProgram> m_lineProgram;
 	std::unique_ptr<QOpenGLShaderProgram> m_overlayProgram;
+	std::unique_ptr<QOpenGLShaderProgram> m_spriteProgram;
+	GLuint m_emptyVao = 0;                   // for quads made from gl_VertexID
+	GLuint m_spriteVao = 0, m_spriteVbo = 0; // one instance per sprite: center, size, color, face
+	std::vector<SpriteBatch> m_spriteBatches;
+	GLsizei m_spriteBoxVertices = 0;         // entity box vertices at the end that sprites replace in 3D
 	GLuint m_overlayTexture = 0;
 	QSize m_overlaySize;
 	std::unique_ptr<QOpenGLShaderProgram> m_edgeProgram;

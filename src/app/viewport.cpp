@@ -11,6 +11,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QRandomGenerator>
 #include <QWheelEvent>
 
 #include <cmath>
@@ -756,7 +757,9 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 	if (toolMousePress(event)) {
 		return;
 	}
-	if (tool == Editor::Tool::Block) {
+	// The block tool, and the entity tool with a brush class armed (the box becomes that entity).
+	if (tool == Editor::Tool::Block || (tool == Editor::Tool::Entity && m_editor->armedBrushEntity())) {
+		m_blockForEntity = tool == Editor::Tool::Entity;
 		if (m_camera.is2D()) {
 			m_blockStart = snap(viewPlanePoint(event->position()), m_editor->snapGrid());
 			m_blockEnd = m_blockStart;
@@ -1128,6 +1131,10 @@ void Viewport::marqueeSelect(const QRectF& rect, Qt::KeyboardModifiers modifiers
 }
 
 void Viewport::placeEntity(const QPointF& pos) {
+	if (m_editor->currentEntityClass().isEmpty()) {
+		emit m_editor->message(tr("Nothing armed: pick an entity class in the Tool panel first"));
+		return;
+	}
 	placeEntityAt(pos, m_editor->currentEntityClass().toStdString());
 }
 
@@ -1173,7 +1180,14 @@ void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, c
 		// Push the box out of the surface so it rests on it.
 		origin[axis] = point[axis] - (normal[axis] > 0 ? local.min[axis] : local.max[axis]);
 	}
-	auto [change, id] = edit::placeEntity(m_editor->doc(), classname, origin, definition, keys);
+	auto finalKeys = keys;
+	const bool hasAngles = definition && definition->property("angles");
+	const bool anglesGiven = std::any_of(keys.begin(), keys.end(), [](const auto& kv) { return kv.first == "angles"; });
+	if (!m_camera.is2D() && m_editor->randomYaw() && hasAngles && !anglesGiven) {
+		// Random yaw: props and debris do not all face the same way.
+		finalKeys.emplace_back("angles", "0 " + std::to_string(QRandomGenerator::global()->bounded(360)) + " 0");
+	}
+	auto [change, id] = edit::placeEntity(m_editor->doc(), classname, origin, definition, finalKeys);
 	m_editor->commit(std::move(change));
 	Selection selection;
 	selection.entities.push_back(id);
@@ -1392,7 +1406,11 @@ void Viewport::createBlockFromDrag() {
 	}
 	m_lastBlockDepth = m_blockBox;
 	setPreviewSolids({});
-	m_editor->createShape(m_blockBox);   // block, wedge, cylinder, arch, ... (Tool panel)
+	if (m_blockForEntity && m_editor->armedBrushEntity()) {
+		m_editor->createBrushEntity(m_blockBox);   // trigger, func_door, ... from the entity tool
+	} else {
+		m_editor->createShape(m_blockBox);   // block, wedge, cylinder, arch, ... (Tool panel)
+	}
 	update();
 }
 
