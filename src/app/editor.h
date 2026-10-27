@@ -62,16 +62,23 @@ public:
 	[[nodiscard]] const MapDocument& doc() const { return m_doc; }
 	[[nodiscard]] History& history() { return m_history; }
 	[[nodiscard]] QString filePath() const { return m_filePath; }
-	[[nodiscard]] bool modified() const { return m_history.modified() || m_footerModified; }
+	[[nodiscard]] bool modified() const { return m_history.modified() || m_footerModified || m_recovered; }
 	void newMap();
 	bool openMap(const QString& path, QString* error = nullptr);
+	/// Saves; with the setting "editor/vmxBackup" (on by default) the previous file is kept as
+	/// <name>.vmx first, like Hammer.
 	bool saveMap(const QString& path, QString* error = nullptr);
+	/// Opens an autosave in place of the map at `originalPath` (empty: a map never saved). The map
+	/// counts as changed until it is saved, so the restored work is not lost by accident.
+	bool openRecovered(const QString& autosavePath, const QString& originalPath, QString* error = nullptr);
 	/// Records an undoable change and notifies everyone.
 	void commit(Change change);
 	/// Like commit(), but folds into the previous change of the same name (paint strokes).
 	void commitMerged(Change change);
 	void undo();
 	void redo();
+	/// Undoes or redoes until exactly `index` changes are applied (undo history panel).
+	void undoTo(std::size_t index);
 
 	// --- Selection -----------------------------------------------------------
 	[[nodiscard]] const Selection& selection() const { return m_selection; }
@@ -233,6 +240,7 @@ private:
 	MapDocument m_doc;
 	History m_history;
 	QString m_filePath;
+	bool m_recovered = false;   ///< Opened from an autosave and not saved since
 	Selection m_selection;
 	Selection m_hidden;
 	std::vector<Vec3> m_vertexCorners;

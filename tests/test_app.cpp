@@ -46,9 +46,12 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QFrame>
+#include <QStandardPaths>
 #include <QToolButton>
 
 #include <sme/brush.h>
+#include <sme/entity_search.h>
+#include <sme/text.h>
 #include <sme/fidelity_look.h>
 #include <sme/heightmap.h>
 #include <sme/soundscape.h>
@@ -61,6 +64,10 @@
 #include <functional>
 
 #include "asset_browser.h"
+#include "autosaver.h"
+#include "find_dialog.h"
+#include "history_panel.h"
+#include "replace_materials_dialog.h"
 #include "compile.h"
 #include "compile_window.h"
 #include "properties_panel.h"
@@ -1888,6 +1895,8 @@ TEST_CASE("source control: a new repository, its changes, a commit and the histo
 	}
 
 	for (const auto& entry : environment) qunsetenv(entry.first);
+}
+
 TEST_CASE("ship panel: what the open map needs, share ZIP, Workshop item") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());
@@ -1963,6 +1972,156 @@ TEST_CASE("ship panel: what the open map needs, share ZIP, Workshop item") {
 	CHECK(command.contains("+workshop_build_item"));
 	CHECK_FALSE(command.contains("password", Qt::CaseInsensitive));
 	CHECK(panel.findChild<QLineEdit*>("shipWorkshopCommand")->text() == command);
+}
+
+TEST_CASE("safety and search: autosave, crash recovery, .vmx backup, undo history, find, replace materials") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	qputenv("XDG_DATA_HOME", QDir(home.path()).filePath("data").toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	REQUIRE(editor.openGame("sourcemods/mymod"));
+	const QString mapPath = fromPath(f.mod / "mapsrc/demo.vmf");
+	// The file is older than anything written now.
+	{
+		QFile file(mapPath);
+		REQUIRE(file.open(QIODevice::ReadWrite));
+		REQUIRE(file.setFileTime(QDateTime::currentDateTime().addSecs(-120), QFileDevice::FileModificationTime));
+	}
+	QString error;
+	REQUIRE(editor.openMap(mapPath, &error));
+	const auto cube = [](Vec3 a, Vec3 b) {
+		Bounds out;
+		out.add(a);
+		out.add(b);
+		return out;
+	};
+
+	{
+		// Autosave: nothing while unchanged, a copy in mapsrc/autosave after a change.
+		CHECK_FALSE(recoveryAfterCrash());   // no earlier session
+		Autosaver saver(&editor);
+		CHECK(QFile::exists(Autosaver::markerPath()));
+		CHECK(saver.autosaveNow().isEmpty());
+		auto [block, ref] = edit::createBlock(editor.doc(), cube({1000, 1000, 0}, {1064, 1064, 64}), "DEMO/BRICKWALL001");
+		editor.commit(std::move(block));
+		const QString written = saver.autosaveNow();
+		REQUIRE_FALSE(written.isEmpty());
+		saver.waitForWrites();
+		CHECK(QFileInfo(written).absolutePath() == QFileInfo(mapPath).absolutePath() + "/autosave");
+		QFile copy(written);
+		REQUIRE(copy.open(QIODevice::ReadOnly));
+		const QByteArray text = copy.readAll();
+		CHECK(MapDocument::parse(std::string_view(text.constData(), static_cast<std::size_t>(text.size()))).solidCount() == editor.doc().solidCount());
+		CHECK(saver.autosaveNow().isEmpty());   // no new change, no new copy
+
+		// Opening the map again offers the newer autosave.
+		const auto offer = recoveryForMap(mapPath);
+		REQUIRE(offer);
+		CHECK(offer->autosaves.value(0) == written);
+		CHECK_FALSE(offer->afterCrash);
+		// The session did not end (no endSession): after a "crash" it is offered as well.
+		const auto crash = recoveryAfterCrash();
+		REQUIRE(crash);
+		CHECK(crash->afterCrash);
+		CHECK(crash->mapPath == mapPath);
+
+		// Restoring keeps the map's own path and counts as unsaved work.
+		REQUIRE(editor.openRecovered(written, mapPath, &error));
+		CHECK(editor.filePath() == mapPath);
+		CHECK(editor.modified());
+		const auto solids = editor.doc().solidCount();
+
+		// Saving keeps the previous file as demo.vmx.
+		REQUIRE(editor.saveMap(mapPath, &error));
+		CHECK_FALSE(editor.modified());
+		CHECK(QFile::exists(fromPath(f.mod / "mapsrc/demo.vmx")));
+		CHECK_FALSE(recoveryForMap(mapPath));   // the file is now the newest
+		saver.endSession();
+		CHECK_FALSE(QFile::exists(Autosaver::markerPath()));
+		CHECK_FALSE(recoveryAfterCrash());
+		CHECK(editor.doc().solidCount() == solids);
+	}
+
+	{
+		// Undo history: every change listed; clicking an earlier line undoes up to it.
+		HistoryPanel panel(&editor);
+		auto [a, refA] = edit::createBlock(editor.doc(), cube({2000, 0, 0}, {2064, 64, 64}), "DEMO/BRICKWALL001");
+		editor.commit(std::move(a));
+		auto [b, refB] = edit::createBlock(editor.doc(), cube({2100, 0, 0}, {2164, 64, 64}), "DEMO/BRICKWALL001");
+		editor.commit(std::move(b));
+		auto* list = panel.list();
+		REQUIRE(list->count() == static_cast<int>(editor.history().size()) + 1);
+		CHECK(list->currentRow() == static_cast<int>(editor.history().index()));
+		const auto before = editor.history().index();
+		list->setCurrentRow(static_cast<int>(before) - 2);
+		QTRY_COMPARE(editor.history().index(), before - 2);
+		CHECK_FALSE(editor.doc().findSolid(refA));
+		CHECK(list->item(static_cast<int>(before))->font().italic());   // undone, still there to redo
+		list->setCurrentRow(static_cast<int>(before));
+		QTRY_COMPARE(editor.history().index(), before);
+		CHECK(editor.doc().findSolid(refB));
+	}
+
+	{
+		// Find: key=value with a wildcard finds the demo's relay; a click selects it, "Go to" frames.
+		bool framed = false;
+		FindDialog dialog(&editor, [&framed] { framed = true; });
+		dialog.setSearch(int(EntityField::KeyValue), "targetname=relay_*");
+		auto* results = dialog.results();
+		REQUIRE(results->topLevelItemCount() == 1);
+		CHECK(results->topLevelItem(0)->text(0) == "logic_relay");
+		results->setCurrentItem(results->topLevelItem(0));
+		REQUIRE(editor.selection().entities.size() == 1);
+		CHECK(editor.doc().findEntity(editor.selection().entities.front())->get("targetname") == "relay_start");
+		dialog.findChild<QPushButton*>("findGoTo")->click();
+		CHECK(framed);
+		dialog.setSearch(int(EntityField::Anything), "target:relay_start");
+		CHECK(results->topLevelItemCount() >= 1);   // the trigger that fires at it
+		// Entity report: every entity, narrowed by class.
+		dialog.showTab(1);
+		CHECK(dialog.report()->topLevelItemCount() == static_cast<int>(editor.doc().entities.size()));
+		auto* classes = dialog.findChild<QComboBox*>("reportClass");
+		REQUIRE(classes);
+		const int relayClass = classes->findData("logic_relay");
+		REQUIRE(relayClass > 0);
+		classes->setCurrentIndex(relayClass);
+		CHECK(dialog.report()->topLevelItemCount() == 1);
+		editor.clearSelection();
+	}
+
+	{
+		// Replace materials: the floor tiles become bricks across the map; undo brings them back.
+		const auto faces = [&](const char* material) {
+			int n = 0;
+			for (const auto& solid : editor.doc().world.solids) {
+				for (const auto& side : solid.sides) n += iequals(side.material, material) ? 1 : 0;
+			}
+			return n;
+		};
+		const int tiles = faces("DEMO/FLOORTILE001");
+		REQUIRE(tiles > 0);
+		ReplaceMaterialsDialog dialog(&editor, {});
+		dialog.setFind("demo/floortile001");
+		dialog.setReplaceWith("demo/brickwall001");
+		CHECK(dialog.matchCount() == tiles);
+		CHECK(dialog.findChild<QLabel*>("replaceCount")->text().startsWith(QString::number(tiles)));
+		CHECK(dialog.apply() == tiles);
+		CHECK(faces("DEMO/FLOORTILE001") == 0);
+		editor.undo();
+		CHECK(faces("DEMO/FLOORTILE001") == tiles);
+		// Wildcards, nothing selected: the scope is the whole map.
+		dialog.setWildcards(true);
+		dialog.setFind("demo/floor*");
+		CHECK(dialog.matchCount() == tiles);
+	}
+	qunsetenv("XDG_DATA_HOME");
 }
 
 int main(int argc, char** argv) {

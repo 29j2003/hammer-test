@@ -14,6 +14,7 @@
 #include <algorithm>
 
 #include <sme/brush.h>
+#include <sme/autosave.h>
 #include <sme/csg.h>
 #include <sme/sky_presets.h>
 #include <sme/text.h>
@@ -221,6 +222,7 @@ void Editor::newMap() {
 	m_selection.clear();
 	m_hidden.clear();
 	m_filePath.clear();
+	m_recovered = false;
 	emit documentReplaced();
 	emit documentChanged();
 	emit selectionChanged();
@@ -249,6 +251,7 @@ bool Editor::openMap(const QString& path, QString* error) {
 	m_selection.clear();
 	m_hidden.clear();
 	m_filePath = path;
+	m_recovered = false;
 	emit documentReplaced();
 	emit documentChanged();
 	emit selectionChanged();
@@ -269,6 +272,12 @@ bool Editor::saveMap(const QString& path, QString* error) {
 		m_doc.world.set("mapversion", std::to_string(version));
 	}
 	const std::string text = m_doc.serialize();
+	// The previous version stays as <name>.vmx (one step back, besides undo and the autosaves).
+	if (QSettings().value("editor/vmxBackup", true).toBool() && QFileInfo::exists(path)) {
+		const QString backup = fromPath(backupPath(toPath(path)));
+		QFile::remove(backup);
+		QFile::copy(path, backup);
+	}
 	QSaveFile file(path);
 	if (!file.open(QIODevice::WriteOnly) || file.write(text.data(), static_cast<qint64>(text.size())) != static_cast<qint64>(text.size()) ||
 	    !file.commit()) {
@@ -280,8 +289,20 @@ bool Editor::saveMap(const QString& path, QString* error) {
 	m_filePath = path;
 	m_history.markSaved();
 	m_footerModified = false;
+	m_recovered = false;
 	emit documentChanged();
 	emit message(tr("Saved %1").arg(QFileInfo(path).fileName()));
+	return true;
+}
+
+bool Editor::openRecovered(const QString& autosavePath, const QString& originalPath, QString* error) {
+	if (!openMap(autosavePath, error)) {
+		return false;
+	}
+	m_filePath = originalPath;
+	m_recovered = true;
+	emit documentChanged();
+	emit message(tr("Restored the autosave %1 - save to keep it").arg(QFileInfo(autosavePath).fileName()));
 	return true;
 }
 
@@ -313,6 +334,20 @@ void Editor::undo() {
 		emit selectionChanged();
 		emit message(tr("Undo: %1").arg(QString::fromStdString(name)));
 	}
+}
+
+void Editor::undoTo(std::size_t index) {
+	if (index == m_history.index() || index > m_history.size()) {
+		return;
+	}
+	const bool back = index < m_history.index();
+	while (m_history.index() != index && (back ? m_history.undo(m_doc) : m_history.redo(m_doc))) {
+	}
+	m_selection.prune(m_doc);
+	emit documentChanged();
+	emit selectionChanged();
+	const QString at = m_history.index() == 0 ? tr("the opened map") : QString::fromStdString(m_history.undoName());
+	emit message(back ? tr("Undone back to: %1").arg(at) : tr("Redone up to: %1").arg(at));
 }
 
 void Editor::redo() {
