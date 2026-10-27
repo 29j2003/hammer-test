@@ -2,6 +2,8 @@
 
 #include "particle_browser.h"
 
+#include "copy_paste.h"
+
 #include "asset_browser.h"
 #include "editor.h"
 
@@ -44,6 +46,7 @@ ParticleBrowser::ParticleBrowser(Editor* editor, AssetBrowser* assets, QWidget* 
 	m_search->setClearButtonEnabled(true);
 	v->addWidget(m_search);
 	m_tree = new ParticleTree;
+	addCopyShortcut(m_tree, Qt::DisplayRole);   // Ctrl+C: the effect name
 	m_tree->setHeaderHidden(true);
 	m_tree->setDragEnabled(true);
 	m_tree->setDragDropMode(QAbstractItemView::DragOnly);

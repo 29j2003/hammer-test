@@ -2,6 +2,8 @@
 
 #include "asset_browser.h"
 
+#include "copy_paste.h"
+
 #include "editor.h"
 #include "material_cache.h"
 #include "model_cache.h"
@@ -302,6 +304,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_materialFilter = new MaterialFilter(this);
 		m_materialFilter->setSourceModel(m_materialModel);
 		m_materialView = makeIconView(page);
+		addCopyShortcut(m_materialView, Qt::UserRole);   // Ctrl+C: the material's name
 		m_materialView->setModel(m_materialFilter);
 		v->addWidget(m_materialView, 1);
 		m_materialInfo = new QLabel(tr("No game loaded"));
@@ -351,6 +354,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		proxy->setFilterRole(Qt::UserRole);
 		proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
 		m_modelView = makeIconView(page);
+		addCopyShortcut(m_modelView, Qt::UserRole);      // Ctrl+C: the model's path
 		m_modelView->setModel(proxy);
 		v->addWidget(m_modelView, 1);
 		m_modelInfo = new QLabel(tr("No game loaded"));

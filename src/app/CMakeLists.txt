@@ -9,6 +9,7 @@ add_library(smeapp STATIC
 	asset_browser.cpp
 	compile.cpp
 	compile_window.cpp
+	copy_paste.cpp
 	editor.cpp
 	main_window.cpp
 	material_cache.cpp

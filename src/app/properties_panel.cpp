@@ -2,6 +2,8 @@
 
 #include "properties_panel.h"
 
+#include "copy_paste.h"
+
 #include "asset_browser.h"
 #include "editor.h"
 #include "material_cache.h"
@@ -23,6 +25,11 @@
 #include <QSpinBox>
 #include <QFrame>
 #include <QGridLayout>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QShortcut>
+#include <QClipboard>
+#include <QApplication>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -80,10 +87,21 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	: QWidget(parent), m_editor(editor), m_assets(assets), m_materials(materials) {
 	auto* layout = new QVBoxLayout(this);
 	layout->setContentsMargins(0, 0, 0, 0);
+	auto* top = new QHBoxLayout;
+	top->setContentsMargins(4, 2, 4, 2);
 	m_filter = new QLineEdit;
 	m_filter->setPlaceholderText(tr("Filter keys ..."));
 	m_filter->setClearButtonEnabled(true);
-	layout->addWidget(m_filter);
+	m_smartEdit = new QCheckBox(tr("Smart Edit"));
+	m_smartEdit->setToolTip(tr("On: fitting editors with descriptions. Off: every key as plain text, like Hammer"));
+	m_smartEdit->setChecked(QSettings().value("properties/smartEdit", true).toBool());
+	top->addWidget(m_filter, 1);
+	top->addWidget(m_smartEdit);
+	layout->addLayout(top);
+	connect(m_smartEdit, &QCheckBox::toggled, this, [this](bool on) {
+		QSettings().setValue("properties/smartEdit", on);
+		scheduleRebuild();
+	});
 	m_scroll = new QScrollArea;
 	m_scroll->setWidgetResizable(true);
 	m_scroll->setFrameShape(QFrame::NoFrame);
@@ -91,6 +109,26 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	connect(m_filter, &QLineEdit::textChanged, this, [this](const QString& text) {
 		m_filterText = text;
 		scheduleRebuild();
+	});
+	// Ctrl+V outside a text field: "key" "value" lines (from a wiki, another map, Ctrl+C here) go
+	// into the selected entities. Inside a field Ctrl+V pastes into the field as usual.
+	auto* paste = new QShortcut(QKeySequence::Paste, m_scroll, nullptr, nullptr, Qt::WidgetWithChildrenShortcut);
+	connect(paste, &QShortcut::activated, this, [this] {
+		const QString text = QApplication::clipboard()->text();
+		auto keys = parseKeyValueLines(text);
+		std::vector<int> ids = m_editor->selection().entities;
+		if (ids.empty() && m_editor->selection().empty()) ids = {0};
+		const Entity* first = ids.empty() ? nullptr : m_editor->doc().findEntity(ids.front());
+		if (!first) return;
+		if (!text.contains('"')) {
+			// Unquoted text could be any sentence: only keys this entity knows count.
+			const auto* definition = m_editor->entities() ? m_editor->entities()->find(first->classname()) : nullptr;
+			std::erase_if(keys, [&](const auto& kv) {
+				const std::string key = kv.first.toStdString();
+				return !(definition && definition->property(key)) && first->get(key).empty();
+			});
+		}
+		if (!keys.empty()) pasteKeys(ids, keys);
 	});
 	connect(editor, &Editor::selectionChanged, this, &PropertiesPanel::scheduleRebuild);
 	connect(editor, &Editor::documentChanged, this, &PropertiesPanel::scheduleRebuild);
@@ -112,6 +150,21 @@ void PropertiesPanel::scheduleRebuild() {
 
 void PropertiesPanel::setKey(const std::vector<int>& ids, const std::string& key, const QString& value) {
 	m_editor->commit(edit::setKeyValue(m_editor->doc(), ids, key, value.toStdString()));
+}
+
+void PropertiesPanel::pasteKeys(const std::vector<int>& ids, const std::vector<std::pair<QString, QString>>& keys) {
+	Transaction t(m_editor->doc(), "Paste keys");
+	for (const int id : ids) {
+		Entity* entity = m_editor->doc().findEntity(id);
+		if (!entity) continue;
+		if (id != 0) t.touchEntity(id);
+		else t.touchWorld();
+		for (const auto& [key, value] : keys) {
+			if (!iequals(key.toStdString(), "id")) entity->set(key.toStdString(), value.toStdString());
+		}
+	}
+	m_editor->commit(t.finish());
+	emit m_editor->message(tr("%1 key(s) pasted").arg(keys.size()));
 }
 
 QStringList PropertiesPanel::targetNames() const {
@@ -404,6 +457,15 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		buildNpcHelper(layout, *first, definition);
 	}
 
+	if (!m_smartEdit->isChecked()) {
+		buildRawKeys(layout, entityIds, definition);
+		if (entityIds.size() == 1 && entityIds.front() != 0) {
+			buildOutputs(layout, entityIds.front());
+			buildIncoming(layout, *first);
+		}
+		return;
+	}
+
 	// Smart keyvalue editors.
 	const auto valueOf = [&](const std::string& key, bool& mixed) {
 		const QString v = qs(first->get(key));
@@ -419,6 +481,26 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	auto* keys = new QVBoxLayout(keysBox);
 	keys->setSpacing(2);
 	std::set<std::string> known = {"classname", "id"};
+	const bool hasName = definition && std::any_of(definition->properties.begin(), definition->properties.end(),
+	                                               [](const EntityProperty& p) { return iequals(p.name, "targetname"); });
+	if (!hasName && entityIds.front() != 0 && (m_filterText.isEmpty() || QStringLiteral("name targetname").contains(m_filterText, Qt::CaseInsensitive))) {
+		// Every entity can have a name (outputs and scripts find it by that), even when its FGD forgot it.
+		known.insert("targetname");
+		EntityProperty name;
+		name.name = "targetname";
+		name.type = "target_source";
+		name.kind = EntityProperty::Kind::Plain;
+		name.displayName = tr("Name").toStdString();
+		name.description = tr("The name that other entities refer to this entity by.").toStdString();
+		bool mixed = false;
+		const QString value = valueOf("targetname", mixed);
+		auto* label = new QLabel(tr("Name"));
+		label->setProperty("role", "key");
+		keys->addWidget(label);
+		keys->addWidget(makeEditor(name, entityIds, value, mixed));
+		keys->addWidget(descriptionLabel(qs(name.description)));
+		keys->addSpacing(4);
+	}
 	if (definition) {
 		for (const auto& property : definition->properties) {
 			known.insert(toLower(property.name));
@@ -499,18 +581,7 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 			keys->addLayout(row);
 		}
 	}
-	auto* addKey = new QPushButton(tr("Add key ..."));
-	connect(addKey, &QPushButton::clicked, this, [this, entityIds] {
-		bool ok = false;
-		const QString key = QInputDialog::getText(this, tr("Add key"), tr("Key name:"), QLineEdit::Normal, {}, &ok);
-		if (ok && !key.trimmed().isEmpty()) {
-			const QString value = QInputDialog::getText(this, tr("Add key"), tr("Value for %1:").arg(key), QLineEdit::Normal, {}, &ok);
-			if (ok) {
-				setKey(entityIds, key.trimmed().toStdString(), value);
-			}
-		}
-	});
-	keys->addWidget(addKey);
+	buildAddKeyRow(keys, entityIds);
 	layout->addWidget(keysBox);
 
 	// Flags as checkboxes with their names.
@@ -553,6 +624,131 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		buildOutputs(layout, entityIds.front());
 		buildIncoming(layout, *first);
 	}
+}
+
+void PropertiesPanel::buildAddKeyRow(QVBoxLayout* layout, const std::vector<int>& entityIds) {
+	auto* row = new QHBoxLayout;
+	auto* key = new QLineEdit;
+	key->setObjectName("newKey");
+	key->setPlaceholderText(tr("new key"));
+	auto* value = new QLineEdit;
+	value->setObjectName("newValue");
+	value->setPlaceholderText(tr("value"));
+	auto* add = new QPushButton(tr("+ Add"));
+	add->setToolTip(tr("Add (or set) a key - also ones the FGD does not list"));
+	const auto apply = [this, key, value, entityIds] {
+		const QString name = key->text().trimmed();
+		if (name.isEmpty() || name.contains(' ') || name.contains('"')) {
+			key->setFocus();
+			return;
+		}
+		setKey(entityIds, name.toStdString(), value->text());
+	};
+	connect(add, &QPushButton::clicked, this, apply);
+	connect(value, &QLineEdit::returnPressed, this, apply);
+	connect(key, &QLineEdit::returnPressed, value, qOverload<>(&QWidget::setFocus));
+	row->addWidget(key, 2);
+	row->addWidget(value, 3);
+	row->addWidget(add);
+	layout->addLayout(row);
+}
+
+void PropertiesPanel::buildRawKeys(QVBoxLayout* layout, const std::vector<int>& entityIds, const EntityClass* definition) {
+	const auto& doc = m_editor->doc();
+	const Entity* first = doc.findEntity(entityIds.front());
+	auto* box = new QGroupBox(tr("Keys and values"));
+	auto* v = new QVBoxLayout(box);
+	auto* table = new QTableWidget;
+	table->setObjectName("rawKeys");
+	table->setColumnCount(2);
+	table->setHorizontalHeaderLabels({tr("Key"), tr("Value")});
+	table->horizontalHeader()->setStretchLastSection(true);
+	table->verticalHeader()->setVisible(false);
+	table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	// Keys of the entity in their order, then FGD keys it does not have yet (grey: default).
+	std::vector<std::pair<std::string, bool>> rows;
+	std::set<std::string> seen;
+	for (const auto& [key, value] : first->keyValues) {
+		if (iequals(key, "id") || !seen.insert(toLower(key)).second) continue;
+		rows.emplace_back(key, true);
+	}
+	if (entityIds.front() != 0 && !seen.contains("targetname")) {
+		rows.emplace_back("targetname", false);
+		seen.insert("targetname");
+	}
+	if (definition) {
+		for (const auto& property : definition->properties) {
+			if (seen.insert(toLower(property.name)).second) rows.emplace_back(property.name, false);
+		}
+	}
+	std::erase_if(rows, [&](const auto& row) { return !m_filterText.isEmpty() && !qs(row.first).contains(m_filterText, Qt::CaseInsensitive); });
+	table->setRowCount(static_cast<int>(rows.size()));
+	for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+		const auto& [key, present] = rows[static_cast<std::size_t>(i)];
+		auto* keyItem = new QTableWidgetItem(qs(key));
+		keyItem->setFlags(keyItem->flags() & ~Qt::ItemIsEditable);
+		QString value;
+		bool mixed = false;
+		for (const int id : entityIds) {
+			if (const auto* e = doc.findEntity(id)) {
+				const QString v = qs(e->get(key));
+				if (id == entityIds.front()) value = v;
+				else if (v != value) mixed = true;
+			}
+		}
+		auto* valueItem = new QTableWidgetItem(mixed ? QString() : value);
+		if (!present) {
+			const EntityProperty* property = definition ? definition->property(key) : nullptr;
+			keyItem->setForeground(QColor(140, 146, 160));
+			valueItem->setToolTip(property && !property->defaultValue.empty() ? tr("Not set - default: %1").arg(qs(property->defaultValue)) : tr("Not set"));
+		}
+		if (const EntityProperty* property = definition ? definition->property(key) : nullptr) {
+			keyItem->setToolTip(QStringLiteral("<b>%1</b> (%2)<br>%3").arg(qs(property->displayName), qs(property->type), qs(property->description).toHtmlEscaped()));
+		}
+		table->setItem(i, 0, keyItem);
+		table->setItem(i, 1, valueItem);
+	}
+	table->resizeColumnToContents(0);
+	table->setMinimumHeight(std::min(520, 30 + 24 * std::max(4, table->rowCount())));
+	connect(table, &QTableWidget::itemChanged, this, [this, table, entityIds](QTableWidgetItem* item) {
+		if (item->column() != 1) return;
+		const QString key = table->item(item->row(), 0)->text();
+		const auto* e = m_editor->doc().findEntity(entityIds.front());
+		if (e && qs(e->get(key.toStdString())) == item->text() && entityIds.size() == 1) return;
+		setKey(entityIds, key.toStdString(), item->text());
+	});
+	onStandardKey(table, QKeySequence::Copy, [table] {
+		// Selected rows as "key" "value" lines (paste them into another entity or map).
+		QStringList lines;
+		std::set<int> rowsDone;
+		for (const auto* item : table->selectedItems()) {
+			if (!rowsDone.insert(item->row()).second) continue;
+			lines << QStringLiteral("\"%1\" \"%2\"").arg(table->item(item->row(), 0)->text(), table->item(item->row(), 1)->text());
+		}
+		if (!lines.isEmpty()) QApplication::clipboard()->setText(lines.join('\n'));
+	});
+	onStandardKey(table, QKeySequence::Paste, [this, table, entityIds] {
+		const QString text = QApplication::clipboard()->text();
+		const auto keys = parseKeyValueLines(text);
+		if (!keys.empty() && (keys.size() > 1 || text.contains('"') || text.contains('\t'))) {
+			pasteKeys(entityIds, keys);
+		} else if (table->currentRow() >= 0) {
+			// A plain value goes into the selected row.
+			setKey(entityIds, table->item(table->currentRow(), 0)->text().toStdString(), text.trimmed());
+		}
+	});
+	v->addWidget(table);
+	auto* remove = new QPushButton(tr("− Remove selected key"));
+	connect(remove, &QPushButton::clicked, this, [this, table, entityIds] {
+		const int row = table->currentRow();
+		if (row < 0) return;
+		const std::string key = table->item(row, 0)->text().toStdString();
+		if (iequals(key, "classname")) return;   // an entity needs its class
+		m_editor->commit(edit::setKeyValue(m_editor->doc(), entityIds, key, std::nullopt));
+	});
+	v->addWidget(remove);
+	buildAddKeyRow(v, entityIds);
+	layout->addWidget(box);
 }
 
 void PropertiesPanel::buildNpcHelper(QVBoxLayout* layout, const Entity& entity, const EntityClass* definition) {

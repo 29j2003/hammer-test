@@ -8,6 +8,10 @@
 #include "fixture.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QClipboard>
+#include <QTableWidget>
+#include <QLabel>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -33,6 +37,8 @@
 #include "asset_browser.h"
 #include "compile.h"
 #include "compile_window.h"
+#include "properties_panel.h"
+#include "copy_paste.h"
 #include "editor.h"
 #include "main_window.h"
 #include "panels.h"
@@ -342,6 +348,91 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(editor.doc().world.solids.size() == before);
 		editor.clearSelection();
 		editor.setTool(Editor::Tool::Entity);
+	}
+	{
+		// Object properties: every entity gets a Name; Smart Edit off shows plain keys (like Hammer),
+		// keys can be added, copied and pasted ("key" "value" lines from a wiki or another map).
+		auto* panel = window.properties();
+		window.raiseDock("Object Properties");
+		const auto* sunClass = editor.entities()->find("light_environment");
+		REQUIRE(sunClass);
+		auto [change, sunId] = edit::placeEntity(editor.doc(), "light_environment", {0, 0, 400}, sunClass);
+		editor.commit(std::move(change));
+		Selection sunSel;
+		sunSel.entities.push_back(sunId);
+		editor.setSelection(sunSel);
+		settle();
+		bool nameField = false;
+		for (auto* label : panel->findChildren<QLabel*>()) {
+			nameField = nameField || label->text() == "Name";
+		}
+		CHECK(nameField);   // light_environment's FGD has no Targetname, the panel adds it
+
+		auto* smart = panel->findChild<QCheckBox*>();
+		REQUIRE(smart);
+		smart->setChecked(false);
+		settle();
+		auto* table = panel->findChild<QTableWidget*>("rawKeys");
+		REQUIRE(table);
+		QStringList keys;
+		for (int i = 0; i < table->rowCount(); ++i) keys << table->item(i, 0)->text();
+		CHECK(keys.contains("classname"));
+		CHECK(keys.contains("targetname"));
+		CHECK(keys.contains("_ambient"));
+		// Edit a value as text.
+		const int pitchRow = int(keys.indexOf("pitch"));
+		REQUIRE(pitchRow >= 0);
+		table->item(pitchRow, 1)->setText("-60");
+		settle();
+		CHECK(editor.doc().findEntity(sunId)->get("pitch") == "-60");
+		// Paste several keys at once.
+		table = panel->findChild<QTableWidget*>("rawKeys");
+		QApplication::clipboard()->setText("\"_light\" \"255 230 200 350\"\n\"SunSpreadAngle\" \"5\"");
+		table->setFocus();
+		QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier);
+		settle();
+		CHECK(editor.doc().findEntity(sunId)->get("_light") == "255 230 200 350");
+		CHECK(editor.doc().findEntity(sunId)->get("SunSpreadAngle") == "5");
+		// Add a key the FGD does not know.
+		panel->findChild<QLineEdit*>("newKey")->setText("mykey");
+		panel->findChild<QLineEdit*>("newValue")->setText("42");
+		for (auto* button : panel->findChildren<QPushButton*>()) {
+			if (button->text() == "+ Add") {
+				button->click();
+				break;
+			}
+		}
+		settle();
+		CHECK(editor.doc().findEntity(sunId)->get("mykey") == "42");
+		// Copy rows: they come out as "key" "value" lines.
+		table = panel->findChild<QTableWidget*>("rawKeys");
+		for (int i = 0; i < table->rowCount(); ++i) {
+			if (table->item(i, 0)->text() == "mykey") table->selectRow(i);
+		}
+		table->setFocus();
+		QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+		CHECK(QApplication::clipboard()->text() == "\"mykey\" \"42\"");
+		smart->setChecked(true);
+		settle();
+		// Text from a wiki: tabs, colons and quotes all work.
+		const auto pairs = parseKeyValueLines("_light\t255 255 255 200\nskyname: sky_day01_01\n\"pitch\" \"-45\"\nnot-a-pair");
+		REQUIRE(pairs.size() == 3);
+		CHECK(pairs[1].first == "skyname");
+		CHECK(pairs[1].second == "sky_day01_01");
+		CHECK(pairs[2].second == "-45");
+		// Ctrl+C on an entity class copies its name.
+		auto* classes = window.toolPanel()->entityPicker()->tree();
+		const auto spot = classes->findItems("light_spot", Qt::MatchExactly | Qt::MatchRecursive);
+		REQUIRE_FALSE(spot.isEmpty());
+		classes->setCurrentItem(spot.back());
+		classes->setFocus();
+		QTest::keyClick(classes, Qt::Key_C, Qt::ControlModifier);
+		CHECK(QApplication::clipboard()->text() == "light_spot");
+		for (int i = 0; i < 4; ++i) {   // mykey, paste, pitch, the entity
+			editor.undo();
+		}
+		CHECK_FALSE(editor.doc().findEntity(sunId));
+		editor.clearSelection();
 	}
 	{
 		// The corner menu of a view switches the look (and shows it on the button).

@@ -16,6 +16,7 @@
 #include <sme/entity_catalog.h>
 #include <sme/map.h>
 
+class QCheckBox;
 class QScrollArea;
 class QVBoxLayout;
 class QLineEdit;
@@ -38,6 +39,10 @@ public:
 private:
 	void rebuild();
 	void buildEntity(QVBoxLayout* layout, const std::vector<int>& entityIds);
+	/// Smart Edit off: every key as plain text (like Hammer), keys can be added and removed.
+	void buildRawKeys(QVBoxLayout* layout, const std::vector<int>& entityIds, const EntityClass* definition);
+	/// Key + value fields and an Add button (both modes).
+	void buildAddKeyRow(QVBoxLayout* layout, const std::vector<int>& entityIds);
 	void buildOutputs(QVBoxLayout* layout, int entityId);
 	void buildIncoming(QVBoxLayout* layout, const Entity& entity);
 	void buildNpcHelper(QVBoxLayout* layout, const Entity& entity, const EntityClass* definition);
@@ -45,6 +50,8 @@ private:
 	void buildBrushes(QVBoxLayout* layout);
 	QWidget* makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed);
 	void setKey(const std::vector<int>& ids, const std::string& key, const QString& value);
+	/// Sets several keys in one undo step (pasted "key" "value" lines).
+	void pasteKeys(const std::vector<int>& ids, const std::vector<std::pair<QString, QString>>& keys);
 
 	[[nodiscard]] QStringList targetNames() const;
 	[[nodiscard]] QString modelFor(const Entity& entity) const;
@@ -55,6 +62,7 @@ private:
 	MaterialCache* m_materials;
 	QScrollArea* m_scroll;
 	QLineEdit* m_filter;
+	QCheckBox* m_smartEdit;
 	QPointer<QWidget> m_content;
 	bool m_pending = false;
 	QString m_filterText;

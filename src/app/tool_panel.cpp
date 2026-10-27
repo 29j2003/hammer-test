@@ -2,6 +2,7 @@
 
 #include "tool_panel.h"
 
+#include "copy_paste.h"
 #include "editor.h"
 #include "material_cache.h"
 #include "model_thumbnails.h"
@@ -167,6 +168,7 @@ EntityPicker::EntityPicker(Editor* editor, QWidget* parent) : QWidget(parent), m
 	m_tree->setDragDropMode(QAbstractItemView::DragOnly);
 	m_tree->setUniformRowHeights(true);
 	m_tree->setIconSize(QSize(ICON_SIZE, ICON_SIZE));
+	addCopyShortcut(m_tree, Qt::UserRole);   // Ctrl+C: the class name
 	v->addWidget(m_tree, 1);
 	m_info = new QLabel;
 	m_info->setWordWrap(true);

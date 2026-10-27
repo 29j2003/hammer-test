@@ -2,6 +2,7 @@
 
 #include "sound_browser.h"
 
+#include "copy_paste.h"
 #include "editor.h"
 #include "sound_player.h"
 
@@ -179,6 +180,7 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	m_tree->setUniformRowHeights(true);
 	m_tree->setDragEnabled(true);
 	m_tree->setDragDropMode(QAbstractItemView::DragOnly);
+	addCopyShortcut(m_tree, NAME_ROLE);   // Ctrl+C: sound name for an ambient_generic or a soundscape
 	v->addWidget(m_tree, 1);
 	m_info = new QLabel(tr("No game loaded"));
 	m_info->setWordWrap(true);

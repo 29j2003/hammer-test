@@ -52,6 +52,7 @@ public:
 	[[nodiscard]] QMenu* gameMenu() const { return m_gameMenu; }
 	[[nodiscard]] ToolPanel* toolPanel() const { return m_toolPanel; }
 	[[nodiscard]] SoundBrowser* sounds() const { return m_sounds; }
+	[[nodiscard]] PropertiesPanel* properties() const { return m_properties; }
 	[[nodiscard]] CompileWindow* compileWindow() const { return m_compileWindow; }
 	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
 	void raiseDock(const QString& name);
