@@ -12,6 +12,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+if(MSVC)
+	# getenv & co. are used read-only and on purpose; keep the build log free of C4996 noise.
+	add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
 
 option(SME_BUILD_APP   "Build the Qt editor application" ON)
 option(SME_BUILD_TESTS "Build the unit tests"            ON)

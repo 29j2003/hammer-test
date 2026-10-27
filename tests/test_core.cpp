@@ -61,7 +61,7 @@ TEST_CASE("steam libraries and app manifests") {
 	CHECK(steam.findApp(220)->name == "Half-Life 2");
 	REQUIRE(steam.findApp(243730));
 	CHECK(std::filesystem::equivalent(steam.findApp(243730)->installDir, f.sdkBase));
-	CHECK(steam.sourceModsDir() == f.steam / "steamapps" / "sourcemods");
+	CHECK(std::filesystem::equivalent(steam.sourceModsDir(), f.steam / "steamapps" / "sourcemods"));
 }
 
 TEST_CASE("game discovery finds games, mods, Mapbase and Hammer++ FGDs") {
@@ -92,7 +92,13 @@ TEST_CASE("game discovery finds games, mods, Mapbase and Hammer++ FGDs") {
 TEST_CASE("relative Steam path still matches the Hammer++ config") {
 	Fixture f;
 	test::createFixture(f);
-	const auto relative = std::filesystem::relative(f.steam, std::filesystem::current_path());
+	// Work from the fixture folder so the relative path stays on one drive (Windows).
+	struct CurrentDir {
+		std::filesystem::path previous = std::filesystem::current_path();
+		~CurrentDir() { std::filesystem::current_path(previous); }
+	} restore;
+	std::filesystem::current_path(f.root);
+	const std::filesystem::path relative = "Steam";
 	const auto result = discoverGames(SteamInstallation::load(relative));
 	CHECK(findGame(result, "sourcemods/mymod").fgds.size() == 2);
 	CHECK(SteamInstallation::load(relative).root().is_absolute());

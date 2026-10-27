@@ -288,8 +288,8 @@ TEST_CASE("VMF parses and round-trips without losing data") {
 }
 
 TEST_CASE("broken VMF reports a line number") {
-	CHECK_THROWS_WITH_AS(MapDocument::parse("world\n{\n\"id\" \"1\"\n"), "line 4: missing '}'", std::runtime_error);
-	CHECK_THROWS(MapDocument::parse("versioninfo { }"));
+	CHECK_THROWS_WITH_AS((void)MapDocument::parse("world\n{\n\"id\" \"1\"\n"), "line 4: missing '}'", std::runtime_error);
+	CHECK_THROWS((void)MapDocument::parse("versioninfo { }"));
 }
 
 TEST_CASE("brush geometry from Hammer planes") {
