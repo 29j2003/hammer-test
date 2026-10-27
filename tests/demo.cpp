@@ -189,6 +189,14 @@ constexpr std::string_view DEMO_FGD = R"FGD(
 	disableshadows(boolean) : "Disable Shadows" : 0 : "Stops the prop from casting a lightmap shadow."
 ]
 
+@PointClass base(Targetname, Angles) iconsprite("editor/info_particle_system.vmt") color(255 160 60) = info_particle_system : "A particle effect (fire, smoke, sparks) from the game's .pcf files."
+[
+	effect_name(particlesystem) : "Particle System Name" : "" : "Name of the particle system (see the Particles tab)."
+	start_active(boolean) : "Start Active?" : 0 : "Plays as soon as the map starts."
+	input Start(void) : "Starts the effect."
+	input Stop(void) : "Stops the effect."
+]
+
 @PointClass base(Targetname) iconsprite("editor/env_soundscape.vmt") color(255 128 0) = env_soundscape : "Plays a soundscape (looping and random background sounds) while the player can see it."
 [
 	radius(integer) : "Radius" : 128 : "If the player is within this distance (-1 = everywhere), the soundscape plays."
@@ -328,6 +336,12 @@ void createDemo(Fixture& f) {
 	writeText(f.mod / "scripts/soundscapes_demo.txt",
 	          "\"demo.outside\"\n{\n\t\"dsp\" \"0\"\n\t\"playlooping\" { \"volume\" \"0.4\" \"wave\" \"ambient/wind1.wav\" }\n"
 	          "\t\"playrandom\" { \"time\" \"5,10\" \"rndwave\" { \"wave\" \"ambient/alarm1.wav\" } }\n}\n");
+
+	// Particles (info_particle_system effect names).
+	writeBytes(f.mod / "particles/demo_fire.pcf", makePcf({"demo_fire_small", "demo_smoke_column"}));
+	writeBytes(f.mod / "particles/demo_sparks.pcf", makePcf({"demo_sparks"}));
+	writeText(f.mod / "particles/particles_manifest.txt",
+	          "particles_manifest\n{\n\t\"file\" \"!particles/demo_fire.pcf\"\n\t\"file\" \"particles/demo_sparks.pcf\"\n}\n");
 
 	// Entity classes for the demo (appended to the mod's FGD).
 	auto fgd = readFileText(f.mod / "mymod.fgd").value_or("");
@@ -703,6 +717,41 @@ void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFil
 	writeBytes(mdlPath, files.mdl);
 	writeBytes(stem.string() + ".vvd", files.vvd);
 	writeBytes(stem.string() + ".dx90.vtx", files.vtx);
+}
+
+std::vector<std::byte> makePcf(const std::vector<std::string>& systems) {
+	// Binary DMX, encoding version 2 (as Source 2013 writes .pcf files): header line ending in
+	// "\n\0", string table (u16 count), elements (type as u16 string index, name, 16-byte id),
+	// then the attributes of every element (none here).
+	std::vector<std::byte> out;
+	const auto put = [&](const void* data, std::size_t size) {
+		const auto* bytes = static_cast<const std::byte*>(data);
+		out.insert(out.end(), bytes, bytes + size);
+	};
+	const auto putString = [&](const std::string& text) { put(text.c_str(), text.size() + 1); };
+	const std::string header = "<!-- dmx encoding binary 2 format pcf 1 -->\n";
+	put(header.data(), header.size());
+	out.push_back(std::byte{0});
+	const std::vector<std::string> strings{"DmElement", "DmeParticleSystemDefinition"};
+	const auto count = static_cast<std::uint16_t>(strings.size());
+	put(&count, 2);
+	for (const auto& text : strings) putString(text);
+	const auto elements = static_cast<std::int32_t>(systems.size() + 1);
+	put(&elements, 4);
+	const auto element = [&](std::uint16_t type, const std::string& name, unsigned char id) {
+		put(&type, 2);
+		putString(name);
+		std::array<std::byte, 16> uuid{};
+		uuid[0] = std::byte{id};
+		put(uuid.data(), uuid.size());
+	};
+	element(0, "untitled", 0);
+	for (std::size_t i = 0; i < systems.size(); ++i) {
+		element(1, systems[i], static_cast<unsigned char>(i + 1));
+	}
+	const std::int32_t noAttributes = 0;
+	for (std::int32_t i = 0; i < elements; ++i) put(&noAttributes, 4);
+	return out;
 }
 
 } // namespace sme::test

@@ -76,6 +76,19 @@ struct Soundscape {
 /// Soundscapes from scripts/soundscapes_manifest.txt (or every scripts/soundscapes*.txt).
 [[nodiscard]] std::vector<Soundscape> soundscapes(const GameFileSystem& fs);
 
+/// A particle system (info_particle_system "effect_name") from a .pcf file.
+struct ParticleSystem {
+	std::string name;
+	std::string file;   ///< "particles/fire_01.pcf"
+};
+
+/// Particle system names in one .pcf (DMX) file; empty for broken files.
+[[nodiscard]] std::vector<std::string> particleSystemNames(std::span<const std::byte> pcf);
+
+/// Particle systems of the game: files from particles/particles_manifest.txt (or every
+/// particles/*.pcf), sorted by name.
+[[nodiscard]] std::vector<ParticleSystem> particleSystems(const GameFileSystem& fs);
+
 /// Removes the leading sound characters of a wave name (")weapons/x.wav" -> "weapons/x.wav").
 [[nodiscard]] std::string stripSoundChars(std::string_view wave);
 

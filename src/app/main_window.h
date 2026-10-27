@@ -26,6 +26,7 @@ class CompileWindow;
 class LogPanel;
 class MaterialCache;
 class Outliner;
+class ParticleBrowser;
 class ProblemsPanel;
 class PropertiesPanel;
 class SoundBrowser;
@@ -79,6 +80,7 @@ private:
 	PropertiesPanel* m_properties = nullptr;
 	ToolPanel* m_toolPanel = nullptr;
 	SoundBrowser* m_sounds = nullptr;
+	ParticleBrowser* m_particles = nullptr;
 	CompileWindow* m_compileWindow = nullptr;
 	std::vector<Vec3> m_lastLeak;
 	Outliner* m_outliner = nullptr;

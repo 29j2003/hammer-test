@@ -300,7 +300,12 @@ TEST_CASE("editing with the mouse in the real window") {
 		const auto prop = drop("application/x-sme-model", "models/humans/group01/male_07.mdl");
 		CHECK(prop.classname() == "prop_static");
 		CHECK(prop.get("model") == "models/humans/group01/male_07.mdl");
-		CHECK(editor.doc().entities.size() == 4);
+		const auto particle = drop("application/x-sme-particle", "demo_sparks");
+		CHECK(particle.classname() == "info_particle_system");
+		CHECK(particle.get("effect_name") == "demo_sparks");
+		CHECK(editor.doc().entities.size() == 5);
+		CHECK(window.assets()->particleNames().contains("demo_fire_small"));
+		editor.undo();
 		editor.undo();
 		editor.undo();
 		editor.undo();

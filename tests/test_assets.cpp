@@ -5,12 +5,15 @@
 #include "fixture.h"
 
 #include <sme/assets.h>
+#include <sme/scene_export.h>
 #include <sme/studio_model.h>
 #include <sme/brush.h>
 #include <sme/checks.h>
 #include <sme/compile_log.h>
 #include <sme/game.h>
+#include <sme/text.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 
@@ -220,6 +223,32 @@ TEST_CASE("compile output: errors, warnings, explanations, progress") {
 	CHECK(compilePhase("Loading c:/maps/demo.bsp").empty());
 }
 
+TEST_CASE("particle systems from .pcf files") {
+	const auto pcf = test::makePcf({"fire_small", "smoke"});
+	CHECK(particleSystemNames(pcf) == std::vector<std::string>{"fire_small", "smoke"});
+	auto broken = pcf;
+	broken.resize(broken.size() / 2);
+	(void)particleSystemNames(broken);   // never crashes
+	CHECK(particleSystemNames(std::vector<std::byte>(16, std::byte{0x41})).empty());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	auto result = discoverGames(SteamInstallation::load(f.steam));
+	const GameEntry* entry = nullptr;
+	for (const auto& g : result.games) {
+		if (g.key() == "sourcemods/mymod") entry = &g;
+	}
+	REQUIRE(entry);
+	const auto game = loadGame(*entry, result.steam, entry->fgds);
+	REQUIRE(game);
+	const auto systems = particleSystems(game->files);
+	REQUIRE(systems.size() == 3);
+	CHECK(systems[0].name == "demo_fire_small");
+	CHECK(systems[0].file == "particles/demo_fire.pcf");   // "!" of the manifest removed
+	CHECK(systems[2].name == "demo_sparks");
+}
+
 TEST_CASE("did you mean") {
 	const std::vector<std::string> names{"concrete/concretewall001a", "concrete/concretefloor002a", "tools/toolsnodraw"};
 	CHECK(closestMatch("concrete/concretwall001a", names) == "concrete/concretewall001a");
@@ -314,4 +343,50 @@ TEST_CASE("leak pointfile names the leaking entity") {
 	CHECK(problem.message.find("900 0 0") != std::string::npos);
 	CHECK(problem.line.size() == 3);
 	(void)c;
+}
+
+TEST_CASE("map export to glTF and OBJ") {
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	auto result = discoverGames(SteamInstallation::load(f.steam));
+	const GameEntry* entry = nullptr;
+	for (const auto& g : result.games) {
+		if (g.key() == "sourcemods/mymod") entry = &g;
+	}
+	REQUIRE(entry);
+	const auto game = loadGame(*entry, result.steam, entry->fgds);
+	REQUIRE(game);
+	const auto text = readFileText(f.mod / "mapsrc/demo.vmf");
+	REQUIRE(text);
+	const auto doc = MapDocument::parse(*text);
+	std::string error;
+	ExportOptions options;
+	const auto gltf = exportMap(doc, &game->entities, &game->files, f.root / "export/demo.gltf", options, &error);
+	REQUIRE_MESSAGE(gltf, error);
+	CHECK(gltf->triangles > 100);
+	CHECK(gltf->models >= 3);            // crates, barrels, the citizen
+	CHECK(gltf->textures >= 5);
+	const auto json = readFileText(f.root / "export/demo.gltf");
+	REQUIRE(json);
+	CHECK(json->find("\"version\":\"2.0\"") != std::string::npos);
+	CHECK(json->find("demo_textures/demo_brickwall001.png") != std::string::npos);
+	CHECK(std::filesystem::exists(f.root / "export/demo_textures/demo_brickwall001.png"));
+	CHECK(json->find("tools_toolsskybox") == std::string::npos);   // tool textures left out
+
+	options.format = ExportFormat::Obj;
+	const auto obj = exportMap(doc, &game->entities, &game->files, f.root / "export/demo.obj", options, &error);
+	REQUIRE(obj);
+	const auto objText = readFileText(f.root / "export/demo.obj");
+	const auto mtlText = readFileText(f.root / "export/demo.mtl");
+	REQUIRE(objText);
+	REQUIRE(mtlText);
+	CHECK(objText->find("mtllib demo.mtl") != std::string::npos);
+	CHECK(std::count(objText->begin(), objText->end(), 'f') > 100);
+	CHECK(mtlText->find("map_Kd demo_textures/") != std::string::npos);
+	// Without the game's files: only the brushes, no textures.
+	const auto bare = exportMap(doc, nullptr, nullptr, f.root / "export/bare.gltf", ExportOptions{}, &error);
+	REQUIRE(bare);
+	CHECK(bare->textures == 0);
+	CHECK(bare->models == 0);
 }

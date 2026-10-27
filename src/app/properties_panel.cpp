@@ -232,8 +232,9 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 	const bool isSequence = isSequenceKey(key);
 	const bool isSound = type == "sound";
 	const bool isModel = type == "studio" || toLower(key) == "model";
+	const bool isParticle = type == "particlesystem" || toLower(key) == "effect_name";
 
-	if (isTarget || isSequence || isSound || isModel) {
+	if (isTarget || isSequence || isSound || isModel || isParticle) {
 		auto* combo = new QComboBox;
 		combo->setEditable(true);
 		combo->setInsertPolicy(QComboBox::NoInsert);
@@ -251,6 +252,8 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 			items = m_assets->soundNames();
 		} else if (isModel) {
 			items = m_assets->modelNames();
+		} else if (isParticle) {
+			items = m_assets->particleNames();
 		}
 		combo->addItems(items);
 		auto* completer = new QCompleter(items, combo);

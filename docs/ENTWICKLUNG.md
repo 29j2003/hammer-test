@@ -30,10 +30,18 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
 | `editing`, `history` | Operationen als Undo-Schritte (`Transaction` merkt sich nur berührte Objekte) |
 | `checks` | Prüfungen mit Autofix, Leak aus `.lin` |
+| `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Vertex verschieben (bleibt konvex) |
+| `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
+| `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
+| `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen |
+| `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
 
 ### Oberfläche (`src/app`)
 
 - `Editor` hält Spiel, Karte, Undo, Auswahl, Werkzeug. **Jede Änderung** läuft über `Editor::commit(Change)`.
+  Formen: `Editor::createShape` merkt sich die zuletzt erstellte Form; `setShapeOptions` baut sie neu und fasst das mit
+  `commitMerged` in denselben Undo-Schritt, solange Block-Werkzeug aktiv, nichts geändert und die Form ausgewählt ist.
+  Cordons stehen im Footer der VMF (`cordons`), ohne Undo (wie in Hammer), aber mit „geändert“-Markierung.
 - `Viewport` = eine Ansicht (3D oder Top/Front/Side). Eigene `SceneRenderer`-Instanz pro Ansicht (kein GL-Sharing nötig).
 - `SceneRenderer` baut Geometrie nur bei Dokumentänderung neu; Auswahl/Verstecken sind Flags pro Fläche in einer Textur
   (`FLAG_SELECTED`, `FLAG_HIDDEN`) → ein Klick baut nichts neu. Beim Ziehen werden ausgewählte Flächen ausgeblendet und
@@ -53,6 +61,17 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Texturieren: Malen (Strg + rechte Maus) schreibt jede Fläche einzeln über `Editor::commitMerged` – gleiche Namen
   werden in `History::push(…, merge)` zu **einem** Undo-Schritt pro Strich zusammengefasst. „Ganze Wand“ =
   `edit::coplanarConnectedFaces` (gleiche Ebene, Flächen-Bounds berühren sich, über alle Brushes).
+- Werkzeuge Clip/Vertex/Polygon in `viewport_tools.cpp`; ihre Vorschau läuft über `setPreviewSolids` mit einem leeren
+  Hilfsdokument (nur für Ids), die Auswahl wird währenddessen ausgeblendet. Rechtsklick ohne Bewegung →
+  `contextMenuRequested` → Menü im `MainWindow` (Aktionen aus `m_contextActions`).
+- Schatten (`renderer_shadows.cpp`): Sonnen-Schattenkarte (orthografisch über die ganze Karte) und ein Atlas mit 16
+  Kacheln (4 Spot-Lichter je 1, 2 Punkt-Lichter je 6 Würfelseiten). Neu gezeichnet nur bei Geometrie-/Licht-Änderung oder
+  wenn sich die nächsten Lichter ändern. Shader: `u_lightShadow[i]` (erste Kachel, Punktlicht ja/nein), PCF 2x2.
+  Schatten-Sampler liegen fest auf Einheit 3 und 4 (zwei Sampler-Typen auf einer Einheit wären ein GL-Fehler).
+- Kompilieren: `CompileRunner` meldet strukturiert (`stepStarted`, `stepProgress`, `problem` …) an das `CompileWindow`.
+  Mit aktiven Cordons wird `<karte>_cordon.vmf` geschrieben und kompiliert.
+- Partikel: `particleSystems()` liest `particles_manifest.txt` und die PCFs mit dem DMX-Leser von sourcepp (`kvpp::DMX`).
+- Tastenkürzel: Aktionen tragen ihren englischen Namen als `objectName`; `ShortcutDialog` speichert unter `shortcuts/<Name>`.
 - Einrasten: `Editor::snapGrid()` (0 wenn Shift+W aus) für alle Positionen, `Editor::snapAngle()` für Drehungen;
   Drehpunkt wird auf das halbe Raster gesetzt, damit Brushes auf dem Raster bleiben.
 
@@ -72,11 +91,15 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 
 ## Tests
 
-- `sme_tests` – Kern: Steam/Spiele/Suchpfade/VPK/VMT/VTF/FGD/Hammer-Config, VMF-Roundtrip, Geometrie, Undo, Editing,
-  Material-Kategorien, MDL, Soundscripts, Prüfungen + Autofix, Leak, Probe-Bericht (keine persönlichen Pfade).
-- `sme_app_tests` (Label `ui`) – startet das echte Hauptfenster und klickt: Block-Werkzeug, Auswahl, Gizmo (auch
-  Shift-Kopie), Undo, Entity-Werkzeug, Drehen mit Rotations-Raster, Flächenmodus, Autofix-Knopf, Malen (ein Undo-Schritt),
-  ganze Wand per Doppelklick, Block im 2D-View, Speichern/Laden.
+- `sme_tests` – Kern: Steam/Spiele/Suchpfade/VPK/VMT/VTF/FGD/Hammer-Config, Mapbase-FGD, VMF-Roundtrip, Geometrie,
+  Undo, Editing, CSG/Formen/Werkzeuge (`test_csg.cpp`), Material-Kategorien, MDL/VVD/VTX, Soundscripts/Soundscapes,
+  Partikel, Kompilier-Meldungen, Export, Prüfungen + Autofix, Leak, Probe-Bericht (keine persönlichen Pfade).
+- `sme_app_tests` (Label `ui`) – startet das echte Hauptfenster und klickt: Spielemenü, Block-Werkzeug (auch Umsehen
+  während des Platzierens), Auswahl, Gizmo (auch Shift-Kopie), Skalieren, Undo, Entity-Werkzeug + Entity-Liste,
+  Modell-Vorschaubilder, Sounds-Tab, Ziehen von Sounds/Soundscapes/Modellen/Partikeln in die Karte, Drehen mit
+  Rotations-Raster, Flächenmodus, Autofix-Knopf, Malen, ganze Wand, Block im 2D-View, Kompilier-Fenster (mit
+  Shell-Skripten als Tools, nur Linux), Formen mit Live-Ändern, Hollow/Merge, Rechtsklick-Menü, Clip/Vertex/Polygon
+  im 2D-View, Speichern/Laden.
 - Testdaten erzeugt `tests/fixture.cpp` (HL2 in zwei Bibliotheken, SDK Base 2013, Mapbase-artige Mod, VPKs, Hammer++)
   und `tests/demo.cpp` (prozedurale Texturen, Modell mit Animationen, Sounds, Demo-Karte mit absichtlichen Fehlern).
 
@@ -86,8 +109,13 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   eindeutiger Lösung `fixLabel` + Fall in `applyFix`; Test in `tests/test_assets.cpp`.
 - **Neuer Schlüsseltyp im Smart Edit**: `PropertiesPanel::makeEditor` (Typ aus der FGD, z. B. `studio`, `sound`,
   `target_destination`); Sequenz-Schlüssel in `isSequenceKey`.
-- **Neues Werkzeug**: `Editor::Tool`, Knopf + Kürzel in `MainWindow::createActions`, Maus in `Viewport`, die Änderung
-  selbst als Funktion in `edit::` (Kern, mit Test) und ein Schritt in `tests/test_app.cpp`.
+- **Neues Werkzeug**: `Editor::Tool`, Knopf + Kürzel in `MainWindow::createActions`, Hinweis in `ToolPanel::refresh`,
+  Maus in `Viewport` (Klick-Werkzeuge in `viewport_tools.cpp`: `toolMousePress`, `toolKey`, `drawToolLines`), die
+  Änderung selbst als Funktion in `edit::` (Kern, mit Test) und ein Schritt in `tests/test_app.cpp`.
+- **Neue Form**: `ShapeOptions::Kind` + Fall in `makeShape` (Punkte → `solidFromPoints`), Eintrag im Tool-Dock
+  (`makeShapePage`), Test in `tests/test_csg.cpp`.
+- **Neue Brush-Operation**: Geometrie in `csg` (bleibt konvex, `usable()` prüft), Undo-Schritt in `edit::`, Aufruf in
+  `Editor`, Aktion im Menü „Brushes“ und in `m_contextActions` (Rechtsklick).
 - **Neues Spiel**: meist nichts zu tun. Bekannte App-IDs (Name, Engine-Zweig, Haupt-FGD) in `game_discovery.cpp`.
 
 ## Bauen, CI, Abgabe
@@ -103,13 +131,15 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   nicht auf Windows. Nächster Schritt: `sme-probe report` und `sme-probe vmf` auf Julius' PC.
 - MDL-Offsets (`studiohdr_t` v44–49) stammen aus `studio.h`; mit echten Modellen gegenprüfen (`sme-probe` zeigt Sequenzen).
 - Black Mesa (Xengine) ist ungetestet; VMF-Unterschiede unbekannt.
+- PCF-Dateien: nur binäre DMX (wie sie die Spiele ausliefern); Text-DMX wird übersprungen.
+- Sound-Wiedergabe hängt am Qt-Multimedia-Backend (Windows: FFmpeg; Linux: GStreamer); ADPCM-/MP3-in-WAV ungetestet.
 - Modelle: VTX-Layout (25/33 Byte) wird ausprobiert; mit echten HL2-/Mapbase-Modellen prüfen (`sme-probe model GAME PATH`).
   Sprites/Overlays/Decals werden noch nicht gezeichnet.
 
 ## Fahrplan
 
-1. Rückmeldung von echten Installationen (Probe-Bericht), Fehler beheben.
-2. Modelle im Viewport (MDL/VVD/VTX), Entity-Icons, Sonnenschatten in der Licht-Vorschau.
-3. Vertex-/Kanten-/Flächen-Werkzeuge (Extrudieren, Abschrägen), immer konvex – sonst Warnung.
+1. Rückmeldung von echten Installationen (Probe-Bericht, `sme-probe model`), Fehler beheben.
+2. Displacements mit dem Vertex-Werkzeug bearbeiten (Reddit-Wunsch), Displacement-Malen.
+3. Entity-Icons (Sprites), Overlays/Decals, Partikel-Vorschau.
 4. Mesh-Modus (Variante B): freie Meshes → beim Kompilieren konvex zerlegen bzw. als Static Prop + Nodraw-Hülle.
-5. Clip-Werkzeug, Instanzen, Visgroups, Overlays, Kubemaps, VRAD-Schnellvorschau.
+5. Echte Physik-Simulation (Hammer++ Physics), Instanzen, Visgroups, Kubemaps, VRAD-Schnellvorschau, Packen (wie CompilePal).

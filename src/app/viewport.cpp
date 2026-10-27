@@ -1545,7 +1545,7 @@ void Viewport::focusOutEvent(QFocusEvent* event) {
 // --- Drag and drop from the asset browser -------------------------------------------
 
 void Viewport::dragEnterEvent(QDragEnterEvent* event) {
-	for (const char* format : {"application/x-sme-material", "application/x-sme-entity", "application/x-sme-model", "application/x-sme-sound"}) {
+	for (const char* format : {"application/x-sme-material", "application/x-sme-entity", "application/x-sme-model", "application/x-sme-sound", "application/x-sme-particle"}) {
 		if (event->mimeData()->hasFormat(format)) {
 			event->acceptProposedAction();
 			return;
@@ -1579,6 +1579,12 @@ void Viewport::dropEvent(QDropEvent* event) {
 	if (mime->hasFormat("application/x-sme-model")) {
 		// A model becomes a prop_static standing on the surface (change the class in Object Properties).
 		placeEntityAt(event->position(), "prop_static", {{"model", QString::fromUtf8(mime->data("application/x-sme-model")).toStdString()}});
+		event->acceptProposedAction();
+		return;
+	}
+	if (mime->hasFormat("application/x-sme-particle")) {
+		placeEntityAt(event->position(), "info_particle_system",
+		              {{"effect_name", QString::fromUtf8(mime->data("application/x-sme-particle")).toStdString()}, {"start_active", "1"}});
 		event->acceptProposedAction();
 		return;
 	}

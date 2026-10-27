@@ -15,9 +15,11 @@ add_library(smeapp STATIC
 	model_cache.cpp
 	model_thumbnails.cpp
 	panels.cpp
+	particle_browser.cpp
 	properties_panel.cpp
 	renderer.cpp
 	renderer_shadows.cpp
+	shortcut_dialog.cpp
 	sound_browser.cpp
 	sound_player.cpp
 	style.cpp

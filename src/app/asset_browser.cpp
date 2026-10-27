@@ -421,6 +421,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		auto index = m_indexWatcher.result();
 		m_models = std::move(index.models);
 		m_sounds = std::move(index.sounds);
+		m_particles = std::move(index.particles);
 		m_materialModel->setItems(std::move(index.materials));
 		m_materialInfo->setText(tr("%1 of %2 materials - drag onto a face, double-click applies to the selection")
 		                            .arg(m_materialFilter->rowCount())
@@ -440,6 +441,14 @@ void AssetBrowser::showMaterials() {
 
 void AssetBrowser::showModels() {
 	m_tabs->setCurrentIndex(1);
+}
+
+QStringList AssetBrowser::particleNames() const {
+	QStringList names;
+	for (const auto& system : m_particles) {
+		names << QString::fromStdString(system.name);
+	}
+	return names;
 }
 
 std::vector<std::string> AssetBrowser::materialNames() const {
@@ -489,10 +498,13 @@ void AssetBrowser::reload() {
 		for (const auto& name : soundScriptNames(*fs)) {
 			index.sounds << QString::fromStdString(name);
 		}
-		for (const char* extension : {".wav", ".mp3"}) {
+		for (const char* extension : {".wav", ".mp3", ".ogg"}) {
 			for (const auto& file : fs->list("sound", extension)) {
 				index.sounds << QString::fromStdString(file.substr(6));
 			}
+		}
+		if (generation == m_generation) {
+			index.particles = particleSystems(*fs);
 		}
 		return index;
 	}));

@@ -6,7 +6,9 @@
 #include "compile_window.h"
 #include "material_cache.h"
 #include "panels.h"
+#include "particle_browser.h"
 #include "properties_panel.h"
+#include "shortcut_dialog.h"
 #include "sound_browser.h"
 #include "tool_panel.h"
 #include "viewport.h"
@@ -42,6 +44,7 @@
 
 #include <sme/checks.h>
 #include <sme/game.h>
+#include <sme/scene_export.h>
 #include <sme/text.h>
 
 namespace sme::app {
@@ -171,6 +174,7 @@ void MainWindow::createDocks() {
 	m_log = new LogPanel;
 	m_toolPanel = new ToolPanel(m_editor);
 	m_sounds = new SoundBrowser(m_editor);
+	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
 
 	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::RightDockWidgetArea);
@@ -181,9 +185,11 @@ void MainWindow::createDocks() {
 	outliner->raise();
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
+	auto* particles = addDock(tr("Particles"), m_particles, Qt::BottomDockWidgetArea);
 	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, sounds);
+	tabifyDockWidget(assets, particles);
 	tabifyDockWidget(assets, compile);
 	tabifyDockWidget(assets, log);
 	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
@@ -219,6 +225,7 @@ Viewport* MainWindow::activeView() const {
 void MainWindow::createActions() {
 	const auto action = [this](const QString& text, const QKeySequence& key, auto slot) {
 		auto* a = new QAction(text, this);
+		a->setObjectName(text);   // key for the shortcut settings
 		if (!key.isEmpty()) {
 			a->setShortcut(key);
 		}
@@ -241,13 +248,39 @@ void MainWindow::createActions() {
 	file->addAction(action(tr("Save"), QKeySequence::Save, [this] { save(false); }));
 	file->addAction(action(tr("Save as ..."), QKeySequence("Ctrl+Shift+S"), [this] { save(true); }));
 	file->addSeparator();
+	file->addAction(action(tr("Export for other programs ..."), QKeySequence("Ctrl+Alt+E"), [this] {
+		// glTF / OBJ for Blender, Unity, Unreal: meters, Y up, textures as PNG, props included.
+		QString filter;
+		const QString base = m_editor->filePath().isEmpty() ? QStringLiteral("map") : QFileInfo(m_editor->filePath()).completeBaseName();
+		const QString path = QFileDialog::getSaveFileName(this, tr("Export map"), QFileInfo(m_editor->filePath()).absolutePath() + "/" + base + ".gltf",
+		                                                  tr("glTF 2.0 (*.gltf);;Wavefront OBJ (*.obj)"), &filter);
+		if (path.isEmpty()) return;
+		ExportOptions options;
+		options.format = path.endsWith(".obj", Qt::CaseInsensitive) ? ExportFormat::Obj : ExportFormat::Gltf;
+		QApplication::setOverrideCursor(Qt::WaitCursor);
+		std::string error;
+		const auto result = exportMap(m_editor->doc(), m_editor->entities(), m_editor->game() ? &m_editor->game()->files : nullptr, toPath(path), options, &error);
+		QApplication::restoreOverrideCursor();
+		if (!result) {
+			QMessageBox::warning(this, tr("Export"), QString::fromStdString(error));
+			return;
+		}
+		for (const auto& warning : result->warnings) m_log->append(QString::fromStdString(warning), QColor(255, 200, 100));
+		emit m_editor->message(tr("Exported %1: %2 triangles, %3 materials, %4 textures, %5 models")
+		                           .arg(QFileInfo(path).fileName())
+		                           .arg(result->triangles)
+		                           .arg(result->materials)
+		                           .arg(result->textures)
+		                           .arg(result->models));
+	}));
+	file->addSeparator();
 	file->addAction(action(tr("Exit"), QKeySequence::Quit, [this] { close(); }));
 
 	// Edit
 	auto* editMenu = menuBar()->addMenu(tr("&Edit"));
 	editMenu->addAction(action(tr("Undo"), QKeySequence::Undo, [this] { m_editor->undo(); }));
 	editMenu->addAction(action(tr("Redo"), QKeySequence("Ctrl+Y"), [this] { m_editor->redo(); }));
-	action(tr("Redo"), QKeySequence("Ctrl+Shift+Z"), [this] { m_editor->redo(); });
+	action(tr("Redo (second key)"), QKeySequence("Ctrl+Shift+Z"), [this] { m_editor->redo(); });
 	editMenu->addSeparator();
 	editMenu->addAction(action(tr("Delete"), QKeySequence::Delete, [this] { m_editor->deleteSelection(); }));
 	editMenu->addAction(action(tr("Duplicate"), QKeySequence("Ctrl+D"), [this] { m_editor->duplicateSelection(); }));
@@ -346,6 +379,7 @@ void MainWindow::createActions() {
 	m_toolGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);   // none checked in face mode
 	const auto toolAction = [&](const QString& glyph, const QString& name, const QKeySequence& key, Editor::Tool tool) {
 		auto* a = new QAction(glyph + "\n" + name, this);
+		a->setObjectName(name);
 		a->setToolTip(QStringLiteral("%1 (%2)").arg(name, key.toString()));
 		a->setShortcut(key);
 		a->setCheckable(true);
@@ -369,6 +403,7 @@ void MainWindow::createActions() {
 	m_modeGroup = new QActionGroup(this);
 	const auto modeAction = [&](const QString& glyph, const QString& name, const QKeySequence& key, Editor::SelectMode mode) {
 		auto* a = new QAction(glyph + "\n" + name, this);
+		a->setObjectName(name);
 		a->setToolTip(QStringLiteral("%1 (%2)").arg(name, key.toString()));
 		a->setShortcuts({key});
 		a->setCheckable(true);
@@ -425,6 +460,7 @@ void MainWindow::createActions() {
 	action(tr("Grid smaller"), QKeySequence("["), [this] { m_editor->setGrid(m_editor->grid() / 2); });
 	action(tr("Grid bigger"), QKeySequence("]"), [this] { m_editor->setGrid(m_editor->grid() * 2); });
 	auto* snapAction = top->addAction(tr("Snap"));
+	snapAction->setObjectName("Snap");
 	snapAction->setCheckable(true);
 	snapAction->setChecked(m_editor->snapping());
 	snapAction->setShortcut(QKeySequence("Shift+W"));
@@ -466,6 +502,7 @@ void MainWindow::createActions() {
 	m_renderGroup = new QActionGroup(this);
 	const auto renderAction = [&](const QString& name, const QKeySequence& key, Editor::RenderMode mode, const QString& tip) {
 		auto* a = top->addAction(name);
+		a->setObjectName(name);
 		a->setShortcut(key);
 		a->setCheckable(true);
 		a->setToolTip(QStringLiteral("%1 (%2)").arg(tip, key.toString()));
@@ -477,6 +514,7 @@ void MainWindow::createActions() {
 	renderAction(tr("Unlit"), QKeySequence("F5"), Editor::RenderMode::Unlit, tr("Textures without lighting"));
 	renderAction(tr("Wire"), QKeySequence("F8"), Editor::RenderMode::Wireframe, tr("Wireframe"));
 	auto* shadows = top->addAction(tr("Shadows"));
+	shadows->setObjectName("Shadows");
 	shadows->setCheckable(true);
 	shadows->setChecked(m_editor->shadows());
 	shadows->setShortcut(QKeySequence("F7"));
@@ -484,6 +522,7 @@ void MainWindow::createActions() {
 	connect(shadows, &QAction::toggled, m_editor, &Editor::setShadows);
 	top->addSeparator();
 	auto* layout = top->addAction(tr("1 / 4 views"));
+	layout->setObjectName("1 / 4 views");
 	layout->setShortcut(QKeySequence("Shift+Alt+Z"));
 	layout->setToolTip(tr("Switch between one 3D view and 3D + top/front/side (Shift+Alt+Z)"));
 	connect(layout, &QAction::triggered, this, [this] { setQuadLayout(!m_quad); });
@@ -495,6 +534,7 @@ void MainWindow::createActions() {
 		raiseDock("Problems");
 	});
 	auto* run = top->addAction(tr("▶ Compile && Run"));
+	run->setObjectName("Compile and run");
 	run->setShortcut(QKeySequence("F9"));
 	run->setToolTip(tr("Compile with VBSP/VVIS/VRAD and start the game (F9)"));
 	connect(run, &QAction::triggered, this, &MainWindow::compile);
@@ -569,6 +609,17 @@ void MainWindow::createActions() {
 
 	auto* help = menuBar()->addMenu(tr("&Help"));
 	help->addAction(action(tr("Shortcuts"), QKeySequence("F1"), [this] { QMessageBox::information(this, tr("Shortcuts"), SHORTCUT_HELP); }));
+	help->addAction(action(tr("Change shortcuts ..."), QKeySequence(), [this] {
+		ShortcutDialog dialog(this, this);
+		dialog.exec();
+	}));
+	// Defaults remembered, then the mapper's own keys applied.
+	for (auto* a : findChildren<QAction*>()) {
+		if (!a->objectName().isEmpty()) {
+			a->setProperty("defaultShortcut", a->shortcut().toString(QKeySequence::PortableText));
+		}
+	}
+	ShortcutDialog::applySaved(this);
 }
 
 void MainWindow::refreshGames() {

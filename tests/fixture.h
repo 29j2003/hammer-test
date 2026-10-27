@@ -54,6 +54,9 @@ struct StudioModelFiles {
 /// Writes the three files next to each other ("models/x.mdl" -> x.mdl, x.vvd, x.dx90.vtx).
 void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFiles& files);
 
+/// A particle file (.pcf, binary DMX) holding particle systems with these names.
+[[nodiscard]] std::vector<std::byte> makePcf(const std::vector<std::string>& systems);
+
 /// Creates an RGBA8888 VTF (solid color with a darker checker) of the given size.
 [[nodiscard]] std::vector<std::byte> makeVtf(unsigned size, unsigned char r, unsigned char g, unsigned char b, bool dxt = false);
 

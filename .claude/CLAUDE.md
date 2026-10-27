@@ -9,14 +9,18 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 ## Aufbau
 - `src/core/` – Bibliothek `smecore` ohne Qt (Namespace `sme`): Steam/Spiele (`steam`, `game_discovery`, `gameinfo`,
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
-  `assets`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte (`keyvalues`, `map`), Geometrie (`brush`, `math`), Bearbeiten + Undo
-  (`editing`, `history`), Prüfungen mit Autofix + Leaks (`checks`).
+  `assets` inkl. Sounds/Soundscapes/Partikel, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
+  (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen `map_tools`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
+  Bearbeiten + Undo (`editing`, `history`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
+  Export glTF/OBJ (`scene_export`).
 - `src/app/` – Qt-6-Editor (`smeapp` + `SourceMapEditor`): `editor` (Zustand, alle Änderungen über `commit()`),
-  `viewport` (Kamera, Werkzeuge, Gizmos), `renderer` (OpenGL 3.3, Licht-Vorschau nach VRAD-Formeln), `material_cache`
+  `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
+  Licht-Vorschau nach VRAD-Formeln, Schatten in `renderer_shadows`), `material_cache`
   (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
   `asset_browser` (Materialien, Modelle), `sound_browser` + `sound_player` (Sounds-Tab, Wiedergabe über Qt Multimedia, optional),
-  `tool_panel` (Werkzeug-Optionen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose), `panels` (Outliner, Probleme, Log),
-  `compile` (VBSP/VVIS/VRAD/Spiel), `main_window`, `style`.
+  `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
+  Justify), `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
+  `shortcut_dialog`, `main_window`, `style`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
 - `tests/` – doctest; `fixture` (künstliche Steam-Installation, keine Valve-Dateien), `demo` (Demo-Inhalte + Demo-Karte),
   `test_app.cpp` (echte Fenster mit simulierter Maus, Label `ui`, braucht OpenGL → unter Linux `xvfb-run`).
@@ -45,5 +49,5 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Prüfen: `python -I tools/check_privacy.py`
 
 ## Geplant
-- Siehe „Fahrplan“ in `docs/ENTWICKLUNG.md`: Modelle im Viewport, Vertex-/Kanten-Werkzeuge (konvex bleibend), Mesh-Modus
-  (Variante B: konvex zerlegen bzw. als Prop kompilieren), Sonnenschatten, Instanzen/Visgroups, Overlays, Clip-Werkzeug.
+- Siehe „Fahrplan“ in `docs/ENTWICKLUNG.md`: Displacements im Vertex-Werkzeug, Entity-Icons/Overlays, Mesh-Modus
+  (Variante B: konvex zerlegen bzw. als Prop kompilieren), echte Physik, Instanzen/Visgroups, Packen.

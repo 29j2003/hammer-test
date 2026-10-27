@@ -6,6 +6,8 @@
 #include <sme/keyvalues.h>
 #include <sme/text.h>
 
+#include <kvpp/DMX.h>
+
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -345,6 +347,58 @@ std::vector<Soundscape> soundscapes(const GameFileSystem& fs) {
 		} catch (const std::exception&) {
 		}
 	}
+	return out;
+}
+
+std::vector<std::string> particleSystemNames(std::span<const std::byte> pcf) {
+	std::vector<std::string> names;
+	try {
+		const kvpp::DMX dmx(pcf);
+		if (!dmx) {
+			return names;
+		}
+		for (const auto& element : dmx.getElements()) {
+			if (element.getType() == "DmeParticleSystemDefinition" && !element.getKey().empty()) {
+				names.emplace_back(element.getKey());
+			}
+		}
+	} catch (const std::exception&) {
+		names.clear();   // broken file: no names rather than half of them
+	}
+	return names;
+}
+
+std::vector<ParticleSystem> particleSystems(const GameFileSystem& fs) {
+	std::vector<std::string> files;
+	if (const auto manifest = fs.readText("particles/particles_manifest.txt")) {
+		try {
+			for (const auto& block : parseKeyValues(*manifest).children) {
+				for (const auto& entry : block.children) {
+					if (!entry.block && iequals(entry.key, "file")) {
+						std::string file = entry.value;
+						if (!file.empty() && file.front() == '!') file.erase(0, 1);   // "!" = load at startup
+						files.push_back(normalizePath(file));
+					}
+				}
+			}
+		} catch (const std::exception&) {
+		}
+	}
+	if (files.empty()) {
+		files = fs.list("particles", ".pcf");
+	}
+	std::vector<ParticleSystem> out;
+	std::set<std::string> seen;
+	for (const auto& file : files) {
+		const auto data = fs.read(file);
+		if (!data) continue;
+		for (auto& name : particleSystemNames(*data)) {
+			if (seen.insert(toLower(name)).second) {
+				out.push_back({std::move(name), file});
+			}
+		}
+	}
+	std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return toLower(a.name) < toLower(b.name); });
 	return out;
 }
 

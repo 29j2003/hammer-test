@@ -17,6 +17,7 @@ add_library(smecore STATIC
 	src/map.cpp
 	src/map_tools.cpp
 	src/material.cpp
+	src/scene_export.cpp
 	src/shapes.cpp
 	src/steam.cpp
 	src/studio_model.cpp

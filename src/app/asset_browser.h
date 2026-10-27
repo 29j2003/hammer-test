@@ -101,6 +101,7 @@ struct AssetIndex {
 	std::vector<MaterialListModel::Item> materials;
 	QStringList models;
 	QStringList sounds;
+	std::vector<ParticleSystem> particles;
 };
 
 class AssetBrowser : public QWidget {
@@ -114,6 +115,8 @@ public:
 	[[nodiscard]] std::vector<std::string> materialNames() const;
 	[[nodiscard]] QStringList modelNames() const { return m_models; }
 	[[nodiscard]] QStringList soundNames() const { return m_sounds; }
+	[[nodiscard]] QStringList particleNames() const;
+	[[nodiscard]] const std::vector<ParticleSystem>& particles() const { return m_particles; }
 	void showMaterials();
 	void showModels();
 	[[nodiscard]] QListView* modelView() const { return m_modelView; }
@@ -142,6 +145,7 @@ private:
 	std::atomic<int> m_generation{0};
 
 	QStringList m_models, m_sounds;
+	std::vector<ParticleSystem> m_particles;
 	ModelThumbnails* m_modelThumbnails;
 	ModelListModel* m_modelModel;
 	QListView* m_modelView;

@@ -10,6 +10,7 @@
 #include <sme/entity_catalog.h>
 #include <sme/game.h>
 #include <sme/map.h>
+#include <sme/scene_export.h>
 #include <sme/studio_model.h>
 #include <sme/material.h>
 #include <sme/text.h>
@@ -35,6 +36,7 @@ Usage:
   sme-probe ls      GAME DIR [EXT]            list files, e.g.: ls hl2 materials/concrete .vmt
   sme-probe material GAME NAME                show a material (patch materials resolved)
   sme-probe model GAME PATH                   load a model (.mdl/.vvd/.vtx): meshes, materials, size, animations
+  sme-probe export GAME FILE.vmf OUT          export the map as .gltf or .obj (with textures and models)
   sme-probe texture GAME NAME OUT.png [--max N]  decode a texture to PNG
   sme-probe fgd FILE.fgd... [--class NAME]    load FGDs, optionally show one class
   sme-probe vmf FILE.vmf                      check a map: load, save again, compare, find broken brushes
@@ -220,6 +222,40 @@ int cmdModel(const Args& args) {
 	return 0;
 }
 
+int cmdExport(const Args& args) {
+	const auto discovery = discover(args);
+	const auto game = openGame(discovery, args.positional.at(1));
+	if (!game) {
+		return 1;
+	}
+	const auto text = readFileText(toNativePath(args.positional.at(2)));
+	if (!text) {
+		std::cerr << "error: cannot read " << args.positional.at(2) << "\n";
+		return 1;
+	}
+	try {
+		const auto doc = MapDocument::parse(*text);
+		ExportOptions options;
+		const std::filesystem::path out = toNativePath(args.positional.at(3));
+		options.format = endsWithI(displayPath(out), ".obj") ? ExportFormat::Obj : ExportFormat::Gltf;
+		std::string error;
+		const auto result = exportMap(doc, &game->entities, &game->files, out, options, &error);
+		if (!result) {
+			std::cerr << "error: " << error << "\n";
+			return 1;
+		}
+		std::cout << result->triangles << " triangles, " << result->materials << " materials, " << result->textures << " textures, " << result->models
+		          << " models\n";
+		for (const auto& warning : result->warnings) {
+			std::cout << "warning: " << warning << "\n";
+		}
+	} catch (const std::exception& e) {
+		std::cerr << "error: " << e.what() << "\n";
+		return 1;
+	}
+	return 0;
+}
+
 int cmdTexture(const Args& args) {
 	const auto discovery = discover(args);
 	const auto game = openGame(discovery, args.positional.at(1));
@@ -350,6 +386,7 @@ int main(int argc, char** argv) {
 		if (command == "ls" && need(3)) return cmdList(args);
 		if (command == "material" && need(3)) return cmdMaterial(args);
 		if (command == "model" && need(3)) return cmdModel(args);
+		if (command == "export" && need(4)) return cmdExport(args);
 		if (command == "texture" && need(4)) return cmdTexture(args);
 		if (command == "fgd" && need(2)) return cmdFgd(args);
 		if (command == "vmf" && need(2)) return cmdVmf(args);
