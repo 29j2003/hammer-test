@@ -15,6 +15,7 @@ add_library(smecore STATIC
 	src/map.cpp
 	src/material.cpp
 	src/steam.cpp
+	src/studio_model.cpp
 	src/text.cpp
 	src/texture.cpp)
 target_include_directories(smecore PUBLIC include)

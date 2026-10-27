@@ -96,6 +96,19 @@ Bounds entityBounds(const Entity& entity, const EntityCatalog* catalog) {
 		return box;
 	}
 	const Vec3 origin = entity.origin();
+	if (catalog) {
+		// A loaded model: its box, turned like the entity.
+		if (const auto model = entityModel(entity, catalog); !model.empty()) {
+			if (const auto* local = catalog->modelBounds(model); local && !local->empty()) {
+				const Mat3 rotation = anglesToMatrix(parseAnglesKey(entity));
+				for (int i = 0; i < 8; ++i) {
+					const Vec3 corner{(i & 1) ? local->max.x : local->min.x, (i & 2) ? local->max.y : local->min.y, (i & 4) ? local->max.z : local->min.z};
+					box.add(origin + rotation * corner);
+				}
+				return box;
+			}
+		}
+	}
 	Vec3 mins{-8, -8, -8}, maxs{8, 8, 8};
 	if (catalog) {
 		if (const auto* definition = catalog->find(entity.classname())) {
@@ -116,6 +129,30 @@ Bounds entityBounds(const Entity& entity, const EntityCatalog* catalog) {
 	box.add(origin + mins);
 	box.add(origin + maxs);
 	return box;
+}
+
+std::string entityModel(const Entity& entity, const EntityCatalog* catalog) {
+	if (!entity.solids.empty()) {
+		return {};
+	}
+	auto model = normalizePath(entity.get("model"));
+	if (endsWithI(model, ".mdl")) {
+		return model;
+	}
+	if (catalog) {
+		if (const auto* definition = catalog->find(entity.classname())) {
+			for (const char* helper : {"studio", "studioprop"}) {
+				auto argument = definition->helper(helper);
+				if (argument.size() >= 2 && argument.front() == '"' && argument.back() == '"') {
+					argument = argument.substr(1, argument.size() - 2);
+				}
+				if (endsWithI(argument, ".mdl")) {
+					return normalizePath(argument);
+				}
+			}
+		}
+	}
+	return {};
 }
 
 Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog) {
@@ -326,7 +363,8 @@ std::pair<Change, SolidRef> createBlock(MapDocument& doc, const Bounds& box, con
 	return {t.finish(), ref};
 }
 
-std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classname, const Vec3& origin, const EntityClass* definition) {
+std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classname, const Vec3& origin, const EntityClass* definition,
+                                   const std::vector<std::pair<std::string, std::string>>& keys) {
 	Transaction t(doc, "Place " + classname);
 	Entity entity;
 	entity.id = doc.newEntityId();
@@ -344,6 +382,9 @@ std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classnam
 				entity.set(property.name, property.defaultValue);
 			}
 		}
+	}
+	for (const auto& [key, value] : keys) {
+		entity.set(key, value);
 	}
 	entity.setOrigin(origin);
 	auto editor = KvNode::makeBlock("editor");

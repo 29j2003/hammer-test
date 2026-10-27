@@ -131,6 +131,7 @@ void writeGame(Json& json, const GameEntry& entry, const SteamInstallation& stea
 	json.value("owner_app", static_cast<std::uint64_t>(entry.ownerAppId)).value("base_app", static_cast<std::uint64_t>(entry.baseAppId));
 	json.value("sourcemod", entry.isSourceMod).value("mapbase", entry.usesMapbase).value("branch", entry.branch);
 	json.value("hammer_config", entry.hammerConfig);
+	json.value("mapbase_fgd", entry.mapbaseFgd);
 	json.beginArray("fgds");
 	for (const auto& fgd : entry.fgds) {
 		json.item(fgd);

@@ -8,6 +8,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
+#include <functional>
+#include <map>
 #include <set>
 
 namespace sme {
@@ -195,15 +198,32 @@ std::vector<std::string> modelSequences(const GameFileSystem& fs, std::string_vi
 }
 
 std::vector<std::string> soundScriptNames(const GameFileSystem& fs) {
-	std::set<std::string> names;
+	std::vector<std::string> names;
+	for (auto& entry : soundScripts(fs)) {
+		names.push_back(std::move(entry.name));
+	}
+	return names;
+}
+
+std::string stripSoundChars(std::string_view wave) {
+	// Characters the engine reads as flags in front of a wave name (see soundchars.h).
+	constexpr std::string_view chars = "*#@><^)}$!?&~`+%";
+	while (!wave.empty() && chars.find(wave.front()) != std::string_view::npos) {
+		wave.remove_prefix(1);
+	}
+	return normalizePath(wave);
+}
+
+namespace {
+
+std::vector<std::string> soundScriptFiles(const GameFileSystem& fs) {
 	std::vector<std::string> scripts;
 	if (const auto manifest = fs.readText("scripts/game_sounds_manifest.txt")) {
 		try {
-			const auto root = parseKeyValues(*manifest);
-			for (const auto& block : root.children) {
+			for (const auto& block : parseKeyValues(*manifest).children) {
 				for (const auto& entry : block.children) {
 					if (!entry.block && (iequals(entry.key, "precache_file") || iequals(entry.key, "preload_file"))) {
-						scripts.push_back(entry.value);
+						scripts.push_back(normalizePath(entry.value));
 					}
 				}
 			}
@@ -213,22 +233,119 @@ std::vector<std::string> soundScriptNames(const GameFileSystem& fs) {
 	if (scripts.empty()) {
 		scripts.emplace_back("scripts/game_sounds.txt");
 	}
-	for (const auto& script : scripts) {
+	return scripts;
+}
+
+void collectWaves(const KvNode& node, std::vector<std::string>& out) {
+	for (const auto& child : node.children) {
+		if (child.block) {
+			collectWaves(child, out);
+		} else if (iequals(child.key, "wave")) {
+			out.push_back(stripSoundChars(child.value));
+		}
+	}
+}
+
+} // namespace
+
+std::vector<SoundScriptEntry> soundScripts(const GameFileSystem& fs) {
+	std::vector<SoundScriptEntry> entries;
+	std::map<std::string, std::size_t> index;
+	for (const auto& script : soundScriptFiles(fs)) {
 		const auto text = fs.readText(script);
 		if (!text) {
 			continue;
 		}
 		try {
-			for (const auto& entry : parseKeyValues(*text).children) {
-				if (entry.block && !entry.key.empty()) {
-					names.insert(entry.key);
+			for (const auto& block : parseKeyValues(*text).children) {
+				if (!block.block || block.key.empty()) {
+					continue;
+				}
+				SoundScriptEntry entry;
+				entry.name = block.key;
+				entry.script = script;
+				entry.channel = block.get("channel");
+				collectWaves(block, entry.waves);
+				const auto key = toLower(entry.name);
+				if (const auto it = index.find(key); it != index.end()) {
+					entries[it->second] = std::move(entry);
+				} else {
+					index.emplace(key, entries.size());
+					entries.push_back(std::move(entry));
 				}
 			}
 		} catch (const std::exception&) {
 			// A broken script must not hide the others.
 		}
 	}
-	return {names.begin(), names.end()};
+	std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return toLower(a.name) < toLower(b.name); });
+	return entries;
+}
+
+std::vector<Soundscape> soundscapes(const GameFileSystem& fs) {
+	std::vector<std::string> files;
+	if (const auto manifest = fs.readText("scripts/soundscapes_manifest.txt")) {
+		try {
+			for (const auto& block : parseKeyValues(*manifest).children) {
+				for (const auto& entry : block.children) {
+					if (!entry.block && iequals(entry.key, "file")) {
+						files.push_back(normalizePath(entry.value));
+					}
+				}
+			}
+		} catch (const std::exception&) {
+		}
+	}
+	if (files.empty()) {
+		for (const auto& file : fs.list("scripts", ".txt")) {
+			if (file.rfind("scripts/soundscapes", 0) == 0 && file != "scripts/soundscapes_manifest.txt") {
+				files.push_back(file);
+			}
+		}
+	}
+	std::vector<Soundscape> out;
+	for (const auto& file : files) {
+		const auto text = fs.readText(file);
+		if (!text) {
+			continue;
+		}
+		try {
+			for (const auto& block : parseKeyValues(*text).children) {
+				if (!block.block || block.key.empty()) {
+					continue;
+				}
+				Soundscape scape;
+				scape.name = block.key;
+				scape.file = file;
+				const auto dsp = block.get("dsp");
+				if (!dsp.empty()) {
+					scape.dsp = std::atoi(dsp.c_str());
+				}
+				const std::function<void(const KvNode&)> walk = [&](const KvNode& node) {
+					for (const auto& child : node.children) {
+						if (child.block) {
+							if (iequals(child.key, "playsoundscape")) {
+								const auto name = child.get("name");
+								if (!name.empty()) {
+									scape.includes.push_back(name);
+								}
+							} else {
+								walk(child);
+							}
+						} else if (iequals(child.key, "wave")) {
+							scape.sounds.push_back(stripSoundChars(child.value));
+						} else if (iequals(child.key, "soundname")) {
+							scape.sounds.push_back(child.value);
+						}
+					}
+				};
+				walk(block);
+				out.push_back(std::move(scape));
+			}
+		} catch (const std::exception&) {
+		}
+	}
+	return out;
 }
 
 std::size_t editDistance(std::string_view a, std::string_view b) {

@@ -5,10 +5,12 @@
 
 #include "report.h"
 
+#include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/entity_catalog.h>
 #include <sme/game.h>
 #include <sme/map.h>
+#include <sme/studio_model.h>
 #include <sme/material.h>
 #include <sme/text.h>
 #include <sme/texture.h>
@@ -32,6 +34,7 @@ Usage:
   sme-probe find    GAME PATH                 which mount provides a file
   sme-probe ls      GAME DIR [EXT]            list files, e.g.: ls hl2 materials/concrete .vmt
   sme-probe material GAME NAME                show a material (patch materials resolved)
+  sme-probe model GAME PATH                   load a model (.mdl/.vvd/.vtx): meshes, materials, size, animations
   sme-probe texture GAME NAME OUT.png [--max N]  decode a texture to PNG
   sme-probe fgd FILE.fgd... [--class NAME]    load FGDs, optionally show one class
   sme-probe vmf FILE.vmf                      check a map: load, save again, compare, find broken brushes
@@ -192,6 +195,31 @@ int cmdMaterial(const Args& args) {
 	return 0;
 }
 
+int cmdModel(const Args& args) {
+	const auto discovery = discover(args);
+	const auto game = openGame(discovery, args.positional.at(1));
+	if (!game) {
+		return 1;
+	}
+	const auto& path = args.positional.at(2);
+	std::string error;
+	const auto model = loadModelGeometry(game->files, path, 0, &error);
+	if (!model) {
+		std::cerr << "error: " << error << "\n";
+		return 1;
+	}
+	const Vec3 size = model->bounds.size();
+	std::cout << path << "\n  vertices: " << model->vertices.size() << "\n  triangles: " << model->triangleCount() << "\n  size: " << size.x << " x "
+	          << size.y << " x " << size.z << "\n";
+	for (const auto& mesh : model->meshes) {
+		std::cout << "  mesh: " << mesh.indexCount / 3 << " triangles, material " << mesh.material
+		          << (game->files.exists("materials/" + mesh.material + ".vmt") ? "" : " (missing)") << "\n";
+	}
+	const auto sequences = modelSequences(game->files, path);
+	std::cout << "  animations: " << sequences.size() << "\n";
+	return 0;
+}
+
 int cmdTexture(const Args& args) {
 	const auto discovery = discover(args);
 	const auto game = openGame(discovery, args.positional.at(1));
@@ -321,6 +349,7 @@ int main(int argc, char** argv) {
 		if (command == "find" && need(3)) return cmdFind(args);
 		if (command == "ls" && need(3)) return cmdList(args);
 		if (command == "material" && need(3)) return cmdMaterial(args);
+		if (command == "model" && need(3)) return cmdModel(args);
 		if (command == "texture" && need(4)) return cmdTexture(args);
 		if (command == "fgd" && need(2)) return cmdFgd(args);
 		if (command == "vmf" && need(2)) return cmdVmf(args);

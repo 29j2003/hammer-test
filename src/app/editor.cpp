@@ -2,10 +2,14 @@
 
 #include "editor.h"
 
+#include "model_cache.h"
+
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QSettings>
+
+#include <algorithm>
 
 #include <sme/brush.h>
 #include <sme/text.h>
@@ -28,7 +32,7 @@ QString fromPath(const std::filesystem::path& path) {
 #endif
 }
 
-Editor::Editor(QObject* parent) : QObject(parent) {
+Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<ModelCache>()) {
 	QSettings settings;
 	m_grid = settings.value("editor/grid", 16.0).toDouble();
 	m_textureLock = settings.value("editor/textureLock", true).toBool();
@@ -158,13 +162,26 @@ bool Editor::openGame(const QString& key, QString* error) {
 		return false;
 	}
 	emit gameAboutToChange();
+	m_models->setFileSystem(nullptr, nullptr);
 	m_game = std::move(game);
+	m_models->setFileSystem(&m_game->files, &m_game->entities);
 	QSettings().setValue("editor/game", key);
 	emit gameChanged();
 	emit message(tr("Game: %1 (%2 entity classes, %3 search paths)")
 	                 .arg(QString::fromStdString(m_game->entry.title))
 	                 .arg(m_game->entities.size())
 	                 .arg(m_game->files.mounts().size()));
+	for (const auto& note : entry->notes) {
+		emit message(QString::fromStdString(note));
+	}
+	if (entry->usesMapbase && std::none_of(fgds.begin(), fgds.end(), [](const auto& fgd) { return isMapbaseFgd(fgd); })) {
+		emit message(entry->mapbaseFgd.empty()
+		                 ? tr("Warning: this mod uses Mapbase, but no Mapbase FGD was found - Mapbase entities (env_global_light, ...) are missing. "
+		                      "Add Mapbase's halflife2.fgd in the game settings (⚙).")
+		                 : tr("Warning: this mod uses Mapbase, but its FGD is not loaded - Mapbase entities (env_global_light, ...) are missing. "
+		                      "Add %1 in the game settings (⚙).")
+		                       .arg(fromPath(entry->mapbaseFgd)));
+	}
 	return true;
 }
 
@@ -329,6 +346,13 @@ void Editor::unhideAll() {
 }
 
 void Editor::setTool(Tool tool) {
+	// Face mode is its own tool (like the texture tool in Hammer): picking any other tool
+	// works on whole objects again.
+	if (m_selectMode == SelectMode::Face) {
+		m_tool = tool;
+		setSelectMode(SelectMode::Object);
+		return;
+	}
 	if (m_tool != tool) {
 		m_tool = tool;
 		emit toolChanged();
@@ -340,6 +364,9 @@ void Editor::setSelectMode(SelectMode mode) {
 		return;
 	}
 	m_selectMode = mode;
+	if (mode == SelectMode::Face) {
+		m_tool = Tool::Select;
+	}
 	// Switching modes converts the selection: faces -> their brushes, brushes -> all their faces.
 	Selection converted;
 	if (mode == SelectMode::Object) {

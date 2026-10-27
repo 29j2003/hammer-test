@@ -9,11 +9,13 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 ## Aufbau
 - `src/core/` – Bibliothek `smecore` ohne Qt (Namespace `sme`): Steam/Spiele (`steam`, `game_discovery`, `gameinfo`,
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
-  `assets`), FGD (`entity_catalog`), Karte (`keyvalues`, `map`), Geometrie (`brush`, `math`), Bearbeiten + Undo
+  `assets`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte (`keyvalues`, `map`), Geometrie (`brush`, `math`), Bearbeiten + Undo
   (`editing`, `history`), Prüfungen mit Autofix + Leaks (`checks`).
 - `src/app/` – Qt-6-Editor (`smeapp` + `SourceMapEditor`): `editor` (Zustand, alle Änderungen über `commit()`),
   `viewport` (Kamera, Werkzeuge, Gizmos), `renderer` (OpenGL 3.3, Licht-Vorschau nach VRAD-Formeln), `material_cache`
-  (lädt im Hintergrund), `asset_browser`, `properties_panel` (Smart Edit, NPC-Pose), `panels` (Outliner, Probleme, Log),
+  (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
+  `asset_browser` (Materialien, Modelle), `sound_browser` + `sound_player` (Sounds-Tab, Wiedergabe über Qt Multimedia, optional),
+  `tool_panel` (Werkzeug-Optionen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose), `panels` (Outliner, Probleme, Log),
   `compile` (VBSP/VVIS/VRAD/Spiel), `main_window`, `style`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
 - `tests/` – doctest; `fixture` (künstliche Steam-Installation, keine Valve-Dateien), `demo` (Demo-Inhalte + Demo-Karte),
@@ -35,7 +37,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Nicht im Spiel/auf Windows getestet heißt nicht getestet: im Bericht ausdrücklich so nennen.
 
 ## Befehle
-- Einrichten (Linux): `apt install cmake ninja-build qt6-base-dev libgl1-mesa-dev xvfb` (Cloud: SessionStart-Hook)
+- Einrichten (Linux): `apt install cmake ninja-build qt6-base-dev qt6-multimedia-dev libgl1-mesa-dev xvfb` (Multimedia optional: Sound-Vorschau) (Cloud: SessionStart-Hook)
 - Bauen: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build`
 - Tests: `ctest --test-dir build -LE ui` · UI-Tests: `xvfb-run -a ctest --test-dir build -L ui`
 - Demo: `build/tests/sme-make-fixture demo` dann `build/src/app/SourceMapEditor --steam demo/Steam --game sourcemods/mymod demo/Steam/steamapps/sourcemods/mymod/mapsrc/demo.vmf`

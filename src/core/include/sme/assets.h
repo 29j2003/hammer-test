@@ -53,6 +53,32 @@ struct ModelInfo {
 /// Sound names from all sound scripts listed in scripts/game_sounds_manifest.txt (sorted, unique).
 [[nodiscard]] std::vector<std::string> soundScriptNames(const GameFileSystem& fs);
 
+/// One entry of a sound script ("Weapon_Pistol.Single" { "wave" "weapons/pistol/pistol_fire2.wav" }).
+struct SoundScriptEntry {
+	std::string name;
+	std::string script;                 ///< File it came from ("scripts/game_sounds_weapons.txt")
+	std::string channel;                ///< CHAN_WEAPON, ...
+	std::vector<std::string> waves;     ///< Files below sound/ (sound characters like ")" removed)
+};
+
+/// Every sound script entry (later scripts override earlier ones with the same name, as in the engine).
+[[nodiscard]] std::vector<SoundScriptEntry> soundScripts(const GameFileSystem& fs);
+
+/// A soundscape (env_soundscape "soundscape" key) from scripts/soundscapes_*.txt.
+struct Soundscape {
+	std::string name;                   ///< "d1_canals.util_drips"
+	std::string file;
+	int dsp = -1;
+	std::vector<std::string> sounds;    ///< Waves and sound script names it plays
+	std::vector<std::string> includes;  ///< Other soundscapes it plays (playsoundscape)
+};
+
+/// Soundscapes from scripts/soundscapes_manifest.txt (or every scripts/soundscapes*.txt).
+[[nodiscard]] std::vector<Soundscape> soundscapes(const GameFileSystem& fs);
+
+/// Removes the leading sound characters of a wave name (")weapons/x.wav" -> "weapons/x.wav").
+[[nodiscard]] std::string stripSoundChars(std::string_view wave);
+
 /// Levenshtein distance (case-insensitive), used for "did you mean" fixes.
 [[nodiscard]] std::size_t editDistance(std::string_view a, std::string_view b);
 

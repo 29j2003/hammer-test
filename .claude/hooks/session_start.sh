@@ -9,7 +9,7 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
 fi
 
 need=()
-for pkg in cmake ninja-build qt6-base-dev libgl1-mesa-dev libgl1-mesa-dri xvfb; do
+for pkg in cmake ninja-build qt6-base-dev qt6-multimedia-dev libgl1-mesa-dev libgl1-mesa-dri xvfb; do
   dpkg -s "$pkg" > /dev/null 2>&1 || need+=("$pkg")
 done
 if [ ${#need[@]} -gt 0 ]; then

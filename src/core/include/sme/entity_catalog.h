@@ -12,6 +12,8 @@
 #include <string_view>
 #include <vector>
 
+#include <sme/math.h>
+
 namespace sme {
 
 struct EntityChoice {
@@ -81,11 +83,19 @@ public:
 	[[nodiscard]] std::vector<const EntityClass*> placeable() const;
 
 	[[nodiscard]] std::size_t size() const { return m_classes.size(); }
+
+	/// Model sizes the editor learned (filled once a model is loaded; makes prop boxes fit).
+	void setModelBounds(const std::string& model, const Bounds& bounds) const { m_modelBounds[model] = bounds; }
+	[[nodiscard]] const Bounds* modelBounds(const std::string& model) const {
+		const auto it = m_modelBounds.find(model);
+		return it == m_modelBounds.end() ? nullptr : &it->second;
+	}
 	[[nodiscard]] const std::vector<std::filesystem::path>& files() const { return m_files; }
 
 private:
 	std::map<std::string, EntityClass> m_classes; ///< key: lowercase class name
 	std::vector<std::filesystem::path> m_files;
+	mutable std::map<std::string, Bounds> m_modelBounds;   ///< key: normalized model path
 };
 
 } // namespace sme

@@ -18,6 +18,8 @@
 
 namespace sme::app {
 
+class ModelCache;
+
 /// Settings stored per game/mod (FGDs, compile tools, folders).
 struct GameSettings {
 	QStringList fgds;
@@ -48,6 +50,8 @@ public:
 	[[nodiscard]] GameSettings gameSettings(const QString& key = {}) const;
 	void setGameSettings(const QString& key, const GameSettings& settings);
 	[[nodiscard]] const EntityCatalog* entities() const { return m_game ? &m_game->entities : nullptr; }
+	/// Models of the current game, loaded in the background (shared by all views and previews).
+	[[nodiscard]] ModelCache* models() const { return m_models.get(); }
 
 	// --- Document ------------------------------------------------------------
 	[[nodiscard]] MapDocument& doc() { return m_doc; }
@@ -127,6 +131,7 @@ signals:
 private:
 	DiscoveryResult m_discovery;
 	std::unique_ptr<LoadedGame> m_game;
+	std::unique_ptr<ModelCache> m_models;   ///< After m_game: stops reading before the game goes away
 	QString m_gameKey;
 	MapDocument m_doc;
 	History m_history;

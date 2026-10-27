@@ -6,6 +6,8 @@
 #include "material_cache.h"
 #include "panels.h"
 #include "properties_panel.h"
+#include "sound_browser.h"
+#include "tool_panel.h"
 #include "viewport.h"
 
 #include <QAction>
@@ -17,13 +19,20 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QToolButton>
+#include <QWidgetAction>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
+
+#include <map>
 
 #include <sme/checks.h>
 #include <sme/game.h>
@@ -114,6 +123,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 				m_log->append(QString::fromStdString(problem), QColor(255, 200, 100));
 			}
 		}
+		QTimer::singleShot(0, this, &MainWindow::refreshGames);   // not while its menu action is still running
 		updateTitle();
 	});
 	connect(&m_compiler, &CompileRunner::output, m_log, &LogPanel::append);
@@ -151,19 +161,28 @@ void MainWindow::createDocks() {
 	m_outliner = new Outliner(m_editor);
 	m_problems = new ProblemsPanel(m_editor, m_assets);
 	m_log = new LogPanel;
+	m_toolPanel = new ToolPanel(m_editor);
+	m_sounds = new SoundBrowser(m_editor);
 
+	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::RightDockWidgetArea);
 	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
 	auto* outliner = addDock(tr("Outliner"), m_outliner, Qt::RightDockWidgetArea);
 	auto* problems = addDock(tr("Problems"), m_problems, Qt::RightDockWidgetArea);
 	tabifyDockWidget(outliner, problems);
 	outliner->raise();
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
+	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
+	tabifyDockWidget(assets, sounds);
 	tabifyDockWidget(assets, log);
 	assets->raise();
 	resizeDocks({properties}, {420}, Qt::Horizontal);
-	resizeDocks({properties, outliner}, {600, 300}, Qt::Vertical);
+	resizeDocks({tool, properties, outliner}, {260, 460, 220}, Qt::Vertical);
 	resizeDocks({assets}, {290}, Qt::Vertical);
+	connect(m_toolPanel, &ToolPanel::wantsAttention, this, [tool] {
+		tool->show();
+		tool->raise();
+	});
 }
 
 void MainWindow::raiseDock(const QString& name) {
@@ -269,6 +288,7 @@ void MainWindow::createActions() {
 	tools->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
 	addToolBar(Qt::LeftToolBarArea, tools);
 	m_toolGroup = new QActionGroup(this);
+	m_toolGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);   // none checked in face mode
 	const auto toolAction = [&](const QString& glyph, const QString& name, const QKeySequence& key, Editor::Tool tool) {
 		auto* a = new QAction(glyph + "\n" + name, this);
 		a->setToolTip(QStringLiteral("%1 (%2)").arg(name, key.toString()));
@@ -304,8 +324,9 @@ void MainWindow::createActions() {
 	objects->setShortcuts({QKeySequence("5"), QKeySequence("4")});
 	objects->setChecked(true);
 	connect(m_editor, &Editor::toolChanged, this, [this] {
+		const bool faces = m_editor->selectMode() == Editor::SelectMode::Face;
 		for (auto* a : m_toolGroup->actions()) {
-			a->setChecked(a->data().toInt() == int(m_editor->tool()));
+			a->setChecked(!faces && a->data().toInt() == int(m_editor->tool()));
 		}
 		m_modeGroup->actions()[m_editor->selectMode() == Editor::SelectMode::Face ? 0 : 1]->setChecked(true);
 	});
@@ -315,11 +336,15 @@ void MainWindow::createActions() {
 	top->setObjectName("Main");
 	addToolBar(Qt::TopToolBarArea, top);
 	top->addWidget(new QLabel(tr(" Game ")));
-	m_gameCombo = new QComboBox;
-	m_gameCombo->setMinimumWidth(260);
-	m_gameCombo->setToolTip(tr("Game or mod to edit for (all Source 1 games and mods found on this PC)"));
-	top->addWidget(m_gameCombo);
-	connect(m_gameCombo, &QComboBox::activated, this, [this](int index) { selectGame(m_gameCombo->itemData(index).toString()); });
+	m_gameButton = new QToolButton;
+	m_gameButton->setPopupMode(QToolButton::InstantPopup);
+	m_gameButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+	m_gameButton->setMinimumWidth(260);
+	m_gameButton->setToolTip(tr("Game or mod to edit for (all Source 1 games and mods found on this PC)"));
+	m_gameMenu = new QMenu(m_gameButton);
+	m_gameMenu->setToolTipsVisible(true);
+	m_gameButton->setMenu(m_gameMenu);
+	top->addWidget(m_gameButton);
 	auto* gameSettings = top->addAction(tr("⚙"));
 	gameSettings->setToolTip(tr("Game settings: FGDs, compile tools, game executable"));
 	connect(gameSettings, &QAction::triggered, this, [this] {
@@ -448,28 +473,96 @@ void MainWindow::createActions() {
 }
 
 void MainWindow::refreshGames() {
-	m_gameCombo->clear();
-	for (const auto& game : m_editor->discovery().games) {
-		QString label = QString::fromStdString(game.title);
-		if (game.isSourceMod) label += tr("  (mod)");
-		if (!game.branch.empty()) label += QStringLiteral("  - %1").arg(QString::fromStdString(game.branch));
-		m_gameCombo->addItem(label, QString::fromStdString(game.key()));
-		m_gameCombo->setItemData(m_gameCombo->count() - 1, QString::fromStdString(displayPath(game.gameDir)), Qt::ToolTipRole);
+	// Menu like Steam's library: games grouped by their Steam app, mods grouped by the game they
+	// are based on, and a search field on top that lists every match directly.
+	m_gameMenu->clear();
+	const auto& games = m_editor->discovery().games;
+	if (games.empty()) {
+		m_gameMenu->addAction(tr("No Source games found"))->setEnabled(false);
+		m_gameButton->setText(tr("No Source games found"));
+		return;
 	}
-	if (m_editor->discovery().games.empty()) {
-		m_gameCombo->addItem(tr("No Source games found"));
+	const auto makeAction = [this](QMenu* menu, const GameEntry& game, const QString& text) {
+		auto* action = menu->addAction(text);
+		QString tip = QString::fromStdString(displayPath(game.gameDir));
+		if (!game.branch.empty()) tip += QStringLiteral("\n") + QString::fromStdString(game.branch);
+		action->setToolTip(tip);
+		action->setCheckable(true);
+		action->setChecked(QString::fromStdString(game.key()) == m_editor->gameKey());
+		const QString key = QString::fromStdString(game.key());
+		connect(action, &QAction::triggered, this, [this, key] { selectGame(key); });
+		return action;
+	};
+	const auto entryText = [this](const GameEntry& game) {
+		QString text = QString::fromStdString(game.label);
+		if (game.usesMapbase) text += tr("   [Mapbase]");
+		return text;
+	};
+
+	auto* search = new QLineEdit;
+	search->setPlaceholderText(tr("Search games and mods..."));
+	search->setClearButtonEnabled(true);
+	auto* searchAction = new QWidgetAction(m_gameMenu);
+	searchAction->setDefaultWidget(search);
+	m_gameMenu->addAction(searchAction);
+	QList<QAction*> matches;
+	for (const auto& game : games) {
+		auto* action = makeAction(m_gameMenu, game, entryText(game) + QStringLiteral("   - ") +
+		                                                QString::fromStdString(game.isSourceMod ? "sourcemods/" + game.folder() : game.appName));
+		action->setVisible(false);
+		action->setData(QString::fromStdString(game.label + " " + game.folder() + " " + game.appName + " " + game.branch).toLower());
+		matches.push_back(action);
 	}
+	QList<QAction*> groups;
+	groups.push_back(m_gameMenu->addSection(tr("Steam games")));
+	std::map<std::string, std::vector<const GameEntry*>> byApp, modsByBase;
+	for (const auto& game : games) {
+		(game.isSourceMod ? modsByBase : byApp)[game.appName].push_back(&game);
+	}
+	for (const auto& [app, list] : byApp) {
+		if (list.size() == 1) {
+			groups.push_back(makeAction(m_gameMenu, *list.front(), entryText(*list.front())));
+			continue;
+		}
+		auto* sub = m_gameMenu->addMenu(QString::fromStdString(app.empty() ? "Other" : app));
+		sub->setToolTipsVisible(true);
+		groups.push_back(sub->menuAction());
+		for (const auto* game : list) {
+			makeAction(sub, *game, QStringLiteral("%1   (%2)").arg(QString::fromStdString(game->title), QString::fromStdString(game->folder())));
+		}
+	}
+	if (!modsByBase.empty()) {
+		groups.push_back(m_gameMenu->addSection(tr("Source mods")));
+		for (const auto& [base, list] : modsByBase) {
+			QMenu* target = m_gameMenu;
+			if (modsByBase.size() > 1) {
+				target = m_gameMenu->addMenu(tr("Based on %1").arg(QString::fromStdString(base.empty() ? "unknown game" : base)));
+				target->setToolTipsVisible(true);
+				groups.push_back(target->menuAction());
+			}
+			for (const auto* game : list) {
+				auto* action = makeAction(target, *game, entryText(*game));
+				if (target == m_gameMenu) groups.push_back(action);
+			}
+		}
+	}
+	connect(search, &QLineEdit::textChanged, m_gameMenu, [matches, groups](const QString& text) {
+		const QString needle = text.trimmed().toLower();
+		for (auto* action : groups) action->setVisible(needle.isEmpty());
+		for (auto* action : matches) action->setVisible(!needle.isEmpty() && action->data().toString().contains(needle));
+	});
+	connect(m_gameMenu, &QMenu::aboutToShow, search, [search] {
+		search->clear();
+		QTimer::singleShot(0, search, [search] { search->setFocus(); });
+	});
+	const GameEntry* current = m_editor->gameEntry();
+	m_gameButton->setText(current ? entryText(*current) + QStringLiteral("  ▾") : tr("Choose a game...  ▾"));
 }
 
 void MainWindow::selectGame(const QString& key) {
 	QString error;
 	if (!m_editor->openGame(key, &error)) {
 		m_log->append(error, QColor(255, 110, 110));
-		return;
-	}
-	const int index = m_gameCombo->findData(key);
-	if (index >= 0) {
-		m_gameCombo->setCurrentIndex(index);
 	}
 }
 

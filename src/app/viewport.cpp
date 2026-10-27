@@ -2,6 +2,8 @@
 
 #include "viewport.h"
 
+#include "model_cache.h"
+
 #include <QDragEnterEvent>
 #include <QGuiApplication>
 #include <QOpenGLContext>
@@ -114,6 +116,11 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		m_needsRebuild = true;
 		update();
 	});
+	connect(editor->models(), &ModelCache::modelReady, this, [this] {
+		// Several models finish between two frames: the next paint rebuilds once.
+		m_needsRebuild = true;
+		update();
+	});
 	connect(materials, &MaterialCache::materialReady, this, [this](const QString& name) {
 		m_renderer.materialReady(name);
 		update();
@@ -142,6 +149,7 @@ void Viewport::setCameraKind(Camera::Kind kind) {
 void Viewport::initializeGL() {
 	QString error;
 	m_glReady = m_renderer.initialize(m_materials, &error);
+	m_renderer.setModels(m_editor->models());
 	if (!m_glReady) {
 		m_glError = error;
 		emit statsChanged(tr("OpenGL error: %1").arg(error));
@@ -278,7 +286,11 @@ void Viewport::paintGL() {
 	const bool dragging = m_drag == Drag::Gizmo;
 	m_renderer.setHideSelected(dragging);
 	m_renderer.render(params);
-	if (dragging) {
+	if (dragging && scaling()) {
+		// Brushes are shown scaled with their real texture coordinates (no stretching).
+		m_renderer.drawPreview(params, m_previewModel, false);
+		m_renderer.drawPreviewSolids(params);
+	} else if (dragging) {
 		m_renderer.drawPreview(params, m_previewModel);
 	}
 
@@ -481,7 +493,7 @@ void Viewport::drawOverlay() {
 	}
 	if (m_drag == Drag::BlockHeight) {
 		p.setPen(QColor(255, 200, 80));
-		p.drawText(QRectF(8, height() - 26, width() - 16, 20), tr("Move the mouse to set the height (%1), click or Enter to create, Esc to cancel")
+		p.drawText(QRectF(8, height() - 26, width() - 16, 20), tr("Move the mouse to set the height (%1), click or Enter to create, Esc to cancel, right mouse to look around")
 		                                                             .arg(m_blockBox.size().z));
 	}
 	if (m_drag == Drag::Gizmo && m_editor->tool() == Editor::Tool::Rotate) {
@@ -509,10 +521,11 @@ void Viewport::drawOverlay() {
 void Viewport::moveCamera() {
 	const double dt = std::min(0.1, m_moveClock.nsecsElapsed() / 1e9);
 	m_moveClock.restart();
-	if (m_drag != Drag::Look) {
+	if (!m_looking) {
 		m_moveTimer.stop();
 		return;
 	}
+	applyLook();   // turn with the current cursor position every frame, not only on mouse events
 	QVector3D dir;
 	if (m_keys.contains(Qt::Key_W)) dir += m_camera.forward();
 	if (m_keys.contains(Qt::Key_S)) dir -= m_camera.forward();
@@ -535,7 +548,7 @@ void Viewport::wheelEvent(QWheelEvent* event) {
 		m_camera.zoom = float(std::clamp(m_camera.zoom * std::pow(1.2, steps), 0.005, 64.0));
 		const Vec3 after = viewPlanePoint(event->position());
 		m_camera.position += toQt(before - after);
-	} else if (m_drag == Drag::Look) {
+	} else if (m_looking) {
 		m_flySpeed = float(std::clamp(m_flySpeed * std::pow(1.25, steps), 50.0, 20000.0));
 		emit statsChanged(tr("Fly speed: %1").arg(m_flySpeed, 0, 'f', 0));
 	} else {
@@ -625,13 +638,24 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 	m_pressModifiers = event->modifiers();
 	const auto tool = m_editor->tool();
 
+	if (event->button() == Qt::RightButton && !m_camera.is2D() && !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier))) {
+		// Right mouse always looks around - also while a block is being placed.
+		if (!m_looking) {
+			beginLook(event->position());
+		}
+		return;
+	}
+	if (m_looking) {
+		return;
+	}
 	if (m_drag == Drag::BlockHeight) {
 		if (event->button() == Qt::LeftButton) {
 			createBlockFromDrag();
-		} else {
-			cancelInteraction();
 		}
 		return;
+	}
+	if (m_drag != Drag::None) {
+		return;   // another button pressed during a drag
 	}
 
 	if (event->button() == Qt::RightButton && (event->modifiers() & Qt::ShiftModifier)) {
@@ -646,14 +670,7 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 		return;
 	}
 	if (event->button() == Qt::RightButton) {
-		if (m_camera.is2D()) {
-			m_drag = Drag::Pan;
-		} else {
-			m_drag = Drag::Look;
-			m_moveClock.restart();
-			m_moveTimer.start();
-			setCursor(Qt::BlankCursor);
-		}
+		m_drag = Drag::Pan;   // 2D views
 		return;
 	}
 	if (event->button() == Qt::MiddleButton) {
@@ -715,6 +732,10 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* event) {
+	if (m_looking) {
+		applyLook();
+		return;
+	}
 	const QPointF pos = event->position();
 	const QPointF delta = pos - m_lastPos;
 	m_lastPos = pos;
@@ -725,18 +746,6 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 	}
 
 	switch (m_drag) {
-		case Drag::Look: {
-			m_camera.yaw -= float(delta.x() * 0.2);
-			m_camera.pitch = std::clamp(m_camera.pitch - float(delta.y() * 0.2), -89.f, 89.f);
-			// Keep the cursor in place so the mouse can turn endlessly.
-			const QPoint centerGlobal = mapToGlobal(m_pressPos.toPoint());
-			if (QLineF(pos, m_pressPos).length() > 50) {
-				QCursor::setPos(centerGlobal);
-				m_lastPos = m_pressPos;
-			}
-			update();
-			return;
-		}
 		case Drag::Pan: {
 			if (m_camera.is2D()) {
 				m_camera.position -= m_camera.right() * float(delta.x() / m_camera.zoom) - m_camera.up() * float(delta.y() / m_camera.zoom);
@@ -801,13 +810,14 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 
 void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 	const Drag drag = m_drag;
-	if (event->button() == Qt::RightButton && drag == Drag::Look && !m_flyMode) {
-		m_drag = Drag::None;
-		m_moveTimer.stop();
-		unsetCursor();
-		// A right click without moving opens nothing for now; reserved for a context menu.
+	if (event->button() == Qt::RightButton && m_looking) {
+		if (!m_flyMode) {
+			endLook();
+		}
 		return;
 	}
+	// While looking the cursor is parked: finish with the last position before the look.
+	const QPointF releasePos = m_looking ? m_lastPos : event->position();
 	if (drag == Drag::Pan || drag == Drag::Orbit) {
 		m_drag = Drag::None;
 		return;
@@ -825,7 +835,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 			finishGizmoDrag(m_pressModifiers & Qt::ShiftModifier);
 			break;
 		case Drag::BlockBase: {
-			updateBlockDrag(event->position());
+			updateBlockDrag(releasePos);
 			const Vec3 size = m_blockBox.size();
 			if (m_camera.is2D()) {
 				m_drag = Drag::None;
@@ -844,8 +854,8 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 		}
 		case Drag::Marquee: {
 			m_drag = Drag::None;
-			if (QLineF(m_pressPos, event->position()).length() < 4) {
-				clickSelect(event->position(), event->modifiers());
+			if (QLineF(m_pressPos, releasePos).length() < 4) {
+				clickSelect(releasePos, event->modifiers());
 			} else {
 				marqueeSelect(m_marquee, event->modifiers());
 			}
@@ -1001,7 +1011,10 @@ void Viewport::marqueeSelect(const QRectF& rect, Qt::KeyboardModifiers modifiers
 }
 
 void Viewport::placeEntity(const QPointF& pos) {
-	const std::string classname = m_editor->currentEntityClass().toStdString();
+	placeEntityAt(pos, m_editor->currentEntityClass().toStdString());
+}
+
+void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys) {
 	const auto* catalog = m_editor->entities();
 	const EntityClass* definition = catalog ? catalog->find(classname) : nullptr;
 	if (definition && definition->isSolid()) {
@@ -1011,6 +1024,9 @@ void Viewport::placeEntity(const QPointF& pos) {
 	// Size of the entity box relative to its origin.
 	Entity probe;
 	probe.set("classname", classname);
+	for (const auto& [key, value] : keys) {
+		probe.set(key, value);
+	}
 	probe.setOrigin({0, 0, 0});
 	const Bounds local = edit::entityBounds(probe, catalog);
 	const double grid = m_editor->snapGrid();
@@ -1040,7 +1056,7 @@ void Viewport::placeEntity(const QPointF& pos) {
 		// Push the box out of the surface so it rests on it.
 		origin[axis] = point[axis] - (normal[axis] > 0 ? local.min[axis] : local.max[axis]);
 	}
-	auto [change, id] = edit::placeEntity(m_editor->doc(), classname, origin, definition);
+	auto [change, id] = edit::placeEntity(m_editor->doc(), classname, origin, definition, keys);
 	m_editor->commit(std::move(change));
 	Selection selection;
 	selection.entities.push_back(id);
@@ -1134,6 +1150,26 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		} else {
 			m_dragNewBounds.min[axis] = std::min(m_dragBounds.max[axis] - minimumSize, snap(m_dragBounds.min[axis] + t, grid));
 		}
+		if (!(m_previewBounds.min == m_dragNewBounds.min && m_previewBounds.max == m_dragNewBounds.max)) {
+			m_previewBounds = m_dragNewBounds;
+			std::vector<Solid> solids;
+			const auto add = [&](const Solid& solid) {
+				Solid copy = solid;
+				if (scaleSolid(copy, m_dragBounds, m_dragNewBounds) && isConvexValid(copy)) {
+					solids.push_back(std::move(copy));
+				}
+			};
+			const auto& doc = m_editor->doc();
+			for (const auto& ref : m_editor->selection().solids) {
+				if (const auto* solid = doc.findSolid(ref)) add(*solid);
+			}
+			for (const int id : m_editor->selection().entities) {
+				if (const auto* entity = doc.findEntity(id)) {
+					for (const auto& solid : entity->solids) add(solid);
+				}
+			}
+			setPreviewSolids(solids);
+		}
 		const Vec3 from = m_dragBounds.size(), to = m_dragNewBounds.size();
 		m_previewModel.translate(toQt(m_dragNewBounds.min));
 		m_previewModel.scale(float(to.x / std::max(from.x, 1e-6)), float(to.y / std::max(from.y, 1e-6)), float(to.z / std::max(from.z, 1e-6)));
@@ -1145,8 +1181,23 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 	update();
 }
 
+bool Viewport::scaling() const {
+	return m_drag == Drag::Gizmo && m_dragHandle >= Handle::ScaleMinX && m_dragHandle <= Handle::ScaleMaxZ;
+}
+
+void Viewport::setPreviewSolids(const std::vector<Solid>& solids) {
+	if (!m_glReady) {
+		return;
+	}
+	makeCurrent();
+	m_renderer.setPreviewSolids(solids);
+	doneCurrent();
+}
+
 void Viewport::finishGizmoDrag(bool clone) {
 	const auto handle = m_dragHandle;
+	m_previewBounds = {};
+	setPreviewSolids({});
 	m_drag = Drag::None;
 	m_dragHandle = Handle::None;
 	auto& doc = m_editor->doc();
@@ -1222,7 +1273,7 @@ void Viewport::createBlockFromDrag() {
 
 bool Viewport::event(QEvent* event) {
 	// While looking around, letter keys fly the camera instead of switching tools.
-	if (event->type() == QEvent::ShortcutOverride && m_drag == Drag::Look) {
+	if (event->type() == QEvent::ShortcutOverride && m_looking) {
 		event->accept();
 		return true;
 	}
@@ -1250,22 +1301,64 @@ void Viewport::toggleFlyMode() {
 	}
 	m_flyMode = !m_flyMode;
 	if (m_flyMode) {
-		m_drag = Drag::Look;
-		m_pressPos = m_lastPos = QPointF(width() / 2.0, height() / 2.0);
-		QCursor::setPos(mapToGlobal(m_pressPos.toPoint()));
-		m_moveClock.restart();
-		m_moveTimer.start();
-		setCursor(Qt::BlankCursor);
+		const QPointF center(width() / 2.0, height() / 2.0);
+		QCursor::setPos(mapToGlobal(center.toPoint()));
+		beginLook(center);
 	} else {
-		cancelInteraction();
+		endLook();
 	}
 }
 
-void Viewport::cancelInteraction() {
+void Viewport::beginLook(const QPointF& anchor) {
+	m_looking = true;
+	m_lookAnchor = mapToGlobal(anchor.toPoint());
+	m_lookLast = QCursor::pos();
+	m_lookTravel = 0;
+	m_moveClock.restart();
+	m_moveTimer.start();
+	setCursor(Qt::BlankCursor);
+	grabMouse();
+}
+
+void Viewport::endLook() {
+	if (!m_looking) {
+		return;
+	}
+	m_looking = false;
 	m_flyMode = false;
-	if (m_drag == Drag::Look) {
-		m_moveTimer.stop();
-		unsetCursor();
+	m_moveTimer.stop();
+	releaseMouse();
+	unsetCursor();
+	QCursor::setPos(m_lookAnchor);
+	update();
+}
+
+void Viewport::applyLook() {
+	// Always measured from the real cursor position (not from queued mouse events): events that
+	// were already queued when the cursor was warped back would otherwise turn the camera twice
+	// and make it jump.
+	const QPoint now = QCursor::pos();
+	const QPoint delta = now - m_lookLast;
+	m_lookLast = now;
+	if (delta.isNull()) {
+		return;
+	}
+	m_lookTravel += delta.manhattanLength();
+	m_camera.yaw -= float(delta.x() * 0.2);
+	m_camera.pitch = std::clamp(m_camera.pitch - float(delta.y() * 0.2), -89.f, 89.f);
+	// Park the cursor again before it reaches the screen edge so turning never stops.
+	if ((now - m_lookAnchor).manhattanLength() > 64) {
+		QCursor::setPos(m_lookAnchor);
+		m_lookLast = QCursor::pos();   // where it really is (warping is not possible everywhere)
+	}
+	update();
+}
+
+void Viewport::cancelInteraction() {
+	endLook();
+	if (scaling()) {
+		m_previewBounds = {};
+		setPreviewSolids({});
 	}
 	m_drag = Drag::None;
 	m_dragHandle = Handle::None;
@@ -1289,9 +1382,9 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
 		toggleFlyMode();
 		return;
 	}
-	if (m_drag == Drag::Look) {
+	if (m_looking) {
 		if (event->key() == Qt::Key_Escape) {
-			cancelInteraction();
+			endLook();
 		}
 		return; // WASD/QE fly while looking; tool shortcuts are off
 	}
@@ -1319,17 +1412,18 @@ void Viewport::keyReleaseEvent(QKeyEvent* event) {
 
 void Viewport::focusOutEvent(QFocusEvent* event) {
 	m_keys.clear();
-	if (m_drag == Drag::Look) {
-		cancelInteraction();
-	}
+	endLook();
 	QOpenGLWidget::focusOutEvent(event);
 }
 
 // --- Drag and drop from the asset browser -------------------------------------------
 
 void Viewport::dragEnterEvent(QDragEnterEvent* event) {
-	if (event->mimeData()->hasFormat("application/x-sme-material") || event->mimeData()->hasFormat("application/x-sme-entity")) {
-		event->acceptProposedAction();
+	for (const char* format : {"application/x-sme-material", "application/x-sme-entity", "application/x-sme-model", "application/x-sme-sound"}) {
+		if (event->mimeData()->hasFormat(format)) {
+			event->acceptProposedAction();
+			return;
+		}
 	}
 }
 
@@ -1353,6 +1447,24 @@ void Viewport::dropEvent(QDropEvent* event) {
 	if (mime->hasFormat("application/x-sme-entity")) {
 		m_editor->setCurrentEntityClass(QString::fromUtf8(mime->data("application/x-sme-entity")));
 		placeEntity(event->position());
+		event->acceptProposedAction();
+		return;
+	}
+	if (mime->hasFormat("application/x-sme-model")) {
+		// A model becomes a prop_static standing on the surface (change the class in Object Properties).
+		placeEntityAt(event->position(), "prop_static", {{"model", QString::fromUtf8(mime->data("application/x-sme-model")).toStdString()}});
+		event->acceptProposedAction();
+		return;
+	}
+	if (mime->hasFormat("application/x-sme-sound")) {
+		// "<kind>:<name>" from the Sounds tab: 3 = soundscape, otherwise a sound.
+		const QString payload = QString::fromUtf8(mime->data("application/x-sme-sound"));
+		const QString name = payload.section(':', 1);
+		if (payload.section(':', 0, 0).toInt() == 3) {
+			placeEntityAt(event->position(), "env_soundscape", {{"soundscape", name.toStdString()}});
+		} else {
+			placeEntityAt(event->position(), "ambient_generic", {{"message", name.toStdString()}});
+		}
 		event->acceptProposedAction();
 		return;
 	}

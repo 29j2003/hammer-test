@@ -6,9 +6,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <tuple>
 
 #include <sme/brush.h>
+#include <sme/studio_model.h>
 #include <sme/text.h>
+
+#include "model_cache.h"
 
 namespace sme::app {
 
@@ -36,14 +41,15 @@ uniform vec2 u_texSize;
 uniform usampler2D u_flags;
 uniform int u_hideSelected;
 uniform int u_onlySelected;
+uniform int u_faceOverride;    // models: one flag slot for the whole instance (-1: per vertex, -2: no flags)
 out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_uvw;
 flat out uint v_flag;
 void main() {
-	int id = int(a_face + 0.5);
-	uint f = texelFetch(u_flags, ivec2(id % 4096, id / 4096), 0).r;
+	int id = u_faceOverride >= 0 ? u_faceOverride : int(a_face + 0.5);
+	uint f = u_faceOverride == -2 ? 0u : texelFetch(u_flags, ivec2(id % 4096, id / 4096), 0).r;
 	v_flag = f;
 	vec4 world = u_model * vec4(a_pos, 1.0);
 	v_world = world.xyz;
@@ -82,6 +88,7 @@ uniform vec4 u_lightColor[64];
 uniform vec4 u_lightSpot[64];
 uniform vec4 u_lightSpot2[64];
 uniform int u_previewTint;
+uniform vec4 u_flatColor;      // a > 0: one color (models in wireframe and 2D views)
 out vec4 fragColor;
 
 vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
@@ -99,6 +106,11 @@ void main() {
 		}
 	}
 	if (u_alphaTest == 1 && base.a < 0.5) discard;
+	if (u_flatColor.a > 0.0) {
+		vec3 lineColor = (v_flag & 1u) != 0u ? vec3(1.0, 0.25, 0.15) : u_flatColor.rgb;
+		fragColor = vec4(lineColor, 1.0);
+		return;
+	}
 	vec3 n = normalize(v_normal);
 	vec3 color;
 	if (u_mode == 1 || u_fullbright == 1) {
@@ -156,10 +168,11 @@ uniform mat4 u_model;
 uniform usampler2D u_flags;
 uniform int u_onlySelected;
 uniform int u_hideSelected;
+uniform int u_noFlags;         // live previews: drawn as they are
 out vec4 v_color;
 void main() {
 	int id = int(a_face + 0.5);
-	uint f = texelFetch(u_flags, ivec2(id % 4096, id / 4096), 0).r;
+	uint f = u_noFlags == 1 ? 1u : texelFetch(u_flags, ivec2(id % 4096, id / 4096), 0).r;
 	bool selected = (f & 1u) != 0u;
 	v_color = selected ? vec4(1.0, 0.25, 0.15, 1.0) : vec4(a_color, 1.0);
 	gl_Position = u_viewProj * u_model * vec4(a_pos, 1.0);
@@ -315,6 +328,30 @@ bool SceneRenderer::initialize(MaterialCache* materials, QString* error) {
 	glEnableVertexAttribArray(2);
 	glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, edgeStride, reinterpret_cast<void*>(6 * sizeof(float)));
 
+	// Preview brushes use the same layouts.
+	for (auto [vao, vbo, edgesLayout] : {std::tuple{&m_previewVao, &m_previewVbo, false}, std::tuple{&m_previewEdgeVao, &m_previewEdgeVbo, true}}) {
+		glGenVertexArrays(1, vao);
+		glGenBuffers(1, vbo);
+		glBindVertexArray(*vao);
+		glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+		if (edgesLayout) {
+			glEnableVertexAttribArray(0);
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, edgeStride, reinterpret_cast<void*>(0));
+			glEnableVertexAttribArray(1);
+			glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, edgeStride, reinterpret_cast<void*>(3 * sizeof(float)));
+			glEnableVertexAttribArray(2);
+			glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, edgeStride, reinterpret_cast<void*>(6 * sizeof(float)));
+		} else {
+			for (GLuint i = 0; i < 4; ++i) {
+				glEnableVertexAttribArray(i);
+			}
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
+			glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(3 * sizeof(float)));
+			glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(6 * sizeof(float)));
+			glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(9 * sizeof(float)));
+		}
+	}
+
 	glGenVertexArrays(1, &m_lineVao);
 	glGenBuffers(1, &m_lineVbo);
 	glBindVertexArray(m_lineVao);
@@ -348,11 +385,21 @@ void SceneRenderer::release() {
 		if (tex.id2) glDeleteTextures(1, &tex.id2);
 	}
 	m_textures.clear();
+	for (auto& model : m_gpuModels) {
+		glDeleteBuffers(1, &model.vbo);
+		glDeleteBuffers(1, &model.ibo);
+		glDeleteVertexArrays(1, &model.vao);
+	}
+	m_gpuModels.clear();
 	glDeleteTextures(1, &m_flagTexture);
 	glDeleteTextures(1, &m_whiteTexture);
 	glDeleteBuffers(1, &m_vbo);
 	glDeleteBuffers(1, &m_edgeVbo);
 	glDeleteBuffers(1, &m_lineVbo);
+	glDeleteBuffers(1, &m_previewVbo);
+	glDeleteBuffers(1, &m_previewEdgeVbo);
+	glDeleteVertexArrays(1, &m_previewVao);
+	glDeleteVertexArrays(1, &m_previewEdgeVao);
 	glDeleteVertexArrays(1, &m_vao);
 	glDeleteVertexArrays(1, &m_edgeVao);
 	glDeleteVertexArrays(1, &m_lineVao);
@@ -385,6 +432,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_faceToSide.clear();
 	m_sceneBounds = {};
 	m_triangleCount = 0;
+	m_modelInstances.clear();
 	int faceIndex = 0;
 
 	std::vector<int> faceVertexOffset;   // per face: vertex offset within its material list
@@ -521,8 +569,31 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			color = parseColor255(entity.get("_light"));   // lights show their own color
 		}
 		const auto box = edit::entityBounds(entity, catalog);
-		boxes.push_back({entity.id, box, color});
 		m_sceneBounds.add(box);
+		// Loaded model: drawn with its own triangles; picked by its (turned) box.
+		const auto modelPath = QString::fromStdString(edit::entityModel(entity, catalog));
+		const auto geometry = m_models && !modelPath.isEmpty() ? m_models->get(modelPath) : nullptr;
+		if (geometry && !geometry->empty()) {
+			Vec3 angles;
+			(void)parseVec3(entity.get("angles", "0 0 0"), angles);
+			const Mat3 r = edit::anglesToMatrix(angles);
+			const Vec3 o = entity.origin();
+			ModelInstance instance;
+			instance.path = modelPath;
+			instance.transform = QMatrix4x4(float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2]), float(o.x), float(r.m[1][0]), float(r.m[1][1]),
+			                                float(r.m[1][2]), float(o.y), float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2]), float(o.z), 0, 0, 0, 1);
+			instance.face = faceIndex++;
+			m_entityFaces[entity.id].push_back(instance.face);
+			m_faceToSide.emplace_back(SolidRef{entity.id, 0}, 0);
+			m_modelInstances.push_back(std::move(instance));
+			m_triangleCount += geometry->triangleCount();
+			PickItem pick;
+			pick.entityId = entity.id;
+			pick.bounds = box;
+			m_pickItems.push_back(std::move(pick));
+		} else {
+			boxes.push_back({entity.id, box, color});
+		}
 
 		// Lights for the lighting preview.
 		if (classname == "light" || classname == "light_spot") {
@@ -665,7 +736,7 @@ void SceneRenderer::setSelection(const MapDocument& doc, const Selection& select
 		for (const int face : faces) {
 			if (face >= 0 && static_cast<std::size_t>(face) < m_flags.size()) {
 				m_flags[static_cast<std::size_t>(face)] |= flag;
-				if (flag == FLAG_SELECTED && static_cast<std::size_t>(face) < m_rangesByFace.size()) {
+				if (flag == FLAG_SELECTED && static_cast<std::size_t>(face) < m_rangesByFace.size() && m_rangesByFace[static_cast<std::size_t>(face)].second > 0) {
 					m_selectedRanges.push_back(m_rangesByFace[static_cast<std::size_t>(face)]);
 				}
 			}
@@ -820,6 +891,17 @@ void SceneRenderer::render(const Params& params) {
 		glEnable(GL_DEPTH_TEST);
 		m_drawCalls += 2;
 		glBindVertexArray(0);
+		if (!m_modelInstances.empty()) {
+			m_program->bind();
+			setCommonUniforms(*m_program, params, QMatrix4x4());
+			m_program->setUniformValue("u_hideSelected", m_hideSelected ? 1 : 0);
+			m_program->setUniformValue("u_onlySelected", 0);
+			if (params.mode == Mode::Flat2D) {
+				glDisable(GL_DEPTH_TEST);
+			}
+			drawModels(*m_program, true, nullptr);
+			glEnable(GL_DEPTH_TEST);
+		}
 		return;
 	}
 
@@ -866,7 +948,12 @@ void SceneRenderer::render(const Params& params) {
 	glFrontFace(GL_CCW);
 	glDisable(GL_BLEND);
 	m_program->setUniformValue("u_useColor", 0);
+	m_program->setUniformValue("u_faceOverride", -1);
+	m_program->setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
 	drawBatches(*m_program, params, false);
+	drawModels(*m_program, false, nullptr);
+	glBindVertexArray(m_vao);
+	glEnable(GL_CULL_FACE);
 
 	// Entity boxes (flat colored).
 	if (m_entityCount > 0) {
@@ -901,11 +988,49 @@ void SceneRenderer::render(const Params& params) {
 	glBindVertexArray(0);
 }
 
-void SceneRenderer::drawPreview(const Params& params, const QMatrix4x4& model) {
-	if (!m_initialized || m_selectedRanges.empty()) {
+void SceneRenderer::drawPreview(const Params& params, const QMatrix4x4& model, bool brushes) {
+	if (!m_initialized) {
 		return;
 	}
 	glEnable(GL_DEPTH_TEST);
+	if (!m_modelInstances.empty()) {
+		const bool flat = params.mode == Mode::Wireframe || params.mode == Mode::Flat2D;
+		m_program->bind();
+		setCommonUniforms(*m_program, params, QMatrix4x4());
+		m_program->setUniformValue("u_hideSelected", 0);
+		m_program->setUniformValue("u_onlySelected", 1);
+		m_program->setUniformValue("u_previewTint", 1);
+		m_program->setUniformValue("u_mode", 1);
+		drawModels(*m_program, flat, &model);
+		m_program->setUniformValue("u_previewTint", 0);
+		m_program->setUniformValue("u_onlySelected", 0);
+	}
+	if (m_selectedRanges.empty()) {
+		return;
+	}
+	if (!brushes) {
+		// Only the point entity boxes (they follow the matrix; brushes come from setPreviewSolids).
+		m_program->bind();
+		setCommonUniforms(*m_program, params, model);
+		m_program->setUniformValue("u_hideSelected", 0);
+		m_program->setUniformValue("u_onlySelected", 1);
+		m_program->setUniformValue("u_previewTint", 1);
+		m_program->setUniformValue("u_faceOverride", -1);
+		m_program->setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
+		m_program->setUniformValue("u_useColor", 1);
+		m_program->setUniformValue("u_mode", 1);
+		glBindVertexArray(m_vao);
+		for (const auto& [first, count] : m_selectedRanges) {
+			if (first >= m_entityFirst) {
+				glDrawArrays(GL_TRIANGLES, first, count);
+			}
+		}
+		m_program->setUniformValue("u_previewTint", 0);
+		m_program->setUniformValue("u_onlySelected", 0);
+		m_program->setUniformValue("u_useColor", 0);
+		glBindVertexArray(0);
+		return;
+	}
 	if (params.mode == Mode::Wireframe || params.mode == Mode::Flat2D) {
 		m_edgeProgram->bind();
 		setCommonUniforms(*m_edgeProgram, params, model);
@@ -924,6 +1049,8 @@ void SceneRenderer::drawPreview(const Params& params, const QMatrix4x4& model) {
 	m_program->setUniformValue("u_onlySelected", 1);
 	m_program->setUniformValue("u_previewTint", 1);
 	m_program->setUniformValue("u_mode", 1);
+	m_program->setUniformValue("u_faceOverride", -1);
+	m_program->setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
 	glBindVertexArray(m_vao);
 	// Draw selected faces material by material.
 	for (const auto& batch : m_batches) {
@@ -948,6 +1075,176 @@ void SceneRenderer::drawPreview(const Params& params, const QMatrix4x4& model) {
 	m_program->setUniformValue("u_previewTint", 0);
 	m_program->setUniformValue("u_onlySelected", 0);
 	glBindVertexArray(0);
+}
+
+void SceneRenderer::setPreviewSolids(const std::vector<Solid>& solids) {
+	m_previewBatches.clear();
+	m_previewEdgeCount = 0;
+	if (!m_initialized) {
+		return;
+	}
+	std::map<QString, std::vector<float>> byMaterial;
+	std::vector<float> edges;
+	const QVector3D edgeColor(1.0f, 0.65f, 0.2f);
+	for (const auto& solid : solids) {
+		const auto geometry = buildBrushGeometry(solid);
+		for (const auto& face : geometry.faces) {
+			const Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
+			auto& vertices = byMaterial[normalizedMaterialName(QString::fromStdString(side.material))];
+			for (std::size_t i = 1; i + 1 < face.vertices.size(); ++i) {
+				for (const auto* v : {&face.vertices[0], &face.vertices[i], &face.vertices[i + 1]}) {
+					const auto tc = textureCoordinate(side, *v);
+					pushVertex(vertices, *v, face.normal, float(tc.u), float(tc.v), 0.f, 0);
+				}
+			}
+			for (std::size_t i = 0; i < face.vertices.size(); ++i) {
+				pushEdge(edges, face.vertices[i], face.vertices[(i + 1) % face.vertices.size()], edgeColor, 0);
+			}
+		}
+	}
+	std::vector<float> all;
+	for (auto& [material, vertices] : byMaterial) {
+		Batch batch;
+		batch.material = material;
+		batch.first = static_cast<GLint>(all.size() / FLOATS_PER_VERTEX);
+		batch.count = static_cast<GLsizei>(vertices.size() / FLOATS_PER_VERTEX);
+		all.insert(all.end(), vertices.begin(), vertices.end());
+		m_previewBatches.push_back(batch);
+		texture(material);
+	}
+	glBindBuffer(GL_ARRAY_BUFFER, m_previewVbo);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(all.size() * sizeof(float)), all.data(), GL_DYNAMIC_DRAW);
+	glBindBuffer(GL_ARRAY_BUFFER, m_previewEdgeVbo);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(edges.size() * sizeof(float)), edges.data(), GL_DYNAMIC_DRAW);
+	m_previewEdgeCount = static_cast<GLsizei>(edges.size() / FLOATS_PER_EDGE);
+}
+
+void SceneRenderer::drawPreviewSolids(const Params& params) {
+	if (!m_initialized || m_previewEdgeCount == 0) {
+		return;
+	}
+	glEnable(GL_DEPTH_TEST);
+	if (params.mode != Mode::Wireframe && params.mode != Mode::Flat2D) {
+		m_program->bind();
+		setCommonUniforms(*m_program, params, QMatrix4x4());
+		m_program->setUniformValue("u_hideSelected", 0);
+		m_program->setUniformValue("u_onlySelected", 0);
+		m_program->setUniformValue("u_faceOverride", -2);
+		m_program->setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
+		m_program->setUniformValue("u_previewTint", 1);
+		m_program->setUniformValue("u_useColor", 0);
+		m_program->setUniformValue("u_hasTex2", 0);
+		m_program->setUniformValue("u_alphaTest", 0);
+		m_program->setUniformValue("u_fullbright", 0);
+		m_program->setUniformValue("u_opacity", 1.f);
+		m_program->setUniformValue("u_mode", params.mode == Mode::Lit ? 0 : 1);
+		glBindVertexArray(m_previewVao);
+		for (const auto& batch : m_previewBatches) {
+			auto& tex = texture(batch.material);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
+			m_program->setUniformValue("u_texSize", QVector2D(float(tex.size.width()), float(tex.size.height())));
+			glDrawArrays(GL_TRIANGLES, batch.first, batch.count);
+		}
+		m_program->setUniformValue("u_previewTint", 0);
+		m_program->setUniformValue("u_faceOverride", -1);
+	}
+	m_edgeProgram->bind();
+	setCommonUniforms(*m_edgeProgram, params, QMatrix4x4());
+	m_edgeProgram->setUniformValue("u_noFlags", 1);
+	m_edgeProgram->setUniformValue("u_onlySelected", 0);
+	m_edgeProgram->setUniformValue("u_hideSelected", 0);
+	glBindVertexArray(m_previewEdgeVao);
+	glDisable(GL_DEPTH_TEST);
+	glDrawArrays(GL_LINES, 0, m_previewEdgeCount);
+	glEnable(GL_DEPTH_TEST);
+	m_edgeProgram->setUniformValue("u_noFlags", 0);
+	glBindVertexArray(0);
+}
+
+SceneRenderer::GpuModel* SceneRenderer::gpuModel(const QString& path) {
+	if (auto it = m_gpuModels.find(path); it != m_gpuModels.end()) {
+		return &*it;
+	}
+	const auto geometry = m_models ? m_models->get(path) : nullptr;
+	if (!geometry) {
+		return nullptr;
+	}
+	// Same vertex layout as the brushes: position, normal, uv (0..1, texture size 1) and face 0.
+	std::vector<float> vertices;
+	vertices.reserve(geometry->vertices.size() * FLOATS_PER_VERTEX);
+	for (const auto& v : geometry->vertices) {
+		vertices.insert(vertices.end(), {v.position[0], v.position[1], v.position[2], v.normal[0], v.normal[1], v.normal[2], v.uv[0], v.uv[1], 0.f, 0.f});
+	}
+	GpuModel model;
+	glGenVertexArrays(1, &model.vao);
+	glGenBuffers(1, &model.vbo);
+	glGenBuffers(1, &model.ibo);
+	glBindVertexArray(model.vao);
+	glBindBuffer(GL_ARRAY_BUFFER, model.vbo);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(float)), vertices.data(), GL_STATIC_DRAW);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model.ibo);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(geometry->indices.size() * sizeof(std::uint32_t)), geometry->indices.data(), GL_STATIC_DRAW);
+	const GLsizei stride = FLOATS_PER_VERTEX * sizeof(float);
+	for (GLuint i = 0; i < 4; ++i) {
+		glEnableVertexAttribArray(i);
+	}
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(3 * sizeof(float)));
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(6 * sizeof(float)));
+	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(9 * sizeof(float)));
+	glBindVertexArray(0);
+	for (const auto& mesh : geometry->meshes) {
+		model.meshes.push_back({normalizedMaterialName(QString::fromStdString(mesh.material)), mesh.firstIndex, static_cast<GLsizei>(mesh.indexCount)});
+	}
+	return &*m_gpuModels.insert(path, std::move(model));
+}
+
+void SceneRenderer::drawModels(QOpenGLShaderProgram& program, bool flat, const QMatrix4x4* preview) {
+	if (m_modelInstances.empty()) {
+		return;
+	}
+	glDisable(GL_CULL_FACE);   // models keep the winding of their files
+	program.setUniformValue("u_useColor", 0);
+	program.setUniformValue("u_hasTex2", 0);
+	program.setUniformValue("u_fullbright", 0);
+	program.setUniformValue("u_opacity", 1.f);
+	program.setUniformValue("u_texSize", QVector2D(1, 1));
+	program.setUniformValue("u_alphaTest", 0);
+	program.setUniformValue("u_flatColor", flat ? QVector4D(0.85f, 0.75f, 1.0f, 1) : QVector4D(0, 0, 0, 0));
+	if (flat) {
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+	}
+	for (const auto& instance : m_modelInstances) {
+		if (preview && !(m_flags[static_cast<std::size_t>(instance.face)] & FLAG_SELECTED)) {
+			continue;
+		}
+		auto* model = gpuModel(instance.path);
+		if (!model) {
+			continue;
+		}
+		program.setUniformValue("u_model", preview ? *preview * instance.transform : instance.transform);
+		program.setUniformValue("u_faceOverride", instance.face);
+		glBindVertexArray(model->vao);
+		for (const auto& mesh : model->meshes) {
+			if (!flat) {
+				auto& tex = texture(mesh.material);
+				glActiveTexture(GL_TEXTURE0);
+				glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
+				program.setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
+			}
+			glDrawElements(GL_TRIANGLES, mesh.count, GL_UNSIGNED_INT, reinterpret_cast<void*>(static_cast<std::uintptr_t>(mesh.first) * sizeof(std::uint32_t)));
+			++m_drawCalls;
+		}
+	}
+	if (flat) {
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	}
+	glBindVertexArray(0);
+	program.setUniformValue("u_model", QMatrix4x4());
+	program.setUniformValue("u_faceOverride", -1);
+	program.setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
+	program.setUniformValue("u_alphaTest", 0);
 }
 
 void SceneRenderer::drawLines(const std::vector<LineVertex>& lines, const QMatrix4x4& viewProjection, bool onTop, float width) {

@@ -8,6 +8,12 @@
 #include "fixture.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QMenu>
+#include <QMimeData>
+#include <QListView>
+#include <QPixmap>
+#include <QTreeWidget>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
@@ -17,10 +23,14 @@
 
 #include <sme/brush.h>
 
+#include <functional>
+
 #include "asset_browser.h"
 #include "editor.h"
 #include "main_window.h"
 #include "panels.h"
+#include "sound_browser.h"
+#include "tool_panel.h"
 #include "viewport.h"
 
 using namespace sme;
@@ -71,6 +81,26 @@ TEST_CASE("editing with the mouse in the real window") {
 	editor.setGrid(16);
 	settle();
 
+	{
+		// Game menu: every game and mod has its own name; mods based on several games are grouped.
+		settle();
+		QStringList names;
+		const std::function<void(QMenu*)> collect = [&](QMenu* menu) {
+			for (auto* action : menu->actions()) {
+				if (action->menu()) {
+					collect(action->menu());
+				} else if (action->isCheckable() && action->isVisible()) {
+					names << action->text();
+				}
+			}
+		};
+		collect(window.gameMenu());
+		CHECK(names.size() == int(editor.discovery().games.size()));
+		CHECK(names.removeDuplicates() == 0);
+		CHECK(names.filter("[Mapbase]").size() >= 1);
+		window.gameMenu()->grab().save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/game_menu.png");
+	}
+
 	Viewport* view = window.view3D();
 	auto& camera = view->camera();
 	camera.position = QVector3D(0, -700, 500);
@@ -84,7 +114,27 @@ TEST_CASE("editing with the mouse in the real window") {
 	QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {-64, -64, 0}));
 	QTest::mouseMove(view, screen(view, {64, 64, 0}));
 	QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {64, 64, 0}));
+	{
+		// Right mouse during the block tool looks around without cancelling the block.
+		const QPoint anchor = screen(view, {0, 0, 64});
+		QCursor::setPos(view->mapToGlobal(anchor));
+		QTest::mousePress(view, Qt::RightButton, {}, anchor);
+		QCursor::setPos(view->mapToGlobal(anchor + QPoint(30, 0)));
+		QTest::mouseMove(view, anchor + QPoint(30, 0));
+		settle();
+		QTest::mouseRelease(view, Qt::RightButton, {}, anchor + QPoint(30, 0));
+		settle();
+		// Only where the window system lets programs move the cursor (not Wayland).
+		if (QCursor::pos() == view->mapToGlobal(anchor)) {
+			CHECK(camera.yaw == doctest::Approx(90 - 30 * 0.2));
+		}
+		camera.yaw = 90;
+		camera.pitch = -35;
+		view->update();
+		settle();
+	}
 	QTest::mouseMove(view, screen(view, {0, 0, 128}));
+	settle();
 	QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {0, 0, 128}));
 	QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {0, 0, 128}));
 	settle();
@@ -132,6 +182,33 @@ TEST_CASE("editing with the mouse in the real window") {
 	editor.undo();
 	CHECK(editor.doc().world.solids.size() == 1);
 
+	// Scale: drag the +X handle; the texture keeps its scale (no stretching).
+	{
+		sme::Selection only;
+		only.solids.push_back(block);
+		editor.setSelection(only);
+		editor.setTool(Editor::Tool::Scale);
+		view->update();
+		settle();
+		const auto uaxisBefore = editor.doc().findSolid(block)->sides.front().u;
+		const Vec3 handle{b.max.x, b.center().y, b.center().z};
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, handle));
+		QTest::mouseMove(view, screen(view, handle + Vec3{32, 0, 0}));
+		QTest::mouseMove(view, screen(view, handle + Vec3{64, 0, 0}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, handle + Vec3{64, 0, 0}));
+		settle();
+		const auto scaled = boundsOf(editor, block);
+		CHECK(scaled.min.x == doctest::Approx(0));
+		CHECK(scaled.max.x == doctest::Approx(192));
+		CHECK(editor.doc().findSolid(block)->sides.front().u.scale == doctest::Approx(uaxisBefore.scale));
+		if (scaled.max.x != b.max.x) {
+			editor.undo();
+		}
+		b = boundsOf(editor, block);
+		CHECK(b.max.x == doctest::Approx(128));
+		editor.setTool(Editor::Tool::Select);
+	}
+
 	// Entity tool: an info_player_start on top of the block stands on it.
 	editor.clearSelection();
 	editor.setCurrentEntityClass("info_player_start");
@@ -140,6 +217,83 @@ TEST_CASE("editing with the mouse in the real window") {
 	settle();
 	REQUIRE(editor.doc().entities.size() == 1);
 	CHECK(editor.doc().entities.front().origin().z == doctest::Approx(b.max.z));
+	{
+		// The entity tool shows the entity list in the Tool panel; a search finds classes.
+		auto* tree = window.toolPanel()->entityPicker()->tree();
+		CHECK(tree->isVisible());
+		CHECK_FALSE(tree->findItems("info_player_start", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+		CHECK_FALSE(tree->findItems("npc_citizen", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+	}
+
+	{
+		// Model browser: every model gets a preview picture.
+		if (window.assets()->modelView()->model()->rowCount() == 0) {
+			CHECK(indexed.wait(10000));
+		}
+		window.assets()->showModels();
+		window.raiseDock("Asset Browser");
+		auto* models = window.assets()->modelView()->model();
+		CHECK(models->rowCount() >= 3);
+		const auto crate = models->match(models->index(0, 0), Qt::UserRole, "models/props_demo/crate01.mdl", 1, Qt::MatchExactly);
+		REQUIRE(crate.size() == 1);
+		(void)crate.front().data(Qt::DecorationRole);   // asks for the preview
+		QPixmap preview;
+		for (int i = 0; i < 100; ++i) {
+			settle();
+			preview = crate.front().data(Qt::DecorationRole).value<QPixmap>();
+			const QImage image = preview.toImage();
+			if (!image.isNull() && image.pixelColor(image.width() / 2, image.height() / 2).alpha() == 255 &&
+			    image.pixelColor(2, 2).alpha() == 0) {
+				break;   // drawn: solid in the middle, transparent in the corner
+			}
+		}
+		const QImage image = preview.toImage();
+		CHECK(image.pixelColor(image.width() / 2, image.height() / 2).alpha() == 255);
+		CHECK(image.pixelColor(2, 2).alpha() == 0);
+		window.assets()->grab().save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/models_tab.png");
+		window.assets()->showMaterials();
+	}
+
+	// Choosing a tool leaves face mode.
+	editor.setSelectMode(Editor::SelectMode::Face);
+	editor.setTool(Editor::Tool::Move);
+	CHECK(editor.selectMode() == Editor::SelectMode::Object);
+	editor.setSelectMode(Editor::SelectMode::Face);
+	CHECK(editor.tool() == Editor::Tool::Select);
+	editor.setSelectMode(Editor::SelectMode::Object);
+	editor.clearSelection();
+
+	{
+		// Sounds tab: sound scripts and soundscapes; dropping them places the matching entity.
+		auto* sounds = window.sounds();
+		if (sounds->tree()->topLevelItemCount() == 0) {
+			QSignalSpy soundsIndexed(sounds, &SoundBrowser::indexed);
+			CHECK(soundsIndexed.wait(10000));
+		}
+		CHECK_FALSE(sounds->tree()->findItems("demo.outside", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+		CHECK_FALSE(sounds->tree()->findItems("Demo.Wind", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+		const auto drop = [&](const char* format, const QByteArray& data) {
+			QMimeData mime;
+			mime.setData(format, data);
+			const QPoint at = screen(view, {-200, -200, 0});
+			QDragEnterEvent enter(at, Qt::CopyAction, &mime, Qt::LeftButton, {});
+			QApplication::sendEvent(view, &enter);
+			QDropEvent event(QPointF(at), Qt::CopyAction, &mime, Qt::LeftButton, {});
+			QApplication::sendEvent(view, &event);
+			settle();
+			return editor.doc().entities.back();
+		};
+		CHECK(drop("application/x-sme-sound", "3:demo.outside").get("soundscape") == "demo.outside");
+		CHECK(drop("application/x-sme-sound", "1:Demo.Wind").get("message") == "Demo.Wind");
+		const auto prop = drop("application/x-sme-model", "models/humans/group01/male_07.mdl");
+		CHECK(prop.classname() == "prop_static");
+		CHECK(prop.get("model") == "models/humans/group01/male_07.mdl");
+		CHECK(editor.doc().entities.size() == 4);
+		editor.undo();
+		editor.undo();
+		editor.undo();
+		CHECK(editor.doc().entities.size() == 1);
+	}
 
 	// Rotation follows the rotation snap: the entity turns by 45°, the brush stays on the grid.
 	editor.setRotationSnap(45);

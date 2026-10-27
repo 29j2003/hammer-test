@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <tuple>
 #include <functional>
 
 #include <vtfpp/VTF.h>
@@ -175,6 +176,25 @@ constexpr std::string_view DEMO_FGD = R"FGD(
 	input SetAnimation(string) : "Force the prop to play an animation."
 ]
 
+@PointClass base(Angles) studioprop() = prop_static : "A prop that does not move. Cheapest kind of model: lit by the map's lighting and baked into the map."
+[
+	model(studio) : "World Model" : : "The model this prop shows."
+	skin(integer) : "Skin" : 0 : "Some models have several versions of their textures, called skins."
+	solid(choices) : "Collisions" : 6 =
+	[
+		0 : "Not Solid"
+		2 : "Use Bounding Box"
+		6 : "Use VPhysics"
+	]
+	disableshadows(boolean) : "Disable Shadows" : 0 : "Stops the prop from casting a lightmap shadow."
+]
+
+@PointClass base(Targetname) iconsprite("editor/env_soundscape.vmt") color(255 128 0) = env_soundscape : "Plays a soundscape (looping and random background sounds) while the player can see it."
+[
+	radius(integer) : "Radius" : 128 : "If the player is within this distance (-1 = everywhere), the soundscape plays."
+	soundscape(string) : "Soundscape" : "Nothing" : "Name of the soundscape from scripts/soundscapes_*.txt."
+]
+
 @PointClass base(Targetname) iconsprite("editor/ambient_generic.vmt") color(80 200 255) = ambient_generic : "Plays and controls a single sound."
 [
 	message(sound) : "Sound Name" : "" : "Name of the sound script entry (or .wav file) to play."
@@ -283,8 +303,18 @@ void createDemo(Fixture& f) {
 	writeText(mat / "models/humans/male_sheet.vmt", vmt("VertexLitGeneric", "\t\"$basetexture\" \"models/humans/male_sheet\"\n"));
 
 	// Model with animations (sequences shared through an include model, like HL2's citizens).
-	writeBytes(f.mod / "models/humans/group01/male_07.mdl",
-	           makeModelFile({"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"}, "models/humans/male_shared.mdl"));
+	// A stand-in person made of boxes (real .mdl/.vvd/.vtx files, so the viewport and the
+	// model browser show it like any model of the game).
+	writeStudioModel(f.mod / "models/humans/group01/male_07.mdl",
+	                 makeStudioModel({{-7, -10, 0, 7, -2, 34}, {-7, 2, 0, 7, 10, 34},     // legs
+	                                  {-8, -12, 34, 8, 12, 60}, {-6, -18, 36, 6, -12, 58}, {-6, 12, 36, 6, 18, 58},   // body, arms
+	                                  {-5, -5, 60, 6, 5, 72}},                            // head
+	                                 {"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"}, "models/humans/male_shared.mdl", "male_sheet",
+	                                 "models/humans/"));
+	writeStudioModel(f.mod / "models/props_demo/crate01.mdl",
+	                 makeStudioModel({{-24, -24, 0, 24, 24, 48}}, {"idle"}, "", "wood001", "demo/"));
+	writeStudioModel(f.mod / "models/props_demo/barrel01.mdl",
+	                 makeStudioModel({{-14, -14, 0, 14, 14, 44}, {-15, -15, 6, 15, 15, 10}, {-15, -15, 34, 15, 15, 38}}, {"idle"}, "", "metal001", "demo/"));
 	writeBytes(f.mod / "models/humans/male_shared.mdl",
 	           makeModelFile({"walk_all", "run_all", "sitchair1", "sit_ground", "lean_wall", "leanwall_idle", "Idle_Relaxed_SMG1_1", "crouch_idle"}, ""));
 
@@ -294,6 +324,10 @@ void createDemo(Fixture& f) {
 	          "\"Demo.Wind\" { \"channel\" \"CHAN_STATIC\" \"wave\" \"ambient/wind1.wav\" }\n"
 	          "\"Demo.Alarm\" { \"wave\" \"ambient/alarm1.wav\" }\n\"NPC_Citizen.Hello\" { \"wave\" \"vo/hello.wav\" }\n");
 	writeText(f.mod / "sound/ambient/wind1.wav", "RIFF");
+	writeText(f.mod / "scripts/soundscapes_manifest.txt", "soundscapes_manifest\n{\n\t\"file\" \"scripts/soundscapes_demo.txt\"\n}\n");
+	writeText(f.mod / "scripts/soundscapes_demo.txt",
+	          "\"demo.outside\"\n{\n\t\"dsp\" \"0\"\n\t\"playlooping\" { \"volume\" \"0.4\" \"wave\" \"ambient/wind1.wav\" }\n"
+	          "\t\"playrandom\" { \"time\" \"5,10\" \"rndwave\" { \"wave\" \"ambient/alarm1.wav\" } }\n}\n");
 
 	// Entity classes for the demo (appended to the mod's FGD).
 	auto fgd = readFileText(f.mod / "mymod.fgd").value_or("");
@@ -426,11 +460,20 @@ void createDemo(Fixture& f) {
 	wind.set("targetname", "wind");
 	wind.set("message", "Demo.Wind");
 	place("lihgt", {200, 200, 260}).set("_light", "255 255 255 100");   // misspelled class (autofix)
+	for (const auto& [model, origin, yaw] : {std::tuple{"models/props_demo/crate01.mdl", Vec3{-430, 120, 0}, 15},
+	                                         std::tuple{"models/props_demo/crate01.mdl", Vec3{-430, 120, 48}, 40},
+	                                         std::tuple{"models/props_demo/barrel01.mdl", Vec3{-360, 190, 0}, 0},
+	                                         std::tuple{"models/props_demo/barrel01.mdl", Vec3{400, -420, 0}, 0}}) {
+		auto& prop = place("prop_static", origin);
+		prop.set("model", model);
+		prop.set("angles", "0 " + std::to_string(yaw) + " 0");
+	}
 
 	writeText(f.mod / "mapsrc/demo.vmf", doc.serialize());
 }
 
-std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, const std::string& include) {
+std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, const std::string& include, const std::string& texture,
+                                     const std::string& cdmaterials) {
 	std::vector<std::byte> data(408, std::byte{0});
 	const auto put32 = [&](std::size_t offset, std::int32_t value) { std::memcpy(data.data() + offset, &value, 4); };
 	const auto putString = [&](const std::string& s) {
@@ -457,13 +500,13 @@ std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, 
 	}
 	const std::size_t texIndex = data.size();
 	data.resize(data.size() + 64, std::byte{0});
-	const auto texName = putString("combine_soldier_sheet");
+	const auto texName = putString(texture);
 	put32(texIndex, static_cast<std::int32_t>(texName - texIndex));
 	put32(204, 1);
 	put32(208, static_cast<std::int32_t>(texIndex));
 	const std::size_t cdIndex = data.size();
 	data.resize(data.size() + 4, std::byte{0});
-	put32(cdIndex, static_cast<std::int32_t>(putString("models/combine_soldier/")));
+	put32(cdIndex, static_cast<std::int32_t>(putString(cdmaterials)));
 	put32(212, 1);
 	put32(216, static_cast<std::int32_t>(cdIndex));
 	put32(308, static_cast<std::int32_t>(putString("flesh")));
@@ -475,6 +518,148 @@ std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, 
 		put32(340, static_cast<std::int32_t>(groupIndex));
 	}
 	return data;
+}
+
+StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes, const std::vector<std::string>& sequences,
+                                 const std::string& include, const std::string& texture, const std::string& cdmaterials) {
+	StudioModelFiles out;
+	// Vertices and triangles of the boxes (4 vertices and 2 triangles per side, counter-clockwise from outside).
+	struct V {
+		float p[3], n[3], uv[2];
+	};
+	std::vector<V> verts;
+	std::vector<std::uint16_t> indices;
+	for (const auto& b : boxes) {
+		const float lo[3] = {b[0], b[1], b[2]}, hi[3] = {b[3], b[4], b[5]};
+		for (int axis = 0; axis < 3; ++axis) {
+			for (int side = 0; side < 2; ++side) {
+				const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+				const auto base = static_cast<std::uint16_t>(verts.size());
+				const float corners[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+				for (const auto& c : corners) {
+					V vert{};
+					vert.p[axis] = side ? hi[axis] : lo[axis];
+					vert.p[u] = c[0] ? hi[u] : lo[u];
+					vert.p[v] = c[1] ? hi[v] : lo[v];
+					vert.n[axis] = side ? 1.f : -1.f;
+					vert.uv[0] = c[0];
+					vert.uv[1] = 1 - c[1];
+					verts.push_back(vert);
+				}
+				if (side) {
+					indices.insert(indices.end(), {base, std::uint16_t(base + 1), std::uint16_t(base + 2), base, std::uint16_t(base + 2), std::uint16_t(base + 3)});
+				} else {
+					indices.insert(indices.end(), {base, std::uint16_t(base + 2), std::uint16_t(base + 1), base, std::uint16_t(base + 3), std::uint16_t(base + 2)});
+				}
+			}
+		}
+	}
+	const auto put32 = [](std::vector<std::byte>& data, std::size_t offset, std::int32_t value) { std::memcpy(data.data() + offset, &value, 4); };
+	const auto putFloat = [](std::vector<std::byte>& data, std::size_t offset, float value) { std::memcpy(data.data() + offset, &value, 4); };
+	const auto n = static_cast<std::int32_t>(verts.size());
+
+	// .mdl: header + sequences/texture (makeModelFile), then skin table, body part, model, mesh.
+	auto& mdl = out.mdl;
+	mdl = makeModelFile(sequences, include, texture, cdmaterials);
+	float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+	for (const auto& v : verts) {
+		for (int k = 0; k < 3; ++k) {
+			lo[k] = std::min(lo[k], v.p[k]);
+			hi[k] = std::max(hi[k], v.p[k]);
+		}
+	}
+	for (int k = 0; k < 3; ++k) {
+		putFloat(mdl, 104 + k * 4, lo[k]);   // hull_min
+		putFloat(mdl, 116 + k * 4, hi[k]);   // hull_max
+	}
+	const std::size_t skins = mdl.size();
+	mdl.resize(mdl.size() + 4, std::byte{0});   // one family, one reference: texture 0
+	put32(mdl, 220, 1);
+	put32(mdl, 224, 1);
+	put32(mdl, 228, static_cast<std::int32_t>(skins));
+	const std::size_t part = mdl.size();
+	mdl.resize(mdl.size() + 16 + 148 + 116, std::byte{0});
+	const std::size_t model = part + 16, mesh = model + 148;
+	put32(mdl, 232, 1);
+	put32(mdl, 236, static_cast<std::int32_t>(part));
+	put32(mdl, part + 4, 1);                                            // nummodels
+	put32(mdl, part + 8, 1);                                            // base
+	put32(mdl, part + 12, static_cast<std::int32_t>(model - part));     // modelindex
+	put32(mdl, model + 72, 1);                                          // nummeshes
+	put32(mdl, model + 76, static_cast<std::int32_t>(mesh - model));    // meshindex
+	put32(mdl, model + 80, n);                                          // numvertices
+	put32(mdl, model + 84, 0);                                          // vertexindex
+	put32(mdl, mesh + 0, 0);                                            // material (skin reference)
+	put32(mdl, mesh + 4, static_cast<std::int32_t>(model - mesh));      // modelindex
+	put32(mdl, mesh + 8, n);                                            // numvertices
+	put32(mdl, mesh + 12, 0);                                           // vertexoffset
+
+	// .vvd: header, vertices (48 bytes), tangents (16 bytes).
+	auto& vvd = out.vvd;
+	vvd.assign(64 + verts.size() * 64, std::byte{0});
+	std::memcpy(vvd.data(), "IDSV", 4);
+	put32(vvd, 4, 4);
+	put32(vvd, 12, 1);
+	for (int lod = 0; lod < 8; ++lod) put32(vvd, 16 + lod * 4, n);
+	put32(vvd, 52, 64);
+	put32(vvd, 56, 64);
+	put32(vvd, 60, static_cast<std::int32_t>(64 + verts.size() * 48));
+	for (std::size_t i = 0; i < verts.size(); ++i) {
+		const auto base = 64 + i * 48;
+		putFloat(vvd, base, 1.f);   // weight of bone 0
+		vvd[base + 15] = std::byte{1};
+		for (int k = 0; k < 3; ++k) {
+			putFloat(vvd, base + 16 + k * 4, verts[i].p[k]);
+			putFloat(vvd, base + 28 + k * 4, verts[i].n[k]);
+		}
+		putFloat(vvd, base + 40, verts[i].uv[0]);
+		putFloat(vvd, base + 44, verts[i].uv[1]);
+	}
+
+	// .dx90.vtx (packed structs): header 36, body part 8, model 8, LOD 12, mesh 9, strip group 25,
+	// vertices 9, indices 2, one triangle-list strip 27.
+	auto& vtx = out.vtx;
+	const std::size_t bodyPart = 36, vmodel = 44, lod = 52, vmesh = 64, group = 73, vertices = 98;
+	const std::size_t indexStart = vertices + verts.size() * 9, strip = indexStart + indices.size() * 2;
+	vtx.assign(strip + 27, std::byte{0});
+	put32(vtx, 0, 7);
+	put32(vtx, 4, 24);
+	put32(vtx, 20, 1);                                              // numLODs
+	put32(vtx, 28, 1);                                              // numBodyParts
+	put32(vtx, 32, static_cast<std::int32_t>(bodyPart));
+	put32(vtx, bodyPart, 1);
+	put32(vtx, bodyPart + 4, static_cast<std::int32_t>(vmodel - bodyPart));
+	put32(vtx, vmodel, 1);
+	put32(vtx, vmodel + 4, static_cast<std::int32_t>(lod - vmodel));
+	put32(vtx, lod, 1);
+	put32(vtx, lod + 4, static_cast<std::int32_t>(vmesh - lod));
+	put32(vtx, vmesh, 1);
+	put32(vtx, vmesh + 4, static_cast<std::int32_t>(group - vmesh));
+	put32(vtx, group, n);
+	put32(vtx, group + 4, static_cast<std::int32_t>(vertices - group));
+	put32(vtx, group + 8, static_cast<std::int32_t>(indices.size()));
+	put32(vtx, group + 12, static_cast<std::int32_t>(indexStart - group));
+	put32(vtx, group + 16, 1);
+	put32(vtx, group + 20, static_cast<std::int32_t>(strip - group));
+	for (std::size_t i = 0; i < verts.size(); ++i) {
+		const auto id = static_cast<std::uint16_t>(i);
+		vtx[vertices + i * 9 + 3] = std::byte{1};
+		std::memcpy(vtx.data() + vertices + i * 9 + 4, &id, 2);
+	}
+	std::memcpy(vtx.data() + indexStart, indices.data(), indices.size() * 2);
+	put32(vtx, strip, static_cast<std::int32_t>(indices.size()));
+	put32(vtx, strip + 4, 0);
+	put32(vtx, strip + 8, n);
+	vtx[strip + 18] = std::byte{1};                                 // STRIP_IS_TRILIST
+	return out;
+}
+
+void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFiles& files) {
+	auto stem = mdlPath;
+	stem.replace_extension();
+	writeBytes(mdlPath, files.mdl);
+	writeBytes(stem.string() + ".vvd", files.vvd);
+	writeBytes(stem.string() + ".dx90.vtx", files.vtx);
 }
 
 } // namespace sme::test

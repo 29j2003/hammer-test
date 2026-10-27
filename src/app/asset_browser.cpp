@@ -4,6 +4,8 @@
 
 #include "editor.h"
 #include "material_cache.h"
+#include "model_cache.h"
+#include "model_thumbnails.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -16,9 +18,8 @@
 #include <QListWidget>
 #include <QMimeData>
 #include <QPainter>
-#include <QStringListModel>
+#include <QRegularExpression>
 #include <QTabWidget>
-#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -153,6 +154,64 @@ void MaterialListModel::thumbnailReady(const QString& name) {
 	}
 }
 
+// --- Model list ---------------------------------------------------------------------
+
+ModelListModel::ModelListModel(ModelThumbnails* thumbnails, QObject* parent) : QAbstractListModel(parent), m_thumbnails(thumbnails) {}
+
+void ModelListModel::setModels(const QStringList& models) {
+	beginResetModel();
+	m_models = models;
+	m_rows.clear();
+	for (int i = 0; i < m_models.size(); ++i) {
+		m_rows.insert(m_models[i], i);
+	}
+	endResetModel();
+}
+
+int ModelListModel::rowCount(const QModelIndex& parent) const {
+	return parent.isValid() ? 0 : static_cast<int>(m_models.size());
+}
+
+QVariant ModelListModel::data(const QModelIndex& index, int role) const {
+	if (!index.isValid() || index.row() >= m_models.size()) {
+		return {};
+	}
+	const QString& path = m_models[index.row()];
+	switch (role) {
+		case Qt::DisplayRole: return path.section('/', -1).chopped(4);   // "crate01"
+		case Qt::ToolTipRole: return path;
+		case Qt::UserRole: return path;
+		case Qt::DecorationRole: return m_thumbnails->get(path);   // rendered only for shown items
+		default: return {};
+	}
+}
+
+Qt::ItemFlags ModelListModel::flags(const QModelIndex& index) const {
+	return QAbstractListModel::flags(index) | Qt::ItemIsDragEnabled;
+}
+
+QStringList ModelListModel::mimeTypes() const {
+	return {"application/x-sme-model"};
+}
+
+QMimeData* ModelListModel::mimeData(const QModelIndexList& indexes) const {
+	if (indexes.isEmpty()) {
+		return nullptr;
+	}
+	auto* mime = new QMimeData;
+	const QString path = data(indexes.first(), Qt::UserRole).toString();
+	mime->setData("application/x-sme-model", path.toUtf8());
+	mime->setText(path);
+	return mime;
+}
+
+void ModelListModel::thumbnailReady(const QString& path) {
+	if (const auto it = m_rows.constFind(path); it != m_rows.constEnd()) {
+		const auto idx = index(*it);
+		emit dataChanged(idx, idx, {Qt::DecorationRole});
+	}
+}
+
 void MaterialFilter::setText(const QString& text) {
 	m_words = text.toLower().split(' ', Qt::SkipEmptyParts);
 	invalidateFilter();
@@ -276,139 +335,75 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		});
 	}
 
-	// Models
+	// Models: previews like the materials, drag one into the 3D view to place it as a prop.
 	{
 		auto* page = new QWidget;
 		auto* v = new QVBoxLayout(page);
 		v->setContentsMargins(4, 4, 4, 4);
 		m_modelSearch = new QLineEdit;
-		m_modelSearch->setPlaceholderText(tr("Search models ..."));
+		m_modelSearch->setPlaceholderText(tr("Search models (words: props_c17 bench) ..."));
 		m_modelSearch->setClearButtonEnabled(true);
 		v->addWidget(m_modelSearch);
-		auto* model = new QStringListModel(this);
+		m_modelThumbnails = new ModelThumbnails(editor->models(), m_thumbnails, THUMB, this);
+		m_modelModel = new ModelListModel(m_modelThumbnails, this);
 		auto* proxy = new QSortFilterProxyModel(this);
-		proxy->setSourceModel(model);
+		proxy->setSourceModel(m_modelModel);
+		proxy->setFilterRole(Qt::UserRole);
 		proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
-		m_modelView = new QListView;
+		m_modelView = makeIconView(page);
 		m_modelView->setModel(proxy);
-		m_modelView->setUniformItemSizes(true);
 		v->addWidget(m_modelView, 1);
-		m_modelInfo = new QLabel;
+		m_modelInfo = new QLabel(tr("No game loaded"));
 		m_modelInfo->setWordWrap(true);
 		m_modelInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		v->addWidget(m_modelInfo);
 		m_tabs->addTab(page, tr("Models"));
-		connect(m_modelSearch, &QLineEdit::textChanged, proxy, &QSortFilterProxyModel::setFilterFixedString);
+		connect(m_modelThumbnails, &ModelThumbnails::thumbnailReady, m_modelModel, &ModelListModel::thumbnailReady);
+		connect(m_modelSearch, &QLineEdit::textChanged, proxy, [proxy](const QString& text) {
+			// Every word must appear in the path.
+			QString pattern;
+			for (const auto& word : text.split(' ', Qt::SkipEmptyParts)) {
+				pattern += QStringLiteral("(?=.*%1)").arg(QRegularExpression::escape(word));
+			}
+			proxy->setFilterRegularExpression(QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption));
+		});
 		connect(m_modelView->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex& index) {
 			if (!index.isValid() || !m_editor->game()) {
 				return;
 			}
-			const auto path = index.data().toString().toStdString();
+			const QString path = index.data(Qt::UserRole).toString();
 			std::string error;
-			const auto sequences = modelSequences(m_editor->game()->files, path, &error);
+			const auto sequences = modelSequences(m_editor->game()->files, path.toStdString(), &error);
 			QStringList names;
-			for (std::size_t i = 0; i < sequences.size() && i < 40; ++i) {
+			for (std::size_t i = 0; i < sequences.size() && i < 30; ++i) {
 				names << QString::fromStdString(sequences[i]);
 			}
-			m_modelInfo->setText(tr("<b>%1</b><br>%2 animations: %3%4<br><i>Double-click: use on the selected entity</i>")
-			                         .arg(index.data().toString())
+			QString size;
+			if (const auto geometry = m_editor->models()->get(path)) {
+				const Vec3 s = geometry->bounds.size();
+				size = tr("%1 x %2 x %3 units, %4 triangles").arg(s.x, 0, 'f', 0).arg(s.y, 0, 'f', 0).arg(s.z, 0, 'f', 0).arg(geometry->triangleCount());
+			} else if (m_editor->models()->failed(path)) {
+				size = tr("cannot load: %1").arg(m_editor->models()->error(path));
+			}
+			m_modelInfo->setText(tr("<b>%1</b> - %2<br>%3 animations: %4%5<br><i>Drag into the 3D view to place it, double-click sets it on the selected entity</i>")
+			                         .arg(path, size)
 			                         .arg(sequences.size())
 			                         .arg(names.join(", "))
-			                         .arg(sequences.size() > 40 ? QStringLiteral(", ...") : QString()));
+			                         .arg(sequences.size() > 30 ? QStringLiteral(", ...") : QString()));
 		});
 		connect(m_modelView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
+			const QString path = index.data(Qt::UserRole).toString();
 			const auto& selection = m_editor->selection();
 			if (selection.entities.empty()) {
-				QApplication::clipboard()->setText(index.data().toString());
-				emit m_editor->message(tr("Model path copied (select an entity to set it directly)"));
+				QApplication::clipboard()->setText(path);
+				emit m_editor->message(tr("Model path copied - drag the model into the 3D view to place it, or select an entity to set it"));
 				return;
 			}
-			m_editor->commit(edit::setKeyValue(m_editor->doc(), selection.entities, "model", index.data().toString().toStdString()));
+			m_editor->commit(edit::setKeyValue(m_editor->doc(), selection.entities, "model", path.toStdString()));
 		});
-		connect(this, &AssetBrowser::materialsIndexed, this, [this, model] { model->setStringList(m_models); });
-	}
-
-	// Sounds
-	{
-		auto* page = new QWidget;
-		auto* v = new QVBoxLayout(page);
-		v->setContentsMargins(4, 4, 4, 4);
-		m_soundSearch = new QLineEdit;
-		m_soundSearch->setPlaceholderText(tr("Search sounds (sound script names and files) ..."));
-		m_soundSearch->setClearButtonEnabled(true);
-		v->addWidget(m_soundSearch);
-		auto* model = new QStringListModel(this);
-		auto* proxy = new QSortFilterProxyModel(this);
-		proxy->setSourceModel(model);
-		proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
-		m_soundView = new QListView;
-		m_soundView->setModel(proxy);
-		m_soundView->setUniformItemSizes(true);
-		v->addWidget(m_soundView, 1);
-		auto* hint = new QLabel(tr("Double-click: copy the name (and set it on a selected ambient_generic)"));
-		v->addWidget(hint);
-		m_tabs->addTab(page, tr("Sounds"));
-		connect(m_soundSearch, &QLineEdit::textChanged, proxy, &QSortFilterProxyModel::setFilterFixedString);
-		connect(m_soundView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
-			QApplication::clipboard()->setText(index.data().toString());
-			const auto& selection = m_editor->selection();
-			if (selection.entities.size() == 1) {
-				if (const auto* e = m_editor->doc().findEntity(selection.entities.front()); e && e->classname() == "ambient_generic") {
-					m_editor->commit(edit::setKeyValue(m_editor->doc(), selection.entities, "message", index.data().toString().toStdString()));
-				}
-			}
-		});
-		connect(this, &AssetBrowser::materialsIndexed, this, [this, model] { model->setStringList(m_sounds); });
-	}
-
-	// Entities
-	{
-		auto* page = new QWidget;
-		auto* v = new QVBoxLayout(page);
-		v->setContentsMargins(4, 4, 4, 4);
-		m_entitySearch = new QLineEdit;
-		m_entitySearch->setPlaceholderText(tr("Search entity classes ..."));
-		m_entitySearch->setClearButtonEnabled(true);
-		v->addWidget(m_entitySearch);
-		m_entityTree = new QTreeWidget;
-		m_entityTree->setHeaderHidden(true);
-		m_entityTree->setDragEnabled(true);
-		v->addWidget(m_entityTree, 1);
-		m_entityInfo = new QLabel;
-		m_entityInfo->setWordWrap(true);
-		v->addWidget(m_entityInfo);
-		m_tabs->addTab(page, tr("Entities"));
-		connect(m_entitySearch, &QLineEdit::textChanged, this, [this](const QString& text) {
-			for (int i = 0; i < m_entityTree->topLevelItemCount(); ++i) {
-				auto* group = m_entityTree->topLevelItem(i);
-				int visible = 0;
-				for (int j = 0; j < group->childCount(); ++j) {
-					const bool show = text.isEmpty() || group->child(j)->text(0).contains(text, Qt::CaseInsensitive);
-					group->child(j)->setHidden(!show);
-					visible += show ? 1 : 0;
-				}
-				group->setHidden(visible == 0);
-				group->setExpanded(!text.isEmpty());
-			}
-		});
-		connect(m_entityTree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* item) {
-			if (!item || item->childCount() > 0 || !m_editor->entities()) {
-				return;
-			}
-			const auto* cls = m_editor->entities()->find(item->text(0).toStdString());
-			if (!cls) {
-				return;
-			}
-			m_editor->setCurrentEntityClass(item->text(0));
-			m_entityInfo->setText(QStringLiteral("<b>%1</b> (%2)<br>%3")
-			                          .arg(item->text(0), cls->isSolid() ? tr("brush entity: select brushes, Ctrl+T") : tr("point entity: Shift+E, click to place"),
-			                               QString::fromStdString(cls->description).left(400).toHtmlEscaped()));
-		});
-		connect(m_entityTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item) {
-			if (item && item->childCount() == 0) {
-				m_editor->setCurrentEntityClass(item->text(0));
-				m_editor->setTool(Editor::Tool::Entity);
-			}
+		connect(this, &AssetBrowser::materialsIndexed, this, [this] {
+			m_modelModel->setModels(m_models);
+			m_modelInfo->setText(tr("%1 models - drag one into the 3D view to place it").arg(m_models.size()));
 		});
 	}
 
@@ -443,6 +438,10 @@ void AssetBrowser::showMaterials() {
 	m_tabs->setCurrentIndex(0);
 }
 
+void AssetBrowser::showModels() {
+	m_tabs->setCurrentIndex(1);
+}
+
 std::vector<std::string> AssetBrowser::materialNames() const {
 	std::vector<std::string> out;
 	for (const auto& item : m_materialModel->items()) {
@@ -454,30 +453,14 @@ std::vector<std::string> AssetBrowser::materialNames() const {
 void AssetBrowser::reload() {
 	auto* game = m_editor->game();
 	m_thumbnails->setFileSystem(game ? &game->files : nullptr);
+	m_modelThumbnails->clear();
+	m_modelModel->setModels({});
 	m_materialModel->setItems({});
 	updateRecent();
-	m_entityTree->clear();
 	if (!game) {
 		return;
 	}
 	m_materialInfo->setText(tr("Indexing materials, models and sounds ..."));
-
-	// Entity classes grouped by prefix (npc_, prop_, func_, ...).
-	QMap<QString, QTreeWidgetItem*> groups;
-	for (const auto* cls : game->entities.placeable()) {
-		const QString name = QString::fromStdString(cls->name);
-		const auto underscore = name.indexOf('_');
-		const QString group = underscore > 0 ? name.left(underscore) : tr("other");
-		if (!groups.contains(group)) {
-			groups.insert(group, new QTreeWidgetItem(QStringList(group)));
-		}
-		auto* item = new QTreeWidgetItem(groups[group], QStringList(name));
-		item->setToolTip(0, QString::fromStdString(cls->description).left(300));
-	}
-	for (auto* group : groups) {
-		group->setText(0, QStringLiteral("%1 (%2)").arg(group->text(0)).arg(group->childCount()));
-		m_entityTree->addTopLevelItem(group);
-	}
 
 	// Materials, models and sounds are listed and classified in a background thread.
 	const GameFileSystem* fs = &game->files;

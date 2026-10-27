@@ -1,6 +1,8 @@
 # The Qt editor application. Qt 6.4+ (CI builds with 6.8).
 # Everything except main.cpp is a library so the UI tests can drive the real windows.
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent)
+# Sound preview in the Sounds tab (optional: without it the editor builds, but cannot play sounds).
+find_package(Qt6 QUIET COMPONENTS Multimedia)
 set(CMAKE_AUTOMOC ON)
 
 add_library(smeapp STATIC
@@ -9,14 +11,26 @@ add_library(smeapp STATIC
 	editor.cpp
 	main_window.cpp
 	material_cache.cpp
+	model_cache.cpp
+	model_thumbnails.cpp
 	panels.cpp
 	properties_panel.cpp
 	renderer.cpp
+	sound_browser.cpp
+	sound_player.cpp
 	style.cpp
+	tool_panel.cpp
 	viewport.cpp)
 target_include_directories(smeapp PUBLIC .)
 target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)
 target_link_libraries(smeapp PUBLIC smecore Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent)
+if(TARGET Qt6::Multimedia)
+	target_link_libraries(smeapp PUBLIC Qt6::Multimedia)
+	target_compile_definitions(smeapp PUBLIC SME_HAVE_MULTIMEDIA)
+	message(STATUS "Sound preview: Qt Multimedia")
+else()
+	message(STATUS "Sound preview: off (Qt Multimedia not found)")
+endif()
 
 qt_add_executable(SourceMapEditor main.cpp)
 set_target_properties(SourceMapEditor PROPERTIES

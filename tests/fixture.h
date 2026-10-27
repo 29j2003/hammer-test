@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <string>
@@ -40,7 +41,18 @@ void writeText(const std::filesystem::path& path, std::string_view text);
 void createDemo(Fixture& fixture);
 
 /// Minimal .mdl (studiohdr_t, version 48) with the given sequences and an optional $includemodel.
-[[nodiscard]] std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, const std::string& include);
+[[nodiscard]] std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, const std::string& include,
+                                                   const std::string& texture = "combine_soldier_sheet",
+                                                   const std::string& cdmaterials = "models/combine_soldier/");
+
+/// A complete model (.mdl + .vvd + .dx90.vtx) made of boxes {min x y z, max x y z}, one material.
+struct StudioModelFiles {
+	std::vector<std::byte> mdl, vvd, vtx;
+};
+[[nodiscard]] StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes, const std::vector<std::string>& sequences,
+                                               const std::string& include, const std::string& texture, const std::string& cdmaterials);
+/// Writes the three files next to each other ("models/x.mdl" -> x.mdl, x.vvd, x.dx90.vtx).
+void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFiles& files);
 
 /// Creates an RGBA8888 VTF (solid color with a darker checker) of the given size.
 [[nodiscard]] std::vector<std::byte> makeVtf(unsigned size, unsigned char r, unsigned char g, unsigned char b, bool dxt = false);

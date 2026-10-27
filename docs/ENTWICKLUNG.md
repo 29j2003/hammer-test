@@ -21,9 +21,10 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `steam` | Steam finden (Registry, Standardordner, `SME_STEAM_ROOT`), `libraryfolders.vdf`, `appmanifest_*.acf` |
 | `gameinfo` | `gameinfo.txt` lesen, `SearchPaths` auflösen (`|gameinfo_path|`, `|all_source_engine_paths|`, `|appid_N|`, `custom/*`, `[$WIN32]`) |
 | `filesystem` | `GameFileSystem`: Ordner + VPKs in Suchreihenfolge, erster Treffer gewinnt; `pak01_dir.vpk` vor dem Ordner; thread-sicher |
-| `game_discovery` | alle Spiele (App-Ordner mit `gameinfo.txt`) und Mods (`sourcemods`), FGD-Vorschläge (Hammer++ > Hammer > Mod > Mapbase-FGD > Haupt-FGD des Spiels) |
+| `game_discovery` | alle Spiele (App-Ordner mit `gameinfo.txt`) und Mods (`sourcemods`), eindeutige Namen (`label`), FGD-Vorschläge (Hammer++ > Hammer > Mod > Haupt-FGD des Spiels); Mapbase-Mods bekommen die Mapbase-FGD aus `sourcemods/mapbase_shared` dazu, wenn keine geladen ist (`isMapbaseFgd`: Text oder `@include` erwähnt Mapbase) |
 | `hammer_config` | `GameConfig.txt` / `hammerplusplus_gameconfig.txt` importieren (FGDs, Tools, Ordner) |
-| `material`, `texture`, `assets` | VMT inkl. `patch`, VTF → RGBA (vtfpp), Material-Kategorien, MDL-Kopf (Sequenzen, `$includemodel`), Soundscripts, „Meintest du …“ |
+| `material`, `texture`, `assets` | VMT inkl. `patch`, VTF → RGBA (vtfpp), Material-Kategorien, MDL-Kopf (Sequenzen, `$includemodel`), Soundscripts (mit Dateien), Soundscapes, „Meintest du …“ |
+| `studio_model` | Dreiecke eines Modells aus `.mdl` (Bodyparts, Meshes, Skins, `$cdmaterials`), `.vvd` (Vertices, Fixups) und `.dx90.vtx` (LOD 0, Strip-Groups 25/33 Byte); Referenz-Pose, alles grenzgeprüft |
 | `entity_catalog` | FGDs laden (toolpp), Basisklassen auflösen, Helfer (`studio`, `size`, `color`, `iconsprite`) |
 | `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei) |
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
@@ -38,7 +39,16 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   (`FLAG_SELECTED`, `FLAG_HIDDEN`) → ein Klick baut nichts neu. Beim Ziehen werden ausgewählte Flächen ausgeblendet und
   mit Matrix als Vorschau gezeichnet; erst beim Loslassen entsteht die Änderung.
 - `MaterialCache` lädt VMT/VTF in Threads; der Viewport bekommt `materialReady` und lädt die Textur hoch.
-- `AssetBrowser` indiziert im Hintergrund alle Materialien (mit Kategorie), Modelle, Sounds.
+- `AssetBrowser` indiziert im Hintergrund alle Materialien (mit Kategorie) und Modelle. Modelle: `ModelCache` (gehört dem
+  `Editor`, lädt in Threads, meldet `modelReady`, trägt die Modellgröße in den `EntityCatalog` ein → Auswahlbox passt),
+  `ModelThumbnails` zeichnet Vorschaubilder per CPU (kein GL-Kontext nötig) nur für sichtbare Einträge.
+- Sounds-Tab (`SoundBrowser`): Soundscripts (gruppiert, Dateien beim Aufklappen), Dateien, Soundscapes; Ziehen in die Karte
+  setzt `ambient_generic`/`env_soundscape`. Wiedergabe mit Qt Multimedia (Backend erst beim ersten Abspielen erzeugt).
+- Tool-Dock (`ToolPanel`): Optionen des aktiven Werkzeugs; beim Entity-Werkzeug die Entity-Liste (Suche, Gruppen, zuletzt benutzt).
+- Renderer: Modelle als eigene VBOs pro Modell, pro Instanz eine Flag-Zelle (`u_faceOverride`), ohne Culling.
+  Live-Vorschau-Brushes (`setPreviewSolids`, z. B. Skalieren mit echten Texturkoordinaten) ohne Flags (`u_faceOverride = -2`).
+- Kamera: Umsehen misst immer die echte Cursor-Position (`QCursor::pos`) statt Ereignis-Positionen und setzt den Cursor
+  zurück, bevor er den Rand erreicht – keine Sprünge durch alte Ereignisse. Umsehen läuft neben Werkzeug-Aktionen (Block).
 - `PropertiesPanel` baut sich bei jeder Auswahl-/Dokumentänderung neu auf (verzögert, damit Editoren ihr Signal beenden).
 - Texturieren: Malen (Strg + rechte Maus) schreibt jede Fläche einzeln über `Editor::commitMerged` – gleiche Namen
   werden in `History::push(…, merge)` zu **einem** Undo-Schritt pro Strich zusammengefasst. „Ganze Wand“ =
@@ -93,7 +103,8 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   nicht auf Windows. Nächster Schritt: `sme-probe report` und `sme-probe vmf` auf Julius' PC.
 - MDL-Offsets (`studiohdr_t` v44–49) stammen aus `studio.h`; mit echten Modellen gegenprüfen (`sme-probe` zeigt Sequenzen).
 - Black Mesa (Xengine) ist ungetestet; VMF-Unterschiede unbekannt.
-- Modelle werden noch als Kästen gezeichnet, Sprites/Overlays/Decals noch nicht.
+- Modelle: VTX-Layout (25/33 Byte) wird ausprobiert; mit echten HL2-/Mapbase-Modellen prüfen (`sme-probe model GAME PATH`).
+  Sprites/Overlays/Decals werden noch nicht gezeichnet.
 
 ## Fahrplan
 

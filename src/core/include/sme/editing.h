@@ -45,6 +45,8 @@ namespace edit {
 
 /// Box of a point entity: FGD size() helper, else 16 units around the origin.
 [[nodiscard]] Bounds entityBounds(const Entity& entity, const EntityCatalog* catalog);
+/// Model a point entity shows: its "model" key (.mdl) or the FGD's studio("...") model; empty if none.
+[[nodiscard]] std::string entityModel(const Entity& entity, const EntityCatalog* catalog);
 /// Box around everything selected (objects, or the faces' brushes in face mode).
 [[nodiscard]] Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog);
 
@@ -64,7 +66,9 @@ namespace edit {
 [[nodiscard]] std::pair<Change, SolidRef> createBlock(MapDocument& doc, const Bounds& box, const std::string& material);
 
 /// Places a point entity; keys with FGD defaults are filled in like Hammer does.
-[[nodiscard]] std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classname, const Vec3& origin, const EntityClass* definition);
+/// `keys` are set after the FGD defaults (e.g. the model of a dropped prop).
+[[nodiscard]] std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classname, const Vec3& origin, const EntityClass* definition,
+                                                 const std::vector<std::pair<std::string, std::string>>& keys = {});
 
 /// Material on the selected faces (face mode) or on every face of the selected brushes/brush entities.
 [[nodiscard]] Change applyMaterial(MapDocument& doc, const Selection& selection, const std::string& material);

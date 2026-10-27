@@ -28,6 +28,8 @@
 
 namespace sme::app {
 
+class ModelCache;
+
 struct LineVertex {
 	QVector3D position;
 	QVector4D color;
@@ -52,6 +54,8 @@ public:
 
 	/// Needs a current OpenGL 3.3 context.
 	bool initialize(MaterialCache* materials, QString* error);
+	/// Models are drawn once loaded (point entities show a box until then).
+	void setModels(ModelCache* models) { m_models = models; }
 	void release();
 
 	/// Rebuilds all geometry from the document.
@@ -69,8 +73,12 @@ public:
 		bool showToolTextures = true;
 	};
 	void render(const Params& params);
-	/// Selected objects drawn with an extra transform (move/rotate/scale preview).
-	void drawPreview(const Params& params, const QMatrix4x4& model);
+	/// Selected objects drawn with an extra transform (move/rotate preview); `brushes` false
+	/// leaves out selected brushes (they come from setPreviewSolids instead).
+	void drawPreview(const Params& params, const QMatrix4x4& model, bool brushes = true);
+	/// Brushes drawn exactly as they would become (scaling, new shapes, clipping); empty clears.
+	void setPreviewSolids(const std::vector<Solid>& solids);
+	void drawPreviewSolids(const Params& params);
 	/// Lines; `onTop` ignores depth (gizmos).
 	void drawLines(const std::vector<LineVertex>& lines, const QMatrix4x4& viewProjection, bool onTop, float width = 1.f);
 
@@ -104,6 +112,20 @@ private:
 		std::vector<Vec3> triangles;   ///< Displacement triangles (picked instead of the planes)
 		std::vector<int> triangleSides;
 	};
+	struct ModelInstance {
+		QString path;
+		QMatrix4x4 transform;
+		int face = 0;          ///< Flag slot (selection, hiding)
+	};
+	struct GpuModel {
+		struct Mesh {
+			QString material;
+			GLuint first = 0;
+			GLsizei count = 0;
+		};
+		GLuint vao = 0, vbo = 0, ibo = 0;
+		std::vector<Mesh> meshes;
+	};
 	struct Light {
 		QVector4D position;    ///< w = 50 % distance
 		QVector4D color;       ///< rgb linear intensity
@@ -116,8 +138,14 @@ private:
 	void drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass);
 	void setCommonUniforms(QOpenGLShaderProgram& program, const Params& params, const QMatrix4x4& model);
 	void ensureFlagTexture();
+	GpuModel* gpuModel(const QString& path);
+	/// Draws model instances; `preview` set: only the selected ones, moved by the matrix.
+	void drawModels(QOpenGLShaderProgram& program, bool flat, const QMatrix4x4* preview);
 
 	MaterialCache* m_materials = nullptr;
+	ModelCache* m_models = nullptr;
+	std::vector<ModelInstance> m_modelInstances;
+	QHash<QString, GpuModel> m_gpuModels;
 	std::unique_ptr<QOpenGLShaderProgram> m_program;
 	std::unique_ptr<QOpenGLShaderProgram> m_lineProgram;
 	std::unique_ptr<QOpenGLShaderProgram> m_edgeProgram;
@@ -125,6 +153,10 @@ private:
 	GLuint m_vao = 0, m_vbo = 0;            // brush faces + entity boxes
 	GLuint m_edgeVao = 0, m_edgeVbo = 0;    // wireframe edges
 	GLuint m_lineVao = 0, m_lineVbo = 0;    // dynamic helper lines
+	GLuint m_previewVao = 0, m_previewVbo = 0;           // live preview brushes
+	GLuint m_previewEdgeVao = 0, m_previewEdgeVbo = 0;
+	std::vector<Batch> m_previewBatches;
+	GLsizei m_previewEdgeCount = 0;
 	GLuint m_flagTexture = 0;
 	GLuint m_whiteTexture = 0;
 

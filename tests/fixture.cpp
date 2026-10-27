@@ -269,6 +269,11 @@ void createFixture(Fixture& f, const std::filesystem::path& dir) {
 		"\t\t\tgame\t\t\t\t|all_source_engine_paths|hl2\n"
 		"\t\t\tgame\t\t\t\t|appid_220|hl2/hl2_misc.vpk\n"));
 	writeText(f.mod / "mymod.fgd", MOD_FGD);
+	// Mapbase's FGDs live with its shared content; its halflife2.fgd builds on its base.fgd.
+	const auto mapbaseBin = f.steam / "steamapps/sourcemods/mapbase_shared/shared_misc/bin";
+	writeText(mapbaseBin / "base.fgd", std::string(BASE_FGD) +
+		"// Mapbase additions\n@PointClass base(Targetname) = env_global_light : \"Mapbase: cascaded shadows from the sun.\" []\n");
+	writeText(mapbaseBin / "halflife2.fgd", HL2_FGD);
 	writeText(f.mod / "materials/mymod/patched.vmt",
 		"patch\n{\n\tinclude \"materials/concrete/wall01.vmt\"\n\tinsert\n\t{\n\t\t\"$detail\" \"detail/noise\"\n\t}\n"
 		"\treplace\n\t{\n\t\t\"$surfaceprop\" \"metal\"\n\t}\n}\n");

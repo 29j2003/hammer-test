@@ -54,7 +54,7 @@ protected:
 
 private:
 	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D };
-	enum class Drag { None, Look, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint };
+	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint };
 
 	[[nodiscard]] Ray rayAt(const QPointF& pos) const;
 	[[nodiscard]] double gizmoSize() const;
@@ -66,9 +66,14 @@ private:
 	void clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers);
 	void marqueeSelect(const QRectF& rect, Qt::KeyboardModifiers modifiers);
 	void placeEntity(const QPointF& pos);
+	/// Places `classname` on the surface under the cursor (with extra keys, e.g. a dropped model).
+	void placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys = {});
 	void beginGizmoDrag(Handle handle, const QPointF& pos);
 	void updateGizmoDrag(const QPointF& pos);
 	void finishGizmoDrag(bool clone);
+	[[nodiscard]] bool scaling() const;   ///< Scale handle being dragged
+	/// Live preview brushes (scaled brushes with their real texture coordinates); empty clears.
+	void setPreviewSolids(const std::vector<Solid>& solids);
 	void updateBlockDrag(const QPointF& pos);
 	void createBlockFromDrag();
 	void cancelInteraction();
@@ -77,6 +82,11 @@ private:
 	void setHoverSide(int sideId);
 	void showHoverMaterial(const QPointF& pos);
 	void toggleFlyMode();
+	/// Mouse look (right mouse or fly mode). Runs alongside a tool drag, so the camera can
+	/// move while a block is being placed.
+	void beginLook(const QPointF& anchor);
+	void endLook();
+	void applyLook();
 
 	void drawGrid(std::vector<LineVertex>& lines) const;
 	void drawGizmo(std::vector<LineVertex>& lines) const;
@@ -103,6 +113,10 @@ private:
 	Vec3 m_orbitPivot;
 	Handle m_hover = Handle::None;
 	bool m_flyMode = false;     ///< Z: look without holding the mouse button
+	bool m_looking = false;     ///< Mouse look active (camera turns, W A S D fly)
+	QPoint m_lookAnchor;        ///< Global cursor position the cursor is warped back to
+	QPoint m_lookLast;          ///< Global cursor position of the last look update
+	int m_lookTravel = 0;       ///< Pixels moved while looking (0 = a plain right click)
 	int m_hoverSide = 0;        ///< Face highlighted under a dragged material or the paint brush
 	int m_paintStroke = 0;      ///< Paint strokes are one undo step each
 	QElapsedTimer m_hoverClock;
@@ -116,6 +130,7 @@ private:
 	Vec3 m_dragDelta;             ///< Move
 	double m_dragAngle = 0;       ///< Rotate (degrees)
 	Bounds m_dragNewBounds;       ///< Scale
+	Bounds m_previewBounds;       ///< Scale bounds the preview brushes were made for
 	QMatrix4x4 m_previewModel;
 
 	// Block tool

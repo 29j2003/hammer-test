@@ -81,11 +81,26 @@ TEST_CASE("game discovery finds games, mods, Mapbase and Hammer++ FGDs") {
 	CHECK(mod.usesMapbase);
 	CHECK(mod.baseAppId == 243730);
 	CHECK(mod.branch == "Source SDK 2013 (Mapbase)");
-	REQUIRE(mod.fgds.size() == 2);                             // from the Hammer++ config
-	CHECK(mod.fgds[1].filename() == "mymod.fgd");
+	// From the Hammer++ config, plus Mapbase's FGD (the config only has the stock one).
+	REQUIRE(mod.fgds.size() == 3);
+	CHECK(mod.fgds[0].parent_path().filename() == "bin");
+	CHECK(mod.fgds[1] == mod.mapbaseFgd);
+	CHECK(mod.fgds[1].filename() == "halflife2.fgd");
+	CHECK(mod.fgds[1].parent_path().parent_path().filename() == "shared_misc");
+	CHECK(mod.fgds[2].filename() == "mymod.fgd");
+	CHECK(isMapbaseFgd(mod.mapbaseFgd));
+	CHECK_FALSE(isMapbaseFgd(mod.fgds[0]));
 	CHECK(mod.hammerConfig.filename() == "hammerplusplus_gameconfig.txt");
 
 	CHECK(findGame(result, "243730/hl2").title == "Half-Life 2");
+	// Same title in several places: the menu names tell them apart.
+	CHECK(hl2.label == "Half-Life 2 (Half-Life 2, hl2)");
+	CHECK(findGame(result, "243730/hl2").label == "Half-Life 2 (Source SDK Base 2013 Singleplayer, hl2)");
+	CHECK(hl2.appName == "Half-Life 2");
+	CHECK(mod.appName == "Source SDK Base 2013 Singleplayer");
+	for (const auto& game : result.games) {
+		CHECK(std::count_if(result.games.begin(), result.games.end(), [&](const GameEntry& g) { return g.label == game.label; }) == 1);
+	}
 	CHECK(result.games.back().isSourceMod);                    // games first, mods last
 }
 
@@ -100,7 +115,7 @@ TEST_CASE("relative Steam path still matches the Hammer++ config") {
 	std::filesystem::current_path(f.root);
 	const std::filesystem::path relative = "Steam";
 	const auto result = discoverGames(SteamInstallation::load(relative));
-	CHECK(findGame(result, "sourcemods/mymod").fgds.size() == 2);
+	CHECK(findGame(result, "sourcemods/mymod").fgds.size() == 3);
 	CHECK(SteamInstallation::load(relative).root().is_absolute());
 }
 

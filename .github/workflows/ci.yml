@@ -40,7 +40,7 @@ jobs:
       - name: Packages (Qt 6, Mesa, Xvfb)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build qt6-base-dev libgl1-mesa-dev libgl1-mesa-dri xvfb
+          sudo apt-get install -y --no-install-recommends ninja-build qt6-base-dev qt6-multimedia-dev libgl1-mesa-dev libgl1-mesa-dri xvfb
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -77,6 +77,7 @@ jobs:
         with:
           version: "6.8.3"
           arch: win64_msvc2022_64
+          modules: qtmultimedia
           aqtversion: "==3.3.0"
           cache: true
       - name: Configure

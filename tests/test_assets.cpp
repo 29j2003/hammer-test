@@ -5,6 +5,7 @@
 #include "fixture.h"
 
 #include <sme/assets.h>
+#include <sme/studio_model.h>
 #include <sme/brush.h>
 #include <sme/checks.h>
 #include <sme/game.h>
@@ -102,6 +103,94 @@ TEST_CASE("sequences are merged from include models; sound scripts") {
 	const auto sequences = modelSequences(game->files, "models/humans/group01/male_01.mdl");
 	CHECK(sequences == std::vector<std::string>{"idle_subtle", "walk_all", "sitchair1", "lineidle01"});
 	CHECK(soundScriptNames(game->files) == std::vector<std::string>{"Ambient.Wind", "Door.Open", "NPC_Combine.Alert"});
+}
+
+TEST_CASE("sound scripts with their files and soundscapes") {
+	test::Fixture f;
+	test::createFixture(f);
+	test::writeText(f.hl2 / "scripts/game_sounds_manifest.txt", "game_sounds_manifest\n{\n\t\"precache_file\" \"scripts/a.txt\"\n\t\"precache_file\" \"scripts/b.txt\"\n}\n");
+	test::writeText(f.hl2 / "scripts/a.txt", "\"Door.Open\" { \"channel\" \"CHAN_ITEM\" \"rndwave\" { \"wave\" \")doors/open1.wav\" \"wave\" \"^doors/open2.wav\" } }\n"
+	                                   "\"Old.Sound\" { \"wave\" \"old.wav\" }\n");
+	test::writeText(f.hl2 / "scripts/b.txt", "\"old.sound\" { \"wave\" \"#new.wav\" }\n");
+	test::writeText(f.hl2 / "scripts/soundscapes_manifest.txt", "soundscapes_manifest\n{\n\t\"file\" \"scripts/soundscapes_town.txt\"\n}\n");
+	test::writeText(f.hl2 / "scripts/soundscapes_town.txt",
+	          "\"town.inside\"\n{\n\t\"dsp\" \"1\"\n\t\"playlooping\" { \"volume\" \"0.5\" \"wave\" \"*ambient/hum.wav\" }\n"
+	          "\t\"playrandom\" { \"rndwave\" { \"wave\" \"ambient/creak1.wav\" } }\n\t\"playsoundscape\" { \"name\" \"town.base\" }\n"
+	          "\t\"playlooping\" { \"soundname\" \"Door.Open\" }\n}\n\"town.base\" { }\n");
+
+	auto result = discoverGames(SteamInstallation::load(f.steam));
+	const GameEntry* entry = nullptr;
+	for (const auto& g : result.games) {
+		if (g.key() == "220/hl2") entry = &g;
+	}
+	REQUIRE(entry);
+	const auto game = loadGame(*entry, result.steam, entry->fgds);
+	REQUIRE(game);
+	const auto scripts = soundScripts(game->files);
+	REQUIRE(scripts.size() == 2);
+	CHECK(scripts[0].name == "Door.Open");
+	CHECK(scripts[0].channel == "CHAN_ITEM");
+	CHECK(scripts[0].waves == std::vector<std::string>{"doors/open1.wav", "doors/open2.wav"});
+	CHECK(scripts[1].waves == std::vector<std::string>{"new.wav"});       // the later script wins
+	CHECK(scripts[1].script == "scripts/b.txt");
+
+	const auto scapes = soundscapes(game->files);
+	REQUIRE(scapes.size() == 2);
+	CHECK(scapes[0].name == "town.inside");
+	CHECK(scapes[0].dsp == 1);
+	CHECK(scapes[0].sounds == std::vector<std::string>{"ambient/hum.wav", "ambient/creak1.wav", "Door.Open"});
+	CHECK(scapes[0].includes == std::vector<std::string>{"town.base"});
+	CHECK(stripSoundChars(")Weapons\\Pistol.wav") == "weapons/pistol.wav");
+}
+
+TEST_CASE("model triangles from .mdl, .vvd and .vtx") {
+	const auto files = test::makeStudioModel({{-24, -24, 0, 24, 24, 48}, {-8, -8, 48, 8, 8, 64}}, {"idle"}, "", "crate", "models/props/");
+	std::string error;
+	const auto model = buildModelGeometry({files.mdl, files.vvd, files.vtx}, 0, &error);
+	REQUIRE_MESSAGE(model, error);
+	CHECK(model->vertices.size() == 48);
+	CHECK(model->triangleCount() == 24);
+	REQUIRE(model->meshes.size() == 1);
+	CHECK(model->meshes[0].material == "models/props/crate");
+	CHECK(model->meshes[0].indexCount == 72);
+	CHECK(model->bounds.min.x == doctest::Approx(-24));
+	CHECK(model->bounds.max.z == doctest::Approx(64));
+	// The triangles keep the winding of the file (the viewport draws models without culling).
+	for (std::size_t t = 0; t < model->indices.size(); t += 3) {
+		const auto p = [&](int k) {
+			const auto& v = model->vertices[model->indices[t + static_cast<std::size_t>(k)]];
+			return Vec3{v.position[0], v.position[1], v.position[2]};
+		};
+		const auto& n = model->vertices[model->indices[t]].normal;
+		const Vec3 normal = cross(p(1) - p(0), p(2) - p(0));
+		CHECK(dot(normal, Vec3{n[0], n[1], n[2]}) > 0);
+	}
+	// The $cdmaterials folder that really has the material wins.
+	const auto other = buildModelGeometry({files.mdl, files.vvd, files.vtx}, 0, nullptr, [](const std::string& m) { return m == "models/props/crate"; });
+	REQUIRE(other);
+	CHECK(other->meshes[0].material == "models/props/crate");
+
+	// Broken or mismatched files give an error, never a crash.
+	CHECK_FALSE(buildModelGeometry({files.mdl, {}, files.vtx}, 0, &error));
+	CHECK_FALSE(buildModelGeometry({files.mdl, files.vvd, {}}, 0, &error));
+	for (std::size_t offset = 0; offset < files.vtx.size(); offset += 7) {
+		auto broken = files.vtx;
+		broken[offset] = std::byte{0xff};
+		(void)buildModelGeometry({files.mdl, files.vvd, broken}, 0);
+	}
+	for (std::size_t offset = 0; offset < files.mdl.size(); offset += 5) {
+		auto broken = files.mdl;
+		broken[offset] = std::byte{0x7f};
+		(void)buildModelGeometry({broken, files.vvd, files.vtx}, 0);
+	}
+	// Animation-only models (included by others) have no triangles, but load fine.
+	const auto animations = test::makeModelFile({"walk_all"}, "");
+	const auto empty = buildModelGeometry({animations, {}, {}}, 0, &error);
+	REQUIRE(empty);
+	CHECK(empty->empty());
+	auto truncated = files.vvd;
+	truncated.resize(200);
+	CHECK_FALSE(buildModelGeometry({files.mdl, truncated, files.vtx}, 0, &error));
 }
 
 TEST_CASE("did you mean") {

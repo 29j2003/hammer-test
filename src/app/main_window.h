@@ -13,6 +13,8 @@
 
 class QActionGroup;
 class QComboBox;
+class QMenu;
+class QToolButton;
 class QLabel;
 class QSplitter;
 class QDockWidget;
@@ -25,6 +27,8 @@ class MaterialCache;
 class Outliner;
 class ProblemsPanel;
 class PropertiesPanel;
+class SoundBrowser;
+class ToolPanel;
 class Viewport;
 
 class MainWindow : public QMainWindow {
@@ -40,6 +44,9 @@ public:
 	[[nodiscard]] Viewport* view(int index) const { return m_views[static_cast<std::size_t>(index)]; }
 	[[nodiscard]] ProblemsPanel* problems() const { return m_problems; }
 	[[nodiscard]] AssetBrowser* assets() const { return m_assets; }
+	[[nodiscard]] QMenu* gameMenu() const { return m_gameMenu; }
+	[[nodiscard]] ToolPanel* toolPanel() const { return m_toolPanel; }
+	[[nodiscard]] SoundBrowser* sounds() const { return m_sounds; }
 	void raiseDock(const QString& name);
 
 protected:
@@ -65,12 +72,15 @@ private:
 
 	AssetBrowser* m_assets = nullptr;
 	PropertiesPanel* m_properties = nullptr;
+	ToolPanel* m_toolPanel = nullptr;
+	SoundBrowser* m_sounds = nullptr;
 	Outliner* m_outliner = nullptr;
 	ProblemsPanel* m_problems = nullptr;
 	LogPanel* m_log = nullptr;
 	QList<QDockWidget*> m_docks;
 
-	QComboBox* m_gameCombo = nullptr;
+	QToolButton* m_gameButton = nullptr;
+	QMenu* m_gameMenu = nullptr;
 	QComboBox* m_gridCombo = nullptr;
 	QLabel* m_cursorLabel = nullptr;
 	QLabel* m_statsLabel = nullptr;

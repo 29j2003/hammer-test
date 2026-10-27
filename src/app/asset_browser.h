@@ -1,5 +1,6 @@
-// asset_browser.h - Browser for materials (with category filters and thumbnails), models,
-// sounds and entity classes. Items can be dragged into the 3D view.
+// asset_browser.h - Browser for materials (with category filters and thumbnails) and models
+// (with previews). Items can be dragged into the 3D view: materials onto faces, models
+// become props. Sounds have their own tab (sound_browser.h), entities sit at the entity tool.
 
 #pragma once
 
@@ -17,7 +18,6 @@ class QLabel;
 class QLineEdit;
 class QListView;
 class QComboBox;
-class QTreeWidget;
 class QTabWidget;
 class QCheckBox;
 class QListWidget;
@@ -74,6 +74,28 @@ private:
 	QSet<QString> m_used;
 };
 
+class ModelThumbnails;
+
+/// All models of the game with preview pictures (rendered when shown).
+class ModelListModel : public QAbstractListModel {
+	Q_OBJECT
+
+public:
+	ModelListModel(ModelThumbnails* thumbnails, QObject* parent = nullptr);
+	void setModels(const QStringList& models);
+	[[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
+	[[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
+	[[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
+	[[nodiscard]] QStringList mimeTypes() const override;
+	[[nodiscard]] QMimeData* mimeData(const QModelIndexList& indexes) const override;
+	void thumbnailReady(const QString& path);
+
+private:
+	ModelThumbnails* m_thumbnails;
+	QStringList m_models;
+	QHash<QString, int> m_rows;
+};
+
 /// Result of the background indexing of a game's assets.
 struct AssetIndex {
 	std::vector<MaterialListModel::Item> materials;
@@ -93,6 +115,8 @@ public:
 	[[nodiscard]] QStringList modelNames() const { return m_models; }
 	[[nodiscard]] QStringList soundNames() const { return m_sounds; }
 	void showMaterials();
+	void showModels();
+	[[nodiscard]] QListView* modelView() const { return m_modelView; }
 
 signals:
 	void materialsIndexed();
@@ -118,15 +142,11 @@ private:
 	std::atomic<int> m_generation{0};
 
 	QStringList m_models, m_sounds;
+	ModelThumbnails* m_modelThumbnails;
+	ModelListModel* m_modelModel;
 	QListView* m_modelView;
 	QLineEdit* m_modelSearch;
 	QLabel* m_modelInfo;
-	QListView* m_soundView;
-	QLineEdit* m_soundSearch;
-
-	QTreeWidget* m_entityTree;
-	QLineEdit* m_entitySearch;
-	QLabel* m_entityInfo;
 };
 
 } // namespace sme::app
