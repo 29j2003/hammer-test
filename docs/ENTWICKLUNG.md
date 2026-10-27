@@ -82,7 +82,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 
 ## Bauen, CI, Abgabe
 
-- Linux: siehe `.claude/CLAUDE.md`. Windows: Visual Studio 2022 + Qt 6.8 (`-DCMAKE_PREFIX_PATH=<Qt>/msvc2022_64`).
+- Linux: siehe `.claude/CLAUDE.md`. Windows: Visual Studio 2022 oder neuer + Qt 6.8 (`-DCMAKE_PREFIX_PATH=<Qt>/msvc2022_64`).
 - CI (`.github/workflows/ci.yml`): `checks` (Privatsphäre), `linux` (Build, Tests, UI-Tests unter Xvfb, Screenshots als
   Artefakt), `windows` (MSVC-Build, Tests, ZIP mit `SourceMapEditor.exe`, `sme-probe.exe`, Qt-DLLs, Prüfsumme).
 - Abhängigkeiten auf Commit-SHAs (`cmake/Dependencies.cmake`); Actions auf SHAs, Dependabot hält sie aktuell.
