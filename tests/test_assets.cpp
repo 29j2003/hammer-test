@@ -7,6 +7,7 @@
 #include <sme/assets.h>
 #include <sme/audio.h>
 #include <sme/scene_export.h>
+#include <sme/soundscape.h>
 #include <sme/studio_model.h>
 #include <sme/brush.h>
 #include <sme/checks.h>
@@ -157,6 +158,92 @@ TEST_CASE("sound scripts with their files and soundscapes") {
 	CHECK(scapes[0].sounds == std::vector<std::string>{"ambient/hum.wav", "ambient/creak1.wav", "Door.Open"});
 	CHECK(scapes[0].includes == std::vector<std::string>{"town.base"});
 	CHECK(stripSoundChars(")Weapons\\Pistol.wav") == "weapons/pistol.wav");
+}
+
+TEST_CASE("soundscape editing: read every rule, keep unknown keys, write back, manifest") {
+	const std::string text =
+		"// comment\n"
+		"\"town.inside\"\n{\n\t\"dsp\" \"1\"\n\t\"fadetime\" \"2\"\n\t\"dsp_volume\" \"0.8\"\n"
+		"\t\"playlooping\" { \"volume\" \"0.5\" \"pitch\" \"100\" \"wave\" \"*ambient/hum.wav\" \"attenuation\" \"1\" }\n"
+		"\t\"playrandom\" { \"time\" \"5,10\" \"volume\" \"0.3,0.6\" \"soundlevel\" \"SNDLVL_70dB\" \"position\" \"0\"\n"
+		"\t\t\"rndwave\" { \"wave\" \"ambient/creak1.wav\" \"wave\" \"ambient/creak2.wav\" } }\n"
+		"\t\"playsoundscape\" { \"name\" \"town.base\" \"volume\" \"0.7\" \"positionoverride\" \"1\" }\n"
+		"\t\"playmusic\" { \"wave\" \"music/x.mp3\" }\n}\n"
+		"\"town.base\" { \"dsp\" \"0\" }\n";
+	auto scapes = parseSoundscapes(text);
+	REQUIRE(scapes.size() == 2);
+	const auto& inside = scapes[0];
+	CHECK(inside.name == "town.inside");
+	CHECK(inside.dsp == "1");
+	CHECK(inside.fadetime == "2");
+	REQUIRE(inside.extra.size() == 1);
+	CHECK(inside.extra[0].key == "dsp_volume");
+	REQUIRE(inside.rules.size() == 4);
+	using Kind = SoundscapeRule::Kind;
+	CHECK(inside.rules[0].kind == Kind::Looping);
+	CHECK(inside.rules[0].wave == "*ambient/hum.wav");
+	CHECK(inside.rules[0].volume == "0.5");
+	REQUIRE(inside.rules[0].extra.size() == 1);   // "attenuation" stays
+	CHECK(inside.rules[1].kind == Kind::Random);
+	CHECK(inside.rules[1].time == "5,10");
+	CHECK(inside.rules[1].soundlevel == "SNDLVL_70dB");
+	CHECK(inside.rules[1].position == "0");
+	CHECK(inside.rules[1].waves == std::vector<std::string>{"ambient/creak1.wav", "ambient/creak2.wav"});
+	CHECK(inside.rules[2].kind == Kind::Soundscape);
+	CHECK(inside.rules[2].name == "town.base");
+	CHECK(inside.rules[2].positionOverride == "1");
+	CHECK(inside.rules[3].kind == Kind::Other);
+	CHECK(inside.rules[3].key == "playmusic");
+
+	// Written and read again: the same.
+	const auto again = parseSoundscapes(writeSoundscape(inside));
+	REQUIRE(again.size() == 1);
+	CHECK(again[0].rules.size() == 4);
+	CHECK(again[0].rules[1].waves == inside.rules[1].waves);
+	CHECK(again[0].rules[3].key == "playmusic");
+	REQUIRE(again[0].rules[3].extra.size() == 1);
+	CHECK(again[0].rules[3].extra[0].value == "music/x.mp3");
+	CHECK(again[0].extra.size() == 1);
+
+	// Edit: a rule more, one less; replaced in place, the other soundscape stays.
+	auto edited = inside;
+	edited.rules.erase(edited.rules.begin() + 2);
+	SoundscapeRule birds;
+	birds.kind = Kind::Random;
+	birds.time = "3,8";
+	birds.waves = {"ambient/birds1.wav"};
+	edited.rules.push_back(birds);
+	edited.dsp = "17";
+	const auto file = upsertSoundscape(text, edited);
+	auto both = parseSoundscapes(file);
+	REQUIRE(both.size() == 2);
+	CHECK(both[0].name == "town.inside");
+	CHECK(both[0].dsp == "17");
+	CHECK(both[0].rules.size() == 4);
+	CHECK(both[0].rules.back().waves == std::vector<std::string>{"ambient/birds1.wav"});
+	CHECK(both[1].name == "town.base");
+	// A new one goes to the end; removing takes only that one.
+	SoundscapeScript fresh;
+	fresh.name = "mymod.cave";
+	const auto three = upsertSoundscape(file, fresh);
+	CHECK(parseSoundscapes(three).size() == 3);
+	CHECK(parseSoundscapes(three).back().name == "mymod.cave");
+	const auto removed = parseSoundscapes(removeSoundscape(three, "TOWN.INSIDE"));
+	REQUIRE(removed.size() == 2);
+	CHECK(removed[0].name == "town.base");
+	CHECK(upsertSoundscape("", fresh).find("\"mymod.cave\"") != std::string::npos);
+
+	// Manifest: the mod's file first (its soundscapes win), only once.
+	const std::string manifest = "soundscapes_manifest\n{\n\t\"file\" \"scripts/soundscapes_town.txt\"\n}\n";
+	const auto withMod = addToSoundscapeManifest(manifest, "scripts/soundscapes_mymod.txt");
+	const auto root = parseKeyValues(withMod);
+	REQUIRE(root.children.size() == 1);
+	REQUIRE(root.children[0].children.size() == 2);
+	CHECK(root.children[0].children[0].value == "scripts/soundscapes_mymod.txt");
+	CHECK(addToSoundscapeManifest(withMod, "scripts/soundscapes_mymod.txt") == withMod);
+	CHECK(parseKeyValues(addToSoundscapeManifest("", "scripts/x.txt")).children[0].key == "soundscapes_manifest");
+	CHECK(dspPresets().size() >= 29);
+	CHECK(std::string(dspPresets()[17].name) == "Concrete, small");
 }
 
 TEST_CASE("model triangles from .mdl, .vvd and .vtx") {

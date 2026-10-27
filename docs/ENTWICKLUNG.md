@@ -23,7 +23,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `filesystem` | `GameFileSystem`: Ordner + VPKs in Suchreihenfolge, erster Treffer gewinnt; `pak01_dir.vpk` vor dem Ordner; thread-sicher (Ordner-Index einmal gebaut, `noteWrittenFile` trägt vom Editor geschriebene Dateien nach) |
 | `game_discovery` | alle Spiele (App-Ordner mit `gameinfo.txt`) und Mods (`sourcemods`), eindeutige Namen (`label`), FGD-Vorschläge (Hammer++ > Hammer > Mod > Haupt-FGD des Spiels); Mapbase-Mods bekommen die Mapbase-FGD aus `sourcemods/mapbase_shared` dazu, wenn keine geladen ist (`isMapbaseFgd`: Text oder `@include`-Kette erwähnt Mapbase); Spiele auf Mapbase-Basis (bekannte App, z. B. Entropy : Zero 2) nehmen die FGD, die die Haupt-FGD einbindet (`ez2.fgd`); Ordner ohne eigene `client.dll` neben einem spielbaren Ordner derselben App = `baseContent` (unten in der Liste, Warnung beim Kompilieren) |
 | `hammer_config` | `GameConfig.txt` / `hammerplusplus_gameconfig.txt` importieren (FGDs, Tools, Ordner) |
-| `material`, `texture`, `assets` | VMT inkl. `patch`, VTF → RGBA (vtfpp), Material-Kategorien, MDL-Kopf (Sequenzen, `$includemodel`), Soundscripts (mit Dateien, Kanal, Lautstärke, Pitch, Soundlevel; schreiben/ersetzen, Manifest ergänzen), Soundscapes, „Meintest du …“; `editMaterialText` ändert nur die genannten Parameter im VMT-Text (Proxies, Reihenfolge, `[$WIN32]` bleiben; Patch → `insert`/`replace`) |
+| `material`, `texture`, `assets` | VMT inkl. `patch`, VTF → RGBA (vtfpp), Material-Kategorien, MDL-Kopf (Sequenzen, `$includemodel`), Soundscripts (mit Dateien, Kanal, Lautstärke, Pitch, Soundlevel; schreiben/ersetzen, Manifest ergänzen), Soundscapes (Übersicht; Bearbeiten in `soundscape`), „Meintest du …“; `editMaterialText` ändert nur die genannten Parameter im VMT-Text (Proxies, Reihenfolge, `[$WIN32]` bleiben; Patch → `insert`/`replace`) |
 | `audio` | Sounds decodieren: WAV (PCM 8/16/24/32, Float, MS-ADPCM, IMA-ADPCM, MP3 in WAV), MP3 (minimp3), OGG (stb_vorbis; beide als Einzeldatei mit Hash gepinnt, gebaut in `codecs*.c`); Loop-Punkt aus `cue`/`smpl`; Wellenform |
 | `studio_model` | Dreiecke eines Modells aus `.mdl` (Bodyparts, Meshes, Skins, `$cdmaterials`), `.vvd` (Vertices, Fixups) und `.dx90.vtx` (LOD 0, Strip-Groups 25/33 Byte); Referenz-Pose, alles grenzgeprüft |
 | `entity_catalog` | FGDs laden (toolpp), Basisklassen auflösen, Helfer (`studio`, `size`, `color`, `iconsprite`); Editor-Sprite einer Klasse/Entity: `edit::classSprite`, `edit::entitySprite` (`sprite()` → eigenes `model`) |
@@ -56,6 +56,14 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Wellenform (`SoundWaveform`) | Soundscript-Eintrag (speichert in `scripts/game_sounds_<mod>.txt` + Manifest). Klick
   decodiert im Hintergrund (`decodeAudio`) und spielt über `SoundPlayer` (QAudioSink im Format des Geräts, eigene
   Umrechnung von Rate/Kanälen; kein FFmpeg-Plugin nötig, Gerät erst beim ersten Abspielen geöffnet).
+- Soundscape-Editor (`SoundscapeEditor`, `soundscape_editor.cpp`): rechte Spalte des Sounds-Tabs (Stapel mit dem
+  Soundscript-Eintrag). Kern-Modul `soundscape`: `parseSoundscapes` liest alle Regeln (`playlooping`, `playrandom` mit
+  `rndwave`, `playsoundscape`, unbekannte Blöcke als `Other`), Unbekanntes bleibt in `extra`; `upsertSoundscape`/
+  `removeSoundscape` schreiben die Datei, `addToSoundscapeManifest` setzt die Mod-Datei an den Anfang des Manifests
+  (gleichnamige Soundscapes der Mod sollen gewinnen – im Spiel nicht geprüft), `dspPresets` = Namen der DSP-Nummern
+  0–28. Karten binden per Referenz an `m_scape.rules[i]`; Hinzufügen/Entfernen baut alle Karten neu (Entfernen/
+  Verschieben verzögert per `QueuedConnection`). Speichern/Löschen macht der `SoundBrowser` (`readModFile`/
+  `writeModFile`, danach neu einlesen und wieder auswählen).
 - Tool-Dock (`ToolPanel`, links): Optionen des aktiven Werkzeugs; beim Entity-Werkzeug `EntityPicker` (Point/Brush,
   Icons aus `iconsprite` über den `MaterialCache` bzw. Editor-Modell über `ModelThumbnails`, „armed“-Klasse,
   Random yaw). Brush-Klasse scharf → Entity-Werkzeug zieht eine Box wie das Block-Werkzeug (`Editor::createBrushEntity`,

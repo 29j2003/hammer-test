@@ -99,6 +99,12 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
   entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
   `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
+- **Soundscapes**: click a soundscape (or **+ Soundscape** for a new one) to edit it: name, room effect (DSP, with
+  names like *Concrete, small*), fade-in, and its sounds as cards - a **looping** sound, **random** sounds every few
+  seconds, or another **soundscape** inside it - each with volume, pitch, sound level and position. **▶** on a card
+  plays its sound; type a file (it completes) or take the one shown in the player. **Save to the mod** writes
+  `scripts/soundscapes_<mod>.txt` and puts it first in the mod's `soundscapes_manifest.txt`, so a changed copy of a
+  game soundscape is used instead of the original. Keys the editor does not know stay in the file.
 - **Side bar**: on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Mod* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
   shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
@@ -110,8 +116,8 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   brings its values back. Texture fields show a small picture of the texture. On the right a big live preview (wall,
   cube or sphere under sun, lamp, night or no light) with *Save* and *Save as new ...* above it. Saving writes the VMT
   into your mod (a material from the game's VPKs becomes an override copy). Only the groups that fit the kind of
-  material are shown (wall, blended ground, model, water). While the tab is open, the map's panels and keys step aside;
-  they come back with the *Map* tab.
+  material are shown (wall, blended ground, model, water). While the page is shown, the map's panels and keys step aside;
+  they come back with the *Map* page.
 - **mapbase-fidelity shaders**: in the material editor, also before the mod has them (the preview shows them; the game
   after the mod's `deploy.bat` ran once)
   - *Relief*: *Give this surface real depth* turns a wall or blended ground into `Fidelity_Parallax` /

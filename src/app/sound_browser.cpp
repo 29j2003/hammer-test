@@ -5,6 +5,7 @@
 #include "copy_paste.h"
 #include "editor.h"
 #include "sound_player.h"
+#include "soundscape_editor.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -25,10 +26,12 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QShortcut>
 #include <QSlider>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
@@ -168,8 +171,12 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	m_kind->addItem(tr("Sound scripts"), int(ScriptSound));
 	m_kind->addItem(tr("Sound files"), int(FileSound));
 	m_kind->addItem(tr("Soundscapes"), int(SoundscapeEntry));
+	auto* newScape = new QPushButton(tr("+ Soundscape"));
+	newScape->setObjectName("newSoundscape");
+	newScape->setToolTip(tr("Make a new soundscape for the mod"));
 	row->addWidget(m_search, 1);
 	row->addWidget(m_kind);
+	row->addWidget(newScape);
 	v->addLayout(row);
 	m_tree = new SoundTree;
 	m_tree->setColumnCount(2);
@@ -260,8 +267,14 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	form->addRow(tr("Sound level"), m_soundlevel);
 	form->addRow(tr("Files"), m_waves);
 	form->addRow(waveButtons);
+	m_entryBox = box;
+	m_scapeEditor = new SoundscapeEditor;
+	m_scapeEditor->setShownFile([this] { return m_file; });
+	m_editors = new QStackedWidget;
+	m_editors->addWidget(box);
+	m_editors->addWidget(m_scapeEditor);
 	split->addWidget(right);
-	split->addWidget(box);   // own column: the dock is low, the waveform needs the height
+	split->addWidget(m_editors);   // own column: the dock is low, the waveform needs the height
 	split->setStretchFactor(0, 3);
 	split->setStretchFactor(1, 3);
 	split->setStretchFactor(2, 2);
@@ -318,6 +331,10 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 		if (!file.isEmpty()) load(file, m_playOnClick->isChecked());
 	});
 	connect(m_save, &QPushButton::clicked, this, &SoundBrowser::saveEntry);
+	connect(newScape, &QPushButton::clicked, this, &SoundBrowser::newSoundscape);
+	connect(m_scapeEditor, &SoundscapeEditor::previewRequested, this, [this](const QString& file) { load(file, true); });
+	connect(m_scapeEditor, &SoundscapeEditor::saveRequested, this, &SoundBrowser::saveSoundscape);
+	connect(m_scapeEditor, &SoundscapeEditor::deleteRequested, this, &SoundBrowser::deleteSoundscape);
 
 	connect(editor, &Editor::gameAboutToChange, this, [this] {
 		++m_generation;
@@ -416,11 +433,29 @@ void SoundBrowser::fill() {
 		item->setData(0, INDEX_ROLE, int(i));
 	}
 	m_tree->setUpdatesEnabled(true);
+	QStringList scapeNames, fileNames;
+	for (const auto& scape : m_index.soundscapes) scapeNames << QString::fromStdString(scape.name);
+	for (const auto& file : m_index.files) fileNames << QString::fromStdString(file);
+	m_scapeEditor->setSoundscapeNames(scapeNames);
+	m_scapeEditor->setSoundFiles(fileNames);
 	m_info->setText(tr("%1 sound script entries, %2 files, %3 soundscapes - drag into the map, double-click sets it on the selected entity")
 	                    .arg(m_index.scripts.size())
 	                    .arg(m_index.files.size())
 	                    .arg(m_index.soundscapes.size()));
 	applyFilter();
+	if (!m_reselect.isEmpty()) {
+		// After saving: the soundscape again, as it is now in the mod (the save message stays).
+		const auto found = m_tree->findItems(m_reselect, Qt::MatchFixedString | Qt::MatchRecursive);
+		m_reselect.clear();
+		for (auto* item : found) {
+			if (item->data(0, KIND_ROLE).toInt() == SoundscapeEntry) {
+				const QString status = m_scapeEditor->status();
+				m_tree->setCurrentItem(item);
+				m_scapeEditor->setStatus(status);
+				break;
+			}
+		}
+	}
 }
 
 void SoundBrowser::applyFilter() {
@@ -467,6 +502,7 @@ void SoundBrowser::showItem(QTreeWidgetItem* item) {
 		m_info->setText(tr("<b>%1</b> from %2 - double-click sets it on the selected ambient_generic")
 		                    .arg(QString::fromStdString(entry.name), QString::fromStdString(entry.script)));
 		editEntry(entry);
+		m_editors->setCurrentWidget(m_entryBox);
 		if (!entry.waves.empty()) {
 			// Like the game: one of the files at random.
 			static std::mt19937 random{std::random_device{}()};
@@ -483,6 +519,7 @@ void SoundBrowser::showItem(QTreeWidgetItem* item) {
 		                    .arg(scape.dsp)
 		                    .arg(sounds.join(", "))
 		                    .arg(includes.isEmpty() ? QString() : tr("<br>Includes: %1").arg(includes.join(", "))));
+		editSoundscape(scape);
 		for (const auto& sound : scape.sounds) {
 			if (sound.find('.') != std::string::npos && sound.find('/') != std::string::npos) {
 				load(QString::fromStdString(sound), autoPlay);
@@ -607,15 +644,8 @@ void SoundBrowser::saveEntry() {
 	// The mod's own script (made if needed) and the manifest that loads it.
 	const QString gameDir = fromPath(gameEntry->gameDir);
 	const QString script = modScriptPath();
-	const auto readMod = [&](const QString& relative) -> std::string {
-		QFile file(gameDir + "/" + relative);
-		return file.open(QIODevice::ReadOnly) ? file.readAll().toStdString() : std::string();
-	};
-	const auto write = [&](const QString& relative, const std::string& text) {
-		QDir().mkpath(QFileInfo(gameDir + "/" + relative).absolutePath());
-		QFile file(gameDir + "/" + relative);
-		return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(text.data(), qint64(text.size())) == qint64(text.size());
-	};
+	const auto readMod = [this](const QString& relative) { return readModFile(relative); };
+	const auto write = [this](const QString& relative, const std::string& text) { return writeModFile(relative, text); };
 	try {
 		const auto scriptText = upsertSoundScriptEntry(readMod(script), entry);
 		// The manifest: the mod's own, else a copy of the base game's (it lists the game's scripts).
@@ -628,14 +658,124 @@ void SoundBrowser::saveEntry() {
 			m_details->setText(tr("Could not write into %1").arg(gameDir));
 			return;
 		}
-		game->files.noteWrittenFile(toPath(gameDir + "/" + script));
-		game->files.noteWrittenFile(toPath(gameDir + "/scripts/game_sounds_manifest.txt"));
 	} catch (const std::exception& e) {
 		m_details->setText(tr("%1 could not be read: %2").arg(script, QString::fromUtf8(e.what())));
 		return;
 	}
 	m_details->setText(tr("Saved %1 into %2 (loaded by scripts/game_sounds_manifest.txt)").arg(QString::fromStdString(entry.name), script));
 	emit m_editor->message(tr("Sound script entry %1 saved").arg(QString::fromStdString(entry.name)));
+	reload();
+}
+
+std::string SoundBrowser::readModFile(const QString& relative) const {
+	const auto* entry = m_editor->gameEntry();
+	if (!entry) return {};
+	QFile file(fromPath(entry->gameDir) + "/" + relative);
+	return file.open(QIODevice::ReadOnly) ? file.readAll().toStdString() : std::string();
+}
+
+bool SoundBrowser::writeModFile(const QString& relative, const std::string& text) {
+	auto* game = m_editor->game();
+	const auto* entry = m_editor->gameEntry();
+	if (!game || !entry) return false;
+	const QString path = fromPath(entry->gameDir) + "/" + relative;
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	QFile file(path);
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(text.data(), qint64(text.size())) != qint64(text.size())) {
+		return false;
+	}
+	file.close();
+	game->files.noteWrittenFile(toPath(path));   // the game's file list knows a new file at once
+	return true;
+}
+
+QString SoundBrowser::modSoundscapePath() const {
+	const auto* entry = m_editor->gameEntry();
+	if (!entry) {
+		return {};
+	}
+	return QStringLiteral("scripts/soundscapes_%1.txt").arg(QString::fromStdString(toLower(entry->folder())));
+}
+
+void SoundBrowser::newSoundscape() {
+	const auto* entry = m_editor->gameEntry();
+	const QString prefix = entry ? QString::fromStdString(toLower(entry->folder())) : QStringLiteral("mymod");
+	m_scapeEditor->newSoundscape(prefix + ".new_soundscape");
+	m_editors->setCurrentWidget(m_scapeEditor);
+}
+
+void SoundBrowser::editSoundscape(const Soundscape& scape) {
+	auto* game = m_editor->game();
+	if (!game) return;
+	const QString file = QString::fromStdString(scape.file);
+	SoundscapeScript found;
+	found.name = scape.name;
+	QString problem;
+	try {
+		for (auto& candidate : parseSoundscapes(game->files.readText(scape.file).value_or(std::string()))) {
+			if (iequals(candidate.name, scape.name)) {
+				found = std::move(candidate);
+				break;
+			}
+		}
+	} catch (const std::exception& e) {
+		problem = tr("%1 could not be read: %2").arg(file, QString::fromUtf8(e.what()));
+	}
+	const auto* entry = m_editor->gameEntry();
+	const bool inMod = entry && QString::compare(file, modSoundscapePath(), Qt::CaseInsensitive) == 0 &&
+	                   QFileInfo::exists(fromPath(entry->gameDir) + "/" + file);
+	m_scapeEditor->setSoundscape(found, file, inMod);
+	m_scapeEditor->setStatus(problem);
+	m_editors->setCurrentWidget(m_scapeEditor);
+}
+
+void SoundBrowser::saveSoundscape(const SoundscapeScript& scape) {
+	auto* game = m_editor->game();
+	if (!game || !m_editor->gameEntry()) {
+		return;
+	}
+	const QString name = QString::fromStdString(scape.name);
+	if (name.isEmpty() || name.contains(QRegularExpression(QStringLiteral("[\\s\"{}]")))) {
+		m_scapeEditor->setStatus(tr("Give the soundscape a name without spaces, e.g. mymod.cave_drips"));
+		return;
+	}
+	const QString file = modSoundscapePath();
+	try {
+		const auto text = upsertSoundscape(readModFile(file), scape);
+		// The manifest: the mod's own, else a copy of the game's (it lists the game's soundscapes).
+		std::string manifest = readModFile(QStringLiteral("scripts/soundscapes_manifest.txt"));
+		if (manifest.empty()) {
+			manifest = game->files.readText("scripts/soundscapes_manifest.txt").value_or(std::string());
+		}
+		const auto manifestText = addToSoundscapeManifest(manifest, file.toStdString());
+		if (!writeModFile(file, text) || !writeModFile(QStringLiteral("scripts/soundscapes_manifest.txt"), manifestText)) {
+			m_scapeEditor->setStatus(tr("Could not write into the mod's folder"));
+			return;
+		}
+	} catch (const std::exception& e) {
+		m_scapeEditor->setStatus(tr("%1 could not be read: %2").arg(file, QString::fromUtf8(e.what())));
+		return;
+	}
+	m_scapeEditor->setStatus(tr("Saved %1 into %2").arg(name, file));
+	emit m_editor->message(tr("Soundscape %1 saved into %2").arg(name, file));
+	m_reselect = name;
+	reload();
+}
+
+void SoundBrowser::deleteSoundscape(const QString& name) {
+	const QString file = modSoundscapePath();
+	try {
+		const std::string text = readModFile(file);
+		if (text.empty() || !writeModFile(file, removeSoundscape(text, name.toStdString()))) {
+			m_scapeEditor->setStatus(tr("%1 is not in the mod's own file").arg(name));
+			return;
+		}
+	} catch (const std::exception& e) {
+		m_scapeEditor->setStatus(tr("%1 could not be read: %2").arg(file, QString::fromUtf8(e.what())));
+		return;
+	}
+	emit m_editor->message(tr("Soundscape %1 removed from %2").arg(name, file));
+	newSoundscape();
 	reload();
 }
 
