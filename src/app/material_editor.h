@@ -1,11 +1,15 @@
-// material_editor.h - "Material Editor" dock: edits a VMT with fields for what mappers change
-// most and a live preview with different lights. The fields shown depend on the kind of
+// material_editor.h - "Material Editor" tab: edits a VMT with fields for what mappers change
+// most and a big live preview with different lights. Laid out like Source 2's material editor:
+// recent materials and a search on the left, then the parameters in groups - a group with a
+// switch in its header is a feature (normal map, relief, reflections, ...) and folds away when
+// it is off - and the preview with its tool bar. The groups shown depend on the kind of
 // material (wall, blended ground, model, water); every other parameter is in a table.
 //
-// Mods with mapbase-fidelity's shaders get switches for them: relief (Fidelity_Parallax: real
-// depth from a height map - made here from the normal map or the texture, turned upside down,
-// with painted zones that stay flat or are inverted), water with the sun's glint and foam
-// (Water_Fidelity) and liquid in glass props (Fidelity_Liquid).
+// mapbase-fidelity's shaders have switches too, also before the mod has them (the preview shows
+// them already; the game after deploy.bat): relief (Fidelity_Parallax: real depth from a height
+// map - made here from the normal map or the texture, turned upside down, with painted zones that
+// stay flat or are inverted), water with the sun's glint and foam (Water_Fidelity) and liquid in
+// glass props (Fidelity_Liquid).
 //
 // Saving writes the VMT into the mod (a material from the game's VPKs is saved as a copy in the
 // mod's materials folder; one deploy.bat made becomes the mod's own and deploy.bat leaves it
@@ -20,6 +24,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,16 +35,18 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
-class QGroupBox;
 class QLabel;
 class QLineEdit;
+class QListWidget;
 class QPushButton;
 class QSlider;
 class QTableWidget;
+class QVBoxLayout;
 
 namespace sme::app {
 
 class Editor;
+class FeatureGroup;
 class MaterialPreview;
 
 /// Paints relief zones over a texture: left mouse paints the chosen zone, right mouse erases.
@@ -96,6 +103,8 @@ public:
 	void setHeightZones(std::vector<std::uint8_t> zones, unsigned width, unsigned height);
 	/// The height map as it would be saved (invert and zones applied), if there is one.
 	[[nodiscard]] std::optional<HeightMap> currentHeights() const;
+	/// Materials opened lately (newest first), as the list on the left shows them.
+	[[nodiscard]] QStringList recentMaterials() const;
 
 signals:
 	void materialSaved(const QString& name);
@@ -109,8 +118,12 @@ private:
 	[[nodiscard]] Kind kind() const;
 	[[nodiscard]] QString baseShader() const;   ///< The shader without the fidelity variant
 	void buildFields();
-	QFormLayout* section(QGroupBox*& box, const QString& title);
-	QLineEdit* textureField(const QString& key, const QString& placeholder);
+	/// A group of parameters; `toggle` (may be null) is the feature switch in its header.
+	QFormLayout* section(FeatureGroup*& group, const QString& title, QCheckBox* toggle = nullptr);
+	/// Turns a feature off (its parameters are kept aside and come back when it is turned on again).
+	void setFeature(const QString& feature, bool on);
+	/// A texture name field with a small picture of the texture in front of it.
+	QWidget* textureField(const QString& key, const QString& placeholder);
 	QWidget* colorField(const QString& key, const QString& placeholder, QLineEdit** field = nullptr);
 	QWidget* sliderField(const QString& key, double minimum, double maximum, double fallback, int decimals, QSlider** slider = nullptr);
 	void loadValuesIntoFields();
@@ -122,6 +135,7 @@ private:
 	void loadHeightSource();
 	void fillOtherTable();
 	void paintZones();
+	void rememberRecent(const QString& name);
 
 	Editor* m_editor;
 	QString m_name;
@@ -144,23 +158,36 @@ private:
 	bool m_heightDirty = false;           ///< Save writes a new height map
 	int m_heightGeneration = 0;
 
+	QLineEdit* m_search;
+	QListWidget* m_recent;
+	QVBoxLayout* m_column = nullptr;      ///< The parameter groups
+	std::map<QString, QStringList> m_featureKeys;   ///< Feature switch -> the parameters it owns
+	std::map<QString, QString> m_parked;  ///< Parameters of features turned off (lowercase key -> value)
+	std::set<QString> m_forcedOn;         ///< Features turned on that have no value yet (empty texture field)
 	QLabel* m_title;
 	QLabel* m_where;
 	QLabel* m_notice;
 	QComboBox* m_kindBox;
 	QLabel* m_shaderName;
 	std::map<QString, QLineEdit*> m_textureFields;
+	std::map<QString, QLabel*> m_thumbs;  ///< Small pictures in front of the texture fields
 	std::map<QString, QLineEdit*> m_colorFields;
 	std::map<QString, QSlider*> m_sliders;
 	std::map<QString, QWidget*> m_rows;   ///< Rows hidden by kind ("$basetexture2", ...)
-	QGroupBox* m_texturesBox;
-	QGroupBox* m_bumpBox;
-	QGroupBox* m_reliefBox;
-	QGroupBox* m_envBox;
-	QGroupBox* m_alphaBox;
-	QGroupBox* m_detailBox;
-	QGroupBox* m_waterBox;
-	QGroupBox* m_liquidBox;
+	FeatureGroup* m_texturesBox;
+	FeatureGroup* m_bumpBox;
+	FeatureGroup* m_reliefBox;
+	FeatureGroup* m_envBox;
+	FeatureGroup* m_alphaBox;
+	FeatureGroup* m_detailBox;
+	FeatureGroup* m_phongBox;
+	FeatureGroup* m_waterBox;
+	FeatureGroup* m_glintBox;
+	FeatureGroup* m_liquidBox;
+	FeatureGroup* m_otherBox;
+	QCheckBox* m_bumpOn;
+	QCheckBox* m_envOn;
+	QCheckBox* m_detailOn;
 	QComboBox* m_surface;
 	QCheckBox* m_ssbump;
 	QCheckBox* m_relief;
@@ -169,7 +196,7 @@ private:
 	QPushButton* m_fromNormals;
 	QPushButton* m_fromTexture;
 	QPushButton* m_zonesButton;
-	std::vector<QLabel*> m_fidelityMissing;   ///< "Needs mapbase-fidelity's shaders" under each switch
+	std::vector<QLabel*> m_fidelityNotes;   ///< "The game shows this after deploy.bat" while the mod lacks the shaders
 	QComboBox* m_reflection;
 	QComboBox* m_mask;
 	QComboBox* m_transparency;

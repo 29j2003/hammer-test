@@ -48,6 +48,11 @@ QTabBar::tab { padding: 5px 12px; background: #2c2f34; border: none; }
 QTabBar::tab:selected { background: #3a3d44; color: #f0a050; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { padding: 2px 4px; border: 1px solid #44484f; border-radius: 3px; background: #1d1f22; }
 QStatusBar { background: #2a2c31; }
+QFrame#featureHeader { background: #2c2f34; border-radius: 3px; }
+QFrame#featureHeader QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #6a707a; border-radius: 3px; background: #1d1f22; }
+QFrame#featureHeader QCheckBox::indicator:checked { background: #e88c28; border-color: #e88c28; }
+QTabWidget#centralTabs > QTabBar::tab { padding: 6px 18px; }
+QPushButton[accent="true"]:disabled { background: #4b3c2c; color: #8f8272; border-color: #4b3c2c; }
 QFrame[role="card"] { background: #2b2e33; border: 1px solid #3a3d44; border-radius: 4px; }
 )");
 }
