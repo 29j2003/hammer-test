@@ -33,6 +33,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `checks` | Prüfungen mit Autofix, Leak aus `.lin` |
 | `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Vertex verschieben (bleibt konvex) |
 | `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
+| `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
@@ -132,7 +133,12 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Kacheln (4 Spot-Lichter je 1, 2 Punkt-Lichter je 6 Würfelseiten). Neu gezeichnet nur bei Geometrie-/Licht-Änderung oder
   wenn sich die nächsten Lichter ändern. Shader: `u_lightShadow[i]` (erste Kachel, Punktlicht ja/nein), PCF 2x2.
   Schatten-Sampler liegen fest auf Einheit 3 und 4 (zwei Sampler-Typen auf einer Einheit wären ein GL-Fehler).
-- Kompilieren: `CompileRunner` meldet strukturiert (`stepStarted`, `stepProgress`, `problem` …) an das `CompileWindow`.
+- Kompilieren: `CompileRunner::plan` setzt die Programme der Spiel-Einstellungen in die Befehle aus `compileCommands`
+  ein und meldet strukturiert (`stepStarted`, `stepProgress`, `problem` …) an das `CompileWindow`. Cubemaps: das Spiel
+  mit `+map <karte> -buildcubemaps` (`+mat_hdr_level 0/2`, bei „Both“ zwei Läufe), wartet bis es sich beendet; braucht
+  das Kopieren. `CompileDialog`: Ansicht „Simple“ (Karten) und „Advanced“ (Schritte, Parameter-Liste mit Suche,
+  eigene Parameter) auf denselben `CompileOptions`; gespeichert pro Spiel in QSettings `compile/<spiel>` (Text aus
+  `serialize`), die zuletzt gewählte Ansicht in `compile/advanced`.
   Mit aktiven Cordons wird `<karte>_cordon.vmf` geschrieben und kompiliert.
 - Partikel: `particleSystems()` liest `particles_manifest.txt` und die PCFs mit dem DMX-Leser von sourcepp (`kvpp::DMX`).
 - Tastenkürzel: Aktionen tragen ihren englischen Namen als `objectName`; `ShortcutDialog` speichert unter `shortcuts/<Name>`.

@@ -1,5 +1,6 @@
-// compile.h - Compiling and running a map (VBSP -> VVIS -> VRAD -> copy -> game), the
-// compile dialog and the per-game settings dialog.
+// compile.h - Compiling and running a map (VBSP -> VVIS -> VRAD -> copy -> cubemaps -> game),
+// the compile dialog (a simple view with cards like XBLAH's and an advanced view with every
+// parameter of each tool) and the per-game settings dialog.
 
 #pragma once
 
@@ -11,23 +12,32 @@
 
 #include <vector>
 
+#include <sme/compile_options.h>
 #include <sme/math.h>
 
 #include "editor.h"
 
+class QButtonGroup;
 class QCheckBox;
 class QComboBox;
+class QFrame;
+class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
+class QPushButton;
+class QSpinBox;
+class QStackedWidget;
+class QTreeWidget;
 
 namespace sme::app {
 
-struct CompileOptions {
-	enum class Preset { Fast, Normal, Final };
-	Preset preset = Preset::Normal;
-	bool vbsp = true, vvis = true, vrad = true, copy = true, run = true, hdr = false;
-};
+/// What a compile runs (steps, quality, game window, extra parameters); see compile_options.h.
+using CompileOptions = CompileSettings;
+
+/// Compile settings of a game, as last used (QSettings "compile/<game>"); defaults if none.
+[[nodiscard]] CompileOptions loadCompileOptions(const QString& gameKey);
+void saveCompileOptions(const QString& gameKey, const CompileOptions& options);
 
 class CompileRunner : public QObject {
 	Q_OBJECT
@@ -87,17 +97,52 @@ class CompileDialog : public QDialog {
 	Q_OBJECT
 
 public:
-	CompileDialog(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, QWidget* parent = nullptr);
-	[[nodiscard]] CompileOptions options() const;
+	/// With a `gameKey` the settings are read from and (on Compile) saved for that game.
+	CompileDialog(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, QWidget* parent = nullptr, const QString& gameKey = {});
+	[[nodiscard]] CompileOptions options() const { return m_options; }
+	/// Simple (cards) or advanced (parameters of each tool) view.
+	void setAdvanced(bool advanced);
+	/// The command lines the compile would run, one per line (shown at the bottom).
+	[[nodiscard]] QString commandText() const;
 
 private:
-	void updatePreview();
+	QWidget* buildSimple();
+	QWidget* buildAdvanced();
+	QFrame* card(const QString& title, const QString& tool, const QString& description, QCheckBox** toggle);
+	QWidget* segmented(const QString& name, const QStringList& labels, QButtonGroup** group);
+	void loadIntoWidgets();
+	void changed();
+	void selectTool(int index);
+	void fillParameters();
+	void fillAdded();
+	void addParameter(const QString& text);
 
-	QString m_vmfPath, m_gameDir;
+	QString m_vmfPath, m_gameDir, m_gameKey;
 	GameSettings m_settings;
+	CompileOptions m_options;
+	bool m_loading = false;
+	CompileTool m_tool = CompileTool::Vbsp;
+
 	QComboBox* m_preset;
-	QCheckBox *m_vbsp, *m_vvis, *m_vrad, *m_copy, *m_run, *m_hdr;
-	QLineEdit* m_preview;
+	QPushButton* m_simpleButton;
+	QPushButton* m_advancedButton;
+	QStackedWidget* m_pages;
+	// Simple view
+	QCheckBox *m_detail, *m_water, *m_vvis, *m_vrad, *m_cubemaps, *m_copy, *m_run;
+	QCheckBox *m_console, *m_windowed, *m_novid;
+	QButtonGroup *m_visQuality, *m_lightLevel, *m_lightQuality, *m_cubemapLevel;
+	QLabel* m_bothWarning;
+	QLabel* m_cubemapNote;
+	QComboBox* m_resolution;
+	QSpinBox *m_width, *m_height;
+	QWidget* m_customSize;
+	// Advanced view
+	QListWidget* m_processes;
+	QLabel* m_toolTitle;
+	QLineEdit* m_search;
+	QTreeWidget* m_parameters;
+	QListWidget* m_added;
+	QLineEdit* m_custom;
 	QPlainTextEdit* m_commands;
 };
 

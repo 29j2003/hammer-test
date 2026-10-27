@@ -4,6 +4,7 @@
 
 #include "fixture.h"
 
+#include <sme/compile_options.h>
 #include <sme/entity_catalog.h>
 #include <sme/filesystem.h>
 #include <sme/game.h>
@@ -368,4 +369,91 @@ TEST_CASE("file system sees files the editor writes") {
 	REQUIRE(game->files.exists("scripts/game_sounds_new.txt"));
 	CHECK(game->files.readText("scripts/game_sounds_new.txt").value_or("").find("a.wav") != std::string::npos);
 	game->files.noteWrittenFile(f.root / "elsewhere.txt");   // outside every folder: ignored
+}
+
+TEST_CASE("compile settings: steps, presets, game window, extra parameters, saving") {
+	using sme::CompileSettings;
+	using sme::CompileTool;
+	const auto has = [](const std::vector<std::string>& args, std::string_view value) {
+		return std::find(args.begin(), args.end(), value) != args.end();
+	};
+	CompileSettings settings;
+	CHECK(settings.preset() == CompileSettings::Preset::Normal);
+	auto steps = sme::compileCommands(settings, "/maps/src/arena", "/game/mod");
+	REQUIRE(steps.size() == 5);
+	CHECK(steps[0].name == "VBSP");
+	CHECK(steps[0].arguments == std::vector<std::string>{"-game", "/game/mod", "/maps/src/arena"});
+	CHECK(steps[1].name == "VVIS");
+	CHECK(steps[2].name == "VRAD");
+	CHECK(steps[3].tool == CompileTool::Copy);
+	CHECK(steps[3].arguments == std::vector<std::string>{"/maps/src/arena.bsp", "/game/mod/maps/arena.bsp"});
+	// The game: console, windowed, 1920x1080 and no intro video by default.
+	const auto& game = steps[4];
+	CHECK(game.detached);
+	CHECK(sme::joinArguments(game.arguments) == "-console -windowed -w 1920 -h 1080 -novid -game /game/mod +map arena");
+
+	// The game's own launch options: what the settings decide is not doubled, the rest stays.
+	steps = sme::compileCommands(settings, "/maps/src/arena", "/game/mod", "-novid -dev -console -windowed -w 800 -h 600");
+	CHECK(sme::joinArguments(steps.back().arguments) == "-console -windowed -w 1920 -h 1080 -novid -dev -game /game/mod +map arena");
+	settings.console = false;
+	settings.windowed = false;
+	settings.width = settings.height = 0;
+	steps = sme::compileCommands(settings, "/maps/src/arena", "/game/mod", "-console");
+	CHECK(sme::joinArguments(steps.back().arguments) == "-novid -game /game/mod +map arena");
+	settings = {};
+
+	// Presets.
+	settings.applyPreset(CompileSettings::Preset::Fast);
+	CHECK(settings.preset() == CompileSettings::Preset::Fast);
+	CHECK(has(sme::toolArguments(settings, CompileTool::Vvis), "-fast"));
+	CHECK(sme::joinArguments(sme::toolArguments(settings, CompileTool::Vrad)) == "-bounce 2 -noextra");
+	settings.applyPreset(CompileSettings::Preset::Final);
+	CHECK(sme::joinArguments(sme::toolArguments(settings, CompileTool::Vrad)) == "-final");
+	settings.visFast = true;
+	CHECK(settings.preset() == CompileSettings::Preset::Custom);
+	settings = {};
+	settings.light = sme::LightLevel::Both;
+	settings.detail = false;
+	settings.water = false;
+	CHECK(has(sme::toolArguments(settings, CompileTool::Vrad), "-both"));
+	CHECK(sme::joinArguments(sme::toolArguments(settings, CompileTool::Vbsp)) == "-nodetail -nowater");
+
+	// Steps switched off are left out; cubemaps need the copy and run once per light level.
+	settings.vvis = false;
+	settings.run = false;
+	settings.cubemaps = true;
+	settings.cubemapLevel = sme::LightLevel::Both;
+	steps = sme::compileCommands(settings, "/maps/src/arena", "/game/mod");
+	REQUIRE(steps.size() == 5);
+	CHECK(steps[1].name == "VRAD");
+	CHECK(steps[3].name == "Cubemaps (LDR)");
+	CHECK(steps[4].name == "Cubemaps (HDR)");
+	CHECK_FALSE(steps[3].detached);
+	CHECK(has(steps[3].arguments, "-buildcubemaps"));
+	CHECK(sme::joinArguments(steps[4].arguments).find("+mat_hdr_level 2 +map arena -buildcubemaps") != std::string::npos);
+	settings.copy = false;
+	steps = sme::compileCommands(settings, "/maps/src/arena", "/game/mod");
+	CHECK(std::none_of(steps.begin(), steps.end(), [](const auto& s) { return s.tool == CompileTool::Cubemaps || s.tool == CompileTool::Copy; }));
+
+	// Extra parameters, one with a value and one quoted.
+	settings = {};
+	settings.extraFor(CompileTool::Vrad) = {"-lights fidelity_lights.rad", "-StaticPropLighting"};
+	settings.extraFor(CompileTool::Game) = {"+map_background \"two words\""};
+	CHECK(sme::joinArguments(sme::toolArguments(settings, CompileTool::Vrad)) == "-lights fidelity_lights.rad -StaticPropLighting");
+	CHECK(has(sme::toolArguments(settings, CompileTool::Game), "two words"));
+	CHECK(sme::splitArguments("  -a \"b c\"  d ") == std::vector<std::string>{"-a", "b c", "d"});
+	CHECK_FALSE(sme::knownParameters(CompileTool::Vrad).empty());
+	CHECK(std::any_of(sme::knownParameters(CompileTool::Vbsp).begin(), sme::knownParameters(CompileTool::Vbsp).end(),
+	                  [](const auto& p) { return p.name == "-onlyents"; }));
+
+	// Saving and reading back; unknown or broken lines keep the defaults.
+	settings.applyPreset(CompileSettings::Preset::Final);
+	settings.cubemaps = true;
+	settings.width = 2560;
+	settings.height = 1440;
+	const auto back = CompileSettings::parse(settings.serialize());
+	CHECK(back.serialize() == settings.serialize());
+	CHECK(back.preset() == CompileSettings::Preset::Final);
+	const auto broken = CompileSettings::parse("width=abc\nnonsense\nunknown=1\nvrad+=\n");
+	CHECK(broken.serialize() == CompileSettings{}.serialize());
 }

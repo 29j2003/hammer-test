@@ -10,6 +10,7 @@ add_library(smecore STATIC
 	src/brush.cpp
 	src/checks.cpp
 	src/compile_log.cpp
+	src/compile_options.cpp
 	src/csg.cpp
 	src/clipboard.cpp
 	src/visibility.cpp
