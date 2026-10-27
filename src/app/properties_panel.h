@@ -1,22 +1,31 @@
 // properties_panel.h - "Object Properties": smart editing of whatever is selected.
 //
-// Entities: every FGD key gets a fitting editor (choices, flags, colors, targets, models,
-// animations, sounds) with its description right below it; outputs are edited in a table
-// with drop-downs for outputs, targets and the target's inputs. NPCs get a pose helper.
-// Faces: material and texture alignment. Brushes: tie to entity. Nothing: world settings.
+// Entities: the class at the top (a drop-down changes it), then tabs Keyvalues / Outputs /
+// Inputs with their counts. Keys are grouped by the FGD class that defines them (Targetname,
+// the entity's own class, ...) in groups that fold away; each row is "label | editor" with a
+// fitting editor (choices, yes/no switches, flags as switches, colors, targets, models,
+// animations, sounds, the sky). What the focused key does is shown in the help area at the
+// bottom. Outputs are edited as cards; inputs list who triggers this entity. NPCs get a pose
+// helper. Faces: material and texture alignment. Brushes: tie to entity. Nothing: worldspawn.
 
 #pragma once
 
+#include <QFutureWatcher>
+#include <QImage>
 #include <QPointer>
 #include <QWidget>
 
 #include <functional>
+#include <set>
+#include <utility>
 #include <vector>
 
 #include <sme/entity_catalog.h>
 #include <sme/map.h>
 
 class QCheckBox;
+class QGridLayout;
+class QLabel;
 class QScrollArea;
 class QVBoxLayout;
 class QLineEdit;
@@ -43,12 +52,25 @@ signals:
 private:
 	void rebuild();
 	void buildEntity(QVBoxLayout* layout, const std::vector<int>& entityIds);
+	/// Keyvalues tab: groups by defining FGD class, flags, other keys, position, add-key row.
+	/// Returns the number of keys shown.
+	int buildKeyvalues(QVBoxLayout* layout, const std::vector<int>& entityIds, const EntityClass* definition);
+	/// A group that folds away (its state is kept); returns the grid for "label | editor" rows.
+	QGridLayout* addGroup(QVBoxLayout* layout, const QString& name, int count);
+	/// One "label | editor" row with its help text (shown in the help area while it has the focus).
+	void addRow(QGridLayout* grid, const QString& label, QWidget* editor, const QString& help);
 	/// Smart Edit off: every key as plain text (like Hammer), keys can be added and removed.
 	void buildRawKeys(QVBoxLayout* layout, const std::vector<int>& entityIds, const EntityClass* definition);
 	/// Key + value fields and an Add button (both modes).
 	void buildAddKeyRow(QVBoxLayout* layout, const std::vector<int>& entityIds);
 	void buildOutputs(QVBoxLayout* layout, int entityId);
+	/// Connections of other entities that target this one, each with "Go to".
 	void buildIncoming(QVBoxLayout* layout, const Entity& entity);
+	[[nodiscard]] int incomingCount(const Entity& entity) const;
+	/// worldspawn "skyname": the game's skies with a picture of each.
+	QWidget* makeSkyPicker(const QString& value);
+	void loadSkies();
+	void showHelp(QWidget* focused);
 	void buildNpcHelper(QVBoxLayout* layout, const Entity& entity, const EntityClass* definition);
 	void buildFaces(QVBoxLayout* layout);
 	/// env_cubemap: its room box for parallax-corrected reflections (Mapbase).
@@ -70,8 +92,16 @@ private:
 	QLineEdit* m_filter;
 	QCheckBox* m_smartEdit;
 	QPointer<QWidget> m_content;
+	QLabel* m_help;                        ///< What the focused key does
+	QString m_defaultHelp;                 ///< Shown while no key has the focus (the class description)
 	bool m_pending = false;
 	QString m_filterText;
+	int m_tab = 0;                         ///< Keyvalues, Outputs, Inputs
+	std::set<QString> m_collapsed;         ///< Folded groups (kept in the settings)
+	// Skies of the current game, read once in the background: name and picture.
+	std::vector<std::pair<QString, QImage>> m_skies;
+	QString m_skiesGame;                   ///< Game the sky list belongs to
+	QFutureWatcher<std::vector<std::pair<QString, QImage>>> m_skyWatcher;
 };
 
 /// First sentence of an FGD description, shortened for the line under each field.

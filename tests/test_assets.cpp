@@ -263,6 +263,8 @@ TEST_CASE("particle systems from .pcf files") {
 	CHECK(systems[0].name == "demo_fire_small");
 	CHECK(systems[0].file == "particles/demo_fire.pcf");   // "!" of the manifest removed
 	CHECK(systems[2].name == "demo_sparks");
+	// Skies for the worldspawn "skyname": by their up face, only with the front face too.
+	CHECK(skyboxNames(game->files) == std::vector<std::string>{"sky_demo01"});
 }
 
 TEST_CASE("did you mean") {

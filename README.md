@@ -40,10 +40,17 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   "global light", A–Z or in groups). The class you pick is *armed*: the next click places it on the surface under the
   cursor (a preview of it follows the mouse); a brush entity (trigger, door, …) is built from the next box you drag.
   **Random yaw** turns every new prop differently.
-- **Smart properties for every entity**: each key has a fitting editor (lists, flags, colors, targets, models,
-  animations, sounds, particle systems) and a short description of what it does. Outputs are edited as readable cards
-  ("When OnTrigger tell door_01 to Open") with drop-downs for the target's inputs. Every entity has a Name field. Turn
-  **Smart Edit** off to see every key as plain text, like Hammer; add any key with the *new key | value | + Add* row.
+- **Smart properties for every entity**: the class at the top (pick another class to change it, the keys stay), then
+  the tabs **Keyvalues**, **Outputs** and **Inputs** with their counts. Keys are grouped by where the FGD defines them
+  (Targetname, Angles, the entity's own class, Flags, Placement); click a group's title to fold it away. Each key has
+  a fitting editor (lists, yes/no and flags as switches, colors, targets, models, animations, sounds, particle
+  systems); what the key you are in does is shown at the bottom of the panel. *Find a property or flag* filters
+  keys and flags. Outputs are edited as readable cards ("When OnTrigger tell door_01 to Open") with drop-downs for the
+  target's inputs; Inputs lists the entities that send something to this one, with *Go to*. Every entity has a Name
+  field. Turn **Smart Edit** off to see every key as plain text, like Hammer; add any key with the
+  *new key | value | + Add* row.
+- **Sky and map settings**: with nothing selected (or **Map > Map properties**) the panel shows the world's keys; the
+  sky is picked from the game's skies, each with a small picture.
 - **Copy and paste objects**: Ctrl+C / Ctrl+X copies or cuts the selected brushes and entities, Ctrl+V pastes them
   under the mouse (resting on the surface). **Paste special** (Ctrl+Shift+V) makes several copies at once, each moved
   and turned a step further, and gives entity names a number (door → door_2) so the copies' outputs stay their own.

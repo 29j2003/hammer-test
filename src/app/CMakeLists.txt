@@ -27,6 +27,7 @@ add_library(smeapp STATIC
 	sound_player.cpp
 	style.cpp
 	tool_panel.cpp
+	toggle_switch.cpp
 	updater.cpp
 	viewport.cpp
 	viewport_tools.cpp)

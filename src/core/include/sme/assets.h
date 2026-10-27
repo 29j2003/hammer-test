@@ -86,6 +86,10 @@ struct Soundscape {
 /// Soundscapes from scripts/soundscapes_manifest.txt (or every scripts/soundscapes*.txt).
 [[nodiscard]] std::vector<Soundscape> soundscapes(const GameFileSystem& fs);
 
+/// Names for the worldspawn "skyname" key: every materials/skybox/<name>up.vmt that also has its
+/// front face (<name>ft.vmt), sorted ("sky_day01_01", "sky_day01_01_hdr", ...).
+[[nodiscard]] std::vector<std::string> skyboxNames(const GameFileSystem& fs);
+
 /// A particle system (info_particle_system "effect_name") from a .pcf file.
 struct ParticleSystem {
 	std::string name;

@@ -13,6 +13,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QTableWidget>
+#include <QTabBar>
 #include <QLabel>
 #include <QGroupBox>
 #include <QComboBox>
@@ -49,6 +50,7 @@
 #include "compile.h"
 #include "compile_window.h"
 #include "properties_panel.h"
+#include "toggle_switch.h"
 #include "copy_paste.h"
 #include "editor.h"
 #include "main_window.h"
@@ -448,7 +450,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		}
 		CHECK(nameField);   // light_environment's FGD has no Targetname, the panel adds it
 
-		auto* smart = panel->findChild<QCheckBox*>();
+		auto* smart = panel->findChild<QCheckBox*>("smartEdit");
 		REQUIRE(smart);
 		smart->setChecked(false);
 		settle();
@@ -512,6 +514,103 @@ TEST_CASE("editing with the mouse in the real window") {
 			editor.undo();
 		}
 		CHECK_FALSE(editor.doc().findEntity(sunId));
+		editor.clearSelection();
+	}
+	{
+		// Properties like XBLAH: tabs with counts, keys grouped by the FGD class that defines them,
+		// flags and yes/no keys as switches, incoming outputs with "Go to"; the world's sky is
+		// picked from the game's skies; Map > Map properties shows the world.
+		auto* panel = window.properties();
+		window.raiseDock("Object Properties");
+		const std::size_t entitiesBefore = editor.doc().entities.size();
+		auto [placeLight, lightId] = edit::placeEntity(editor.doc(), "light", {0, 0, 128}, editor.entities()->find("light"), {{"targetname", "lamp1"}});
+		editor.commit(std::move(placeLight));
+		auto [placeRelay, relayId] = edit::placeEntity(editor.doc(), "logic_relay", {32, 0, 128}, editor.entities()->find("logic_relay"));
+		editor.commit(std::move(placeRelay));
+		editor.commit(edit::setConnections(editor.doc(), relayId, {Connection{"OnTrigger", "lamp1", "TurnOn", "", 0, -1}}));
+		Selection lightSel;
+		lightSel.entities.push_back(lightId);
+		editor.setSelection(lightSel);
+		settle();
+		auto* tabs = panel->findChild<QTabBar*>("propertyTabs");
+		REQUIRE(tabs);
+		CHECK(tabs->tabText(0).startsWith("Keyvalues"));
+		CHECK(tabs->tabText(1) == "Outputs  0");
+		CHECK(tabs->tabText(2) == "Inputs  1");
+		CHECK(panel->findChild<QPushButton*>("group:Targetname"));
+		CHECK(panel->findChild<QPushButton*>("group:Parentname"));
+		CHECK(panel->findChild<QPushButton*>("group:light"));
+		// A group folds away and stays folded.
+		auto* lightGroup = panel->findChild<QPushButton*>("group:light");
+		lightGroup->click();
+		editor.setSelection(lightSel);
+		settle();
+		CHECK(panel->findChild<QPushButton*>("group:light")->text().contains(QStringLiteral("▸")));
+		panel->findChild<QPushButton*>("group:light")->click();
+		// Flags are switches: "Initially dark" sets bit 1.
+		ToggleSwitch* dark = nullptr;
+		for (auto* toggle : panel->findChildren<ToggleSwitch*>()) {
+			if (toggle->property("help").toString().contains("Initially dark")) dark = toggle;
+		}
+		REQUIRE(dark);
+		dark->click();
+		settle();
+		CHECK(editor.doc().findEntity(lightId)->get("spawnflags") == "1");
+		editor.undo();
+		// Inputs: who sends something here, with Go to.
+		settle();
+		tabs = panel->findChild<QTabBar*>("propertyTabs");
+		tabs->setCurrentIndex(2);
+		QToolButton* go = nullptr;
+		for (auto* button : panel->findChildren<QToolButton*>()) {
+			if (button->text() == "Go to" && button->isVisibleTo(panel)) go = button;
+		}
+		REQUIRE(go);
+		go->click();
+		settle();
+		CHECK(editor.selection().entities == std::vector<int>{relayId});
+		panel->findChild<QTabBar*>("propertyTabs")->setCurrentIndex(0);
+		// Map > Map properties: nothing selected, the world's keys.
+		QAction* mapProperties = nullptr;
+		for (auto* a : window.actions()) {
+			if (a->objectName() == "Map properties ...") mapProperties = a;
+		}
+		REQUIRE(mapProperties);
+		mapProperties->trigger();
+		settle();
+		CHECK(editor.selection().empty());
+		CHECK(panel->findChild<QPushButton*>("group:worldspawn"));
+		// "World is cold" (0 No / 1 Yes) is a switch.
+		ToggleSwitch* cold = nullptr;
+		for (auto* toggle : panel->findChildren<ToggleSwitch*>()) {
+			if (toggle->parentWidget()->property("help").toString().contains("coldworld")) cold = toggle;
+		}
+		REQUIRE(cold);
+		CHECK_FALSE(cold->isChecked());
+		cold->click();
+		settle();
+		CHECK(editor.doc().world.get("coldworld") == "1");
+		editor.undo();
+		settle();
+		// The sky: the demo's sky is listed (read in the background) and picking it is one undo step.
+		QComboBox* sky = nullptr;
+		for (int i = 0; i < 100; ++i) {
+			sky = panel->findChild<QComboBox*>("skyPicker");
+			if (sky && sky->findText("sky_demo01") >= 0) break;
+			QTest::qWait(50);
+		}
+		REQUIRE(sky);
+		const int skyIndex = sky->findText("sky_demo01");
+		REQUIRE(skyIndex >= 0);
+		CHECK_FALSE(sky->itemIcon(skyIndex).isNull());   // a picture of the sky
+		const std::string skyBefore = editor.doc().world.get("skyname");
+		sky->setCurrentIndex(skyIndex);
+		emit sky->activated(skyIndex);
+		settle();
+		CHECK(editor.doc().world.get("skyname") == "sky_demo01");
+		editor.undo();
+		CHECK(editor.doc().world.get("skyname") == skyBefore);
+		while (editor.doc().entities.size() > entitiesBefore) editor.undo();
 		editor.clearSelection();
 	}
 	{

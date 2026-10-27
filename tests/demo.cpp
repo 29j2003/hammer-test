@@ -88,6 +88,11 @@ constexpr std::string_view DEMO_FGD = R"FGD(
 	maxpropscreenwidth(float) : "Start Fade Pixels" : "-1" : "Number of pixels wide at which all props in the level start to fade (<0 = use fademaxdist)."
 	detailvbsp(string) : "Detail.vbsp file" : "detail.vbsp" : "Detail.vbsp file to use for emitting detail props."
 	detailmaterial(string) : "Detail material file" : "detail/detailsprites" : "Material for detail sprites to use for drawing detail props."
+	coldworld(choices) : "World is cold" : 0 : "Emits steam from NPCs' mouths and similar effects." =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @BaseClass base(Targetname, Angles) = BaseNPC
@@ -331,6 +336,19 @@ void createDemo(Fixture& f) {
 	writeText(mat / "demo/grass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/grass001\"\n"));
 	writeText(mat / "demo/blend_grass_dirt.vmt",
 	          vmt("WorldVertexTransition", "\t\"$basetexture\" \"demo/grass001\"\n\t\"$basetexture2\" \"demo/dirt001\"\n\t\"$surfaceprop\" \"dirt\"\n"));
+	// A 2D skybox (six faces): a blue gradient with a bright horizon, the ground below.
+	for (const char* face : {"up", "dn", "lf", "rt", "ft", "bk"}) {
+		const bool up = std::string_view(face) == "up", down = std::string_view(face) == "dn";
+		writeBytes(mat / "skybox" / (std::string("sky_demo01") + face + ".vtf"), makeTexture(64, [up, down](double u, double v) {
+			if (up) return Rgba{0.25, 0.45, 0.85};
+			if (down) return Rgba{0.3, 0.27, 0.22};
+			const double t = std::clamp(v, 0.0, 1.0);
+			const double cloud = std::max(0.0, fbm(u * 2, v, 91) - 0.55) * 1.2;
+			return Rgba{0.3 + t * 0.45 + cloud, 0.5 + t * 0.35 + cloud, 0.88 + t * 0.08 + cloud};
+		}));
+		writeText(mat / "skybox" / (std::string("sky_demo01") + face + ".vmt"),
+		          vmt("UnlitGeneric", "\t\"$basetexture\" \"skybox/sky_demo01" + std::string(face) + "\"\n\t\"$nofog\" \"1\"\n\t\"$ignorez\" \"1\"\n"));
+	}
 	writeText(mat / "demo/water001.vmt",
 	          vmt("Water", "\t\"$normalmap\" \"demo/water001_normal\"\n\t\"$forcecheap\" \"1\"\n\t\"$fogenable\" \"1\"\n"
 	                       "\t\"$fogcolor\" \"{30 50 50}\"\n\t\"$fogstart\" \"0\"\n\t\"$fogend\" \"300\"\n\t\"$surfaceprop\" \"water\"\n"));

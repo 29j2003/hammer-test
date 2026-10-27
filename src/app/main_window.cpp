@@ -733,6 +733,11 @@ void MainWindow::createActions() {
 
 	// Map
 	auto* map = menuBar()->addMenu(tr("&Map"));
+	// Hammer's Map Properties: the world's keys (sky, detail sprites, ...) in Object Properties.
+	map->addAction(action(tr("Map properties ..."), QKeySequence(), [this] {
+		m_editor->clearSelection();
+		raiseDock("Object Properties");
+	}));
 	map->addAction(check);
 	map->addAction(run);
 	map->addAction(action(tr("Load pointfile (.lin) ..."), QKeySequence(), [this] {

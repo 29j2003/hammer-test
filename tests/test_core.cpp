@@ -299,6 +299,10 @@ TEST_CASE("FGD: includes, base classes, helpers, choices, flags, IO") {
 	const auto hasKill = std::any_of(light->inputs.begin(), light->inputs.end(), [](const EntityIo& io) { return io.name == "Kill"; });
 	CHECK(hasKill);
 	CHECK(light->inputs.size() == 3);
+	// Every key knows the class that defines it (the panel groups keys by it).
+	CHECK(light->property("targetname")->origin == "Targetname");
+	CHECK(light->property("parentname")->origin == "Parentname");
+	CHECK(light->property("style")->origin == "light");
 
 	const auto* start = catalog.find("info_player_start");
 	REQUIRE(start);

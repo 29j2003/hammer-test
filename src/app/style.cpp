@@ -39,6 +39,10 @@ QGroupBox { border: 1px solid #3a3d44; border-radius: 4px; margin-top: 14px; pad
 QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #e8a050; font-weight: bold; }
 QLabel[role="description"] { color: #9399a3; font-size: 8.5pt; }
 QLabel[role="key"] { color: #e3e5e8; font-weight: 600; margin-top: 2px; }
+QLabel[role="rowLabel"] { color: #c4c8ce; }
+QPushButton[role="groupHeader"] { text-align: left; font-weight: 600; color: #e3e5e8; background: transparent; border: none; border-bottom: 1px solid #34373d; border-radius: 0; padding: 5px 2px 4px 2px; margin-top: 4px; }
+QPushButton[role="groupHeader"]:hover { color: #ffffff; background: #2c2f34; }
+QLabel[role="help"] { background: #24262a; border-top: 1px solid #34373d; color: #b8bdc5; }
 QLabel[role="warning"] { color: #ffb050; }
 QComboBox[problem="true"], QLineEdit[problem="true"] { border: 1px solid #d04040; }
 QPushButton { padding: 4px 10px; border: 1px solid #4a4e56; border-radius: 3px; background: #383b41; }
