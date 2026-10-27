@@ -158,6 +158,18 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 
   The command lines are shown at the bottom (with *Copy*). The **Compile** panel shows every step with time and progress, the warnings and errors with a plain explanation, and a
   summary. A leak is shown as a red line in the 3D view. **Cordons** compile only a part of the map.
+- **Ship**: get a map or the whole mod ready for players.
+  - *Check what the map needs* lists every file the open map uses (materials with their textures, the sky, models with
+    their files and materials, sounds, soundscapes, particle files), grouped by where it comes from: **your mod** (players
+    do not have it), **other mod folders**, the **base game** (players have it) and **missing**.
+  - **Pack into BSP** puts your mod's files into the compiled map with `bspzip` (next to the compile tools); what VBSP
+    packed already stays.
+  - **Make share ZIP** writes `maps/<name>.bsp` with your mod's files next to it, plus an optional readme.
+  - **Make mod ZIP** packs the whole mod folder without map sources, logs, compile leftovers, screenshots, saved games and
+    your own `config.cfg` (*Check mod folder* shows what stays out).
+  - **Steam Workshop** (advanced, folded away): builds the content folder from the share package and writes the item file
+    for Valve's `steamcmd`; *Run steamcmd* starts it, or copy the command. steamcmd asks for your Steam login itself –
+    the editor never sees or stores a password.
 - **Export** the map as glTF or OBJ (meters, Y up, textures as PNG, props included) for Blender, Unity or Unreal.
 - **Status bar**: what is selected, its size (width, length, height) and center, where the mouse points in the 3D
   view and how far away that is, grid, snap, rotation step, texture lock, and how long a frame takes (hover it for

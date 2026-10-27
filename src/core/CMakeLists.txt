@@ -17,6 +17,7 @@ add_library(smecore STATIC
 	src/fidelity_look.cpp
 	src/sky_presets.cpp
 	src/soundscape.cpp
+	src/shipping.cpp
 	src/editing.cpp
 	src/entity_catalog.cpp
 	src/filesystem.cpp
