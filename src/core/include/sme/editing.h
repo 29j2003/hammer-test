@@ -61,6 +61,14 @@ namespace edit {
 /// Resizes the selection from box `from` to box `to`; brushes that would become invalid are left alone.
 [[nodiscard]] Change scale(MapDocument& doc, const Selection& selection, const Bounds& from, const Bounds& to);
 [[nodiscard]] Change remove(MapDocument& doc, const Selection& selection);
+/// Mirrors the selection across the plane through `center` perpendicular to `axis` (0 X, 1 Y,
+/// 2 Z) - Hammer's Flip Objects. Point entities are turned to match.
+[[nodiscard]] Change mirror(MapDocument& doc, const Selection& selection, int axis, const Vec3& center, bool textureLock);
+/// Objects like the selected ones (Source 2 Hammer: Select Similar): entities of the same class
+/// (props and other model entities: also the same model), brushes with the same main material.
+[[nodiscard]] Selection similarObjects(const MapDocument& doc, const Selection& selection);
+/// The brush or entity with this id (Hammer: Go to Brush Number); empty if there is none.
+[[nodiscard]] Selection objectWithId(const MapDocument& doc, int id);
 
 /// Copies the selection, moved by `offset`; returns the change and the selection of the copies.
 [[nodiscard]] std::pair<Change, Selection> duplicate(MapDocument& doc, const Selection& selection, const Vec3& offset);

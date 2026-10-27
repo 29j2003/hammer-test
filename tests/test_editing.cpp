@@ -368,3 +368,40 @@ TEST_CASE("mapbase-fidelity look values per map: logic_auto -> point_clientcomma
 	CHECK(cfg.at("r_fidelity_godrays_tint") == "1.0 0.92 0.8");
 	CHECK(cfg.at("exec") == "other");
 }
+
+TEST_CASE("flip, select similar, go to id") {
+	MapDocument doc;
+	auto [c1, wedge] = edit::createBlock(doc, box({0, 0, 0}, {64, 32, 16}), "BRICK/A");
+	auto [c2, other] = edit::createBlock(doc, box({200, 0, 0}, {264, 32, 16}), "BRICK/A");
+	auto [c3, concrete] = edit::createBlock(doc, box({400, 0, 0}, {464, 32, 16}), "CONCRETE/B");
+	auto [c4, prop1] = edit::placeEntity(doc, "prop_static", {0, 0, 0}, nullptr, {{"model", "models/a.mdl"}, {"angles", "0 30 0"}});
+	auto [c5, prop2] = edit::placeEntity(doc, "prop_static", {50, 0, 0}, nullptr, {{"model", "models/a.mdl"}});
+	auto [c6, prop3] = edit::placeEntity(doc, "prop_static", {90, 0, 0}, nullptr, {{"model", "models/b.mdl"}});
+
+	// Flip across x = 100: the block lands at 136..200, stays valid, the prop turns.
+	Selection sel;
+	sel.solids.push_back(wedge);
+	sel.entities.push_back(prop1);
+	(void)edit::mirror(doc, sel, 0, {100, 0, 0}, true);
+	const auto bounds = buildBrushGeometry(*doc.findSolid(wedge)).bounds;
+	CHECK(bounds.min.x == doctest::Approx(136));
+	CHECK(bounds.max.x == doctest::Approx(200));
+	CHECK(isConvexValid(*doc.findSolid(wedge)));
+	CHECK(doc.findEntity(prop1)->origin().x == doctest::Approx(200));
+	Vec3 angles;
+	REQUIRE(parseVec3(doc.findEntity(prop1)->get("angles"), angles));
+	CHECK(angles.y == doctest::Approx(150));   // facing 30 degrees, mirrored in x: 180 - 30
+
+	// Similar: same main material; props only with the same model.
+	Selection one;
+	one.solids.push_back(wedge);
+	one.entities.push_back(prop1);
+	const auto similar = edit::similarObjects(doc, one);
+	CHECK(similar.solids.size() == 2);
+	CHECK(std::find(similar.solids.begin(), similar.solids.end(), concrete) == similar.solids.end());
+	CHECK(similar.entities == std::vector<int>{prop1, prop2});
+
+	CHECK(edit::objectWithId(doc, other.solidId).solids == std::vector<SolidRef>{other});
+	CHECK(edit::objectWithId(doc, prop3).entities == std::vector<int>{prop3});
+	CHECK(edit::objectWithId(doc, 99999).empty());
+}

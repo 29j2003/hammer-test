@@ -7,6 +7,8 @@
 #include "material_cache.h"
 #include "model_thumbnails.h"
 
+#include <QAction>
+#include <QTableWidget>
 #include <QCheckBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -22,6 +24,7 @@
 #include <QMimeData>
 #include <QSettings>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -660,7 +663,25 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	m_hint->setAlignment(Qt::AlignTop | Qt::AlignLeft);
 	m_hint->setMargin(8);
 	m_hint->setTextFormat(Qt::RichText);
-	m_pages->addWidget(m_hint);
+	// Hint and the keys of the tool (Source 2 Hammer's Key | Operation table).
+	m_hintPage = new QWidget;
+	auto* hintLayout = new QVBoxLayout(m_hintPage);
+	hintLayout->setContentsMargins(0, 0, 0, 0);
+	hintLayout->setSpacing(4);
+	hintLayout->addWidget(m_hint);
+	m_keys = new QTableWidget(0, 2);
+	m_keys->setObjectName("toolKeys");
+	m_keys->setHorizontalHeaderLabels({tr("Key"), tr("Operation")});
+	m_keys->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+	m_keys->horizontalHeader()->setStretchLastSection(true);
+	m_keys->verticalHeader()->setVisible(false);
+	m_keys->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	m_keys->setSelectionMode(QAbstractItemView::NoSelection);
+	m_keys->setFocusPolicy(Qt::NoFocus);
+	m_keys->setShowGrid(false);
+	m_keys->setWordWrap(true);
+	hintLayout->addWidget(m_keys, 1);
+	m_pages->addWidget(m_hintPage);
 	m_entities = new EntityPicker(editor);
 	m_pages->addWidget(m_entities);
 	m_block = makeShapePage(editor);
@@ -673,6 +694,8 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 		}
 	});
 	refresh();
+	// Once the window's actions exist, the key table shows their shortcuts.
+	QTimer::singleShot(0, this, &ToolPanel::refresh);
 }
 
 void ToolPanel::setBlockPage(QWidget* page) {
@@ -681,12 +704,46 @@ void ToolPanel::setBlockPage(QWidget* page) {
 	refresh();
 }
 
+void ToolPanel::showKeys(const std::vector<std::pair<QString, QString>>& rows) {
+	// "action:Name" takes the action's current key (the shortcut editor may have changed it).
+	const auto keyText = [this](const QString& key) {
+		if (!key.startsWith(QLatin1String("action:"))) return key;
+		const QString name = key.mid(7);
+		for (auto* action : window()->findChildren<QAction*>()) {
+			if (action->objectName() == name && !action->shortcut().isEmpty()) {
+				return action->shortcut().toString(QKeySequence::NativeText);
+			}
+		}
+		return QString();
+	};
+	m_keys->setRowCount(0);
+	for (const auto& [key, operation] : rows) {
+		const QString text = keyText(key);
+		if (text.isEmpty()) continue;
+		const int row = m_keys->rowCount();
+		m_keys->insertRow(row);
+		auto* keyItem = new QTableWidgetItem(QStringLiteral("[%1]").arg(text));
+		keyItem->setForeground(QColor(240, 160, 48));
+		m_keys->setItem(row, 0, keyItem);
+		m_keys->setItem(row, 1, new QTableWidgetItem(operation));
+	}
+	m_keys->setVisible(m_keys->rowCount() > 0);
+	m_keys->resizeRowsToContents();
+}
+
 void ToolPanel::refresh() {
 	if (m_editor->selectMode() == Editor::SelectMode::Face) {
 		m_hint->setText(tr("<b>Faces</b><br>Click a face to select it, Ctrl+click adds, double-click selects the whole wall.<br>"
 		                   "Drag a material onto a face, Shift+T applies the current material, Ctrl+right mouse paints.<br>"
 		                   "The Object Properties panel aligns and fits the selected faces together."));
-		m_pages->setCurrentWidget(m_hint);
+		showKeys({{tr("Ctrl+Click"), tr("Add or remove a face")},
+		          {tr("Double-click"), tr("Select the whole wall")},
+		          {"action:Apply current material", tr("Apply the current material")},
+		          {tr("Ctrl+Right drag"), tr("Paint the current material")},
+		          {tr("Shift+Right click"), tr("Pick the material under the cursor")},
+		          {QStringLiteral("Ctrl+M"), tr("Pick the material under the cursor")},
+		          {"action:Select similar", tr("Faces with the same material")}});
+		m_pages->setCurrentWidget(m_hintPage);
 		return;
 	}
 	switch (m_editor->tool()) {
@@ -697,35 +754,76 @@ void ToolPanel::refresh() {
 				return;
 			}
 			m_hint->setText(tr("<b>Block</b><br>Drag the base on the grid, move the mouse up for the height and click."));
+			showKeys({{tr("Enter"), tr("Create the block")}, {tr("Esc"), tr("Cancel")}, {"action:Grid smaller", tr("Grid smaller")},
+			          {"action:Grid bigger", tr("Grid bigger")}});
 			break;
 		case Editor::Tool::Select:
 			m_hint->setText(tr("<b>Select</b><br>Click selects, Ctrl+click adds, drag a frame for many.<br>Double-click frames the selection (F).<br>"
 			                   "Right mouse: look around, W A S D fly."));
+			showKeys({{tr("Ctrl+Click"), tr("Add or remove")},
+			          {tr("Drag a side square"), tr("Make the selection longer, shorter, taller")},
+			          {"action:Frame selection", tr("Frame the selection")},
+			          {"action:Copy", tr("Copy")},
+			          {"action:Paste", tr("Paste under the mouse")},
+			          {"action:Paste special ...", tr("Paste several copies")},
+			          {"action:Duplicate", tr("Duplicate")},
+			          {"action:Delete", tr("Delete")},
+			          {"action:Select similar", tr("Select similar objects")},
+			          {"action:Go to ID ...", tr("Go to a brush or entity id")},
+			          {"action:Snap to grid", tr("Snap the selection to the grid")},
+			          {"action:Flip left/right (X)", tr("Flip left/right")},
+			          {"action:Flip up/down (Z)", tr("Flip up/down")},
+			          {"action:Transform ...", tr("Exact move, rotation, scale")},
+			          {"action:Drop to floor", tr("Drop onto what is below")},
+			          {"action:Tie to entity (func_detail)", tr("Tie to func_detail")},
+			          {"action:Hide selection", tr("Hide the selection")},
+			          {"action:Show all", tr("Show everything hidden")}});
 			break;
 		case Editor::Tool::Move:
 			m_hint->setText(tr("<b>Move</b><br>Drag an arrow or a square of the gizmo. Shift+drag copies.<br>Arrow keys nudge by the grid."));
+			showKeys({{tr("Shift+Drag"), tr("Move a copy")},
+			          {tr("Corner square"), tr("Snap onto a corner of another object")},
+			          {"action:Nudge right", tr("Nudge right")},
+			          {"action:Nudge left", tr("Nudge left")},
+			          {"action:Nudge forward", tr("Nudge forward")},
+			          {"action:Nudge back", tr("Nudge back")},
+			          {"action:Nudge up", tr("Nudge up")},
+			          {"action:Nudge down", tr("Nudge down")},
+			          {"action:Snap to grid", tr("Snap to the grid")}});
 			break;
 		case Editor::Tool::Rotate:
 			m_hint->setText(tr("<b>Rotate</b><br>Drag a ring. Steps follow the rotation snap (Ctrl: 1°).<br>Alt+arrow keys rotate by one step."));
+			showKeys({{tr("Ctrl+Drag"), tr("Rotate in 1° steps")},
+			          {"action:Rotate left", tr("Turn left")},
+			          {"action:Rotate right", tr("Turn right")},
+			          {"action:Rotate up", tr("Tilt up")},
+			          {"action:Rotate down", tr("Tilt down")},
+			          {"action:Rotation snap smaller", tr("Smaller rotation step")},
+			          {"action:Rotation snap bigger", tr("Bigger rotation step")}});
 			break;
 		case Editor::Tool::Scale:
 			m_hint->setText(tr("<b>Scale</b><br>Drag a handle on a side of the box. Textures stay in place (texture lock)."));
+			showKeys({{"action:Transform ...", tr("Scale by exact factors")}, {"action:Flip left/right (X)", tr("Flip left/right")},
+			          {"action:Flip up/down (Z)", tr("Flip up/down")}});
 			break;
 		case Editor::Tool::Clip:
 			m_hint->setText(tr("<b>Clip</b><br>Select brushes. In a 2D view drag a line through them; in the 3D view click three points "
 			                   "on surfaces.<br>Tab: keep both parts / the back / the front. Enter cuts, Esc starts over."));
+			showKeys({{tr("Tab"), tr("Keep both parts / the back / the front")}, {tr("Enter"), tr("Cut")}, {tr("Esc"), tr("Start over")}});
 			break;
 		case Editor::Tool::Vertex:
 			m_hint->setText(tr("<b>Vertex</b><br>Select a brush, then drag its corners (white) or edge middles (grey). Ctrl+click selects "
 			                   "several, then drag one of them.<br>In 3D the corner moves across the view; use a 2D view for exact moves. "
 			                   "Brushes always stay convex - corners that fold in are merged."));
+			showKeys({{tr("Ctrl+Click"), tr("Select several corners")}, {tr("Drag"), tr("Move the selected corners")}});
 			break;
 		case Editor::Tool::Polygon:
 			m_hint->setText(tr("<b>Polygon</b><br>Click the corners of the base (on the floor in 3D, or in a 2D view). Enter or double-click "
 			                   "makes a brush as high as the last block. Backspace removes the last corner."));
+			showKeys({{tr("Enter"), tr("Make the brush")}, {tr("Backspace"), tr("Remove the last corner")}, {tr("Esc"), tr("Cancel")}});
 			break;
 	}
-	m_pages->setCurrentWidget(m_hint);
+	m_pages->setCurrentWidget(m_hintPage);
 }
 
 } // namespace sme::app

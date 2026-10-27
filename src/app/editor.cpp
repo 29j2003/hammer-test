@@ -862,6 +862,78 @@ void Editor::createPolygonBrush(const std::vector<Vec3>& base, const Vec3& extru
 	setSelection(std::move(selection));
 }
 
+void Editor::flipSelection(int axis) {
+	if (!m_selection.hasObjects()) {
+		return;
+	}
+	const auto bounds = edit::selectionBounds(m_doc, m_selection, entities());
+	commit(edit::mirror(m_doc, m_selection, axis, snap(bounds.center(), snapGrid() / 2), m_textureLock));
+}
+
+void Editor::snapSelectionToGrid() {
+	if (!m_selection.hasObjects() || m_grid <= 0) {
+		return;
+	}
+	const auto bounds = edit::selectionBounds(m_doc, m_selection, entities());
+	const Vec3 delta = snap(bounds.min, m_grid) - bounds.min;
+	if (length(delta) > 1e-9) {
+		commit(edit::translate(m_doc, m_selection, delta, m_textureLock));
+	}
+}
+
+void Editor::transformSelection(const Vec3& move, const Vec3& rotation, const Vec3& scale) {
+	if (!m_selection.hasObjects()) {
+		return;
+	}
+	// One undo step: the parts are folded into one ("Transform").
+	const auto bounds = edit::selectionBounds(m_doc, m_selection, entities());
+	const Vec3 center = bounds.center();
+	std::vector<Change> parts;
+	if (scale.x != 1 || scale.y != 1 || scale.z != 1) {
+		Bounds to;
+		const Vec3 half = bounds.size() * 0.5;
+		to.add(center - Vec3{half.x * std::abs(scale.x), half.y * std::abs(scale.y), half.z * std::abs(scale.z)});
+		to.add(center + Vec3{half.x * std::abs(scale.x), half.y * std::abs(scale.y), half.z * std::abs(scale.z)});
+		parts.push_back(edit::scale(m_doc, m_selection, bounds, to));
+	}
+	if (rotation.x != 0 || rotation.y != 0 || rotation.z != 0) {
+		const Mat3 turn = Mat3::rotation(2, rotation.z) * Mat3::rotation(1, rotation.y) * Mat3::rotation(0, rotation.x);
+		parts.push_back(edit::rotate(m_doc, m_selection, turn, center, m_textureLock));
+	}
+	if (move.x != 0 || move.y != 0 || move.z != 0) {
+		parts.push_back(edit::translate(m_doc, m_selection, move, m_textureLock));
+	}
+	for (std::size_t i = 0; i < parts.size(); ++i) {
+		parts[i].name = "Transform";
+		if (i == 0) {
+			commit(std::move(parts[i]));
+		} else {
+			commitMerged(std::move(parts[i]));
+		}
+	}
+}
+
+void Editor::selectSimilar() {
+	if (m_selection.empty()) {
+		emit message(tr("Select an object first - Select similar then adds everything like it"));
+		return;
+	}
+	auto similar = edit::similarObjects(m_doc, m_selection);
+	const auto count = similar.solids.size() + similar.entities.size();
+	setSelection(std::move(similar));
+	emit message(tr("%n similar object(s) selected", nullptr, int(count)));
+}
+
+bool Editor::selectById(int id) {
+	auto found = edit::objectWithId(m_doc, id);
+	if (found.empty()) {
+		emit message(tr("There is no brush or entity with id %1").arg(id));
+		return false;
+	}
+	setSelection(std::move(found));
+	return true;
+}
+
 void Editor::dropSelectionToFloor() {
 	auto change = edit::dropToFloor(m_doc, m_selection, entities());
 	if (change.empty()) {

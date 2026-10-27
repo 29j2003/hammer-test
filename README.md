@@ -41,7 +41,11 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   spirals) and stairs. Change the settings in the **Tool** panel right after creating a shape and it is rebuilt.
   Click or press Enter to create a block and simply drag on for the next one.
 - **Brush tools** (right-click menu or the **Brushes** menu): hollow (wall thickness, walls inside or outside), carve,
-  merge into one brush, round or bevel the edge between two faces, drop to floor, select a whole path_track chain.
+  merge into one brush, round or bevel the edge between two faces, drop to floor, select a whole path_track chain,
+  flip (Ctrl+L left/right, Ctrl+I up/down), snap to grid (Ctrl+B), *Transform …* with exact numbers (Ctrl+Alt+M).
+- **Select similar** (Ctrl+Alt+O: same class, same model, or brushes with the same material) and **Go to ID**
+  (Ctrl+Shift+G, for ids from compile messages).
+- **Keys at hand**: the Tool panel lists the keys of the current tool and what they do (with your own shortcuts).
 - **Clip, vertex and polygon tools**: cut brushes with a line (2D view) or three points (3D view); drag corners and edge
   middles (brushes always stay convex); draw a brush from the corners of its base.
 - **Entity tool**: the Tool panel on the left lists every point and brush entity with its icon (search with words like

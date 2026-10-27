@@ -173,6 +173,16 @@ public:
 	/// Polygon tool: a brush from a convex base (points) extruded by `height`.
 	void createPolygonBrush(const std::vector<Vec3>& base, const Vec3& extrude);
 	void dropSelectionToFloor();
+	/// Hammer's Flip Objects: mirrors the selection across its center (axis 0 X, 1 Y, 2 Z).
+	void flipSelection(int axis);
+	/// Hammer's Snap Selected to Grid: moves the selection so its box starts on the grid.
+	void snapSelectionToGrid();
+	/// Exact move, rotation (degrees around X, Y, Z) and size factors around the selection's center.
+	void transformSelection(const Vec3& move, const Vec3& rotation, const Vec3& scale);
+	/// Source 2 Hammer's Select Similar: same class / model, brushes with the same main material.
+	void selectSimilar();
+	/// Hammer's Go to Brush Number: selects the brush or entity with this id; false if none.
+	bool selectById(int id);
 	/// Cubemap room boxes (Mapbase parallax correction): set/resize, fit to the room around
 	/// the cubemap, remove.
 	void setCubemapRoomBox(int cubemapId, const Bounds& box);

@@ -53,6 +53,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include <limits>
 #include <map>
 
 #include <sme/checks.h>
@@ -453,6 +454,15 @@ void MainWindow::createActions() {
 	editMenu->addAction(action(tr("Duplicate"), QKeySequence("Ctrl+D"), [this] { m_editor->duplicateSelection(); }));
 	editMenu->addAction(action(tr("Select all"), QKeySequence::SelectAll, [this] { m_editor->selectAll(); }));
 	editMenu->addAction(action(tr("Select nothing"), QKeySequence("Ctrl+Shift+D"), [this] { m_editor->clearSelection(); }));
+	editMenu->addAction(action(tr("Select similar"), QKeySequence("Ctrl+Alt+O"), [this] { m_editor->selectSimilar(); }));
+	editMenu->addAction(action(tr("Go to ID ..."), QKeySequence("Ctrl+Shift+G"), [this] {
+		bool ok = false;
+		const int id = QInputDialog::getInt(this, tr("Go to ID"), tr("Brush or entity id (as in the .vmf and in compile messages):"), 1, 1,
+		                                    std::numeric_limits<int>::max(), 1, &ok);
+		if (ok && m_editor->selectById(id)) {
+			activeView()->frameSelection();
+		}
+	}));
 	editMenu->addSeparator();
 	editMenu->addAction(action(tr("Apply current material"), QKeySequence("Shift+T"), [this] { m_editor->applyMaterialToSelection(m_editor->currentMaterial()); }));
 	editMenu->addAction(action(tr("Tie to entity (func_detail)"), QKeySequence("Ctrl+T"), [this] { m_editor->tieSelectionToEntity("func_detail"); }));
@@ -484,6 +494,16 @@ void MainWindow::createActions() {
 	brushes->addAction(carve);
 	brushes->addAction(mergeAction);
 	brushes->addAction(round);
+	brushes->addSeparator();
+	brushes->addSeparator();
+	auto* flip = brushes->addMenu(tr("Flip"));
+	flip->addAction(action(tr("Flip left/right (X)"), QKeySequence("Ctrl+L"), [this] { m_editor->flipSelection(0); }));
+	flip->addAction(action(tr("Flip front/back (Y)"), QKeySequence("Ctrl+Alt+L"), [this] { m_editor->flipSelection(1); }));
+	flip->addAction(action(tr("Flip up/down (Z)"), QKeySequence("Ctrl+I"), [this] { m_editor->flipSelection(2); }));
+	auto* snapGrid = action(tr("Snap to grid"), QKeySequence("Ctrl+B"), [this] { m_editor->snapSelectionToGrid(); });
+	snapGrid->setToolTip(tr("Moves the selection so its corner lies on the grid"));
+	brushes->addAction(snapGrid);
+	brushes->addAction(action(tr("Transform ..."), QKeySequence("Ctrl+Alt+M"), [this] { transformDialog(); }));
 	brushes->addSeparator();
 	auto* drop = action(tr("Drop to floor"), QKeySequence("Ctrl+Shift+F"), [this] { m_editor->dropSelectionToFloor(); });
 	drop->setToolTip(tr("Lets the selected objects fall straight down onto what is below them"));
@@ -1117,6 +1137,56 @@ void MainWindow::updateStatusInfo() {
 	                         .arg(onOff(m_editor->snapping()))
 	                         .arg(m_editor->rotationSnap())
 	                         .arg(onOff(m_editor->textureLock())));
+}
+
+void MainWindow::transformDialog() {
+	if (!m_editor->selection().hasObjects()) {
+		statusBar()->showMessage(tr("Select objects to transform"), 4000);
+		return;
+	}
+	QDialog dialog(this);
+	dialog.setWindowTitle(tr("Transform"));
+	auto* form = new QFormLayout(&dialog);
+	form->setContentsMargins(16, 16, 16, 12);
+	form->setHorizontalSpacing(12);
+	form->setVerticalSpacing(8);
+	const auto row = [&](double fallback, double limit, const QString& suffix, int decimals) {
+		auto* w = new QWidget;
+		auto* h = new QHBoxLayout(w);
+		h->setContentsMargins(0, 0, 0, 0);
+		h->setSpacing(6);
+		std::array<QDoubleSpinBox*, 3> boxes{};
+		const char* axes[3] = {"X", "Y", "Z"};
+		for (int i = 0; i < 3; ++i) {
+			boxes[i] = new QDoubleSpinBox;
+			boxes[i]->setRange(-limit, limit);
+			boxes[i]->setDecimals(decimals);
+			boxes[i]->setPrefix(QString(axes[i]) + "  ");
+			boxes[i]->setSuffix(suffix);
+			boxes[i]->setValue(fallback);
+			h->addWidget(boxes[i], 1);
+		}
+		return std::pair{w, boxes};
+	};
+	auto [moveRow, move] = row(0, 65536, QString(), 2);
+	form->addRow(tr("Move by"), moveRow);
+	auto [turnRow, turn] = row(0, 360, QStringLiteral("°"), 2);
+	form->addRow(tr("Rotate by"), turnRow);
+	auto [scaleRow, scale] = row(1, 100, QStringLiteral(" ×"), 3);
+	for (auto* box : scale) box->setMinimum(0.001);
+	form->addRow(tr("Scale by"), scaleRow);
+	auto* note = new QLabel(tr("Around the selection's center; applied as one step (undo takes it back)."));
+	note->setProperty("role", "hint");
+	note->setWordWrap(true);
+	form->addRow(note);
+	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	form->addRow(buttons);
+	if (dialog.exec() == QDialog::Accepted) {
+		m_editor->transformSelection({move[0]->value(), move[1]->value(), move[2]->value()}, {turn[0]->value(), turn[1]->value(), turn[2]->value()},
+		                             {scale[0]->value(), scale[1]->value(), scale[2]->value()});
+	}
 }
 
 void MainWindow::pasteHere() {

@@ -103,6 +103,10 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Tangentenraum aus `dFdx`/`dFdy`, Normale aus der Höhe, Abdunkeln 0,35, Ausblenden 600–1000 Einheiten) – nur im
   Lighting-Preview und mit dem Look-Schalter. Fassaden-Vermessung (`courses7` von `height_map.cs`) ist nicht nachgebaut:
   Ziegel ohne Normal-Map nehmen die Helligkeit.
+  Hammer-Funktionen: `edit::mirror` (Spiegeln, Windung der Ebenenpunkte umdrehen, Texturachsen gespiegelt, Winkel
+  über M·R·diag(1,−1,1)), `edit::similarObjects`, `edit::objectWithId`; `Editor::snapSelectionToGrid`,
+  `transformSelection` (Teile mit `commitMerged` zu einem Undo-Schritt „Transform“). Werkzeug-Panel: `ToolPanel::showKeys`
+  (Zeilen mit `action:<Name>` zeigen das aktuelle Kürzel der Aktion).
   Entity-Werkzeug: `Viewport::updateGhost` zeigt die scharfe Klasse unter der Maus (Box + Modell über
   `SceneRenderer::drawGhostModel`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.

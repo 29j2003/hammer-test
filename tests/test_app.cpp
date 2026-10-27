@@ -49,6 +49,7 @@
 #include <sme/texture.h>
 #include <sme/map_tools.h>
 
+#include <cmath>
 #include <functional>
 
 #include "asset_browser.h"
@@ -298,6 +299,46 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(editor.selection().solids == std::vector<SolidRef>{block});   // still selected, not a marquee
 		editor.undo();
 		CHECK(boundsOf(editor, block).max.z == doctest::Approx(b.max.z));
+	}
+	{
+		// The Tool panel lists the keys of the current tool, with the shortcuts as they are set.
+		editor.setTool(Editor::Tool::Select);
+		settle();
+		auto* keys = window.findChild<QTableWidget*>("toolKeys");
+		REQUIRE(keys);
+		QStringList operations;
+		for (int row = 0; row < keys->rowCount(); ++row) operations << keys->item(row, 0)->text() + " " + keys->item(row, 1)->text();
+		CHECK(operations.join('\n').contains("Paste several copies"));
+		CHECK(operations.join('\n').contains("[Ctrl+Alt+O] Select similar objects"));
+	}
+	{
+		// Hammer tools on the selection: transform (one undo step), flip, snap to grid, go to id, select similar.
+		sme::Selection only;
+		only.solids.push_back(block);
+		editor.setSelection(only);
+		const auto start = boundsOf(editor, block);
+		editor.transformSelection({32, 0, 0}, {0, 0, 0}, {2, 1, 1});
+		auto now = boundsOf(editor, block);
+		CHECK(now.size().x == doctest::Approx(start.size().x * 2));
+		CHECK(now.center().x == doctest::Approx(start.center().x + 32));
+		editor.undo();
+		CHECK(boundsOf(editor, block).min.x == doctest::Approx(start.min.x));
+		editor.flipSelection(2);
+		CHECK(boundsOf(editor, block).min.z == doctest::Approx(start.min.z));   // flipped in place
+		CHECK(isConvexValid(*editor.doc().findSolid(block)));
+		editor.undo();
+		editor.nudgeSelection({3, 0, 0});
+		editor.snapSelectionToGrid();
+		CHECK(std::fmod(boundsOf(editor, block).min.x, editor.grid()) == doctest::Approx(0));
+		editor.undo();
+		editor.undo();
+		CHECK(boundsOf(editor, block).min.x == doctest::Approx(start.min.x));
+		editor.clearSelection();
+		REQUIRE(editor.selectById(block.solidId));
+		CHECK(editor.selection().solids == std::vector<SolidRef>{block});
+		CHECK_FALSE(editor.selectById(987654));
+		editor.selectSimilar();
+		CHECK(!editor.selection().solids.empty());
 	}
 	{
 		// Copy and paste: Ctrl+C puts the block on the clipboard as VMF text, Ctrl+V pastes it

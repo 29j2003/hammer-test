@@ -8,8 +8,12 @@
 #include <QIcon>
 #include <QWidget>
 
+#include <utility>
+#include <vector>
+
 class QCheckBox;
 class QLabel;
+class QTableWidget;
 class QLineEdit;
 class QStackedWidget;
 class QTreeWidget;
@@ -90,10 +94,14 @@ signals:
 
 private:
 	void refresh();
+	/// The tool's keys (key text, or "action:<name>" for an action's current shortcut) and what they do.
+	void showKeys(const std::vector<std::pair<QString, QString>>& rows);
 
 	Editor* m_editor;
 	QStackedWidget* m_pages;
 	QLabel* m_hint;
+	QWidget* m_hintPage;
+	QTableWidget* m_keys;
 	EntityPicker* m_entities;
 	QWidget* m_block = nullptr;
 };

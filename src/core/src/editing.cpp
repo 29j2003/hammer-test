@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <set>
 
 namespace sme {
 
@@ -339,6 +341,137 @@ Change remove(MapDocument& doc, const Selection& selection) {
 		std::erase_if(doc.entities, [id](const Entity& e) { return e.id == id; });
 	}
 	return t.finish();
+}
+
+namespace {
+
+void mirrorSolid(Solid& solid, int axis, const Vec3& center, bool textureLock) {
+	const auto reflect = [&](Vec3 p) {
+		p[axis] = 2 * center[axis] - p[axis];
+		return p;
+	};
+	for (auto& side : solid.sides) {
+		for (auto& p : side.planePoints) {
+			p = reflect(p);
+		}
+		std::swap(side.planePoints[0], side.planePoints[2]);   // a mirror turns the winding round: keep normals outwards
+		if (textureLock) {
+			for (TextureAxis* t : {&side.u, &side.v}) {
+				Vec3 mirrored = t->axis;
+				mirrored[axis] = -mirrored[axis];
+				if (t->scale != 0) {
+					t->shift += (dot(center, t->axis) - dot(center, mirrored)) / t->scale;
+				}
+				t->axis = mirrored;
+			}
+		}
+	}
+}
+
+/// The material most faces of a brush have (lower case).
+std::string mainMaterial(const Solid& solid) {
+	std::map<std::string, int> counts;
+	for (const auto& side : solid.sides) {
+		++counts[toLower(side.material)];
+	}
+	std::string best;
+	int most = 0;
+	for (const auto& [material, count] : counts) {
+		if (count > most) {
+			most = count;
+			best = material;
+		}
+	}
+	return best;
+}
+
+} // namespace
+
+Change mirror(MapDocument& doc, const Selection& selection, int axis, const Vec3& center, bool textureLock) {
+	Transaction t(doc, "Flip");
+	Mat3 m;
+	m.m[axis][axis] = -1;
+	for (const auto& ref : selection.solids) {
+		t.touchSolid(ref);
+		if (auto* solid = doc.findSolid(ref)) {
+			mirrorSolid(*solid, axis, center, textureLock);
+		}
+	}
+	for (const int id : selection.entities) {
+		auto* entity = entityOrNull(doc, id);
+		if (!entity) {
+			continue;
+		}
+		t.touchEntity(id);
+		for (auto& solid : entity->solids) {
+			mirrorSolid(solid, axis, center, textureLock);
+		}
+		if (entity->hasOrigin()) {
+			Vec3 origin = entity->origin();
+			origin[axis] = 2 * center[axis] - origin[axis];
+			entity->setOrigin(origin);
+		}
+		if (isPointEntity(*entity) && !entity->get("angles").empty()) {
+			// Forward and up are mirrored; the side axis turns round so it stays a rotation.
+			Mat3 side;
+			side.m[1][1] = -1;
+			entity->set("angles", formatVec3(matrixToAngles(m * anglesToMatrix(parseAnglesKey(*entity)) * side)));
+		}
+	}
+	return t.finish();
+}
+
+Selection similarObjects(const MapDocument& doc, const Selection& selection) {
+	std::set<std::string> classes, models, materials;
+	for (const int id : selection.entities) {
+		if (const auto* entity = doc.findEntity(id)) {
+			classes.insert(toLower(entity->classname()));
+			if (const auto model = entity->get("model"); !model.empty() && entity->solids.empty()) {
+				models.insert(toLower(model));
+			}
+		}
+	}
+	for (const auto& ref : selection.solids) {
+		if (const auto* solid = doc.findSolid(ref)) {
+			materials.insert(mainMaterial(*solid));
+		}
+	}
+	for (const auto& face : selection.faces) {
+		if (const auto* solid = doc.findSolid(face.solid)) {
+			for (const auto& side : solid->sides) {
+				if (side.id == face.sideId) materials.insert(toLower(side.material));
+			}
+		}
+	}
+	Selection out;
+	for (const auto& solid : doc.world.solids) {
+		if (!materials.empty() && materials.contains(mainMaterial(solid))) out.solids.push_back({0, solid.id});
+	}
+	for (const auto& entity : doc.entities) {
+		if (!classes.contains(toLower(entity.classname()))) continue;
+		const auto model = toLower(entity.get("model"));
+		// Props: only the same model; brush entities and others: the whole class.
+		if (!models.empty() && entity.solids.empty() && !model.empty() && !models.contains(model)) continue;
+		out.entities.push_back(entity.id);
+	}
+	return out;
+}
+
+Selection objectWithId(const MapDocument& doc, int id) {
+	Selection out;
+	for (const auto& solid : doc.world.solids) {
+		if (solid.id == id) out.solids.push_back({0, id});
+	}
+	for (const auto& entity : doc.entities) {
+		if (entity.id == id) {
+			out.entities.push_back(id);
+			continue;
+		}
+		for (const auto& solid : entity.solids) {
+			if (solid.id == id) out.entities.push_back(entity.id);   // a brush of an entity: the entity
+		}
+	}
+	return out;
 }
 
 std::pair<Change, Selection> duplicate(MapDocument& doc, const Selection& selection, const Vec3& offset) {

@@ -83,6 +83,8 @@ private:
 	void roundEdgeDialog();
 	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).
 	void pasteHere();
+	/// Brushes > Transform: exact move, rotation and scale.
+	void transformDialog();
 	/// Status bar: selection, its size and center, grid / snap / angle.
 	void updateStatusInfo();
 	/// Ctrl+Shift+V: several copies with offset, rotation and new names (Hammer's Paste Special).
