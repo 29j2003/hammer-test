@@ -2,7 +2,7 @@
 // and every soundscape of the game, searchable and draggable into the map
 // (sound -> ambient_generic, soundscape -> env_soundscape). A click plays the sound (own
 // decoder, waveform with loop point and playhead); sound script entries can be edited and
-// new ones saved into the mod's own sound script.
+// new ones saved into the mod's own sound script; soundscapes have their own editor.
 
 #pragma once
 
@@ -15,6 +15,7 @@
 
 #include <sme/assets.h>
 #include <sme/audio.h>
+#include <sme/soundscape.h>
 
 class QCheckBox;
 class QComboBox;
@@ -23,6 +24,7 @@ class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QSlider;
+class QStackedWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -30,6 +32,7 @@ namespace sme::app {
 
 class Editor;
 class SoundPlayer;
+class SoundscapeEditor;
 
 /// Result of the background indexing.
 struct SoundIndex {
@@ -74,6 +77,11 @@ public:
 	[[nodiscard]] std::shared_ptr<const DecodedAudio> currentAudio() const { return m_audio; }
 	/// Sound script file of the mod that "Save" writes ("scripts/game_sounds_<mod>.txt").
 	[[nodiscard]] QString modScriptPath() const;
+	/// Soundscape file of the mod that the soundscape editor saves into ("scripts/soundscapes_<mod>.txt").
+	[[nodiscard]] QString modSoundscapePath() const;
+	[[nodiscard]] SoundscapeEditor* soundscapeEditor() const { return m_scapeEditor; }
+	/// Starts a new soundscape in the editor.
+	void newSoundscape();
 
 signals:
 	void indexed();
@@ -90,6 +98,12 @@ private:
 	void playCurrent();
 	void editEntry(const SoundScriptEntry& entry);
 	void saveEntry();
+	void editSoundscape(const Soundscape& scape);
+	void saveSoundscape(const SoundscapeScript& scape);
+	void deleteSoundscape(const QString& name);
+	/// Text of a file in the mod's folder ("" if missing) / writes one (folders made as needed).
+	[[nodiscard]] std::string readModFile(const QString& relative) const;
+	bool writeModFile(const QString& relative, const std::string& text);
 
 	Editor* m_editor;
 	SoundPlayer* m_player;
@@ -116,6 +130,11 @@ private:
 	QComboBox* m_soundlevel;
 	QListWidget* m_waves;
 	QPushButton* m_save;
+	// Right column: the sound script entry or the soundscape editor
+	QStackedWidget* m_editors;
+	QWidget* m_entryBox;
+	SoundscapeEditor* m_scapeEditor;
+	QString m_reselect;                            ///< Soundscape to select again after re-reading
 
 	QTimer m_filterTimer;
 	SoundIndex m_index;

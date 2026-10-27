@@ -42,11 +42,13 @@
 #include <QTest>
 #include <QTabWidget>
 #include <QTimer>
+#include <QFrame>
 #include <QToolButton>
 
 #include <sme/brush.h>
 #include <sme/fidelity_look.h>
 #include <sme/heightmap.h>
+#include <sme/soundscape.h>
 #include <sme/material.h>
 #include <sme/texture.h>
 #include <sme/map_tools.h>
@@ -70,6 +72,7 @@
 #include "sound_player.h"
 #include "style.h"
 #include "sound_browser.h"
+#include "soundscape_editor.h"
 #include "tool_panel.h"
 #include "updater.h"
 #include "viewport.h"
@@ -1179,11 +1182,19 @@ TEST_CASE("editing with the mouse in the real window") {
 			auto* name = sounds->findChild<QLineEdit*>("soundEntryName");
 			REQUIRE(name);
 			name->setText("MyMod.Wind");
-			for (auto* button : sounds->findChildren<QPushButton*>()) {
+			// Only the sound script entry's buttons (the soundscape editor has its own "+" and "Save").
+			const auto entryButtons = [&] {
+				QList<QPushButton*> out;
+				for (auto* button : sounds->findChildren<QPushButton*>()) {
+					if (!sounds->soundscapeEditor()->isAncestorOf(button) && button->objectName() != "newSoundscape") out << button;
+				}
+				return out;
+			};
+			for (auto* button : entryButtons()) {
 				if (button->text().startsWith("+")) button->click();
 			}
 			QSignalSpy reindexed(sounds, &SoundBrowser::indexed);
-			for (auto* button : sounds->findChildren<QPushButton*>()) {
+			for (auto* button : entryButtons()) {
 				if (button->text() == "Save to the mod") button->click();
 			}
 			REQUIRE(reindexed.wait(10000));
@@ -1193,6 +1204,75 @@ TEST_CASE("editing with the mouse in the real window") {
 			const QString text = manifest.readAll();
 			CHECK(text.contains("scripts/game_sounds_mymod.txt"));
 			CHECK(text.contains("scripts/game_sounds_demo.txt"));
+		}
+		{
+			// Soundscape editor: clicking a soundscape shows its rules as cards; changes, a new rule and a
+			// new soundscape are saved into the mod's own soundscape file and its manifest.
+			auto* editor = sounds->soundscapeEditor();
+			const auto outside = sounds->tree()->findItems("demo.outside", Qt::MatchExactly | Qt::MatchRecursive);
+			REQUIRE_FALSE(outside.isEmpty());
+			sounds->tree()->setCurrentItem(outside.front());
+			CHECK(editor->isVisibleTo(sounds));
+			CHECK(editor->soundscape().name == "demo.outside");
+			REQUIRE(editor->soundscape().rules.size() == 2);
+			CHECK(editor->soundscape().rules[0].wave == "ambient/wind1.wav");
+			CHECK(editor->soundscape().rules[1].time == "5,10");
+			CHECK(editor->findChildren<QFrame*>("soundscapeRule").size() == 2);
+			// A sound file of the random rule plays in the browser's player.
+			QSignalSpy heard(sounds, &SoundBrowser::audioLoaded);
+			editor->findChildren<QToolButton*>("ruleListen").at(1)->click();
+			REQUIRE(heard.wait(10000));
+			CHECK(sounds->currentAudio());
+			// Room effect: concrete; one more looping sound; save.
+			auto* dsp = editor->findChild<QComboBox*>("soundscapeDsp");
+			REQUIRE(dsp);
+			dsp->setCurrentIndex(dsp->findData("17"));
+			editor->findChild<QPushButton*>("addLooping")->click();
+			REQUIRE(editor->soundscape().rules.size() == 3);
+			auto waves = editor->findChildren<QLineEdit*>("ruleWave");
+			REQUIRE(waves.size() == 2);
+			waves.back()->setText("ambient/alarm1.wav");
+			QSignalSpy scapesIndexed(sounds, &SoundBrowser::indexed);
+			editor->findChild<QPushButton*>("saveSoundscape")->click();
+			REQUIRE(scapesIndexed.wait(10000));
+			QFile scapeFile(fromPath(f.mod / "scripts/soundscapes_mymod.txt"));
+			REQUIRE(scapeFile.open(QIODevice::ReadOnly));
+			const auto saved = parseSoundscapes(scapeFile.readAll().toStdString());
+			REQUIRE(saved.size() == 1);
+			CHECK(saved[0].name == "demo.outside");
+			CHECK(saved[0].dsp == "17");
+			REQUIRE(saved[0].rules.size() == 3);
+			CHECK(saved[0].rules[2].wave == "ambient/alarm1.wav");
+			QFile scapeManifest(fromPath(f.mod / "scripts/soundscapes_manifest.txt"));
+			REQUIRE(scapeManifest.open(QIODevice::ReadOnly));
+			const QString manifestText = scapeManifest.readAll();
+			CHECK(manifestText.indexOf("soundscapes_mymod.txt") < manifestText.indexOf("soundscapes_demo.txt"));   // the mod's copy first
+			// Selected again from the mod's file, now deletable there.
+			CHECK(editor->soundscape().rules.size() == 3);
+			CHECK(editor->findChild<QPushButton*>("deleteSoundscape")->isEnabled());
+
+			// A new soundscape with a random rule and another soundscape inside.
+			sounds->findChild<QPushButton*>("newSoundscape")->click();
+			editor->findChild<QLineEdit*>("soundscapeName")->setText("mymod.cave");
+			editor->findChild<QPushButton*>("addRandom")->click();
+			editor->findChild<QPushButton*>("addSubSoundscape")->click();
+			auto* inside = editor->findChild<QComboBox*>("ruleSoundscape");
+			REQUIRE(inside);
+			CHECK(inside->findText("demo.outside") >= 0);
+			inside->setCurrentText("demo.outside");
+			QSignalSpy again(sounds, &SoundBrowser::indexed);
+			editor->findChild<QPushButton*>("saveSoundscape")->click();
+			REQUIRE(again.wait(10000));
+			CHECK_FALSE(sounds->tree()->findItems("mymod.cave", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+			CHECK(editor->soundscape().name == "mymod.cave");
+			REQUIRE(editor->soundscape().rules.size() == 2);
+			CHECK(editor->soundscape().rules[1].name == "demo.outside");
+			// Removed again: only from the mod's file.
+			QSignalSpy removed(sounds, &SoundBrowser::indexed);
+			editor->findChild<QPushButton*>("deleteSoundscape")->click();
+			REQUIRE(removed.wait(10000));
+			CHECK(sounds->tree()->findItems("mymod.cave", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+			CHECK_FALSE(sounds->tree()->findItems("demo.outside", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
 		}
 		const auto drop = [&](const char* format, const QByteArray& data) {
 			QMimeData mime;

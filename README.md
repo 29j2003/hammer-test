@@ -90,6 +90,12 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
   entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
   `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
+- **Soundscapes**: click a soundscape (or **+ Soundscape** for a new one) to edit it: name, room effect (DSP, with
+  names like *Concrete, small*), fade-in, and its sounds as cards - a **looping** sound, **random** sounds every few
+  seconds, or another **soundscape** inside it - each with volume, pitch, sound level and position. **▶** on a card
+  plays its sound; type a file (it completes) or take the one shown in the player. **Save to the mod** writes
+  `scripts/soundscapes_<mod>.txt` and puts it first in the mod's `soundscapes_manifest.txt`, so a changed copy of a
+  game soundscape is used instead of the original. Keys the editor does not know stay in the file.
 - **Side bar** (like XBLAH's Modding Tool): on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Mod* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
   shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
