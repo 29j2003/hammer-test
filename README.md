@@ -176,6 +176,20 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   triangles, draw calls and lights).
 - **Your own shortcuts**: Help > Change shortcuts.
 - Opening and saving never loses data: everything the editor does not understand stays in the file as it was.
+- **Autosave and crash recovery**: every 5 minutes (setting) a changed map is copied to `autosave/` next to it
+  (`<map>.<date-time>.vmf`, the newest 10 stay; a map never saved goes to the editor's own data folder). If the editor
+  did not close normally, the next start offers the newest autosave that is younger than the map; opening a map with a
+  newer autosave asks too. A restored map counts as unsaved until you save it. On every save the previous version stays
+  as `<map>.vmx`.
+- **Undo history**: every change in a list; click a line to go back (or forward) to that point. Undone steps stay
+  listed in grey until you do something new.
+- **Find entities** while you type: by class, name, any `key=value` (with `*` and `?`), output target, model or sound
+  - or all at once: `class:prop_* name:crate*`, `target:relay_*`, `rendercolor=255*`. Click a result to select it,
+  **Go to** frames it, **Select all** takes every result. The **Entity report** tab lists every entity of the map
+  (class, name, origin, outputs) to sort and filter.
+- **Replace materials**: one material for another on the whole map or the selection (in face mode: the selected
+  faces), exact or with wildcards (`concrete/*`), keeping the alignment or aligning the new texture to the world, also
+  in overlays and decals. It shows how many faces will change before you press Replace; one undo step.
 
 ![Problem list with autofix](docs/images/problems.png)
 

@@ -16,6 +16,9 @@ add_library(smecore STATIC
 	src/visibility.cpp
 	src/fidelity_look.cpp
 	src/sky_presets.cpp
+	src/autosave.cpp
+	src/entity_search.cpp
+	src/material_replace.cpp
 	src/soundscape.cpp
 	src/shipping.cpp
 	src/editing.cpp

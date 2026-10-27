@@ -70,6 +70,12 @@ public:
 	[[nodiscard]] bool canRedo() const { return m_index < m_changes.size(); }
 	[[nodiscard]] std::string undoName() const;
 	[[nodiscard]] std::string redoName() const;
+	/// Recorded changes, oldest first (undone ones stay until something new is pushed).
+	[[nodiscard]] std::size_t size() const { return m_changes.size(); }
+	/// How many changes are applied: changes [0, index) are in the document, [index, size) are undone.
+	[[nodiscard]] std::size_t index() const { return m_index; }
+	/// Name of change `i` ("Move", "Paint", ...); empty when out of range.
+	[[nodiscard]] std::string nameAt(std::size_t i) const { return i < m_changes.size() ? m_changes[i].name : std::string{}; }
 	/// Increases with every push/undo/redo (for "modified" tracking and redraws).
 	[[nodiscard]] unsigned revision() const { return m_revision; }
 	/// Revision at which the document matches the file on disk.

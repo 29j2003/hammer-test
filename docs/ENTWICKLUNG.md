@@ -39,6 +39,10 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 
+| `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
+| `entity_search` | Entities finden: Klasse, Name, `key=value` (Platzhalter `*`/`?`, `wildcardMatch`), Ausgangsziel, Modell, Sound; Abfrage-Syntax mit `class:`/`name:`/`target:`/`model:`/`sound:`, alle Begriffe müssen passen |
+| `material_replace` | Material ersetzen (ganze Karte, Auswahl oder gewählte Flächen; exakt oder Platzhalter; Ausrichtung behalten oder an der Welt ausrichten; Overlays/Decals), `countMaterialMatches` für die Vorschau |
+
 ### Oberfläche (`src/app`)
 
 - `Editor` hält Spiel, Karte, Undo, Auswahl, Werkzeug. **Jede Änderung** läuft über `Editor::commit(Change)`.
@@ -215,6 +219,22 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Tastenkürzel: Aktionen tragen ihren englischen Namen als `objectName`; `ShortcutDialog` speichert unter `shortcuts/<Name>`.
 - Einrasten: `Editor::snapGrid()` (0 wenn Shift+W aus) für alle Positionen, `Editor::snapAngle()` für Drehungen;
   Drehpunkt wird auf das halbe Raster gesetzt, damit Brushes auf dem Raster bleiben.
+
+## Sicherheit und Suche (Autosave, Verlauf, Finden, Ersetzen)
+
+- `autosaver.{h,cpp}`: `Autosaver(Editor*)` – Timer (`autosave/minutes`, Standard 5, 0 = aus), schreibt nur, wenn sich
+  die History-Revision seit dem letzten Autosave geändert hat; Text auf dem UI-Thread (`serialize`), Schreiben (QSaveFile)
+  und Aufräumen (`autosave/keep`, Standard 10) in einem eigenen `QThreadPool` mit einem Thread. Sitzungs-Markierung
+  `<AppData>/session-open.txt` mit dem Kartenpfad; `aboutToQuit` entfernt sie. `recoveryAfterCrash()` (vor dem
+  Anlegen des Autosavers aufrufen!) und `recoveryForMap()` liefern Autosaves, die neuer sind als die Kartendatei
+  (1 s Spielraum), `offerRecovery()` fragt, `openMapWithRecovery()` öffnet mit Nachfrage. `Editor::openRecovered`
+  setzt den Pfad der Originalkarte und `m_recovered` (zählt als ungespeichert). `Editor::saveMap` legt vorher
+  `<karte>.vmx` an (`editor/vmxBackup`, Standard an).
+- `history_panel.{h,cpp}`: `HistoryPanel` – Zeile 0 = geöffnete Karte, Zeile i = nach Änderung i; Klick →
+  `Editor::undoTo` (verzögert, weil das die Liste neu aufbaut). `History::size/index/nameAt`.
+- `find_dialog.{h,cpp}`: `FindDialog` (nicht modal, Tabs Find / Entity report), `showFindDialog(editor, parent,
+  frame, tab)` hält ein Exemplar pro Fenster. `replace_materials_dialog.{h,cpp}`: `ReplaceMaterialsDialog`,
+  `showReplaceMaterialsDialog(editor, parent, bekannteMaterialien)`.
 
 ## Wichtige Formeln (aus dem Quellcode von VBSP/VRAD, Source SDK 2013 / Mapbase)
 
