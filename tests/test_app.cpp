@@ -50,6 +50,7 @@
 #include <sme/material.h>
 #include <sme/texture.h>
 #include <sme/map_tools.h>
+#include <sme/shipping.h>
 
 #include <cmath>
 #include <functional>
@@ -58,6 +59,7 @@
 #include "compile.h"
 #include "compile_window.h"
 #include "properties_panel.h"
+#include "ship_panel.h"
 #include "toggle_switch.h"
 #include "copy_paste.h"
 #include "editor.h"
@@ -1635,6 +1637,83 @@ TEST_CASE("update check: release information and the version button") {
 		found = found || b->text().contains("Update to v9.1.0");
 	}
 	CHECK(found);
+}
+
+TEST_CASE("ship panel: what the open map needs, share ZIP, Workshop item") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	test::writeText(f.mod / "maps/demo.bsp", "VBSP fake map");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	REQUIRE(editor.openGame("sourcemods/mymod"));
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+
+	ShipPanel panel(&editor);
+	panel.resize(1000, 900);
+	panel.show();
+	CHECK(QDir::fromNativeSeparators(panel.bspPath()).endsWith("maps/demo.bsp"));   // the open map's BSP in the mod
+
+	// What the map needs: the demo's own materials are the mod's ("Your mod"), with their textures.
+	QSignalSpy scanned(&panel, &ShipPanel::scanned);
+	auto* scan = panel.findChild<QPushButton*>("shipScan");
+	REQUIRE(scan);
+	scan->click();
+	REQUIRE(scanned.wait(15000));
+	auto* tree = panel.findChild<QTreeWidget*>("shipFiles");
+	REQUIRE(tree);
+	QTreeWidgetItem* custom = nullptr;
+	for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+		if (tree->topLevelItem(i)->data(0, Qt::UserRole).toInt() == int(ShipFile::Origin::Custom)) custom = tree->topLevelItem(i);
+	}
+	REQUIRE(custom);
+	QStringList files;
+	for (int i = 0; i < custom->childCount(); ++i) files << custom->child(i)->text(0);
+	CHECK(files.contains("materials/demo/brickwall001.vmt"));
+	CHECK(files.contains("materials/demo/brickwall001.vtf"));
+	CHECK(files.contains("models/humans/group01/male_07.mdl"));
+	CHECK(files.contains("sound/ambient/wind1.wav"));
+	CHECK_FALSE(panel.findChild<QLabel*>("shipSummary")->text().isEmpty());
+
+	// Share ZIP: the map and every file of the mod it needs.
+	QSignalSpy finished(&panel, &ShipPanel::taskFinished);
+	const QString zip = QDir(home.path()).filePath("share/demo.zip");
+	panel.makeShareZip(zip);
+	REQUIRE(finished.wait(15000));
+	CHECK(finished.takeFirst().at(0).toBool());
+	const auto names = zipEntryNames(toPath(zip));
+	for (const char* expected : {"maps/demo.bsp", "materials/demo/brickwall001.vmt", "materials/demo/brickwall001.vtf",
+	                             "models/humans/group01/male_07.mdl", "sound/ambient/wind1.wav"}) {
+		INFO(expected);
+		CHECK(std::find(names.begin(), names.end(), expected) != names.end());
+	}
+	CHECK(std::none_of(names.begin(), names.end(), [](const std::string& n) { return n.starts_with("materials/concrete/"); }));
+
+	// Without bspzip next to the compile tools, packing says so instead of failing silently.
+	panel.packIntoBsp();
+	REQUIRE(finished.count() == 1);
+	CHECK_FALSE(finished.takeFirst().at(0).toBool());
+
+	// Mod ZIP: the mod without map sources.
+	panel.makeModZip(QDir(home.path()).filePath("share/mymod.zip"));
+	REQUIRE(finished.wait(15000));
+	CHECK(finished.takeFirst().at(0).toBool());
+	const auto modNames = zipEntryNames(toPath(QDir(home.path()).filePath("share/mymod.zip")));
+	CHECK(std::find(modNames.begin(), modNames.end(), "mymod/gameinfo.txt") != modNames.end());
+	CHECK(std::none_of(modNames.begin(), modNames.end(), [](const std::string& n) { return n.ends_with(".vmf"); }));
+
+	// Workshop: the content folder and the item file for steamcmd; no password anywhere.
+	panel.findChild<QLineEdit*>("shipTitle")->setText("Demo map");
+	const QString command = panel.prepareWorkshop();
+	CHECK(command.contains("+workshop_build_item"));
+	CHECK_FALSE(command.contains("password", Qt::CaseInsensitive));
+	CHECK(panel.findChild<QLineEdit*>("shipWorkshopCommand")->text() == command);
 }
 
 int main(int argc, char** argv) {

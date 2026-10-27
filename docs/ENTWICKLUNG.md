@@ -37,6 +37,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
+| `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 
 ### Oberfläche (`src/app`)
 
@@ -258,6 +259,11 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Modelle: VTX-Layout (25/33 Byte) wird ausprobiert; mit echten HL2-/Mapbase-Modellen prüfen (`sme-probe model GAME PATH`).
   Overlays/Decals werden noch nicht gezeichnet.
 - Material-Vorschau ist eine Annäherung an die Shader der Engine (kein HDR, Cubemap = einfacher Himmel).
+- Ship (`ship_panel`, Kern `shipping`): `bspzip -addorupdatelist <bsp> <liste> <bsp> -game <mod>` und der Start von steamcmd
+  (`+login <name> +workshop_build_item <vdf> +quit`, eigenes Konsolenfenster unter Windows) sind nur mit fehlendem Werkzeug
+  getestet, nicht mit echtem bspzip/steamcmd. Die Abhängigkeiten kommen aus der offenen VMF, nicht aus der BSP; Materialien
+  in PCF-Dateien und Modelle, die erst Skripte (z. B. Gibs, `propdata`) laden, werden nicht gefunden. Eigene PCF brauchen
+  im Spiel zusätzlich ein Partikel-Manifest. Die Seite „Project“ im `MainWindow` bindet das Panel ein (`ShipPanel(Editor*)`).
 
 ## Fahrplan
 
