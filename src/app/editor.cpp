@@ -42,6 +42,11 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_currentMaterial = settings.value("editor/material", m_currentMaterial).toString();
 	m_snapping = settings.value("editor/snapping", true).toBool();
 	m_shadows = settings.value("editor/shadows", true).toBool();
+	m_hiddenKinds = settings.value("view/hiddenKinds", 0u).toUInt() & ALL_OBJECT_KINDS;
+	// Hidden objects follow every change of the map (and of what was hidden by hand).
+	connect(this, &Editor::documentChanged, this, [this] { m_hiddenDirty = true; });
+	connect(this, &Editor::selectionChanged, this, [this] { m_hiddenDirty = true; });
+	connect(this, &Editor::gameChanged, this, [this] { m_hiddenDirty = true; });
 	m_recentMaterials = settings.value("editor/recentMaterials").toStringList();
 	m_shapeOptions.kind = static_cast<ShapeOptions::Kind>(std::clamp(settings.value("shape/kind", 0).toInt(), 0, int(ShapeOptions::Kind::Stairs)));
 	m_shapeOptions.sides = settings.value("shape/sides", m_shapeOptions.sides).toInt();
@@ -328,6 +333,40 @@ void Editor::selectAll() {
 		all.entities.push_back(entity.id);
 	}
 	setSelection(std::move(all));
+}
+
+const Selection& Editor::hidden() const {
+	if (!m_hiddenDirty) {
+		return m_hiddenAll;
+	}
+	m_hiddenAll = m_hidden;
+	if (m_hiddenKinds != 0) {
+		auto filtered = objectsOfKinds(m_doc, m_hiddenKinds, entities());
+		m_hiddenAll.solids.insert(m_hiddenAll.solids.end(), filtered.solids.begin(), filtered.solids.end());
+		m_hiddenAll.entities.insert(m_hiddenAll.entities.end(), filtered.entities.begin(), filtered.entities.end());
+		m_hiddenAll.faces = std::move(filtered.faces);
+	}
+	m_hiddenDirty = false;
+	return m_hiddenAll;
+}
+
+void Editor::setKindVisible(ObjectKind kind, bool visible) {
+	const auto bit = static_cast<std::uint32_t>(kind);
+	const std::uint32_t mask = visible ? (m_hiddenKinds & ~bit) : (m_hiddenKinds | bit);
+	if (mask == m_hiddenKinds) {
+		return;
+	}
+	m_hiddenKinds = mask;
+	QSettings().setValue("view/hiddenKinds", m_hiddenKinds);
+	// What disappears is no longer selected (it could not be seen while being changed).
+	if (!visible) {
+		const auto gone = objectsOfKinds(m_doc, bit, entities());
+		std::erase_if(m_selection.solids, [&](const SolidRef& ref) { return gone.contains(ref); });
+		std::erase_if(m_selection.entities, [&](int id) { return gone.containsEntity(id); });
+	}
+	m_hiddenDirty = true;
+	emit selectionChanged();
+	emit viewFilterChanged();
 }
 
 void Editor::hideSelection() {

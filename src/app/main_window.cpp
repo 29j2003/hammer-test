@@ -632,6 +632,12 @@ void MainWindow::createActions() {
 	view->addAction(action(tr("Side view"), QKeySequence("F4"), [this] { activeView()->setCameraKind(Camera::Kind::Side); }));
 	view->addAction(action(tr("3D view"), QKeySequence("Ctrl+F1"), [this] { activeView()->setCameraKind(Camera::Kind::Perspective); }));
 	view->addSeparator();
+	auto* show = view->addMenu(tr("Show"));
+	connect(show, &QMenu::aboutToShow, this, [this, show] {
+		show->clear();
+		Viewport::fillShowMenu(show, m_editor);
+	});
+	view->addSeparator();
 	view->addActions(m_renderGroup->actions());
 	view->addAction(shadows);
 	view->addSeparator();

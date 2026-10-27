@@ -757,6 +757,39 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK_FALSE(QString(written.readAll()).contains("mapbase-fidelity: generated"));
 	}
 	{
+		// View filters: hiding a kind of object (lights here) hides every one of them, the view's
+		// button says so, and showing them again brings them back.
+		int lightId = 0;
+		bool placed = false;
+		for (const auto& entity : editor.doc().entities) {
+			if (entity.classname().starts_with("light")) lightId = entity.id;
+		}
+		if (lightId == 0) {
+			auto [change, id] = sme::edit::placeEntity(editor.doc(), "light", {0, 0, 64}, nullptr);
+			editor.commit(std::move(change));
+			lightId = id;
+			placed = true;
+		}
+		CHECK_FALSE(editor.hidden().containsEntity(lightId));
+		auto* button = view->findChild<QToolButton*>("viewMenu");
+		REQUIRE(button);
+		emit button->menu()->aboutToShow();
+		QAction* lights = nullptr;
+		for (auto* action : button->menu()->actions()) {
+			if (action->text() == "Lights") lights = action;
+		}
+		REQUIRE(lights);
+		CHECK(lights->isChecked());
+		lights->trigger();
+		CHECK_FALSE(editor.kindVisible(ObjectKind::Lights));
+		CHECK(editor.hidden().containsEntity(lightId));
+		CHECK(button->text().contains("hidden"));
+		editor.setKindVisible(ObjectKind::Lights, true);
+		CHECK_FALSE(editor.hidden().containsEntity(lightId));
+		CHECK_FALSE(button->text().contains("hidden"));
+		if (placed) editor.undo();
+	}
+	{
 		// The corner menu of a view switches the look (and shows it on the button).
 		auto* button = view->findChild<QToolButton*>("viewMenu");
 		REQUIRE(button);

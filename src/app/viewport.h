@@ -53,6 +53,8 @@ public:
 	void setCameraKind(Camera::Kind kind);
 	/// Moves the camera so the selection (or the whole map) fills the view.
 	void frameSelection();
+	/// "Show" section: switches for each kind of object (view filters).
+	static void fillShowMenu(QMenu* menu, Editor* editor);
 	/// Entity tool preview box under the mouse (none while nothing is armed or the mouse is away).
 	[[nodiscard]] std::optional<Bounds> ghostBox() const { return m_ghost ? std::optional<Bounds>(m_ghost->box) : std::nullopt; }
 	/// Where pasted objects with this box go: their center under the mouse (resting on the

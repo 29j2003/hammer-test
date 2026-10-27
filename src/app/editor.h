@@ -13,6 +13,7 @@
 
 #include <sme/clipboard.h>
 #include <sme/editing.h>
+#include <sme/visibility.h>
 #include <sme/game.h>
 #include <sme/history.h>
 #include <sme/map.h>
@@ -78,7 +79,12 @@ public:
 	void selectAll();
 
 	// --- Hiding (editor only, not saved) -------------------------------------------
-	[[nodiscard]] const Selection& hidden() const { return m_hidden; }
+	/// Everything not drawn: hidden by hand (H) plus the kinds switched off in the view filters.
+	[[nodiscard]] const Selection& hidden() const;
+	/// View filters: kinds of objects that are not shown (mask of ObjectKind, editor only, kept).
+	[[nodiscard]] std::uint32_t hiddenKinds() const { return m_hiddenKinds; }
+	[[nodiscard]] bool kindVisible(ObjectKind kind) const { return (m_hiddenKinds & static_cast<std::uint32_t>(kind)) == 0; }
+	void setKindVisible(ObjectKind kind, bool visible);
 	void hideSelection();
 	void hideUnselected();
 	void unhideAll();
@@ -178,6 +184,7 @@ signals:
 	void selectionChanged();
 	void toolChanged();
 	void settingsChanged();
+	void viewFilterChanged();    ///< A kind of object was shown or hidden
 	void recentMaterialsChanged();
 	void message(const QString& text);
 
@@ -191,6 +198,9 @@ private:
 	QString m_filePath;
 	Selection m_selection;
 	Selection m_hidden;
+	std::uint32_t m_hiddenKinds = 0;
+	mutable Selection m_hiddenAll;        ///< m_hidden plus the filtered kinds, made when needed
+	mutable bool m_hiddenDirty = true;
 	Tool m_tool = Tool::Select;
 	SelectMode m_selectMode = SelectMode::Object;
 	RenderMode m_renderMode = RenderMode::Lit;

@@ -158,6 +158,7 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	m_viewButton->setMenu(menu);
 	connect(menu, &QMenu::aboutToShow, this, [this, menu] { fillViewMenu(menu); });
 	connect(editor, &Editor::settingsChanged, this, &Viewport::updateViewButton);
+	connect(editor, &Editor::viewFilterChanged, this, &Viewport::updateViewButton);
 	updateViewButton();
 }
 
@@ -169,6 +170,9 @@ void Viewport::updateViewButton() {
 			case Editor::RenderMode::Unlit: text += tr("  ·  Textured (unlit)"); break;
 			case Editor::RenderMode::Wireframe: text += tr("  ·  Wireframe"); break;
 		}
+	}
+	if (const int hiddenKinds = std::popcount(m_editor->hiddenKinds()); hiddenKinds > 0) {
+		text += tr("  ·  %n kind(s) hidden", nullptr, hiddenKinds);   // so nobody wonders where things went
 	}
 	m_viewButton->setText(text + QStringLiteral("  ▾"));
 	m_viewButton->adjustSize();
@@ -204,6 +208,35 @@ void Viewport::fillViewMenu(QMenu* menu) {
 	shadows->setEnabled(m_editor->renderMode() == Editor::RenderMode::Lit);
 	shadows->setToolTip(tr("Sun, nearest spot and point lights cast shadows in the lighting preview"));
 	connect(shadows, &QAction::toggled, m_editor, &Editor::setShadows);
+	fillShowMenu(menu, m_editor);
+}
+
+void Viewport::fillShowMenu(QMenu* menu, Editor* editor) {
+	menu->addSection(tr("Show"));
+	const std::pair<ObjectKind, QString> kinds[] = {
+		{ObjectKind::World, tr("World brushes")},
+		{ObjectKind::BrushEntities, tr("Brush entities (doors, func_detail ...)")},
+		{ObjectKind::Triggers, tr("Triggers")},
+		{ObjectKind::ToolBrushes, tr("Tool brushes and faces (clip, nodraw, hint ...)")},
+		{ObjectKind::Sky, tr("Sky brushes (toolsskybox)")},
+		{ObjectKind::Models, tr("Models (props)")},
+		{ObjectKind::Npcs, tr("NPCs")},
+		{ObjectKind::Lights, tr("Lights")},
+		{ObjectKind::Cubemaps, tr("Cubemaps and their room boxes")},
+		{ObjectKind::Helpers, tr("Other entities (logic, info, paths, sounds ...)")},
+	};
+	for (const auto& [kind, name] : kinds) {
+		auto* action = menu->addAction(name);
+		action->setCheckable(true);
+		action->setChecked(editor->kindVisible(kind));
+		action->setObjectName(QStringLiteral("show%1").arg(static_cast<std::uint32_t>(kind)));
+		connect(action, &QAction::toggled, editor, [editor, kind](bool on) { editor->setKindVisible(kind, on); });
+	}
+	auto* all = menu->addAction(tr("Show everything"));
+	all->setEnabled(editor->hiddenKinds() != 0);
+	connect(all, &QAction::triggered, editor, [editor] {
+		for (std::uint32_t bit = 1; bit <= ALL_OBJECT_KINDS; bit <<= 1) editor->setKindVisible(static_cast<ObjectKind>(bit), true);
+	});
 }
 
 Viewport::~Viewport() {

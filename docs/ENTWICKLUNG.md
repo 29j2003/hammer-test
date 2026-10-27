@@ -74,6 +74,10 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   `pasteObjects` mit `PasteOptions`: Anzahl, Versatz und Drehung je Kopie, Mittelpunkt, eindeutige Namen samt Ausgängen,
   Präfix; ein Undo-Schritt), `Editor::copySelection/cutSelection/paste`, `MainWindow::pasteHere` (unter der Maus über
   `Viewport::pasteCenter` → `restingPlace`, dieselbe Rechnung wie beim Platzieren) und `pasteSpecialDialog`.
+  Sichtbarkeit: Kern-Modul `visibility` (`ObjectKind`, `objectsOfKinds` – ganze Brushes/Entities, bei normalen
+  Brushes einzelne Tool-/Himmelsflächen); `Editor::hidden()` = von Hand versteckt (H) + gefilterte Arten, zwischengespeichert
+  und bei jeder Änderung neu (`m_hiddenDirty`), Maske in QSettings `view/hiddenKinds`; Menü `Viewport::fillShowMenu`.
+  Versteckt wird nur über Flags (`FLAG_HIDDEN`), die Geometrie bleibt.
   Entity-Werkzeug: `Viewport::updateGhost` zeigt die scharfe Klasse unter der Maus (Box + Modell über
   `SceneRenderer::drawGhostModel`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.

@@ -17,7 +17,9 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
 - **3D view first**, like Source 2 Hammer: look around with the right mouse button and fly with W A S D (also while
   placing a block), orbit with Alt, gizmos to move/rotate/scale, Shift+drag to copy. Optional 2D views (top/front/side).
   The menu in the top left corner of each view switches between 3D, top, front and side, and between lighting preview,
-  textured and wireframe.
+  textured and wireframe. Its **Show** section (also View > Show) hides kinds of objects while you map: world brushes,
+  brush entities, triggers, tool brushes and faces (clip, nodraw, hint …), sky brushes, models, NPCs, lights, cubemaps
+  and other entities. The view's button says how many kinds are hidden.
 - **Snap to corners**: the move tool shows small squares on the corners of the selection; drag one onto a corner of
   another brush or model and they line up exactly.
 - **Resize right away**: selected brushes show squares on their sides in the select tool too; drag one to make the

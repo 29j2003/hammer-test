@@ -4,6 +4,7 @@
 
 #include <sme/brush.h>
 #include <sme/clipboard.h>
+#include <sme/visibility.h>
 #include <sme/editing.h>
 
 #include <set>
@@ -285,4 +286,38 @@ TEST_CASE("copy and paste map objects: in place, at a point, several copies, uni
 	std::string error;
 	CHECK_FALSE(edit::pasteObjects(doc, "world { }", PasteOptions{}, nullptr, &error));
 	CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("object kinds for hiding: brushes, tool and sky faces, entities") {
+	MapDocument doc;
+	auto [c1, wall] = edit::createBlock(doc, box({0, 0, 0}, {64, 64, 64}), "BRICK/BRICKWALL001A");
+	auto [c2, clip] = edit::createBlock(doc, box({100, 0, 0}, {164, 64, 64}), "TOOLS/TOOLSCLIP");
+	auto [c3, sky] = edit::createBlock(doc, box({0, 0, 200}, {64, 64, 216}), "TOOLS/TOOLSSKYBOX");
+	doc.findSolid(wall)->sides[0].material = "TOOLS/TOOLSNODRAW";
+	const int nodrawSide = doc.findSolid(wall)->sides[0].id;
+	auto [c4, light] = edit::placeEntity(doc, "light", {0, 0, 0}, nullptr);
+	auto [c5, prop] = edit::placeEntity(doc, "prop_static", {0, 0, 0}, nullptr, {{"model", "models/props/crate.mdl"}});
+	auto [c6, relay] = edit::placeEntity(doc, "logic_relay", {0, 0, 0}, nullptr);
+	auto [c7, cubemap] = edit::placeEntity(doc, "env_cubemap", {0, 0, 0}, nullptr);
+	auto [c8, npc] = edit::placeEntity(doc, "npc_citizen", {0, 0, 0}, nullptr);
+	Selection triggerBrushes;
+	auto [c9, triggerBlock] = edit::createBlock(doc, box({0, 300, 0}, {64, 364, 64}), "TOOLS/TOOLSTRIGGER");
+	triggerBrushes.solids.push_back(triggerBlock);
+	auto [c10, trigger] = edit::tieToEntity(doc, triggerBrushes, "trigger_once", nullptr);
+
+	CHECK(objectsOfKinds(doc, 0, nullptr).empty());
+	const auto tools = objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::ToolBrushes), nullptr);
+	CHECK(tools.solids == std::vector<SolidRef>{clip});
+	REQUIRE(tools.faces.size() == 1);
+	CHECK(tools.faces[0].sideId == nodrawSide);
+	CHECK(objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::Sky), nullptr).solids == std::vector<SolidRef>{sky});
+	CHECK(objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::Lights), nullptr).entities == std::vector<int>{light});
+	CHECK(objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::Models), nullptr).entities == std::vector<int>{prop});
+	CHECK(objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::Helpers), nullptr).entities == std::vector<int>{relay});
+	CHECK(objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::Cubemaps), nullptr).entities == std::vector<int>{cubemap});
+	CHECK(objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::Npcs), nullptr).entities == std::vector<int>{npc});
+	CHECK(objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::Triggers), nullptr).entities == std::vector<int>{trigger});
+	const auto world = objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::World), nullptr);
+	CHECK(world.solids == std::vector<SolidRef>{wall});
+	CHECK(world.faces.empty());
 }
