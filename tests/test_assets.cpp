@@ -754,3 +754,37 @@ TEST_CASE("height maps for relief shaders") {
 	CHECK(fromColor->at(16, 8) > fromColor->at(16, 0) + 0.3f);
 	CHECK_FALSE(heightFromNormalMap(ImageRgba{}, false, &error));
 }
+
+TEST_CASE("relief like mapbase-fidelity's deploy.bat: which walls, from what, how deep") {
+	const auto material = [](const std::string& text) {
+		auto m = parseMaterial(text, "test");
+		REQUIRE(m);
+		return *m;
+	};
+	// A bump-mapped wall: from its normal map.
+	auto source = fidelityReliefSource("concrete/wall01", material("LightmappedGeneric { $basetexture concrete/wall01 $bumpmap concrete/wall01_normal }"));
+	REQUIRE(source);
+	CHECK(source->kind == ReliefSource::Kind::NormalMap);
+	CHECK(source->texture == "concrete/wall01_normal");
+	CHECK(source->depth == doctest::Approx(0.02));
+	CHECK(fidelityReliefSource("concrete/wall01", material("LightmappedGeneric { $basetexture a $bumpmap b $ssbump 1 }"))->kind ==
+	      ReliefSource::Kind::SSBump);
+	// Bricks without a bump map: from the texture, half as deep (courses).
+	source = fidelityReliefSource("brick/brickwall001a", material("LightmappedGeneric { $basetexture brick/brickwall001a }"));
+	REQUIRE(source);
+	CHECK(source->kind == ReliefSource::Kind::Color);
+	CHECK(source->depth == doctest::Approx(0.01));
+	// Already on the shader: its own height map and depth.
+	source = fidelityReliefSource("x/y", material("Fidelity_Parallax { $basetexture a $parallaxmap a_fidh $parallaxdepth 0.035 }"));
+	REQUIRE(source);
+	CHECK(source->kind == ReliefSource::Kind::HeightMap);
+	CHECK(source->texture == "a_fidh");
+	CHECK(source->depth == doctest::Approx(0.035));
+	// Not: plain names, wood, models, see-through, other shaders.
+	CHECK_FALSE(fidelityReliefSource("concrete/floor01", material("LightmappedGeneric { $basetexture concrete/floor01 }")));
+	CHECK_FALSE(fidelityReliefSource("wood/woodwall009a", material("LightmappedGeneric { $basetexture wood/woodwall009a $bumpmap wood/n }")));
+	CHECK_FALSE(fidelityReliefSource("models/props/crate", material("VertexLitGeneric { $basetexture a $bumpmap b }")));
+	CHECK_FALSE(fidelityReliefSource("glass/window01", material("LightmappedGeneric { $basetexture a $bumpmap b }")));
+	CHECK_FALSE(fidelityReliefSource("brick/fence", material("LightmappedGeneric { $basetexture a $bumpmap b $alphatest 1 }")));
+	CHECK_FALSE(fidelityReliefSource("brick/wall", material("UnlitGeneric { $basetexture brick/wall }")));
+}

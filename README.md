@@ -30,6 +30,8 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   and water glint and foam. The lighting preview shows the clouds and the grading at once (view menu: *mapbase-fidelity
   look*; also for mods without the add-on, to try it). The map sets the values when it loads through a `logic_auto`
   and a `point_clientcommand` the editor keeps itself; values you leave alone are the mod's own (`cfg/fidelity.cfg`).
+  With the same switch, walls get the **relief** the add-on's `deploy.bat` would give them (bump-mapped walls, and
+  bricks, stones and tiles without a bump map; wood stays flat) – real depth in the preview without deploying first.
 - **Lighting preview with real-time shadows** from your light entities (light, light_spot, light_environment), using
   VRAD's own falloff formulas: the sun and the nearest spot and point lights cast shadows (F7 turns them off).
   Entities show their editor icons (the sprites and models Hammer uses).

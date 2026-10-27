@@ -110,7 +110,34 @@ uniform vec4 u_tone;                   // contrast, saturation, vibrance, vignet
 uniform vec4 u_lgg;                    // lift, 1/gamma, gain, vignette radius
 uniform vec2 u_vignette;               // strength, aspect (height / width)
 uniform vec2 u_viewport;
+uniform int u_hasHeight;               // relief: height map on unit 11 (white = top)
+uniform sampler2D u_height;
+uniform float u_parallaxDepth;
 out vec4 fragColor;
+
+// Relief like mapbase-fidelity's Fidelity_Parallax: walks into the height map along the view
+// (parallax occlusion mapping). The tangent frame comes from the screen derivatives.
+vec2 reliefOffset(vec2 uv, vec3 viewTS, float depth, float lod, out float hitHeight) {
+	const int STEPS = 24;
+	vec2 shift = viewTS.xy / max(viewTS.z, 0.25) * depth;
+	float layer = 1.0 / float(STEPS);
+	float d = 0.0;
+	vec2 current = uv, previous = uv;
+	float mapDepth = 1.0 - textureLod(u_height, current, lod).r;
+	float previousDepth = 0.0, previousMap = mapDepth;
+	for (int i = 0; i < STEPS && d < mapDepth; ++i) {
+		previous = current;
+		previousDepth = d;
+		previousMap = mapDepth;
+		current -= shift * layer;
+		d += layer;
+		mapDepth = 1.0 - textureLod(u_height, current, lod).r;
+	}
+	float after = mapDepth - d, before = previousMap - previousDepth;
+	vec2 hit = mix(current, previous, clamp(after / (after - before), 0.0, 1.0));
+	hitHeight = textureLod(u_height, hit, lod).r;
+	return hit;
+}
 
 vec3 grade(vec3 c) {
 	if (u_grade == 0) return c;
@@ -257,12 +284,42 @@ vec3 toGamma(vec3 c) { return pow(c, vec3(1.0 / 2.2)); }
 
 void main() {
 	vec4 base;
+	vec2 uv = v_uv;
+	float relief = 1.0;            // height at the visible point (1 = top)
+	vec3 reliefNormal = vec3(0.0); // set: lighting uses this normal
+	if (u_hasHeight == 1 && u_flatColor.a <= 0.0) {
+		vec3 N = normalize(v_normal);
+		vec3 dp1 = dFdx(v_world), dp2 = dFdy(v_world);
+		vec2 duv1 = dFdx(v_uv), duv2 = dFdy(v_uv);
+		vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+		vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+		vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+		float scale = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-12));
+		T *= scale;
+		B *= scale;
+		vec3 toEye = u_camPos - v_world;
+		float distance = length(toEye);
+		vec3 V = toEye / max(distance, 0.001);
+		vec3 viewTS = vec3(dot(V, normalize(T)), dot(V, normalize(B)), dot(V, N));
+		// Fades out in the distance, as $parallaxfade does (1000 units).
+		float depth = u_parallaxDepth * (1.0 - smoothstep(600.0, 1000.0, distance));
+		if (depth > 0.0001 && viewTS.z > 0.0) {
+			vec2 size = vec2(textureSize(u_height, 0));
+			float lod = max(0.0, 0.5 * log2(max(dot(duv1 * size, duv1 * size), dot(duv2 * size, duv2 * size))));
+			uv = reliefOffset(v_uv, viewTS, depth, lod, relief);
+			vec2 texel = 1.0 / size * exp2(lod);
+			float hx = textureLod(u_height, uv + vec2(texel.x, 0.0), lod).r - textureLod(u_height, uv - vec2(texel.x, 0.0), lod).r;
+			float hy = textureLod(u_height, uv + vec2(0.0, texel.y), lod).r - textureLod(u_height, uv - vec2(0.0, texel.y), lod).r;
+			vec3 nTS = normalize(vec3(-depth * hx / (2.0 * texel.x), -depth * hy / (2.0 * texel.y), 1.0));
+			reliefNormal = normalize(normalize(T) * nTS.x + normalize(B) * nTS.y + N * nTS.z);
+		}
+	}
 	if (u_useColor == 1) {
 		base = vec4(v_uvw, 1.0);
 	} else {
-		base = texture(u_tex, v_uv);
+		base = texture(u_tex, uv);
 		if (u_hasTex2 == 1) {
-			vec4 second = texture(u_tex2, v_uv);
+			vec4 second = texture(u_tex2, uv);
 			base = mix(base, second, clamp(v_uvw.z / 255.0, 0.0, 1.0));
 		}
 	}
@@ -287,6 +344,7 @@ void main() {
 		float shade = 0.78 + 0.22 * dot(n, normalize(vec3(0.35, 0.55, 0.75)));
 		color = base.rgb * shade;
 	} else {
+		if (dot(reliefNormal, reliefNormal) > 0.0) n = reliefNormal;
 		float sunLit = max(dot(n, -u_sunDir), 0.0);
 		if (u_shadows == 1 && sunLit > 0.0) sunLit *= sunShadow(v_world, n);
 		vec3 light = u_ambient + u_sunColor * sunLit;
@@ -316,6 +374,7 @@ void main() {
 			light += u_lightColor[i].rgb * ndl * atten;
 		}
 		// Soft filmic curve: keeps hot spots near lights from clipping to white.
+		light *= 1.0 - (1.0 - relief) * 0.35;   // deep parts darker ($parallaxao)
 		vec3 hdr = toLinear(base.rgb) * light * u_exposure;
 		color = grade(toGamma(vec3(1.0) - exp(-hdr * 1.25)));
 	}
@@ -634,6 +693,7 @@ void SceneRenderer::release() {
 	for (auto& tex : m_textures) {
 		if (tex.id) glDeleteTextures(1, &tex.id);
 		if (tex.id2) glDeleteTextures(1, &tex.id2);
+		if (tex.height) glDeleteTextures(1, &tex.height);
 	}
 	m_textures.clear();
 	for (auto& model : m_gpuModels) {
@@ -1136,6 +1196,13 @@ void SceneRenderer::uploadTexture(GpuTexture& tex, const MaterialInfo& info) {
 	if (!info.image2.isNull()) {
 		upload(tex.id2, info.image2.convertToFormat(QImage::Format_RGBA8888));
 	}
+	if (!info.height.isNull()) {
+		upload(tex.height, info.height.convertToFormat(QImage::Format_RGBA8888));
+	} else if (tex.height) {
+		glDeleteTextures(1, &tex.height);
+		tex.height = 0;
+	}
+	tex.parallaxDepth = info.height.isNull() ? 0.f : info.parallaxDepth;
 	tex.kind = info.kind;
 	tex.isTool = info.isTool;
 	tex.isSky = info.isSky;
@@ -1149,6 +1216,7 @@ void SceneRenderer::setCommonUniforms(QOpenGLShaderProgram& program, const Param
 	program.setUniformValue("u_flags", 2);
 	if (&program == m_program.get()) {
 		program.setUniformValue("u_skyFace", 0);
+		program.setUniformValue("u_hasHeight", 0);
 	}
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, m_flagTexture);
@@ -1206,6 +1274,16 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 		program.setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
 		program.setUniformValue("u_fullbright", (tex.isTool || tex.isSky) ? 1 : 0);
 		program.setUniformValue("u_skyFace", tex.isSky ? 1 : 0);
+		// Relief (mapbase-fidelity) in the lighting preview.
+		const bool relief = tex.height != 0 && params.mode == Mode::Lit && !translucent;
+		program.setUniformValue("u_hasHeight", relief ? 1 : 0);
+		if (relief) {
+			glActiveTexture(GL_TEXTURE11);
+			glBindTexture(GL_TEXTURE_2D, tex.height);
+			glActiveTexture(GL_TEXTURE0);
+			program.setUniformValue("u_height", 11);
+			program.setUniformValue("u_parallaxDepth", tex.parallaxDepth);
+		}
 		program.setUniformValue("u_opacity", translucent && tex.isTool ? 0.55f : 1.f);
 		if (tex.kind == MaterialInfo::Kind::Additive) {
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -1216,6 +1294,7 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 		++m_drawCalls;
 	}
 	program.setUniformValue("u_skyFace", 0);
+	program.setUniformValue("u_hasHeight", 0);
 }
 
 void SceneRenderer::render(const Params& params) {

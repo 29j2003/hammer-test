@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <sme/texture.h>
@@ -50,6 +51,19 @@ void applyHeightZones(HeightMap& map, const std::vector<std::uint8_t>& zones, un
 
 /// Gray RGBA image of the heights (previews).
 [[nodiscard]] ImageRgba heightImage(const HeightMap& map);
+
+/// Where mapbase-fidelity's deploy.bat takes a wall material's relief from (deploy.ps1,
+/// Get-ParallaxSource): a material already on Fidelity_Parallax with its own height map, a
+/// bump-mapped wall (its normal map), or a wall without one whose name tells of relief (brick,
+/// stone, tile ...: the base texture). Wood stays flat, as deploy.bat leaves it by default.
+struct ReliefSource {
+	enum class Kind { HeightMap, NormalMap, SSBump, Color };
+	Kind kind = Kind::NormalMap;
+	std::string texture;          ///< Texture name the heights come from ("brick/brickwall001a_normal")
+	double depth = 0.02;          ///< $parallaxdepth (texture units)
+};
+struct Material;
+[[nodiscard]] std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, const Material& material);
 
 /// An I8 .vtf with all mip levels (what the Fidelity_Parallax shader reads).
 [[nodiscard]] std::vector<std::byte> encodeHeightVtf(const HeightMap& map);

@@ -89,6 +89,12 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   `parseCfgValues` für `cfg/fidelity.cfg`, `mapLookValues`/`setMapLookValues` über `logic_auto` „fidelity_look“ →
   `point_clientcommand` „fidelity_look_command“, OnMapSpawn mit 0,1 s Verzögerung), `Editor::lookValue` (Karte → cfg →
   Standard), `Editor::fidelityLook` (automatisch an, wenn die Mod mapbase-fidelity hat), Panel `MapLookPanel`.
+  Relief ohne deploy: `fidelityReliefSource` (Kern, `heightmap`) = `Get-ParallaxSource` aus `deploy.ps1` (Ordner,
+  Shader, Ausschlüsse, Holz, Tiefe 0,02 / Ziegel 0,01); `MaterialCache::setRelief` macht die Höhenkarten im Hintergrund
+  (`reliefHeights`, geteilt pro Quelltextur); der Welt-Shader läuft per Parallax Occlusion Mapping hinein (24 Schritte,
+  Tangentenraum aus `dFdx`/`dFdy`, Normale aus der Höhe, Abdunkeln 0,35, Ausblenden 600–1000 Einheiten) – nur im
+  Lighting-Preview und mit dem Look-Schalter. Fassaden-Vermessung (`courses7` von `height_map.cs`) ist nicht nachgebaut:
+  Ziegel ohne Normal-Map nehmen die Helligkeit.
   Entity-Werkzeug: `Viewport::updateGhost` zeigt die scharfe Klasse unter der Maus (Box + Modell über
   `SceneRenderer::drawGhostModel`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.

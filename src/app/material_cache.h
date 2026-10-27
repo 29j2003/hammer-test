@@ -32,6 +32,8 @@ struct MaterialInfo {
 	Kind kind = Kind::Opaque;
 	QImage image;              ///< Base texture, RGBA8888 (null if missing)
 	QImage image2;             ///< $basetexture2 for blended displacements
+	QImage height;             ///< Relief heights (mapbase-fidelity, see setRelief), null without
+	float parallaxDepth = 0;   ///< Relief depth in texture units
 	QString error;
 };
 
@@ -54,6 +56,10 @@ public:
 	[[nodiscard]] static const QImage& checkerboard();
 
 	void clear();
+	/// Relief preview (mapbase-fidelity): materials deploy.bat would put on Fidelity_Parallax get
+	/// their height map, made in the background. Changing it reads the loaded materials again.
+	void setRelief(bool on);
+	[[nodiscard]] bool relief() const { return m_relief; }
 	/// Forgets one material and reads it again (after it was edited); materialReady follows.
 	void reload(const QString& name);
 
@@ -69,6 +75,7 @@ private:
 	QSet<QString> m_pending;
 	QThreadPool m_pool;
 	quint64 m_generation = 0;
+	bool m_relief = false;
 };
 
 /// "Concrete\\Wall01.vmt" -> "concrete/wall01".

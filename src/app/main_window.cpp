@@ -199,8 +199,11 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	});
 	connect(editor, &Editor::documentChanged, this, &MainWindow::updateTitle);
 	connect(editor, &Editor::gameAboutToChange, this, [this] { m_materials->setFileSystem(nullptr); });
+	// Relief preview (mapbase-fidelity) with the editor's look switch.
+	connect(editor, &Editor::settingsChanged, this, [this] { m_materials->setRelief(m_editor->fidelityLook()); });
 	connect(editor, &Editor::gameChanged, this, [this] {
 		m_materials->setFileSystem(m_editor->game() ? &m_editor->game()->files : nullptr);
+		m_materials->setRelief(m_editor->fidelityLook());
 		if (m_editor->game()) {
 			for (const auto& problem : m_editor->game()->problems) {
 				m_log->append(QString::fromStdString(problem), QColor(255, 200, 100));

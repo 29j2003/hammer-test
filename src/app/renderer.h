@@ -124,6 +124,8 @@ private:
 	struct GpuTexture {
 		GLuint id = 0;
 		GLuint id2 = 0;
+		GLuint height = 0;     ///< Relief heights (mapbase-fidelity preview)
+		float parallaxDepth = 0;
 		QSize size{64, 64};
 		MaterialInfo::Kind kind = MaterialInfo::Kind::Opaque;
 		bool isTool = false;

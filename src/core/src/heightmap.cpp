@@ -2,6 +2,9 @@
 
 #include <sme/heightmap.h>
 
+#include <sme/material.h>
+#include <sme/text.h>
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -283,6 +286,70 @@ std::vector<std::byte> encodeHeightVtf(const HeightMap& map) {
 	options.computeReflectivity = false;
 	options.computeThumbnail = false;
 	return vtfpp::VTF::create(image.pixels, vtfpp::ImageFormat::RGBA8888, image.width, image.height, options).bake();
+}
+
+} // namespace sme
+
+namespace sme {
+
+namespace {
+
+bool containsAnyI(std::string_view text, std::initializer_list<std::string_view> words) {
+	const std::string lower = toLower(text);
+	return std::any_of(words.begin(), words.end(), [&](std::string_view w) { return lower.find(w) != std::string::npos; });
+}
+
+} // namespace
+
+std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, const Material& material) {
+	// deploy.ps1's numbers: -ParallaxDepth 0.02, bricks and tiles in courses at half of it.
+	constexpr double DEPTH = 0.02, COURSE_SHARE = 0.5;
+	const std::string shader = toLower(material.shader);
+	if ((shader == "fidelity_parallax" || shader == "fidelity_worldvertextransition") && !material.param("$parallaxmap").empty()) {
+		ReliefSource source;
+		source.kind = ReliefSource::Kind::HeightMap;
+		source.texture = material.param("$parallaxmap");
+		if (const auto depth = material.param("$parallaxdepth"); !depth.empty()) {
+			try {
+				source.depth = std::stod(depth);
+			} catch (const std::exception&) {
+			}
+		}
+		return source;
+	}
+	const std::string path = "materials/" + toLower(materialName);
+	for (const char* folder : {"models", "skybox", "tools", "decals", "overlays", "effects", "sprites", "console", "vgui", "dev", "editor",
+	                           "particle", "water", "glass", "liquids", "nature/water"}) {
+		const std::string prefix = std::string("materials/") + folder;
+		if (path.starts_with(prefix) && (path.size() == prefix.size() || path[prefix.size()] == '/')) return std::nullopt;
+	}
+	const bool wall = shader == "lightmappedgeneric" || shader == "sdk_lightmappedgeneric" || shader == "worldvertextransition" ||
+	                  shader == "sdk_worldvertextransition";
+	if (!wall) return std::nullopt;
+	// Drawn otherwise than the parallax shader can: see-through, decals, three-way mapping, detail modes 2+.
+	for (const char* flag : {"$alphatest", "$translucent", "$additive", "$decal", "$nodiffusebumplighting", "$maskedblending"}) {
+		if (material.flag(flag)) return std::nullopt;
+	}
+	if (!material.param("$seamless_scale").empty()) return std::nullopt;
+	if (const auto mode = material.param("$detailblendmode"); !mode.empty() && std::atoi(mode.c_str()) >= 2) return std::nullopt;
+	// Wood keeps its own look (deploy.bat without -ParallaxWood).
+	const std::string base = material.param("$basetexture");
+	if (containsAnyI(base.empty() ? path : base, {"wood", "plank", "board"})) return std::nullopt;
+	if (const auto bump = material.param("$bumpmap"); !bump.empty()) {
+		ReliefSource source;
+		source.kind = material.flag("$ssbump") ? ReliefSource::Kind::SSBump : ReliefSource::Kind::NormalMap;
+		source.texture = bump;
+		source.depth = DEPTH;
+		return source;
+	}
+	if (base.empty() || !containsAnyI(path, {"brick", "stone", "cobble", "rock", "tile", "block", "cinder", "paver", "slate", "roof", "shingle"})) {
+		return std::nullopt;
+	}
+	ReliefSource source;
+	source.kind = ReliefSource::Kind::Color;
+	source.texture = base;
+	source.depth = containsAnyI(path, {"brick", "tile", "block", "cinder", "paver"}) ? DEPTH * COURSE_SHARE : DEPTH;
+	return source;
 }
 
 } // namespace sme
