@@ -90,7 +90,11 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
   entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
   `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
-- **Material editor**: its own tab next to *Map* (right-click a material > *Edit material*, *Edit* next to a selected
+- **Side bar** (like XBLAH's Modding Tool): on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Mod* each fill
+  the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
+  shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
+  `gameinfo.txt` with what was found, and the entity definitions (FGDs).
+- **Material editor**: the *Materials* page (right-click a material > *Edit material*, *Edit* next to a selected
   face, or *View > Material Editor*). On the left: *Open a material ...* and the materials you edited lately. In the
   middle the parameters in groups; a group with a switch in its header is a feature (*Normal map*, *Relief*,
   *Reflections*, *Detail texture*, *Shiny highlights*, ...) and folds away while it is off - turning it off and on again

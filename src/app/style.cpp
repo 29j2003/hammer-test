@@ -55,7 +55,11 @@ QStatusBar { background: #2a2c31; }
 QFrame#featureHeader { background: #2c2f34; border-radius: 3px; }
 QFrame#featureHeader QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #6a707a; border-radius: 3px; background: #1d1f22; }
 QFrame#featureHeader QCheckBox::indicator:checked { background: #e88c28; border-color: #e88c28; }
-QTabWidget#centralTabs > QTabBar::tab { padding: 6px 18px; }
+QToolBar#Pages { background: #1b1c1f; border-right: 1px solid #34373d; padding: 4px 2px; spacing: 4px; }
+QToolBar#Pages QToolButton { min-width: 58px; padding: 7px 4px; color: #aab0b9; border-left: 3px solid transparent; border-radius: 0; }
+QToolBar#Pages QToolButton:hover { background: #2a2c31; color: #e3e5e8; }
+QToolBar#Pages QToolButton:checked { background: #2c2f34; color: #f0a050; border-left: 3px solid #e88c28; }
+QLabel#pageTitle { font-size: 15pt; font-weight: 600; color: #f0f1f3; }
 QPushButton[accent="true"]:disabled { background: #4b3c2c; color: #8f8272; border-color: #4b3c2c; }
 QFrame[role="card"] { background: #2b2e33; border: 1px solid #3a3d44; border-radius: 4px; }
 )");

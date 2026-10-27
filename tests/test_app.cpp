@@ -30,6 +30,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QPixmap>
+#include <QStackedWidget>
 #include <QTreeWidget>
 #include <QPushButton>
 #include <QSlider>
@@ -61,6 +62,7 @@
 #include "copy_paste.h"
 #include "editor.h"
 #include "main_window.h"
+#include "mod_page.h"
 #include "map_look_panel.h"
 #include "material_preview.h"
 #include "material_editor.h"
@@ -753,8 +755,9 @@ TEST_CASE("editing with the mouse in the real window") {
 		materials->openMaterial("demo/brickwall001");
 		window.raiseDock("Material Editor");
 		REQUIRE(previewed.wait(10000));
-		// Its own tab: the map's docks and tool bars step aside (and come back with the Map tab).
-		CHECK(window.centralTabs()->currentWidget() == materials);
+		// Its own page: the map's docks and tool bars step aside (and come back with the Map page).
+		CHECK(window.pages()->currentWidget() == materials);
+		CHECK(window.currentPage() == MainWindow::Page::Materials);
 		CHECK_FALSE(window.assets()->isVisible());
 		CHECK(materials->recentMaterials().value(0) == "demo/brickwall001");
 		CHECK(materials->value("$basetexture") == "demo/brickwall001");
@@ -957,15 +960,41 @@ TEST_CASE("editing with the mouse in the real window") {
 		QFile written(path);
 		REQUIRE(written.open(QIODevice::ReadOnly));
 		CHECK_FALSE(QString(written.readAll()).contains("mapbase-fidelity: generated"));
-		// Back to the map: its docks return; the closed tab opens again from the View menu.
-		const int tab = window.centralTabs()->indexOf(materials);
-		REQUIRE(tab > 0);
-		emit window.centralTabs()->tabCloseRequested(tab);
-		CHECK(window.centralTabs()->indexOf(materials) < 0);
+		// Back to the map with the side bar: its docks return.
+		QAction* mapPage = nullptr;
+		for (auto* a : window.findChildren<QAction*>()) {
+			if (a->objectName() == "page:Map") mapPage = a;
+		}
+		REQUIRE(mapPage);
+		CHECK(mapPage->isEnabled());   // the side bar works on every page
+		mapPage->trigger();
+		CHECK(window.currentPage() == MainWindow::Page::Map);
 		CHECK(window.assets()->isVisible());
 		window.showMaterialEditor();
-		CHECK(window.centralTabs()->currentWidget() == materials);
+		CHECK(window.pages()->currentWidget() == materials);
 		window.raiseDock("Map");
+		CHECK(window.assets()->isVisible());
+		// Sounds and Particles: the dock's browser fills the page and goes back to its dock.
+		window.showPage(MainWindow::Page::Sounds);
+		CHECK(window.sounds()->isVisible());
+		CHECK(window.sounds()->parentWidget() == window.pages()->currentWidget());
+		CHECK_FALSE(window.assets()->isVisible());
+		window.raiseDock("Sounds");
+		CHECK(window.currentPage() == MainWindow::Page::Map);
+		CHECK(window.sounds()->isVisible());
+		CHECK(window.sounds()->parentWidget() != window.pages()->widget(2));
+		// Mod page: the game's maps, search paths and FGDs.
+		window.showPage(MainWindow::Page::Mod);
+		auto* mounts = window.modPage()->findChild<QTreeWidget*>("modMounts");
+		REQUIRE(mounts);
+		CHECK(mounts->topLevelItemCount() > 0);
+		auto* fgds = window.modPage()->findChild<QTreeWidget*>("modFgds");
+		REQUIRE(fgds);
+		CHECK(fgds->topLevelItemCount() >= 2);
+		auto* maps = window.modPage()->findChild<QListWidget*>("modMaps");
+		REQUIRE(maps);
+		CHECK(maps->count() > 0);
+		window.showPage(MainWindow::Page::Map);
 		CHECK(window.assets()->isVisible());
 	}
 	{

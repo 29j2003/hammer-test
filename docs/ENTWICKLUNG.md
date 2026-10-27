@@ -115,11 +115,13 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.
   Namen kopieren/einfügen: `copy_paste` (`addCopyShortcut`, `onStandardKey` – Item-Views
   verschlucken Strg+C/V sonst; `parseKeyValueLines` für Wiki-Text).
-- Material-Editor als Tab: `MainWindow` hat in der Mitte ein `QTabWidget` (`centralTabs`: „Map“ mit den Views, dazu
-  der Material-Editor über `showMaterialEditor()`, schließbar). Solange ein anderer Tab vorn ist, blendet
-  `setMapWorkspaceShown(false)` Docks und Werkzeugleisten aus und schaltet die Tasten der Karte ab (außer Datei/Hilfe),
-  damit Entf, H usw. die Karte nicht unsichtbar ändern; zurück auf „Map“ kommt alles wieder. `raiseDock("Material
-  Editor")`/`raiseDock("Map")` wechseln den Tab, jeder andere Dock-Name holt zuerst die Karte nach vorn.
+- Seitenleiste wie XBLAH: `MainWindow` hat links die Werkzeugleiste „Pages“ (vor den Werkzeugen) und in der Mitte
+  einen `QStackedWidget` (`workspacePages`) mit den Seiten aus `MainWindow::Page`: Map (die Views), Materials
+  (`MaterialEditor`), Sounds, Particles, Mod (`ModPage`, `mod_page.cpp`). Sound- und Partikel-Browser sind beim Mappen
+  Docks; `showPage()` hängt sie in ihre Seite um und beim Zurückgehen wieder ins Dock. Solange nicht „Map“ vorn ist,
+  blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
+  der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Mod")` zeigt die Seite, jeder
+  andere Dock-Name die Karte mit dem Dock. Screenshots: `--page mod|sounds|…`, `--pick-edge` (Kante gewählt).
   Aufbau wie in Source 2: links Suche + zuletzt bearbeitete (`QSettings` `materialEditor/recent`), Mitte Gruppen
   (`FeatureGroup`: Kopf mit Pfeil und ggf. Schalter; Schalter aus = zugeklappt), rechts die Vorschau mit Werkzeugleiste.
   Feature-Schalter (`setFeature`: `bump`, `env`, `detail`, `phong`) legen ihre Parameter beim Ausschalten in

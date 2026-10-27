@@ -19,9 +19,9 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
   `asset_browser` (Materialien, Modelle), `material_editor` + `material_preview` (inkl. Schalter für die mapbase-fidelity-Shader der Mod), `sound_browser` + `sound_player`
   (Sounds-Tab, Wiedergabe über QAudioSink, optional), `copy_paste`,
-  `map_look_panel`, `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
+  `map_look_panel`, `mod_page` (Seite „Mod“ der Seitenleiste), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
   Justify), `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
-  `shortcut_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window`, `style`.
+  `shortcut_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste wie XBLAH: Map, Materials, Sounds, Particles, Mod), `style`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
 - `tests/` – doctest; `fixture` (künstliche Steam-Installation, keine Valve-Dateien), `demo` (Demo-Inhalte + Demo-Karte),
   `test_app.cpp` (echte Fenster mit simulierter Maus, Label `ui`, braucht OpenGL → unter Linux `xvfb-run`).

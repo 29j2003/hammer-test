@@ -5,6 +5,7 @@
 #include "asset_browser.h"
 #include "compile_window.h"
 #include "map_look_panel.h"
+#include "mod_page.h"
 #include "material_editor.h"
 #include "material_cache.h"
 #include "panels.h"
@@ -47,7 +48,7 @@
 #include <QSplitter>
 #include <QSet>
 #include <QTabBar>
-#include <QTabWidget>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -111,15 +112,12 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 		m_columns[static_cast<std::size_t>(r)]->addWidget(m_views[static_cast<std::size_t>(r * 2 + 1)]);
 		m_rows->addWidget(m_columns[static_cast<std::size_t>(r)]);
 	}
-	// The views are the "Map" tab; the Material Editor opens as a tab next to it.
-	m_centralTabs = new QTabWidget;
-	m_centralTabs->setObjectName("centralTabs");
-	m_centralTabs->setDocumentMode(true);
-	m_centralTabs->setTabsClosable(true);
-	m_centralTabs->addTab(m_rows, tr("Map"));
-	m_centralTabs->tabBar()->setTabButton(0, QTabBar::RightSide, nullptr);   // the map stays
-	m_centralTabs->tabBar()->setTabButton(0, QTabBar::LeftSide, nullptr);
-	setCentralWidget(m_centralTabs);
+	// Pages of the side bar (like XBLAH): the map (the views and their docks), Materials, Sounds,
+	// Particles and the Mod overview, each filling the middle.
+	m_pages = new QStackedWidget;
+	m_pages->setObjectName("workspacePages");
+	m_pages->addWidget(m_rows);
+	setCentralWidget(m_pages);
 	m_active = m_views[0];
 	connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) {
 		for (auto* view : m_views) {
@@ -257,8 +255,27 @@ void MainWindow::createDocks() {
 	m_sounds = new SoundBrowser(m_editor);
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
-	m_materialEditor = new MaterialEditor(m_editor, this);   // a tab when opened (showMaterialEditor)
-	m_materialEditor->hide();
+	m_materialEditor = new MaterialEditor(m_editor, this);
+	m_modPage = new ModPage(m_editor);
+	connect(m_modPage, &ModPage::openMapRequested, this, [this](const QString& path) {
+		if (maybeSave() && openMap(path)) showPage(Page::Map);
+	});
+	connect(m_modPage, &ModPage::compileSettingsRequested, this, [this] {
+		showPage(Page::Map);
+		compile();
+	});
+	// Sounds and Particles are docks while mapping (drag them into the map) and whole pages from
+	// the side bar: showPage() moves the browser between its dock and its page.
+	m_soundsPage = new QWidget;
+	m_soundsPage->setObjectName("soundsPage");
+	(new QVBoxLayout(m_soundsPage))->setContentsMargins(0, 0, 0, 0);
+	m_particlesPage = new QWidget;
+	m_particlesPage->setObjectName("particlesPage");
+	(new QVBoxLayout(m_particlesPage))->setContentsMargins(0, 0, 0, 0);
+	m_pages->addWidget(m_materialEditor);
+	m_pages->addWidget(m_soundsPage);
+	m_pages->addWidget(m_particlesPage);
+	m_pages->addWidget(m_modPage);
 
 	// Tool options on the left next to the tool bar (like XBLAH's "New objects"), properties on the right.
 	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::LeftDockWidgetArea);
@@ -275,18 +292,14 @@ void MainWindow::createDocks() {
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
 	auto* particles = addDock(tr("Particles"), m_particles, Qt::BottomDockWidgetArea);
+	m_soundsDock = sounds;
+	m_particlesDock = particles;
 	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, sounds);
 	tabifyDockWidget(assets, particles);
 	tabifyDockWidget(assets, compile);
 	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
-	connect(m_centralTabs, &QTabWidget::currentChanged, this, [this](int index) {
-		setMapWorkspaceShown(m_centralTabs->widget(index) == m_rows);
-	});
-	connect(m_centralTabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
-		if (m_centralTabs->widget(index) != m_rows) m_centralTabs->removeTab(index);   // the editor itself stays for later
-	});
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
@@ -318,10 +331,39 @@ void MainWindow::createDocks() {
 }
 
 void MainWindow::showMaterialEditor() {
-	if (m_centralTabs->indexOf(m_materialEditor) < 0) {
-		m_centralTabs->addTab(m_materialEditor, tr("Material Editor"));
+	showPage(Page::Materials);
+}
+
+void MainWindow::showPage(Page page) {
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_modPage};
+	QWidget* target = widgets[int(page)];
+	// The browsers that are docks while mapping move to their page and back.
+	const auto borrow = [](QWidget* browser, QDockWidget* dock, QWidget* holder, bool toPage) {
+		if (!browser || !dock) return;
+		if (toPage && browser->parentWidget() != holder) {
+			holder->layout()->addWidget(browser);
+			browser->show();
+		} else if (!toPage && dock->widget() != browser) {
+			dock->setWidget(browser);
+		}
+	};
+	borrow(m_sounds, m_soundsDock, m_soundsPage, page == Page::Sounds);
+	borrow(m_particles, m_particlesDock, m_particlesPage, page == Page::Particles);
+	if (page == Page::Mod) m_modPage->refresh();
+	m_pages->setCurrentWidget(target);
+	setMapWorkspaceShown(page == Page::Map);
+	if (m_pageGroup) {
+		const auto actions = m_pageGroup->actions();
+		if (int(page) < actions.size()) actions[int(page)]->setChecked(true);
 	}
-	m_centralTabs->setCurrentWidget(m_materialEditor);
+}
+
+MainWindow::Page MainWindow::currentPage() const {
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_modPage};
+	for (int i = 0; i < 5; ++i) {
+		if (m_pages->currentWidget() == widgets[i]) return Page(i);
+	}
+	return Page::Map;
 }
 
 void MainWindow::setMapWorkspaceShown(bool shown) {
@@ -337,7 +379,7 @@ void MainWindow::setMapWorkspaceShown(bool shown) {
 			}
 		}
 		for (auto* bar : findChildren<QToolBar*>(QString(), Qt::FindDirectChildrenOnly)) {
-			if (bar->isVisible()) {
+			if (bar->isVisible() && bar != m_pageBar) {
 				m_hiddenForTab << bar;
 				bar->hide();
 			}
@@ -350,7 +392,7 @@ void MainWindow::setMapWorkspaceShown(bool shown) {
 		}
 		for (auto* a : findChildren<QAction*>()) {
 			if (a->menu() || a->shortcut().isEmpty() || keep.contains(a) || !a->isEnabled()) continue;
-			if (a->objectName() == tr("Material Editor")) continue;
+			if (a->objectName() == tr("Material Editor") || (m_pageGroup && m_pageGroup->actions().contains(a))) continue;
 			a->setEnabled(false);
 			m_disabledForTab << a;
 		}
@@ -371,7 +413,12 @@ void MainWindow::raiseDock(const QString& name) {
 		showMaterialEditor();
 		return;
 	}
-	m_centralTabs->setCurrentWidget(m_rows);   // the docks belong to the map
+	static const QMap<QString, Page> PAGES = {{"Materials", Page::Materials}, {"Mod", Page::Mod}};
+	if (const auto it = PAGES.constFind(name); it != PAGES.constEnd()) {
+		showPage(*it);
+		return;
+	}
+	if (currentPage() != Page::Map) showPage(Page::Map);   // the docks belong to the map
 	if (name == tr("Map") || name == "Map") return;
 	for (auto* dock : m_docks) {
 		if (dock->objectName() == name || dock->windowTitle() == name) {
@@ -556,6 +603,29 @@ void MainWindow::createActions() {
 	};
 	action(tr("Rotate up"), QKeySequence("Alt+Up"), [this, rotateStep, pitchAxis] { m_editor->rotateSelection(pitchAxis(), rotateStep()); });
 	action(tr("Rotate down"), QKeySequence("Alt+Down"), [this, rotateStep, pitchAxis] { m_editor->rotateSelection(pitchAxis(), -rotateStep()); });
+
+	// Side bar of pages (like XBLAH), left of the tools.
+	m_pageBar = new QToolBar(tr("Pages"));
+	m_pageBar->setObjectName("Pages");
+	m_pageBar->setMovable(false);
+	m_pageBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+	addToolBar(Qt::LeftToolBarArea, m_pageBar);
+	m_pageGroup = new QActionGroup(this);
+	const auto pageAction = [&](const QString& glyph, const QString& name, const QString& tip, Page page) {
+		auto* a = new QAction(glyph + "\n" + name, this);
+		a->setObjectName("page:" + name);
+		a->setToolTip(tip);
+		a->setCheckable(true);
+		m_pageGroup->addAction(a);
+		m_pageBar->addAction(a);
+		connect(a, &QAction::triggered, this, [this, page] { showPage(page); });
+		return a;
+	};
+	pageAction(QStringLiteral("▦"), tr("Map"), tr("The map: 3D and 2D views, tools and their panels"), Page::Map)->setChecked(true);
+	pageAction(QStringLiteral("◩"), tr("Materials"), tr("Material Editor: textures, shaders and mapbase-fidelity effects"), Page::Materials);
+	pageAction(QStringLiteral("♪"), tr("Sounds"), tr("Sounds, sound scripts and soundscapes"), Page::Sounds);
+	pageAction(QStringLiteral("✺"), tr("Particles"), tr("Particle systems of the game"), Page::Particles);
+	pageAction(QStringLiteral("⚙"), tr("Mod"), tr("The game or mod: folders, maps, content, entity definitions"), Page::Mod);
 
 	// Tools (left tool bar)
 	auto* tools = new QToolBar(tr("Tools"));

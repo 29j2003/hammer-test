@@ -9,6 +9,8 @@
 //   --camera "x y z yaw pitch"
 //   --render lit|unlit|wire
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
+//   --page NAME          show a page of the side bar (map, materials, sounds, particles, mod)
+//   --pick-edge          vertex tool with an edge of the first brush picked
 //   --tool NAME          start with a tool (block, entity, ...)
 //   --material NAME      open a material in the Material Editor
 //   --check              run the problem checks after loading
@@ -30,6 +32,8 @@
 #include "panels.h"
 #include "style.h"
 #include "viewport.h"
+
+#include <sme/csg.h>
 
 using namespace sme::app;
 
@@ -61,6 +65,8 @@ int main(int argc, char** argv) {
 	parser.addOption({"camera", "Camera \"x y z yaw pitch\".", "camera"});
 	parser.addOption({"render", "lit, unlit or wire.", "mode"});
 	parser.addOption({"dock", "Raise a dock.", "name"});
+	parser.addOption({"page", "Show a page of the side bar (map, materials, sounds, particles, mod).", "page"});
+	parser.addOption({"pick-edge", "Vertex tool with the top front edge of the first brush picked."});
 	parser.addOption({"material", "Open a material in the Material Editor.", "name"});
 	parser.addOption({"tool", "Start with a tool (select, move, rotate, scale, block, entity, clip, vertex, polygon).", "tool"});
 	parser.addOption({"check", "Run the problem checks."});
@@ -128,6 +134,21 @@ int main(int argc, char** argv) {
 		}
 		if (parser.isSet("dock")) {
 			window.raiseDock(parser.value("dock"));
+		}
+		if (parser.isSet("page")) {
+			static const QMap<QString, MainWindow::Page> PAGES = {{"map", MainWindow::Page::Map}, {"materials", MainWindow::Page::Materials},
+				{"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles}, {"mod", MainWindow::Page::Mod}};
+			window.showPage(PAGES.value(parser.value("page").toLower(), MainWindow::Page::Map));
+		}
+		if (parser.isSet("pick-edge") && !editor.doc().world.solids.empty()) {
+			const auto& solid = editor.doc().world.solids.front();
+			sme::Selection selection;
+			selection.solids.push_back({0, solid.id});
+			editor.setSelection(selection);
+			editor.setTool(Editor::Tool::Vertex);
+			sme::Bounds box;
+			for (const auto& corner : sme::solidCorners(solid)) box.add(corner);
+			editor.setVertexCorners({{box.min.x, box.min.y, box.max.z}, {box.max.x, box.min.y, box.max.z}});
 		}
 		if (parser.isSet("material")) {
 			window.materialEditor()->openMaterial(parser.value("material"));
