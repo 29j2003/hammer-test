@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <QColor>
 #include <QElapsedTimer>
+#include <QImage>
 #include <QOpenGLWidget>
 #include <QSet>
 #include <QTimer>
@@ -15,6 +17,27 @@
 #include "renderer.h"
 
 namespace sme::app {
+
+/// One thing drawn over the view (text or the selection frame).
+struct OverlayItem {
+	QRectF rect;
+	QString text;
+	QColor color;
+	int flags = Qt::AlignLeft | Qt::AlignTop;
+	bool marquee = false;
+	bool operator==(const OverlayItem&) const = default;
+};
+
+/// Collects the overlay of a frame, so it is only painted again when something changed.
+struct OverlayRecorder {
+	std::vector<OverlayItem> items;
+	void drawText(const QRectF& rect, const QString& text, const QColor& color, int flags = Qt::AlignLeft | Qt::AlignTop) {
+		items.push_back({rect, text, color, flags, false});
+	}
+	void drawText(const QRectF& rect, const QColor& color, const QString& text) { drawText(rect, text, color); }
+	void drawText(const QRectF& rect, const QColor& color, int flags, const QString& text) { drawText(rect, text, color, flags); }
+	void drawMarquee(const QRectF& rect) { items.push_back({rect, {}, {}, 0, true}); }
+};
 
 class Viewport : public QOpenGLWidget {
 	Q_OBJECT
@@ -114,6 +137,7 @@ private:
 	void drawGrid(std::vector<LineVertex>& lines) const;
 	void drawGizmo(std::vector<LineVertex>& lines) const;
 	void drawOverlay();
+	void paintOverlayImage();
 	void moveCamera();
 
 	Editor* m_editor;
@@ -180,6 +204,8 @@ private:
 
 	// Stats
 	QElapsedTimer m_frameClock;
+	std::vector<OverlayItem> m_overlayItems;
+	QImage m_overlayImage;
 	double m_frameMs = 0;
 	int m_frames = 0;
 	QElapsedTimer m_fpsClock;

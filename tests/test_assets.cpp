@@ -209,6 +209,10 @@ TEST_CASE("compile output: errors, warnings, explanations, progress") {
 	CHECK(model->explanation.find("model") != std::string::npos);
 	CHECK(classifyCompileLine("Brush 12: WARNING, portal clipped away (ptr 0x0)")->severity == CompileMessage::Severity::Warning);
 	CHECK(classifyCompileLine("Error: MAX_MAP_BRUSHES")->severity == CompileMessage::Severity::Error);
+	// Harmless notes that sound alarming (VRAD without lights.rad, gameinfo without GameData).
+	CHECK(classifyCompileLine("Warning: Couldn't open texlight file D:\\Games\\bin\\lights.rad.")->severity == CompileMessage::Severity::Info);
+	CHECK(classifyCompileLine("Could not locate 'GameData' key in d:\\games\\hl2\\gameinfo.txt")->severity == CompileMessage::Severity::Info);
+	CHECK(classifyCompileLine("Couldn't open map.prt")->severity == CompileMessage::Severity::Error);
 	CHECK(classifyCompileLine("some unexpected error happened")->severity == CompileMessage::Severity::Error);
 	CHECK(classifyCompileLine("some unexpected error happened")->explanation.empty());
 	CHECK_FALSE(classifyCompileLine("0 errors, 0 warnings"));

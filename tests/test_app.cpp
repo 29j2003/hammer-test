@@ -160,6 +160,40 @@ TEST_CASE("editing with the mouse in the real window") {
 	CHECK(b.min.z == doctest::Approx(0));
 	CHECK(b.max.z == doctest::Approx(128).epsilon(0.15));
 	CHECK(editor.selection().solids.size() == 1);
+	{
+		// The block tool stays ready: Enter creates, the next drag starts the next block right away.
+		for (int i = 1; i <= 2; ++i) {
+			const double x = 64 + 160 * i;
+			QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {x, -64, 0}));
+			QTest::mouseMove(view, screen(view, {x + 96, 64, 0}));
+			QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {x + 96, 64, 0}));
+			QTest::mouseMove(view, screen(view, {x + 48, 0, 64}));
+			settle();
+			QTest::keyClick(view, Qt::Key_Return);
+			settle();
+			CHECK(editor.doc().world.solids.size() == std::size_t(1 + i));
+			CHECK(editor.tool() == Editor::Tool::Block);
+		}
+		// While the height is set, dragging somewhere else creates this block and starts the next.
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {-320, -64, 0}));
+		QTest::mouseMove(view, screen(view, {-224, 64, 0}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {-224, 64, 0}));
+		QTest::mouseMove(view, screen(view, {-272, 0, 64}));
+		settle();
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {-320, -320, 0}));
+		CHECK(editor.doc().world.solids.size() == 4);
+		QTest::mouseMove(view, screen(view, {-224, -224, 0}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {-224, -224, 0}));
+		QTest::mouseMove(view, screen(view, {-272, -272, 64}));
+		settle();
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {-272, -272, 64}));
+		settle();
+		CHECK(editor.doc().world.solids.size() == 5);
+		for (int i = 0; i < 4; ++i) {
+			editor.undo();
+		}
+		REQUIRE(editor.doc().world.solids.size() == 1);
+	}
 
 	// Clicking empty space clears, clicking the block selects it.
 	editor.setTool(Editor::Tool::Select);

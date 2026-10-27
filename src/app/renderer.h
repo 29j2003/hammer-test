@@ -8,6 +8,7 @@
 #pragma once
 
 #include <QHash>
+#include <QImage>
 #include <QMatrix4x4>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
@@ -82,6 +83,10 @@ public:
 	void drawPreviewSolids(const Params& params);
 	/// Lines; `onTop` ignores depth (gizmos).
 	void drawLines(const std::vector<LineVertex>& lines, const QMatrix4x4& viewProjection, bool onTop, float width = 1.f);
+	/// Draws a CPU-painted image (premultiplied alpha) over the whole view; uploads only when changed.
+	void drawOverlay(const QImage& image, bool changed);
+	/// Puts the OpenGL state back to what QPainter expects (call before painting text on top).
+	void endFrame();
 
 	/// Ray picking against brushes (incl. displacements) and entity boxes.
 	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false) const;
@@ -159,6 +164,9 @@ private:
 	QHash<QString, GpuModel> m_gpuModels;
 	std::unique_ptr<QOpenGLShaderProgram> m_program;
 	std::unique_ptr<QOpenGLShaderProgram> m_lineProgram;
+	std::unique_ptr<QOpenGLShaderProgram> m_overlayProgram;
+	GLuint m_overlayTexture = 0;
+	QSize m_overlaySize;
 	std::unique_ptr<QOpenGLShaderProgram> m_edgeProgram;
 	std::unique_ptr<QOpenGLShaderProgram> m_depthProgram;
 	GLuint m_sunFbo = 0, m_sunDepth = 0, m_atlasFbo = 0, m_atlasDepth = 0;

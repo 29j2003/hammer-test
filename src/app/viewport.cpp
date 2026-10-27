@@ -337,6 +337,7 @@ void Viewport::paintGL() {
 	drawGizmo(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
 
+	m_renderer.endFrame();
 	drawOverlay();
 
 	// Frame statistics.
@@ -503,26 +504,20 @@ void Viewport::drawGizmo(std::vector<LineVertex>& lines) const {
 }
 
 void Viewport::drawOverlay() {
-	QPainter p(this);
-	p.setRenderHint(QPainter::Antialiasing);
-	QFont font = p.font();
-	font.setPointSizeF(9);
-	p.setFont(font);
-	p.setPen(QColor(200, 205, 215));
-	p.drawText(QRectF(8, 6, 300, 20), viewName(m_camera.kind));
+	// The overlay is recorded first and painted on the CPU only when it changed; the GPU just
+	// draws the finished picture. (QPainter straight onto the GL widget garbles or loses text
+	// on some drivers.)
+	OverlayRecorder p;
+	p.drawText(QRectF(8, 6, 300, 20), viewName(m_camera.kind), QColor(200, 205, 215));
 	if (m_drag == Drag::Marquee) {
-		p.setPen(QPen(QColor(255, 160, 40), 1, Qt::DashLine));
-		p.setBrush(QColor(255, 160, 40, 30));
-		p.drawRect(m_marquee);
+		p.drawMarquee(m_marquee);
 	}
 	if (m_drag == Drag::BlockHeight) {
-		p.setPen(QColor(255, 200, 80));
-		p.drawText(QRectF(8, height() - 26, width() - 16, 20), tr("Move the mouse to set the height (%1), click or Enter to create, Esc to cancel, right mouse to look around")
+		p.drawText(QRectF(8, height() - 26, width() - 16, 20), QColor(255, 200, 80), tr("Move the mouse to set the height (%1) - click or Enter creates it (drag on for the next block), Esc cancels, right mouse looks around")
 		                                                             .arg(m_blockBox.size().z));
 	}
 	const auto hint = [&](const QString& text) {
-		p.setPen(QColor(150, 230, 255));
-		p.drawText(QRectF(8, height() - 26, width() - 16, 20), text);
+		p.drawText(QRectF(8, height() - 26, width() - 16, 20), text, QColor(150, 230, 255));
 	};
 	if (m_editor->tool() == Editor::Tool::Clip) {
 		const QString keep = m_clipKeep == edit::ClipKeep::Both ? tr("both parts") : (m_clipKeep == edit::ClipKeep::Back ? tr("back part") : tr("front part"));
@@ -535,22 +530,52 @@ void Viewport::drawOverlay() {
 		hint(tr("Polygon: click the corners of the base (%1), Enter or double-click makes the brush, Backspace removes a corner").arg(m_polygon.size()));
 	}
 	if (m_drag == Drag::Gizmo && m_editor->tool() == Editor::Tool::Rotate) {
-		p.setPen(QColor(255, 220, 120));
-		p.drawText(QRectF(8, height() - 26, 200, 20), tr("%1°").arg(m_dragAngle));
+		p.drawText(QRectF(8, height() - 26, 200, 20), tr("%1°").arg(m_dragAngle), QColor(255, 220, 120));
 	}
 	if (m_drag == Drag::Gizmo && (m_editor->tool() == Editor::Tool::Move || m_camera.is2D())) {
-		p.setPen(QColor(255, 220, 120));
-		p.drawText(QRectF(8, height() - 26, 400, 20), tr("Move %1 %2 %3%4")
+		p.drawText(QRectF(8, height() - 26, 400, 20), QColor(255, 220, 120), tr("Move %1 %2 %3%4")
 		                                                  .arg(m_dragDelta.x)
 		                                                  .arg(m_dragDelta.y)
 		                                                  .arg(m_dragDelta.z)
 		                                                  .arg((m_pressModifiers & Qt::ShiftModifier) ? tr("  (copy)") : QString()));
 	}
 	if (m_editor->doc().solidCount() == 0 && m_editor->doc().entities.empty() && !m_camera.is2D()) {
-		p.setPen(QColor(170, 175, 185));
-		p.drawText(rect().adjusted(0, 0, 0, -40), Qt::AlignCenter,
+		p.drawText(QRectF(rect().adjusted(0, 0, 0, -40)), QColor(170, 175, 185), Qt::AlignCenter,
 		           tr("Empty map\nB: block tool - drag on the grid, then set the height\nShift+E: entity tool\n"
 		              "Right mouse: look around, with W A S D Q E to fly\nCtrl+O: open a .vmf"));
+	}
+
+	const bool changed = p.items != m_overlayItems || m_overlayImage.size() != size() * devicePixelRatio();
+	if (changed) {
+		m_overlayItems = std::move(p.items);
+		paintOverlayImage();
+	}
+	m_renderer.drawOverlay(m_overlayImage, changed);
+}
+
+void Viewport::paintOverlayImage() {
+	const qreal dpr = devicePixelRatio();
+	m_overlayImage = QImage(size() * dpr, QImage::Format_RGBA8888_Premultiplied);
+	m_overlayImage.setDevicePixelRatio(dpr);
+	m_overlayImage.fill(Qt::transparent);
+	QPainter painter(&m_overlayImage);
+	painter.setRenderHint(QPainter::Antialiasing);
+	painter.setRenderHint(QPainter::TextAntialiasing);
+	QFont font = this->font();
+	font.setPointSizeF(9);
+	painter.setFont(font);
+	for (const auto& item : m_overlayItems) {
+		if (item.marquee) {
+			painter.setPen(QPen(QColor(255, 160, 40), 1, Qt::DashLine));
+			painter.setBrush(QColor(255, 160, 40, 30));
+			painter.drawRect(item.rect);
+			continue;
+		}
+		// A soft dark outline keeps the text readable on bright textures.
+		painter.setPen(QColor(0, 0, 0, 170));
+		painter.drawText(item.rect.translated(1, 1), item.flags, item.text);
+		painter.setPen(item.color);
+		painter.drawText(item.rect, item.flags, item.text);
 	}
 }
 
@@ -687,10 +712,12 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 		return;
 	}
 	if (m_drag == Drag::BlockHeight) {
-		if (event->button() == Qt::LeftButton) {
-			createBlockFromDrag();
+		if (event->button() != Qt::LeftButton) {
+			return;
 		}
-		return;
+		// The click creates the block and may already start the next one: dragging on goes
+		// straight into the next base, a plain click just creates.
+		createBlockFromDrag();
 	}
 	if (m_drag != Drag::None) {
 		return;   // another button pressed during a drag
@@ -896,6 +923,12 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 		case Drag::BlockBase: {
 			updateBlockDrag(releasePos);
 			const Vec3 size = m_blockBox.size();
+			if (QLineF(m_pressPos, releasePos).length() < 4) {
+				m_drag = Drag::None;   // a click, not a drag
+				setPreviewSolids({});
+				update();
+				break;
+			}
 			if (m_camera.is2D()) {
 				m_drag = Drag::None;
 				const int a = viewAxis() == 0 ? 1 : 0, b = viewAxis() == 2 ? 1 : 2;

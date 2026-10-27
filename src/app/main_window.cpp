@@ -20,7 +20,9 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QDir>
 #include <QFileDialog>
+#include <QFont>
 #include <QFileInfo>
 #include <QSpinBox>
 #include <QInputDialog>
@@ -296,7 +298,8 @@ void MainWindow::createActions() {
 		// glTF / OBJ for Blender, Unity, Unreal: meters, Y up, textures as PNG, props included.
 		QString filter;
 		const QString base = m_editor->filePath().isEmpty() ? QStringLiteral("map") : QFileInfo(m_editor->filePath()).completeBaseName();
-		const QString path = QFileDialog::getSaveFileName(this, tr("Export map"), QFileInfo(m_editor->filePath()).absolutePath() + "/" + base + ".gltf",
+		const QString folder = m_editor->filePath().isEmpty() ? QDir::homePath() : QFileInfo(m_editor->filePath()).absolutePath();
+		const QString path = QFileDialog::getSaveFileName(this, tr("Export map"), folder + "/" + base + ".gltf",
 		                                                  tr("glTF 2.0 (*.gltf);;Wavefront OBJ (*.obj)"), &filter);
 		if (path.isEmpty()) return;
 		ExportOptions options;
@@ -735,7 +738,19 @@ void MainWindow::refreshGames() {
 		sub->setToolTipsVisible(true);
 		groups.push_back(sub->menuAction());
 		for (const auto* game : list) {
-			makeAction(sub, *game, QStringLiteral("%1   (%2)").arg(QString::fromStdString(game->title), QString::fromStdString(game->folder())));
+			QString text = QStringLiteral("%1   (%2)").arg(QString::fromStdString(game->title), QString::fromStdString(game->folder()));
+			if (game->baseContent) {
+				// hl2/ inside Entropy : Zero 2 and the like: only content, the game is the other folder.
+				text += tr("   - base content, not playable");
+			} else if (game->usesMapbase) {
+				text += tr("   [Mapbase]");
+			}
+			auto* action = makeAction(sub, *game, text);
+			if (game->baseContent) {
+				QFont font = action->font();
+				font.setItalic(true);
+				action->setFont(font);
+			}
 		}
 	}
 	if (!modsByBase.empty()) {
@@ -807,8 +822,17 @@ void MainWindow::updateTitle() {
 bool MainWindow::save(bool saveAs) {
 	QString path = m_editor->filePath();
 	if (saveAs || path.isEmpty()) {
-		const QString dir = m_editor->gameKey().isEmpty() ? QString() : m_editor->gameSettings().mapDir;
-		path = QFileDialog::getSaveFileName(this, tr("Save map"), dir, tr("Valve map (*.vmf)"));
+		QString start = m_editor->filePath();
+		if (start.isEmpty()) {
+			// The game's map folder (made if needed: a missing folder makes the dialog offer
+			// its name as the file name) and a real file name.
+			const QString dir = m_editor->gameKey().isEmpty() ? QString() : m_editor->gameSettings().mapDir;
+			if (!dir.isEmpty()) {
+				QDir().mkpath(dir);
+			}
+			start = (dir.isEmpty() ? QDir::homePath() : dir) + "/untitled.vmf";
+		}
+		path = QFileDialog::getSaveFileName(this, tr("Save map"), start, tr("Valve map (*.vmf)"));
 		if (path.isEmpty()) {
 			return false;
 		}
@@ -845,6 +869,15 @@ void MainWindow::compile() {
 	if (m_compiler.running()) {
 		m_compiler.cancel();
 		return;
+	}
+	if (const auto& entry = m_editor->game()->entry; entry.baseContent) {
+		// hl2/ inside Entropy : Zero 2: the game would stop with "Could not load library client".
+		if (QMessageBox::question(this, tr("Compile"),
+		                          tr("%1 is only base content of %2, not a game of its own - the game will not start with it.\n"
+		                             "Choose %2's own folder in the game list. Compile anyway?")
+		                              .arg(QString::fromStdString(entry.folder()), QString::fromStdString(entry.appName))) != QMessageBox::Yes) {
+			return;
+		}
 	}
 	m_problems->runChecks();
 	if (m_problems->errorCount() > 0) {

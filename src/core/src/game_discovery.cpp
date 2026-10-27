@@ -133,29 +133,62 @@ GameEntry makeEntry(const std::filesystem::path& gameDir, AppId ownerAppId, bool
 
 } // namespace
 
-bool isMapbaseFgd(const std::filesystem::path& fgd) {
-	if (mentionsMapbase(fgd)) {
-		return true;
-	}
-	// Mapbase's halflife2.fgd mostly adds to its base.fgd: look into the @includes next to it.
+std::vector<std::filesystem::path> fgdIncludes(const std::filesystem::path& fgd) {
+	std::vector<std::filesystem::path> out;
 	const auto text = readFileText(fgd);
 	if (!text) {
-		return false;
+		return out;
 	}
+	const auto lower = toLower(*text);
 	std::size_t at = 0;
-	while ((at = toLower(*text).find("@include", at)) != std::string::npos) {
+	while ((at = lower.find("@include", at)) != std::string::npos) {
 		const auto open = text->find('"', at);
 		const auto close = open == std::string::npos ? open : text->find('"', open + 1);
 		if (close == std::string::npos) {
 			break;
 		}
-		const auto included = fgd.parent_path() / text->substr(open + 1, close - open - 1);
-		if (mentionsMapbase(included)) {
-			return true;
-		}
+		out.push_back(fgd.parent_path() / text->substr(open + 1, close - open - 1));
 		at = close;
 	}
+	return out;
+}
+
+namespace {
+
+bool isMapbaseFgd(const std::filesystem::path& fgd, int depth) {
+	if (mentionsMapbase(fgd)) {
+		return true;
+	}
+	// Mapbase's halflife2.fgd mostly adds to its base.fgd, and a mod's FGD may include that
+	// halflife2.fgd: follow the @includes a few levels.
+	if (depth <= 0) {
+		return false;
+	}
+	for (const auto& included : fgdIncludes(fgd)) {
+		if (isMapbaseFgd(included, depth - 1)) {
+			return true;
+		}
+	}
 	return false;
+}
+
+/// True if the folder has the game's own client library (bin/client.dll and friends).
+bool hasClientLibrary(const std::filesystem::path& gameDir) {
+	for (const char* sub : {"bin", "bin/win64", "bin/x64", "bin/linux64"}) {
+		for (const char* name : {"client.dll", "client.so", "client_srv.so", "client.dylib"}) {
+			std::error_code ec;
+			if (std::filesystem::is_regular_file(gameDir / sub / name, ec)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+} // namespace
+
+bool isMapbaseFgd(const std::filesystem::path& fgd) {
+	return isMapbaseFgd(fgd, 3);
 }
 
 const KnownApp* findKnownApp(AppId appId) {
@@ -207,6 +240,19 @@ DiscoveryResult discoverGames(SteamInstallation steam) {
 					result.warnings.push_back(displayPath(configPath) + ": " + error);
 				}
 			}
+		}
+	}
+
+	// Several game folders in one app (Entropy : Zero 2 ships hl2/ next to its own folder): the
+	// folders without a client library are only content for the one that has it.
+	for (auto& game : result.games) {
+		const bool siblingPlayable = std::any_of(result.games.begin(), result.games.end(), [&](const GameEntry& other) {
+			return &other != &game && other.ownerAppId == game.ownerAppId && hasClientLibrary(other.gameDir);
+		});
+		game.baseContent = siblingPlayable && !hasClientLibrary(game.gameDir);
+		if (const auto* known = findKnownApp(game.ownerAppId);
+		    known && !game.baseContent && std::string_view(known->branch).find("Mapbase") != std::string_view::npos) {
+			game.usesMapbase = true;   // built on Mapbase without naming it in the search paths
 		}
 	}
 
@@ -284,19 +330,40 @@ DiscoveryResult discoverGames(SteamInstallation steam) {
 		}
 		// No Hammer config: FGDs that ship with the mod itself, then Mapbase's shared FGD
 		// (sourcemods/mapbase_shared/shared_misc/bin/halflife2.fgd, it includes base.fgd),
-		// else the base game's main FGD.
-		game.fgds = local;
-		addMapbase();
-		if (game.fgds.empty()) {
-			if (const auto* known = findKnownApp(baseApp)) {
-				for (const auto& fgd : game.availableFgds) {
-					const auto name = toLower(displayPath(fgd.filename()));
-					if (name == std::string(known->mainFgd) + ".fgd") {
-						game.fgds.push_back(fgd);
-						break;
+		// else the base game's main FGD. A game in its own app (not a sourcemod) takes its
+		// app's main FGD first; when that is itself built on Mapbase nothing more is added.
+		const auto addMainFgd = [&] {
+			const auto* known = findKnownApp(baseApp);
+			std::filesystem::path main;
+			for (const auto& fgd : game.availableFgds) {
+				if (known && iequals(displayPath(fgd.filename()), std::string(known->mainFgd) + ".fgd")) {
+					main = fgd;
+					break;
+				}
+			}
+			if (main.empty()) {
+				return;
+			}
+			// A game FGD that @includes the main one (ez2.fgd -> halflife2.fgd) has everything the main one has.
+			for (const auto& fgd : game.availableFgds) {
+				if (fgd.parent_path() != main.parent_path() || fgd == main) {
+					continue;
+				}
+				for (const auto& included : fgdIncludes(fgd)) {
+					if (iequals(displayPath(included.filename()), displayPath(main.filename()))) {
+						main = fgd;
 					}
 				}
 			}
+			game.fgds.push_back(main);
+		};
+		game.fgds = local;
+		if (game.fgds.empty() && !game.isSourceMod) {
+			addMainFgd();
+		}
+		addMapbase();
+		if (game.fgds.empty()) {
+			addMainFgd();
 		}
 		if (game.fgds.empty()) {
 			game.notes.emplace_back("No FGD found - add one in the game settings");
@@ -343,11 +410,20 @@ DiscoveryResult discoverGames(SteamInstallation steam) {
 	}
 	for (std::size_t i = 0; i < labels.size(); ++i) {
 		result.games[i].label = std::move(labels[i]);
+		auto& game = result.games[i];
+		if (game.baseContent) {
+			game.label += " - base content";
+			game.notes.push_back("Only content for " + game.appName + ", not a game of its own (Run would fail with "
+			                     "\"Could not load library client\") - choose " + game.appName + "'s own folder");
+		}
 	}
 
 	std::stable_sort(result.games.begin(), result.games.end(), [](const GameEntry& a, const GameEntry& b) {
 		if (a.isSourceMod != b.isSourceMod) {
 			return !a.isSourceMod;
+		}
+		if (a.baseContent != b.baseContent) {
+			return !a.baseContent;
 		}
 		return toLower(a.title) < toLower(b.title);
 	});

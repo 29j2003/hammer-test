@@ -80,6 +80,8 @@ bool SceneRenderer::initShadows(QString* error) {
 		if (error) *error = m_depthProgram->log();
 		return false;
 	}
+	GLint previousFbo = 0;
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFbo);
 	for (auto [fbo, depth, size] : {std::tuple{&m_sunFbo, &m_sunDepth, SUN_SIZE}, std::tuple{&m_atlasFbo, &m_atlasDepth, ATLAS_SIZE}}) {
 		*depth = makeDepthTexture(*this, size);
 		glGenFramebuffers(1, fbo);
@@ -89,7 +91,7 @@ bool SceneRenderer::initShadows(QString* error) {
 		glReadBuffer(GL_NONE);
 		m_hasShadowMaps = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
 	}
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, GLuint(previousFbo));   // the widget's own framebuffer, not 0
 	// Shadow maps stay on units 3 and 4; the scene shader's shadow samplers point there for good
 	// (two sampler types on one unit would be an error even when unused).
 	glActiveTexture(GL_TEXTURE3);

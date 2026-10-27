@@ -105,6 +105,40 @@ TEST_CASE("game discovery finds games, mods, Mapbase and Hammer++ FGDs") {
 	CHECK(result.games.back().isSourceMod);                    // games first, mods last
 }
 
+TEST_CASE("a game with base content next to it (Entropy : Zero 2)") {
+	Fixture f;
+	test::createFixture(f);
+	const auto app = f.steam / "steamapps/common/EntropyZero2";
+	test::writeText(f.steam / "steamapps/appmanifest_1583720.acf",
+	                "\"AppState\"\n{\n\t\"appid\"\t\t\"1583720\"\n\t\"name\"\t\t\"Entropy : Zero 2\"\n\t\"installdir\"\t\t\"EntropyZero2\"\n}\n");
+	const auto gameInfo = [](std::string_view title, int appId) {
+		return "\"GameInfo\"\n{\n\tgame \"" + std::string(title) + "\"\n\tFileSystem\n\t{\n\t\tSteamAppId " + std::to_string(appId) +
+		       "\n\t\tSearchPaths\n\t\t{\n\t\t\tgame+mod\t|gameinfo_path|.\n\t\t\tgame\t|all_source_engine_paths|hl2\n\t\t}\n\t}\n}\n";
+	};
+	test::writeText(app / "hl2/gameinfo.txt", gameInfo("HALF-LIFE 2", 220));
+	test::writeText(app / "EntropyZero2/gameinfo.txt", gameInfo("Entropy : Zero 2", 1583720));
+	test::writeText(app / "EntropyZero2/bin/client.dll", "not a real dll");
+	test::writeText(app / "bin/base.fgd", "// Mapbase base FGD\n@PointClass = env_global_light : \"Sun shadows\" []\n");
+	test::writeText(app / "bin/halflife2.fgd", "@include \"base.fgd\"\n@PointClass = npc_citizen : \"Citizen\" []\n");
+	test::writeText(app / "bin/ez2.fgd", "@include \"halflife2.fgd\"\n@PointClass = npc_wilson : \"Wilson\" []\n");
+
+	const auto result = discoverGames(SteamInstallation::load(f.steam));
+	const auto& ez2 = findGame(result, "1583720/entropyzero2");
+	const auto& content = findGame(result, "1583720/hl2");
+	CHECK_FALSE(ez2.baseContent);
+	CHECK(content.baseContent);
+	CHECK(ez2.usesMapbase);
+	CHECK(ez2.label == "Entropy : Zero 2");
+	CHECK(content.label.ends_with("base content"));
+	REQUIRE(ez2.fgds.size() == 1);
+	CHECK(ez2.fgds[0].filename() == "ez2.fgd");                // includes halflife2.fgd and Mapbase's base.fgd
+	CHECK(isMapbaseFgd(ez2.fgds[0]));
+	// Base content comes after the real games in the list.
+	const auto at = [&](const GameEntry& game) { return &game - result.games.data(); };
+	CHECK(at(content) > at(ez2));
+	CHECK(at(content) > at(findGame(result, "220/hl2")));
+}
+
 TEST_CASE("relative Steam path still matches the Hammer++ config") {
 	Fixture f;
 	test::createFixture(f);

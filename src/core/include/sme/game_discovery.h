@@ -35,7 +35,9 @@ struct GameEntry {
 	AppId ownerAppId = 0;                       ///< App the folder belongs to (0 for sourcemods)
 	AppId baseAppId = 0;                        ///< SteamAppId from gameinfo.txt
 	bool isSourceMod = false;
-	bool usesMapbase = false;                   ///< Search paths mention Mapbase content
+	bool usesMapbase = false;                   ///< Search paths mention Mapbase content (or the app is built on Mapbase)
+	bool baseContent = false;                   ///< Shared content of another game in the same app (e.g. hl2/ inside
+	                                            ///< Entropy : Zero 2): no client library of its own, not playable
 	std::string branch;                         ///< Engine branch hint (may be empty)
 	std::vector<std::filesystem::path> fgds;    ///< Suggested FGDs (Hammer config first, then the game's main FGD)
 	std::vector<std::filesystem::path> availableFgds; ///< Every .fgd found next to the game and in the base game's bin/
@@ -56,7 +58,10 @@ struct DiscoveryResult {
 	std::vector<std::string> warnings;
 };
 
-/// True if the FGD (or an FGD it @includes from the same folder) is Mapbase's: it mentions Mapbase.
+/// Files an FGD pulls in with @include (resolved next to it).
+[[nodiscard]] std::vector<std::filesystem::path> fgdIncludes(const std::filesystem::path& fgd);
+
+/// True if the FGD (or an FGD it @includes, a few levels deep) is Mapbase's: it mentions Mapbase.
 [[nodiscard]] bool isMapbaseFgd(const std::filesystem::path& fgd);
 
 /// Scans the given Steam installation (use SteamInstallation::detect() for the real one).

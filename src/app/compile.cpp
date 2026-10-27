@@ -137,7 +137,7 @@ void CompileRunner::handleLine(const QString& raw) {
 			m_leaked = true;
 		}
 		const int severity = message->severity == CompileMessage::Severity::Error ? 2 : (message->severity == CompileMessage::Severity::Warning ? 1 : 0);
-		color = severity == 2 ? QColor(255, 110, 110) : QColor(255, 200, 100);
+		color = severity == 2 ? QColor(255, 110, 110) : (severity == 1 ? QColor(255, 200, 100) : QColor(140, 150, 165));
 		if (severity > 0) {
 			emit problem(m_current, line, severity, QString::fromStdString(message->explanation));
 		}

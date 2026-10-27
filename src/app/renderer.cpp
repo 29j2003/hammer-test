@@ -229,6 +229,25 @@ void main() {
 }
 )";
 
+// Full-screen quad for the text overlay (painted on the CPU, premultiplied alpha).
+const char* OVERLAY_VS = R"(#version 330 core
+out vec2 v_uv;
+void main() {
+	vec2 p = vec2((gl_VertexID & 1) * 2.0, (gl_VertexID >> 1) * 2.0);
+	v_uv = vec2(p.x * 0.5, 1.0 - p.y * 0.5);
+	gl_Position = vec4(p - 1.0, 0.0, 1.0);
+}
+)";
+
+const char* OVERLAY_FS = R"(#version 330 core
+in vec2 v_uv;
+uniform sampler2D u_image;
+out vec4 fragColor;
+void main() {
+	fragColor = texture(u_image, v_uv);
+}
+)";
+
 const char* LINE_VS = R"(#version 330 core
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec4 a_color;
@@ -345,7 +364,8 @@ bool SceneRenderer::initialize(MaterialCache* materials, QString* error) {
 		}
 		return true;
 	};
-	if (!build(m_program, SCENE_VS, SCENE_FS) || !build(m_edgeProgram, EDGE_VS, COLOR_FS) || !build(m_lineProgram, LINE_VS, COLOR_FS)) {
+	if (!build(m_program, SCENE_VS, SCENE_FS) || !build(m_edgeProgram, EDGE_VS, COLOR_FS) || !build(m_lineProgram, LINE_VS, COLOR_FS) ||
+	    !build(m_overlayProgram, OVERLAY_VS, OVERLAY_FS)) {
 		return false;
 	}
 	if (!initShadows(error)) {
@@ -457,6 +477,11 @@ void SceneRenderer::release() {
 	m_program.reset();
 	m_edgeProgram.reset();
 	m_lineProgram.reset();
+	m_overlayProgram.reset();
+	if (m_overlayTexture) {
+		glDeleteTextures(1, &m_overlayTexture);
+		m_overlayTexture = 0;
+	}
 	m_initialized = false;
 }
 
@@ -466,6 +491,7 @@ void SceneRenderer::ensureFlagTexture() {
 	glBindTexture(GL_TEXTURE_2D, m_flagTexture);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, FLAG_WIDTH, rows, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, m_flags.data());
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }
@@ -823,6 +849,7 @@ void SceneRenderer::setSelection(const MapDocument& doc, const Selection& select
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	const int rows = static_cast<int>(m_flags.size()) / FLAG_WIDTH;
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, FLAG_WIDTH, rows, GL_RED_INTEGER, GL_UNSIGNED_BYTE, m_flags.data());
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
 void SceneRenderer::materialReady(const QString& name) {
@@ -1340,6 +1367,64 @@ void SceneRenderer::drawLines(const std::vector<LineVertex>& lines, const QMatri
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);
 	glBindVertexArray(0);
+}
+
+void SceneRenderer::drawOverlay(const QImage& image, bool changed) {
+	if (!m_initialized || image.isNull()) {
+		return;
+	}
+	glActiveTexture(GL_TEXTURE0);
+	if (!m_overlayTexture) {
+		glGenTextures(1, &m_overlayTexture);
+		changed = true;
+	}
+	glBindTexture(GL_TEXTURE_2D, m_overlayTexture);
+	if (changed) {
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		const QImage rgba = image.format() == QImage::Format_RGBA8888_Premultiplied ? image : image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+		if (rgba.size() != m_overlaySize) {
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, rgba.width(), rgba.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.constBits());
+			m_overlaySize = rgba.size();
+		} else {
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rgba.width(), rgba.height(), GL_RGBA, GL_UNSIGNED_BYTE, rgba.constBits());
+		}
+	}
+	m_overlayProgram->bind();
+	m_overlayProgram->setUniformValue("u_image", 0);
+	glDisable(GL_DEPTH_TEST);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+	glBindVertexArray(m_lineVao);   // any VAO; the quad comes from gl_VertexID
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindVertexArray(0);
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+}
+
+void SceneRenderer::endFrame() {
+	if (!m_initialized) {
+		return;
+	}
+	// QPainter's glyph cache uploads rows padded to 4 bytes; an alignment of 1 left behind by
+	// the flag texture turns all text into smudge on some drivers (and makes it vanish on others).
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glUseProgram(0);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_BLEND);
+	glDepthMask(GL_TRUE);
+	glLineWidth(1.f);
 }
 
 std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) const {
