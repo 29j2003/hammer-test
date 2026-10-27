@@ -71,7 +71,7 @@ QToolBar#Pages QToolButton { min-width: 66px; padding: 8px 2px 7px 2px; color: #
 QToolBar#Pages QToolButton:hover { background: #262626; color: #e8e8e8; }
 QToolBar#Pages QToolButton:checked { background: #2a2a2a; color: #ffffff; border-left: 3px solid #f5a524; }
 
-QTabBar::tab { padding: 6px 14px; background: transparent; border: none; border-bottom: 2px solid transparent; color: #a6a6a6; }
+QTabBar::tab { padding: 6px 11px; background: transparent; border: none; border-bottom: 2px solid transparent; color: #a6a6a6; }
 QTabBar::tab:hover { color: #e4e4e4; }
 QTabBar::tab:selected { color: #f2f2f2; border-bottom: 2px solid #f5a524; }
 QTabWidget::pane { border: none; }

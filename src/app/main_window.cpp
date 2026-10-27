@@ -318,11 +318,9 @@ void MainWindow::createDocks() {
 	m_mapLook = new MapLookPanel(m_editor);
 	auto* mapLook = addDock(tr("Map Look"), m_mapLook, Qt::LeftDockWidgetArea);
 	auto* visgroups = addDock(tr("VisGroups"), new VisGroupsPanel(m_editor), Qt::LeftDockWidgetArea);
-	auto* history = addDock(tr("History"), new HistoryPanel(m_editor), Qt::LeftDockWidgetArea);
 	tabifyDockWidget(tool, outliner);
 	tabifyDockWidget(tool, visgroups);
 	tabifyDockWidget(tool, mapLook);
-	tabifyDockWidget(tool, history);
 	tool->raise();
 	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
@@ -337,6 +335,9 @@ void MainWindow::createDocks() {
 	tabifyDockWidget(assets, particles);
 	tabifyDockWidget(assets, compile);
 	tabifyDockWidget(assets, problems);
+	// Every undo step, next to the log (click one to go back or forward to it).
+	auto* history = addDock(tr("History"), new HistoryPanel(m_editor), Qt::BottomDockWidgetArea);
+	tabifyDockWidget(assets, history);
 	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);

@@ -28,9 +28,10 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Sky**: faces with the skybox tool texture show the map's sky (worldspawn *skyname*) as the game does.
 - **Layout**: on the far left the side bar with the pages, next to it the tools (their key in the corner). Left of the
   views the *Tool* panel (options and keys of the current tool; with the Select tool also *Hollow, Carve, Merge, Tie to,
-  Flip, Snap to grid, Drop to floor, Select similar, Hide*), the *Outliner*, *VisGroups*, *Map Look* and *History*
-  (every undo step; click one to go back or forward to it) as tabs. Right only *Object
-  Properties*. Below: Asset Browser, Sounds, Particles, Compile, Problems, Log. The three buttons at the top right show
+  Flip, Snap to grid, Drop to floor, Select similar, Hide*), the *Outliner*, *VisGroups* and *Map Look*
+  as tabs. Right only *Object
+  Properties*. Below: Asset Browser, Sounds, Particles, Compile, Problems, Log and History (every undo step; click one to go back
+  or forward to it). The three buttons at the top right show
   or hide the left, bottom and right panels.
 - **View switches** in the tool bar: helper entities, models, lights, cubemaps, triggers, tool brushes, sky, entity
   names in the 2D views, connection lines (green to what the selected entity's outputs fire at, blue from what fires at
