@@ -19,6 +19,7 @@
 #include <cmath>
 
 #include <sme/brush.h>
+#include <sme/csg.h>
 #include <sme/shapes.h>
 #include <sme/text.h>
 
@@ -483,6 +484,18 @@ void Viewport::drawGrid(std::vector<LineVertex>& lines) const {
 	}
 }
 
+std::vector<Vec3> Viewport::selectionCorners() const {
+	const Bounds box = m_drag == Drag::Gizmo ? m_dragBounds : edit::selectionBounds(m_editor->doc(), m_editor->selection(), m_editor->entities());
+	std::vector<Vec3> corners;
+	if (box.empty()) {
+		return corners;
+	}
+	for (int i = 0; i < 8; ++i) {
+		corners.push_back({(i & 1) ? box.max.x : box.min.x, (i & 2) ? box.max.y : box.min.y, (i & 4) ? box.max.z : box.min.z});
+	}
+	return corners;
+}
+
 void Viewport::drawGizmo(std::vector<LineVertex>& lines) const {
 	const auto tool = m_editor->tool();
 	const auto& selection = m_editor->selection();
@@ -535,6 +548,22 @@ void Viewport::drawGizmo(std::vector<LineVertex>& lines) const {
 				line(lines, center + u, center + u + v, color);
 				line(lines, center + v, center + u + v, color);
 			}
+		}
+		// Corner squares: drag one onto a corner of another brush or model to line them up.
+		const double hs = size * 0.022;
+		const Vec3 offset = dragging ? m_dragDelta : Vec3{};
+		const QVector4D cornerColor = (m_hover == Handle::Corner || m_dragHandle == Handle::Corner) ? HOVER_COLOR : QVector4D(0.95f, 0.95f, 1.0f, 0.9f);
+		for (const Vec3& corner : selectionCorners()) {
+			Bounds square;
+			square.add(corner + offset - Vec3{hs, hs, hs});
+			square.add(corner + offset + Vec3{hs, hs, hs});
+			boxLines(lines, square, cornerColor);
+		}
+		if (dragging && m_dragHandle == Handle::Corner && m_snapHit) {
+			Bounds target;
+			target.add(*m_snapHit - Vec3{hs * 2, hs * 2, hs * 2});
+			target.add(*m_snapHit + Vec3{hs * 2, hs * 2, hs * 2});
+			boxLines(lines, target, {0.3f, 1.0f, 0.4f, 1.0f});
 		}
 	} else if (tool == Editor::Tool::Rotate) {
 		for (int axis = 0; axis < 3; ++axis) {
@@ -702,6 +731,13 @@ Viewport::Handle Viewport::hitHandle(const QPointF& pos) const {
 	}
 	constexpr double TOLERANCE = 8;
 	if (tool == Editor::Tool::Move) {
+		for (const Vec3& corner : selectionCorners()) {
+			QPointF q;
+			// Corners right at the gizmo (tiny or far objects) leave the arrows usable.
+			if (m_camera.project(corner, width(), height(), q) && QLineF(q, pos).length() < 7 && QLineF(q, c).length() > 16) {
+				return Handle::Corner;
+			}
+		}
 		if (!m_camera.is2D()) {
 			const Handle planes[3] = {Handle::PlaneYZ, Handle::PlaneXZ, Handle::PlaneXY};
 			for (int normal = 0; normal < 3; ++normal) {
@@ -1289,6 +1325,48 @@ void Viewport::beginGizmoDrag(Handle handle, const QPointF& pos) {
 		}
 	} else if (handle == Handle::Move2D) {
 		m_dragStartPoint = viewPlanePoint(pos);
+	} else if (handle == Handle::Corner) {
+		// The corner under the cursor, and every corner it could snap to.
+		double best = 1e9;
+		for (const Vec3& corner : selectionCorners()) {
+			QPointF q;
+			if (m_camera.project(corner, width(), height(), q) && QLineF(q, pos).length() < best) {
+				best = QLineF(q, pos).length();
+				m_cornerStart = corner;
+			}
+		}
+		m_snapTargets.clear();
+		m_snapHit.reset();
+		const auto& doc = m_editor->doc();
+		const auto& selection = m_editor->selection();
+		const auto& hidden = m_editor->hidden();
+		const auto isSelected = [&](const SolidRef& ref) {
+			return std::find(selection.solids.begin(), selection.solids.end(), ref) != selection.solids.end() ||
+			       std::find(selection.entities.begin(), selection.entities.end(), ref.entityId) != selection.entities.end() ||
+			       std::find(hidden.solids.begin(), hidden.solids.end(), ref) != hidden.solids.end();
+		};
+		const auto addSolid = [&](const Solid& solid, int entityId) {
+			if (!isSelected({entityId, solid.id})) {
+				const auto corners = solidCorners(solid);
+				m_snapTargets.insert(m_snapTargets.end(), corners.begin(), corners.end());
+			}
+		};
+		for (const auto& solid : doc.world.solids) {
+			addSolid(solid, 0);
+		}
+		for (const auto& entity : doc.entities) {
+			for (const auto& solid : entity.solids) {
+				addSolid(solid, entity.id);
+			}
+			const bool skip = std::find(selection.entities.begin(), selection.entities.end(), entity.id) != selection.entities.end() ||
+			                  std::find(hidden.entities.begin(), hidden.entities.end(), entity.id) != hidden.entities.end();
+			if (entity.solids.empty() && !skip) {
+				const Bounds box = edit::entityBounds(entity, m_editor->entities());   // props: their model's box
+				for (int i = 0; i < 8; ++i) {
+					m_snapTargets.push_back({(i & 1) ? box.max.x : box.min.x, (i & 2) ? box.max.y : box.min.y, (i & 4) ? box.max.z : box.min.z});
+				}
+			}
+		}
 	}
 	update();
 }
@@ -1314,6 +1392,42 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 	} else if (handle == Handle::Move2D) {
 		m_dragDelta = snap(viewPlanePoint(pos) - m_dragStartPoint, grid);
 		m_dragDelta[viewAxis()] = 0;
+	} else if (handle == Handle::Corner) {
+		// Nearest corner of another object on screen wins; otherwise the corner follows the
+		// cursor on the grid (2D: in the view plane, 3D: on the floor plane through it, or a wall
+		// plane when looking flat across the map).
+		constexpr double SNAP_PIXELS = 14;
+		m_snapHit.reset();
+		double best = SNAP_PIXELS;
+		for (const Vec3& target : m_snapTargets) {
+			QPointF q;
+			if (m_camera.project(target, width(), height(), q)) {
+				const double d = QLineF(q, pos).length();
+				if (d < best) {
+					best = d;
+					m_snapHit = target;
+				}
+			}
+		}
+		if (m_snapHit) {
+			m_dragDelta = *m_snapHit - m_cornerStart;
+		} else if (m_camera.is2D()) {
+			Vec3 p = snap(viewPlanePoint(pos), grid);
+			p[viewAxis()] = m_cornerStart[viewAxis()];
+			m_dragDelta = p - m_cornerStart;
+		} else {
+			const Vec3 forward = fromQt(m_camera.forward());
+			Vec3 normal{0, 0, 1};
+			if (std::abs(forward.z) < 0.35) {
+				normal = std::abs(forward.x) > std::abs(forward.y) ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+			}
+			if (const auto p = rayPlane(ray, m_cornerStart, normal)) {
+				m_dragDelta = snap(*p, grid) - m_cornerStart;
+				for (int a = 0; a < 3; ++a) {
+					if (normal[a] != 0) m_dragDelta[a] = 0;
+				}
+			}
+		}
 	} else if (handle >= Handle::RingX && handle <= Handle::RingZ) {
 		const int axis = static_cast<int>(handle) - static_cast<int>(Handle::RingX);
 		std::optional<Vec3> p = m_camera.is2D() ? std::optional<Vec3>(viewPlanePoint(pos)) : rayPlane(ray, m_dragCenter, axisVector(axis));
@@ -1398,7 +1512,9 @@ void Viewport::finishGizmoDrag(bool clone) {
 	m_dragHandle = Handle::None;
 	auto& doc = m_editor->doc();
 	const auto& selection = m_editor->selection();
-	if ((handle >= Handle::AxisX && handle <= Handle::PlaneYZ) || handle == Handle::Move2D) {
+	m_snapTargets.clear();
+	m_snapHit.reset();
+	if ((handle >= Handle::AxisX && handle <= Handle::PlaneYZ) || handle == Handle::Move2D || handle == Handle::Corner) {
 		if (length(m_dragDelta) > 0) {
 			if (clone) {
 				auto [change, copies] = edit::duplicate(doc, selection, m_dragDelta);

@@ -81,7 +81,7 @@ protected:
 	void dropEvent(QDropEvent* event) override;
 
 private:
-	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D };
+	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner };
 	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex };
 
 	[[nodiscard]] Ray rayAt(const QPointF& pos) const;
@@ -139,6 +139,8 @@ private:
 
 	void drawGrid(std::vector<LineVertex>& lines) const;
 	void drawGizmo(std::vector<LineVertex>& lines) const;
+	/// The eight corners of the selection box (move tool squares).
+	[[nodiscard]] std::vector<Vec3> selectionCorners() const;
 	void drawOverlay();
 	void paintOverlayImage();
 	void updateViewButton();
@@ -180,6 +182,10 @@ private:
 	Bounds m_dragBounds;          ///< Selection bounds at drag start
 	Vec3 m_dragCenter;
 	Vec3 m_dragStartPoint;
+	// Corner snapping (move tool): drag a corner square onto a corner of another object.
+	Vec3 m_cornerStart;
+	std::vector<Vec3> m_snapTargets;      ///< Corners of everything not selected (taken at drag start)
+	std::optional<Vec3> m_snapHit;        ///< Target the dragged corner sits on now
 	double m_dragStartParam = 0;
 	Vec3 m_dragDelta;             ///< Move
 	double m_dragAngle = 0;       ///< Rotate (degrees)

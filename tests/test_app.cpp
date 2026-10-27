@@ -313,6 +313,37 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(green);   // the class color square would be magenta
 	}
 	{
+		// Move tool: drag a corner square onto a corner of another brush - they line up exactly.
+		const std::size_t before = editor.doc().world.solids.size();
+		editor.setShapeOptions(ShapeOptions{});
+		editor.createShape(box({-320, 128, 0}, {-256, 192, 64}));
+		const SolidRef moving = editor.selection().solids.front();
+		editor.createShape(box({-176, 240, 0}, {-112, 304, 48}));
+		REQUIRE(editor.doc().world.solids.size() == before + 2);
+		Selection select;
+		select.solids.push_back(moving);
+		editor.setSelection(select);
+		editor.setTool(Editor::Tool::Move);
+		view->update();
+		settle();
+		const Vec3 grabCorner{-256, 192, 64}, targetCorner{-176, 240, 48};
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, grabCorner));
+		QTest::mouseMove(view, screen(view, grabCorner + Vec3{30, 20, 0}));
+		QTest::mouseMove(view, screen(view, targetCorner) + QPoint(3, -2));   // close is enough
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, targetCorner) + QPoint(3, -2));
+		settle();
+		const auto moved = boundsOf(editor, moving);
+		CHECK(moved.max.x == doctest::Approx(-176));
+		CHECK(moved.max.y == doctest::Approx(240));
+		CHECK(moved.max.z == doctest::Approx(48));
+		editor.undo();
+		editor.undo();
+		editor.undo();
+		CHECK(editor.doc().world.solids.size() == before);
+		editor.clearSelection();
+		editor.setTool(Editor::Tool::Entity);
+	}
+	{
 		// The corner menu of a view switches the look (and shows it on the button).
 		auto* button = view->findChild<QToolButton*>("viewMenu");
 		REQUIRE(button);
