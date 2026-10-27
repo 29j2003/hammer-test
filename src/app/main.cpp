@@ -1,4 +1,4 @@
-// main.cpp - Source Map Editor entry point.
+// main.cpp - Mapsmith entry point.
 //
 // Options (mainly for automation and screenshots):
 //   --steam DIR          use this Steam folder instead of the detected one
@@ -17,9 +17,11 @@
 //   --check              run the problem checks after loading
 //   --screenshot FILE    save a picture of the window after loading and quit
 //   --no-update-check    do not ask GitHub for a newer version at start
+//   --write-icon DIR     write the logo as PNG files (for the Windows .ico) and quit
 //   FILE.vmf             map to open
 
 #include <QApplication>
+#include <QDir>
 #include <QMap>
 #include <QCommandLineParser>
 #include <QSettings>
@@ -28,6 +30,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "icons.h"
 #include "main_window.h"
 #include "material_editor.h"
 #include "panels.h"
@@ -38,6 +41,23 @@
 #include <sme/csg.h>
 
 using namespace sme::app;
+
+namespace {
+
+/// Settings of the editor's earlier name ("Source Map Editor") are taken over once.
+void migrateOldSettings() {
+	QSettings current;
+	if (current.value("settings/migrated", false).toBool()) {
+		return;
+	}
+	QSettings old(QStringLiteral("hammer-test"), QStringLiteral("Source Map Editor"));
+	if (current.allKeys().isEmpty()) {
+		for (const auto& key : old.allKeys()) current.setValue(key, old.value(key));
+	}
+	current.setValue("settings/migrated", true);
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
 	QSurfaceFormat format;
@@ -50,10 +70,12 @@ int main(int argc, char** argv) {
 	QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
 	QApplication app(argc, argv);
-	QApplication::setOrganizationName("hammer-test");
-	QApplication::setApplicationName("Source Map Editor");
+	QApplication::setOrganizationName("Mapsmith");
+	QApplication::setApplicationName("Mapsmith");
+	migrateOldSettings();
 	QApplication::setApplicationVersion(SME_VERSION);
 	applyDarkStyle(app);
+	QApplication::setWindowIcon(appIcon());
 
 	QCommandLineParser parser;
 	parser.setApplicationDescription("Modern 3D-first map editor for Source 1 games");
@@ -75,9 +97,18 @@ int main(int argc, char** argv) {
 	parser.addOption({"check", "Run the problem checks."});
 	parser.addOption({"screenshot", "Save a screenshot and quit.", "file"});
 	parser.addOption({"wait", "Milliseconds before the screenshot.", "ms", "2500"});
+	parser.addOption({"write-icon", "Write the logo as PNG files (16 ... 256 pixels) into a folder and quit.", "dir"});
 	parser.addOption({"no-update-check", "Do not check for a newer version at start."});
 	parser.addPositionalArgument("map", "Map (.vmf) to open.");
 	parser.process(app);
+	if (parser.isSet("write-icon")) {
+		// Used to make src/app/resources/mapsmith.ico (tools/make_ico.py packs the PNGs).
+		const QDir dir(parser.value("write-icon"));
+		for (const int size : {16, 24, 32, 48, 64, 128, 256}) {
+			appIcon().pixmap(size, size).save(dir.filePath(QStringLiteral("mapsmith_%1.png").arg(size)));
+		}
+		return 0;
+	}
 
 	Editor editor;
 	editor.discover(parser.value("steam"));

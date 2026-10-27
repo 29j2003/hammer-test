@@ -1,4 +1,4 @@
-# Entwicklung – Source Map Editor
+# Entwicklung – Mapsmith
 
 Ziel: ein Karten-Editor für Source 1, der sich wie Source 2 Hammer bedient (3D-Ansicht zuerst, Gizmos, Asset-Browser,
 Licht-Vorschau), aber normale `.vmf` für HL2, Mapbase, Black Mesa und andere Source-Spiele schreibt. Spiele und Mods
@@ -8,7 +8,7 @@ werden automatisch gefunden.
 
 ```
 src/core/   smecore   – ohne Qt, vollständig getestet
-src/app/    smeapp    – Qt-6-Oberfläche (+ SourceMapEditor = main.cpp)
+src/app/    smeapp    – Qt-6-Oberfläche (+ Mapsmith = main.cpp)
 src/probe/  sme-probe – Diagnose auf der Kommandozeile
 tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 ```
@@ -279,7 +279,11 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 
 - Linux: siehe `.claude/CLAUDE.md`. Windows: Visual Studio 2022 oder neuer + Qt 6.8 (`-DCMAKE_PREFIX_PATH=<Qt>/msvc2022_64`).
 - CI (`.github/workflows/ci.yml`): `checks` (Privatsphäre), `linux` (Build, Tests, UI-Tests unter Xvfb, Screenshots als
-  Artefakt), `windows` (MSVC-Build, Tests, ZIP mit `SourceMapEditor.exe`, `sme-probe.exe`, Qt-DLLs, Prüfsumme).
+  Artefakt), `windows` (MSVC-Build, Tests, ZIP mit `Mapsmith.exe`, `sme-probe.exe`, Qt-DLLs, Prüfsumme, dazu der Installer
+  `Mapsmith-Setup-<version>.exe` aus `installer/mapsmith.iss` (Inno Setup, pro Benutzer nach `%LOCALAPPDATA%\Programs\Mapsmith`,
+  ohne Adminrechte; der Updater ersetzt später die Dateien dort aus der ZIP). Programm-Icon: `src/app/resources/mapsmith.ico`
+  (`Mapsmith --write-icon DIR` + `tools/make_ico.py`; gezeichnet in `icons.cpp` `drawAppLogo`). Der frühere Name war
+  „Source Map Editor“; `main.cpp` übernimmt dessen Einstellungen einmal (`migrateOldSettings`).
 - Abhängigkeiten auf Commit-SHAs (`cmake/Dependencies.cmake`); Actions auf SHAs, Dependabot hält sie aktuell.
 
 ## Offene Punkte / Annahmen (noch nicht am echten Spiel geprüft)

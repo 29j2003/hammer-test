@@ -48,14 +48,17 @@ else()
 	message(STATUS "Sound preview: off (Qt Multimedia not found)")
 endif()
 
-qt_add_executable(SourceMapEditor main.cpp)
-set_target_properties(SourceMapEditor PROPERTIES
+qt_add_executable(Mapsmith main.cpp)
+if(WIN32)
+	target_sources(Mapsmith PRIVATE resources/mapsmith.rc)   # program icon
+endif()
+set_target_properties(Mapsmith PROPERTIES
 	WIN32_EXECUTABLE ON
 	MACOSX_BUNDLE ON
-	OUTPUT_NAME "SourceMapEditor")
-target_link_libraries(SourceMapEditor PRIVATE smeapp)
+	OUTPUT_NAME "Mapsmith")
+target_link_libraries(Mapsmith PRIVATE smeapp)
 
-foreach(target smeapp SourceMapEditor)
+foreach(target smeapp Mapsmith)
 	if(MSVC)
 		target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
 	else()

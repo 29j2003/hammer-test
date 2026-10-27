@@ -210,7 +210,7 @@ std::optional<ExportResult> exportMap(const MapDocument& doc, const EntityCatalo
 	}
 	if (options.format == ExportFormat::Obj) {
 		const auto mtlName = stem + ".mtl";
-		out << "# Exported by Source Map Editor (meters, Y up)\nmtllib " << mtlName << "\n";
+		out << "# Exported by Mapsmith (meters, Y up)\nmtllib " << mtlName << "\n";
 		std::size_t base = 1;
 		std::ostringstream mtl;
 		for (const auto& [name, mesh] : meshes) {
@@ -284,7 +284,7 @@ std::optional<ExportResult> exportMap(const MapDocument& doc, const EntityCatalo
 		           << ",\"material\":" << material << "}";
 		++material;
 	}
-	out << "{\"asset\":{\"version\":\"2.0\",\"generator\":\"Source Map Editor\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+	out << "{\"asset\":{\"version\":\"2.0\",\"generator\":\"Mapsmith\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
 	    << "\"nodes\":[{\"name\":" << jsonString(stem) << (meshes.empty() ? "" : ",\"mesh\":0") << "}],";
 	if (!meshes.empty()) {
 		out << "\"meshes\":[{\"name\":" << jsonString(stem) << ",\"primitives\":[" << primitives.str() << "]}],"

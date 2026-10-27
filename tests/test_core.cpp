@@ -353,9 +353,9 @@ TEST_CASE("versions and checksums for updates") {
 	CHECK(compareVersions("0.2", "0.2.0") == 0);
 	CHECK(compareVersions("V1.0.0", "1.0.1") < 0);
 	CHECK(compareVersions("1.2.0-beta", "1.2.0") == 0);
-	const std::string sums = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ABCDEF  SourceMapEditor-0.2.0-windows.zip\n"
+	const std::string sums = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ABCDEF  Mapsmith-0.2.0-windows.zip\n"
 	                         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff *other.zip\n";
-	CHECK(checksumFor(sums, "SourceMapEditor-0.2.0-windows.zip") == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+	CHECK(checksumFor(sums, "Mapsmith-0.2.0-windows.zip") == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
 	CHECK(checksumFor(sums, "other.zip").has_value());
 	CHECK_FALSE(checksumFor(sums, "missing.zip"));
 	CHECK_FALSE(checksumFor("not a checksum file", "x"));

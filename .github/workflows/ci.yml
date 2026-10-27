@@ -53,7 +53,7 @@ jobs:
         run: |
           build/tests/sme-make-fixture demo > /dev/null
           map=demo/Steam/steamapps/sourcemods/mymod/mapsrc/demo.vmf
-          shot() { HOME="$PWD/home" xvfb-run -a -s "-screen 0 1920x1080x24" build/src/app/SourceMapEditor --steam demo/Steam --game sourcemods/mymod "$map" "$@"; }
+          shot() { HOME="$PWD/home" xvfb-run -a -s "-screen 0 1920x1080x24" build/src/app/Mapsmith --steam demo/Steam --game sourcemods/mymod "$map" "$@"; }
           mkdir -p screenshots home
           shot --camera "-470 -470 230 45 -18" --select-class npc_citizen --screenshot screenshots/npc.png --wait 6000
           shot --quad --camera "-470 -470 230 45 -18" --select-class trigger_once --screenshot screenshots/quad.png --wait 6000
@@ -92,21 +92,29 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content VERSION).Trim()
-          $out = "dist/SourceMapEditor-$version-windows"
+          $out = "dist/Mapsmith-$version-windows"
           New-Item -ItemType Directory -Force $out | Out-Null
-          Copy-Item build/src/app/Release/SourceMapEditor.exe $out
+          Copy-Item build/src/app/Release/Mapsmith.exe $out
           Copy-Item build/src/probe/Release/sme-probe.exe $out
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.txt $out
           Copy-Item build/_deps/sourcepp-src/LICENSE "$out/LICENSE_sourcepp.txt"
           Copy-Item build/_deps/sourcepp-src/THIRDPARTY_LEGAL_NOTICES.txt "$out/THIRD_PARTY_NOTICES_sourcepp.txt"
           # windeployqt adds the Qt DLLs (and opengl32sw.dll, a software OpenGL fallback).
-          windeployqt --release --no-translations --no-system-d3d-compiler "$out/SourceMapEditor.exe"
+          windeployqt --release --no-translations --no-system-d3d-compiler "$out/Mapsmith.exe"
           Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
           (Get-FileHash "$out.zip" -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path "$out.zip" -Leaf) | Out-File -Encoding ascii "$out.zip.sha256"
+          # One installer exe (Inno Setup; preinstalled on the runner, else from Chocolatey with a fixed version).
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --version 6.4.3 --no-progress -y; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc /Qp "/DAppVersion=$version" "/DSourceDir=$((Resolve-Path $out).Path)" "/DOutputDir=$((Resolve-Path dist).Path)" installer/mapsmith.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          $setup = "dist/Mapsmith-Setup-$version.exe"
+          (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $setup -Leaf) | Out-File -Encoding ascii "$setup.sha256"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: SourceMapEditor-windows
+          name: Mapsmith-windows
           path: |
             dist/*.zip
-            dist/*.zip.sha256
+            dist/*.exe
+            dist/*.sha256
           retention-days: 30

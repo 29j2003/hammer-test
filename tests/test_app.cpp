@@ -1741,12 +1741,12 @@ TEST_CASE("editing with the mouse in the real window") {
 TEST_CASE("update check: release information and the version button") {
 	const QByteArray json = R"({"tag_name": "v9.1.0", "html_url": "https://github.com/29j2003/hammer-test/releases/tag/v9.1.0",
 		"body": "New: things", "draft": false, "prerelease": false, "assets": [
-		{"name": "SourceMapEditor-9.1.0-windows.zip", "browser_download_url": "https://example.invalid/a.zip"},
-		{"name": "SourceMapEditor-9.1.0-windows.zip.sha256", "browser_download_url": "https://example.invalid/a.zip.sha256"}]})";
+		{"name": "Mapsmith-9.1.0-windows.zip", "browser_download_url": "https://example.invalid/a.zip"},
+		{"name": "Mapsmith-9.1.0-windows.zip.sha256", "browser_download_url": "https://example.invalid/a.zip.sha256"}]})";
 	const auto release = parseRelease(json);
 	REQUIRE(release);
 	CHECK(release->version == "9.1.0");
-	CHECK(release->zipName == "SourceMapEditor-9.1.0-windows.zip");
+	CHECK(release->zipName == "Mapsmith-9.1.0-windows.zip");
 	CHECK(release->checksumUrl.toString().endsWith(".sha256"));
 	CHECK(release->notes == "New: things");
 	CHECK_FALSE(parseRelease(R"({"tag_name": "v9.2.0", "prerelease": true})"));
@@ -1888,6 +1888,8 @@ TEST_CASE("source control: a new repository, its changes, a commit and the histo
 	}
 
 	for (const auto& entry : environment) qunsetenv(entry.first);
+}
+
 TEST_CASE("ship panel: what the open map needs, share ZIP, Workshop item") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());
@@ -1974,7 +1976,7 @@ int main(int argc, char** argv) {
 	QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 	QApplication app(argc, argv);
 	QApplication::setOrganizationName("hammer-test-tests");
-	QApplication::setApplicationName("Source Map Editor Tests");
+	QApplication::setApplicationName("Mapsmith Tests");
 	doctest::Context context(argc, argv);
 	return context.run();
 }

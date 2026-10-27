@@ -463,7 +463,64 @@ void drawIcon(QPainter& p, const QString& name) {
 	}
 }
 
+/// Mapsmith's logo (64 units square): a map tile on a dark tile with a hammer across it.
+void drawAppLogo(QPainter& p) {
+	p.setRenderHint(QPainter::Antialiasing);
+	QLinearGradient back(0, 0, 0, 64);
+	back.setColorAt(0, QColor(46, 46, 48));
+	back.setColorAt(1, QColor(24, 24, 26));
+	p.setPen(Qt::NoPen);
+	p.setBrush(back);
+	p.drawRoundedRect(QRectF(2, 2, 60, 60), 13, 13);
+	// The map: an orange floor tile seen from above at an angle, with its grid.
+	const QPointF top(32, 22), right(54, 34), bottom(32, 46), left(10, 34);
+	p.setBrush(QColor(245, 165, 36));
+	p.drawPolygon(QPolygonF{top, right, bottom, left});
+	p.setPen(QPen(QColor(150, 92, 12), 1.4));
+	for (int i = 1; i < 4; ++i) {
+		const double t = i / 4.0;
+		p.drawLine(left + (top - left) * t, bottom + (right - bottom) * t);
+		p.drawLine(left + (bottom - left) * t, top + (right - top) * t);
+	}
+	p.setPen(Qt::NoPen);
+	p.setBrush(QColor(196, 120, 16));
+	p.drawPolygon(QPolygonF{left, bottom, bottom + QPointF(0, 5), left + QPointF(0, 5)});
+	p.setBrush(QColor(160, 96, 10));
+	p.drawPolygon(QPolygonF{bottom, right, right + QPointF(0, 5), bottom + QPointF(0, 5)});
+	// The hammer: wooden handle, steel head.
+	p.save();
+	p.translate(36, 28);
+	p.rotate(-38);
+	p.setBrush(QColor(170, 112, 60));
+	p.drawRoundedRect(QRectF(-3, -4, 6, 34), 3, 3);
+	QLinearGradient steel(0, -16, 0, -4);
+	steel.setColorAt(0, QColor(236, 238, 242));
+	steel.setColorAt(1, QColor(150, 156, 166));
+	p.setBrush(steel);
+	p.drawRoundedRect(QRectF(-14, -16, 28, 12), 3, 3);
+	p.setBrush(QColor(120, 126, 136));
+	p.drawRect(QRectF(10, -16, 4, 12));
+	p.restore();
+}
+
 } // namespace
+
+QIcon appIcon() {
+	static const QIcon result = [] {
+		QIcon out;
+		for (const int size : {16, 24, 32, 48, 64, 128, 256}) {
+			QPixmap pixmap(size, size);
+			pixmap.fill(Qt::transparent);
+			QPainter p(&pixmap);
+			p.scale(size / double(SIZE), size / double(SIZE));
+			drawAppLogo(p);
+			p.end();
+			out.addPixmap(pixmap);
+		}
+		return out;
+	}();
+	return result;
+}
 
 QIcon icon(const QString& name, const QString& shortcut) {
 	static QHash<QString, QIcon> cache;

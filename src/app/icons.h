@@ -12,4 +12,7 @@ namespace sme::app {
 /// `shortcut` (one or two characters) is drawn small in the lower right corner.
 [[nodiscard]] QIcon icon(const QString& name, const QString& shortcut = {});
 
+/// Mapsmith's logo in the usual sizes (window icon; also written as the .ico of the Windows program).
+[[nodiscard]] QIcon appIcon();
+
 } // namespace sme::app

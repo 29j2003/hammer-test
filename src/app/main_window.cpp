@@ -1020,7 +1020,7 @@ void MainWindow::createActions() {
 	help->addAction(autoCheck);
 	help->addAction(action(tr("About"), QKeySequence(), [this] {
 		QMessageBox::about(this, tr("About"),
-		                   tr("<b>Source Map Editor</b> %1<br>A Source 2 Hammer style editor for Source 1 maps.<br>"
+		                   tr("<b>Mapsmith</b> %1<br>A modern map editor for Source 1 games and mods.<br>"
 		                      "<a href=\"https://github.com/29j2003/hammer-test\">github.com/29j2003/hammer-test</a>")
 		                       .arg(QApplication::applicationVersion()));
 	}));
@@ -1167,7 +1167,7 @@ void MainWindow::setQuadLayout(bool quad) {
 void MainWindow::updateTitle() {
 	const QString file = m_editor->filePath().isEmpty() ? tr("untitled") : QFileInfo(m_editor->filePath()).fileName();
 	const QString game = m_editor->game() ? QString::fromStdString(m_editor->game()->entry.title) : tr("no game");
-	setWindowTitle(QStringLiteral("%1%2 - %3 - Source Map Editor").arg(file, m_editor->modified() ? "*" : "", game));
+	setWindowTitle(QStringLiteral("%1%2 - %3 - Mapsmith").arg(file, m_editor->modified() ? "*" : "", game));
 }
 
 bool MainWindow::save(bool saveAs) {

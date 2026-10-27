@@ -1,4 +1,4 @@
-# Source Map Editor (hammer-test)
+# Mapsmith
 
 A modern, 3D-first map editor for **Source 1** games — Half-Life 2, Mapbase mods, Black Mesa and other Source games —
 that works like **Source 2 Hammer** but saves ordinary `.vmf` files for the normal compile tools (VBSP, VVIS, VRAD).
@@ -181,10 +181,11 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 
 ## Getting started (Windows)
 
-1. Download `SourceMapEditor-<version>-windows.zip` from the newest
-   [release](https://github.com/29j2003/hammer-test/releases/latest).
-2. Unzip it into a folder you can write to (e.g. `Documents\SourceMapEditor`, not `Program Files`) and start
-   `SourceMapEditor.exe`.
+1. Download `Mapsmith-Setup-<version>.exe` from the newest
+   [release](https://github.com/29j2003/hammer-test/releases/latest) and run it. It installs for your Windows user
+   (no administrator rights needed), adds a Start menu entry and, if you like, a desktop icon; uninstall it in the
+   Windows settings like any program. (A portable `Mapsmith-<version>-windows.zip` is there too: unzip it into a folder
+   you can write to and start `Mapsmith.exe`.)
 3. Choose your game or mod in the **Game** list at the top. Check the **⚙** game settings once: FGDs, VBSP/VVIS/VRAD
    and the game executable are filled in from Hammer++/Hammer when available.
 
@@ -243,7 +244,7 @@ ctest --test-dir build -C Release -LE ui
 
 `build/tests/sme-make-fixture demo` creates a fake Steam folder with a demo mod and map for trying the editor without
 any game installed:
-`SourceMapEditor --steam demo/Steam --game sourcemods/mymod demo/Steam/steamapps/sourcemods/mymod/mapsrc/demo.vmf`
+`Mapsmith --steam demo/Steam --game sourcemods/mymod demo/Steam/steamapps/sourcemods/mymod/mapsrc/demo.vmf`
 
 ## Status
 

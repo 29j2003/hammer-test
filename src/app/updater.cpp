@@ -37,7 +37,7 @@ try {
 	Remove-Item -LiteralPath $Zip -Force
 } catch {
 	Add-Type -AssemblyName PresentationFramework
-	[System.Windows.MessageBox]::Show("The update could not be installed: $($_.Exception.Message)`nDownload it from the release page instead.", 'Source Map Editor') | Out-Null
+	[System.Windows.MessageBox]::Show("The update could not be installed: $($_.Exception.Message)`nDownload it from the release page instead.", 'Mapsmith') | Out-Null
 }
 Start-Process -FilePath $Exe
 )PS";
@@ -74,7 +74,7 @@ Updater::Updater(QObject* parent) : QObject(parent), m_network(new QNetworkAcces
 
 QNetworkReply* Updater::get(const QUrl& url) {
 	QNetworkRequest request(url);
-	request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("SourceMapEditor/%1").arg(QCoreApplication::applicationVersion()));
+	request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Mapsmith/%1").arg(QCoreApplication::applicationVersion()));
 	request.setRawHeader("Accept", "application/vnd.github+json");
 	request.setTransferTimeout(TIMEOUT_MS);
 	request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -128,7 +128,7 @@ void Updater::download(const ReleaseInfo& release) {
 			emit downloadFailed(tr("The checksum file does not list %1").arg(release.zipName));
 			return;
 		}
-		const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/SourceMapEditor-update";
+		const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/Mapsmith-update";
 		QDir().mkpath(dir);
 		auto file = std::make_shared<QFile>(dir + "/" + release.zipName);
 		if (!file->open(QIODevice::WriteOnly)) {

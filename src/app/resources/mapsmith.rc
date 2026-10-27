@@ -1,0 +1,3 @@
+// mapsmith.rc - Windows resources of Mapsmith.exe: the program icon (drawn by the editor itself,
+// see icons.cpp drawAppLogo; regenerate with `Mapsmith --write-icon DIR` and tools/make_ico.py).
+IDI_ICON1 ICON "mapsmith.ico"

@@ -1,4 +1,4 @@
-# Source Map Editor (hammer-test) – Leitfaden für Claude Code
+# Mapsmith (Repo hammer-test) – Leitfaden für Claude Code
 
 Moderner, 3D-zentrierter Karten-Editor für **Source 1** (Half-Life 2, Mapbase-Mods, Black Mesa, andere Source-Spiele),
 Bedienung angelehnt an **Source 2 Hammer**, speichert normale `.vmf`. Nichts ist auf HL2
@@ -13,7 +13,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
   Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
   Export glTF/OBJ (`scene_export`).
-- `src/app/` – Qt-6-Editor (`smeapp` + `SourceMapEditor`): `editor` (Zustand, alle Änderungen über `commit()`),
+- `src/app/` – Qt-6-Editor (`smeapp` + Programm `Mapsmith`): `editor` (Zustand, alle Änderungen über `commit()`),
   `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
   Licht-Vorschau nach VRAD-Formeln, Schatten in `renderer_shadows`), `material_cache`
   (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
@@ -48,11 +48,12 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Einrichten (Linux): `apt install cmake ninja-build qt6-base-dev qt6-multimedia-dev libgl1-mesa-dev xvfb` (Multimedia optional: Sound-Vorschau) (Cloud: SessionStart-Hook)
 - Bauen: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build`
 - Tests: `ctest --test-dir build -LE ui` · UI-Tests: `xvfb-run -a ctest --test-dir build -L ui`
-- Demo: `build/tests/sme-make-fixture demo` dann `build/src/app/SourceMapEditor --steam demo/Steam --game sourcemods/mymod demo/Steam/steamapps/sourcemods/mymod/mapsrc/demo.vmf`
+- Demo: `build/tests/sme-make-fixture demo` dann `build/src/app/Mapsmith --steam demo/Steam --game sourcemods/mymod demo/Steam/steamapps/sourcemods/mymod/mapsrc/demo.vmf`
 - Screenshot: zusätzlich `--screenshot out.png --camera "x y z yaw pitch" --select-class npc_citizen`
 - Prüfen: `python -I tools/check_privacy.py`
 - Release: `VERSION` erhöhen, committen, annotierten Tag `vX.Y.Z` (Nachricht = Release-Text, Englisch) pushen →
-  `.github/workflows/release.yml` baut die Windows-ZIP + `.sha256` und veröffentlicht das Release; die Editoren bieten es an.
+  `.github/workflows/release.yml` baut den Installer `Mapsmith-Setup-<v>.exe` (Inno Setup, `installer/mapsmith.iss`) und die
+  Windows-ZIP (für den Updater), je mit `.sha256`, und veröffentlicht das Release; die Editoren bieten es an.
 
 ## Geplant
 - Siehe „Fahrplan“ in `docs/ENTWICKLUNG.md`: Displacements im Vertex-Werkzeug, Entity-Icons/Overlays, Mesh-Modus

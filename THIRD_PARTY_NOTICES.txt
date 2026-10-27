@@ -1,4 +1,4 @@
-Source Map Editor uses the following third-party software. Their licenses apply to
+Mapsmith uses the following third-party software. Their licenses apply to
 those parts; the editor's own code is released under the Unlicense (see LICENSE).
 
 sourcepp (https://github.com/craftablescience/sourcepp) - MIT License
