@@ -27,6 +27,7 @@
 #include <QSpinBox>
 #include <QFrame>
 #include <QGridLayout>
+#include <map>
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QShortcut>
@@ -1644,63 +1645,38 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 }
 
 void PropertiesPanel::buildBrushes(QVBoxLayout* layout) {
-	const auto count = m_editor->selection().solids.size();
-	layout->addWidget(new QLabel(tr("<b>%1 world brush(es)</b>").arg(count)));
-	auto* apply = new QPushButton(tr("Apply current material to all faces (Shift+T)"));
-	connect(apply, &QPushButton::clicked, this, [this] { m_editor->applyMaterialToSelection(m_editor->currentMaterial()); });
-	layout->addWidget(apply);
-
-	// Brush tools (also in the right-click menu and the Brushes menu).
-	auto* toolsBox = new QGroupBox(tr("Brush tools"));
-	auto* tg = new QGridLayout(toolsBox);
-	auto* thickness = new QSpinBox;
-	thickness->setRange(-4096, 4096);
-	thickness->setSuffix(tr(" units"));
-	thickness->setValue(QSettings().value("brushes/hollow", 16.0).toInt());
-	thickness->setToolTip(tr("Wall thickness; negative puts the walls outside"));
-	auto* hollowButton = new QPushButton(tr("Hollow"));
-	hollowButton->setToolTip(tr("Walls around the inside (a room from a block)"));
-	auto* carveButton = new QPushButton(tr("Carve"));
-	carveButton->setToolTip(tr("Cut these brushes out of every brush they touch"));
-	auto* mergeButton = new QPushButton(tr("Merge"));
-	mergeButton->setToolTip(tr("One convex brush around all selected brushes"));
-	mergeButton->setEnabled(count >= 2);
-	tg->addWidget(hollowButton, 0, 0);
-	tg->addWidget(thickness, 0, 1);
-	tg->addWidget(carveButton, 1, 0);
-	tg->addWidget(mergeButton, 1, 1);
-	connect(hollowButton, &QPushButton::clicked, this, [this, thickness] {
-		QSettings().setValue("brushes/hollow", double(thickness->value()));
-		m_editor->hollowSelection(thickness->value());
-	});
-	connect(carveButton, &QPushButton::clicked, this, [this] { m_editor->carveWithSelection(); });
-	connect(mergeButton, &QPushButton::clicked, this, [this] { m_editor->mergeSelection(); });
-	layout->addWidget(toolsBox);
-
-	auto* tieBox = new QGroupBox(tr("Tie to entity"));
-	auto* v = new QVBoxLayout(tieBox);
-	auto* combo = new QComboBox;
-	combo->setEditable(true);
-	QStringList classes{"func_detail", "func_brush", "func_wall_toggle", "func_door", "func_button", "trigger_once", "trigger_multiple", "func_illusionary"};
-	if (const auto* catalog = m_editor->entities()) {
-		for (const auto* cls : catalog->placeable()) {
-			if (cls->isSolid() && !classes.contains(qs(cls->name))) {
-				classes << qs(cls->name);
-			}
+	const auto& doc = m_editor->doc();
+	const auto& selection = m_editor->selection();
+	auto* title = new QLabel(tr("%n brush(es)", nullptr, int(selection.solids.size())));
+	title->setObjectName("entityClass");
+	layout->addWidget(title);
+	const auto box = edit::selectionBounds(doc, selection, m_editor->entities());
+	if (!box.empty()) {
+		const auto size = box.size();
+		layout->addWidget(descriptionLabel(tr("%1 × %2 × %3 units").arg(size.x).arg(size.y).arg(size.z)));
+	}
+	// Its materials, most used first (like the face list of Source 2's object properties).
+	std::map<std::string, int> used;
+	for (const auto& ref : selection.solids) {
+		if (const auto* solid = doc.findSolid(ref)) {
+			for (const auto& side : solid->sides) ++used[side.material];
 		}
 	}
-	combo->addItems(classes);
-	auto* completer = new QCompleter(classes, combo);
-	completer->setCaseSensitivity(Qt::CaseInsensitive);
-	completer->setFilterMode(Qt::MatchContains);
-	combo->setCompleter(completer);
-	auto* tie = new QPushButton(tr("Tie (Ctrl+T)"));
-	connect(tie, &QPushButton::clicked, this, [this, combo] { m_editor->tieSelectionToEntity(combo->currentText()); });
-	v->addWidget(combo);
-	v->addWidget(tie);
-	v->addWidget(descriptionLabel(tr("func_detail: does not cut visibility - use it for small details, pillars, stairs (faster compile, better performance).")));
-	layout->addWidget(tieBox);
-	layout->addWidget(descriptionLabel(tr("Tools: T move, R rotate, E scale (gizmo). Shift+drag copies. Arrow keys nudge by the grid.")));
+	std::vector<std::pair<int, std::string>> ranked;
+	for (const auto& [material, count] : used) ranked.push_back({-count, material});
+	std::sort(ranked.begin(), ranked.end());
+	auto* materials = new QGroupBox(tr("Materials"));
+	auto* mv = new QVBoxLayout(materials);
+	for (std::size_t i = 0; i < ranked.size() && i < 8; ++i) {
+		auto* row = new QLabel(QStringLiteral("%1  <span style='color:#8a919c'>%2</span>").arg(qs(ranked[i].second)).arg(tr("%n face(s)", nullptr, -ranked[i].first)));
+		row->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		mv->addWidget(row);
+	}
+	auto* apply = new QPushButton(tr("Apply current material to all faces (Shift+T)"));
+	connect(apply, &QPushButton::clicked, this, [this] { m_editor->applyMaterialToSelection(m_editor->currentMaterial()); });
+	mv->addWidget(apply);
+	layout->addWidget(materials);
+	layout->addWidget(descriptionLabel(tr("Hollow, Carve, Merge, Tie to entity and more: Tool panel on the left (Select tool). Faces mode (3) edits single faces.")));
 }
 
 } // namespace sme::app

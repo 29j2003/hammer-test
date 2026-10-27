@@ -3,7 +3,8 @@
 A modern, 3D-first map editor for **Source 1** games — Half-Life 2, Mapbase mods, Black Mesa and other Source games —
 that works like **Source 2 Hammer** but saves ordinary `.vmf` files for the normal compile tools (VBSP, VVIS, VRAD).
 
-It started as an experiment: how far can an AI-built editor go? This is the first usable iteration.
+It started as an experiment: how far can an AI-built editor go? This is the first usable iteration. Its ideas are
+inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons and design are its own.
 
 ![3D view with lighting preview, NPC selected](docs/images/npc.png)
 
@@ -25,7 +26,15 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
 - **Resize right away**: selected brushes show squares on their sides in the select tool too; drag one to make the
   brush longer, shorter or taller without switching to the scale tool.
 - **Sky**: faces with the skybox tool texture show the map's sky (worldspawn *skyname*) as the game does.
-- **Map Look (mapbase-fidelity)**: the *Map Look* panel (next to the Outliner) sets what the mod's graphics add-on shows
+- **Layout**: on the far left the side bar with the pages, next to it the tools (their key in the corner). Left of the
+  views the *Tool* panel (options and keys of the current tool; with the Select tool also *Hollow, Carve, Merge, Tie to,
+  Flip, Snap to grid, Drop to floor, Select similar, Hide*), the *Outliner* and *Map Look* as tabs. Right only *Object
+  Properties*. Below: Asset Browser, Sounds, Particles, Compile, Problems, Log. The three buttons at the top right show
+  or hide the left, bottom and right panels.
+- **View switches** in the tool bar: helper entities, models, lights, cubemaps, triggers, tool brushes, sky, entity
+  names in the 2D views, connection lines (green to what the selected entity's outputs fire at, blue from what fires at
+  it) and the 3D grid; the eye button lists every kind of object.
+- **Map Look (mapbase-fidelity)**: the *Map Look* panel (a tab next to the Tool panel) sets what the mod's graphics add-on shows
   in this map: drifting clouds, light shafts, colour grading (exposure, contrast, saturation, temperature, vignette …)
   and water glint and foam. The lighting preview shows the clouds and the grading at once (view menu: *mapbase-fidelity
   look*; also for mods without the add-on, to try it). The map sets the values when it loads through a `logic_auto`
@@ -90,7 +99,7 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
   entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
   `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
-- **Side bar** (like XBLAH's Modding Tool): on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Mod* each fill
+- **Side bar**: on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Mod* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
   shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
   `gameinfo.txt` with what was found, and the entity definitions (FGDs).

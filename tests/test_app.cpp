@@ -576,7 +576,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		editor.clearSelection();
 	}
 	{
-		// Properties like XBLAH: tabs with counts, keys grouped by the FGD class that defines them,
+		// Properties: tabs with counts, keys grouped by the FGD class that defines them,
 		// flags and yes/no keys as switches, incoming outputs with "Go to"; the world's sky is
 		// picked from the game's skies; Map > Map properties shows the world.
 		auto* panel = window.properties();

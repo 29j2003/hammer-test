@@ -1,5 +1,5 @@
 // toggle_switch.h - An on/off switch (a pill with a sliding knob) for yes/no keys and flags,
-// like Source 2 Hammer's and XBLAH's property panels. It is a QCheckBox underneath, so it
+// like modern property panels. It is a QCheckBox underneath, so it
 // toggles with a click or the space key and reports `toggled` like any checkbox.
 
 #pragma once

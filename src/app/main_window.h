@@ -61,7 +61,7 @@ public:
 	[[nodiscard]] CompileWindow* compileWindow() const { return m_compileWindow; }
 	[[nodiscard]] MaterialEditor* materialEditor() const { return m_materialEditor; }
 	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
-	/// Pages of the side bar on the left (like XBLAH's).
+	/// Pages of the side bar on the left.
 	enum class Page { Map, Materials, Sounds, Particles, Mod };
 	void showPage(Page page);
 	[[nodiscard]] Page currentPage() const;

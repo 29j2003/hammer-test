@@ -10,3 +10,5 @@ compile_commands.json
 # Python
 __pycache__/
 *.pyc
+# Worktrees of helper sessions
+/.claude/worktrees/

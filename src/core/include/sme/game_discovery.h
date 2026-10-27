@@ -1,6 +1,6 @@
 // game_discovery.h - Finds every Source 1 game and mod on this PC.
 //
-// Follows the same idea as XBLAH's Modding Tool: nothing is hardcoded to Half-Life 2.
+// Nothing is hardcoded to Half-Life 2.
 // Any installed Steam app folder or sourcemod with a gameinfo.txt becomes a game entry;
 // a small table of known app ids only adds friendly names and engine branch hints.
 

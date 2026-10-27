@@ -2,7 +2,7 @@
 
 Ziel: ein Karten-Editor für Source 1, der sich wie Source 2 Hammer bedient (3D-Ansicht zuerst, Gizmos, Asset-Browser,
 Licht-Vorschau), aber normale `.vmf` für HL2, Mapbase, Black Mesa und andere Source-Spiele schreibt. Spiele und Mods
-werden wie bei XBLAH's Modding Tool automatisch gefunden.
+werden automatisch gefunden.
 
 ## Aufbau
 
@@ -71,7 +71,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   sonst Raster. Cubemap-Raum-Box: Quadrate auf den Seiten (`Handle::RoomMin…`) bei genau einer ausgewählten
   `env_cubemap` mit Box.
 - Eigenschaften: Schalter „Smart Edit“ (aus = Tabelle aller Keys inkl. nicht gesetzter FGD-Keys), Zeile „neuer Key“,
-  Feld „Name“ bei jeder Entity. Smart Edit wie XBLAH: Klassen-Combo oben, `QTabBar` „propertyTabs“ (Keyvalues/Outputs/
+  Feld „Name“ bei jeder Entity. Smart Edit: Klassen-Combo oben, `QTabBar` „propertyTabs“ (Keyvalues/Outputs/
   Inputs mit Zahlen, gewählter Tab in `properties/tab`), Gruppen nach `EntityProperty::origin` (die FGD-Klasse, die den
   Key definiert – beim Laden gesetzt) über `addGroup` (aufklappbar, Zustand in `properties/collapsed`, beim Suchen
   offen), Zeilen „Label | Editor“ über `addRow`; die Beschreibung steht als Property „help“ am Editor und erscheint im
@@ -115,7 +115,15 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.
   Namen kopieren/einfügen: `copy_paste` (`addCopyShortcut`, `onStandardKey` – Item-Views
   verschlucken Strg+C/V sonst; `parseKeyValueLines` für Wiki-Text).
-- Seitenleiste wie XBLAH: `MainWindow` hat links die Werkzeugleiste „Pages“ (vor den Werkzeugen) und in der Mitte
+- Oberfläche: Icons zeichnet `icons.cpp` selbst (QPainter, keine Bilddateien; `icon(name, kürzel)`), Stil in `style.cpp`
+  (neutrale Grautöne, ein Orange). Werkzeugleisten: „Pages“ (Seiten), „Tools“ (nur Icons, Taste in der Ecke, eigene
+  Spalte über `addToolBarBreak`), „Main“ (Spiel, Undo/Redo, Objects/Faces als Segment, Raster, Snap, Drehschritt,
+  Texture lock, 1/4 Ansichten, Ansicht-Schalter `view:*`, Check, „Run map“ orange, Panel-Schalter links/unten/rechts).
+  Docks links (Tool, Outliner, Map Look) und unten haben keine Titelleiste (Tabs benennen sie), rechts nur „Object
+  Properties“ mit schmalem Kopf. Brush-Aktionen stehen im Werkzeug-Panel (Kasten „selectionTools“), nicht mehr rechts.
+  Ansicht-Optionen im Editor: `showGrid3D`, `showEntityNames` (2D, ab 64 Einheiten ≥ 18 px, max. 400), `showConnections`
+  (`Viewport::drawConnections`, Ziele auch mit `*` am Ende).
+- Seitenleiste: `MainWindow` hat links die Werkzeugleiste „Pages“ (vor den Werkzeugen) und in der Mitte
   einen `QStackedWidget` (`workspacePages`) mit den Seiten aus `MainWindow::Page`: Map (die Views), Materials
   (`MaterialEditor`), Sounds, Particles, Mod (`ModPage`, `mod_page.cpp`). Sound- und Partikel-Browser sind beim Mappen
   Docks; `showPage()` hängt sie in ihre Seite um und beim Zurückgehen wieder ins Dock. Solange nicht „Map“ vorn ist,

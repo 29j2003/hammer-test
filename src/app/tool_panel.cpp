@@ -651,6 +651,72 @@ QWidget* makeShapePage(Editor* editor) {
 	return page;
 }
 
+/// Select tool: what can be done with the selection, as a list of buttons (Source 2's Tool
+/// Properties). Shown while something is selected.
+QWidget* makeSelectionBox(Editor* editor) {
+	auto* box = new QGroupBox(QObject::tr("Selection"));
+	box->setObjectName("selectionTools");
+	auto* v = new QVBoxLayout(box);
+	v->setSpacing(4);
+	const auto add = [&](QLayout* layout, const QString& text, const QString& name, const QString& tip, auto&& slot) {
+		auto* b = new QPushButton(text);
+		b->setObjectName(name);
+		b->setToolTip(tip);
+		b->setProperty("role", "action");
+		QObject::connect(b, &QPushButton::clicked, box, slot);
+		layout->addWidget(b);
+		return b;
+	};
+	auto* hollowRow = new QHBoxLayout;
+	auto* thickness = new QSpinBox;
+	thickness->setRange(-4096, 4096);
+	thickness->setSuffix(QObject::tr(" units"));
+	thickness->setValue(QSettings().value("brushes/hollow", 16.0).toInt());
+	thickness->setToolTip(QObject::tr("Wall thickness; negative puts the walls outside"));
+	auto* hollow = add(hollowRow, QObject::tr("Hollow"), "actionHollow", QObject::tr("Walls around the inside: a room from a block (Ctrl+H)"), [editor, thickness] {
+		QSettings().setValue("brushes/hollow", double(thickness->value()));
+		editor->hollowSelection(thickness->value());
+	});
+	hollowRow->addWidget(thickness);
+	v->addLayout(hollowRow);
+	auto* carve = add(v->layout(), QObject::tr("Carve"), "actionCarve", QObject::tr("Cut these brushes out of every brush they touch"), [editor] { editor->carveWithSelection(); });
+	auto* merge = add(v->layout(), QObject::tr("Merge"), "actionMerge", QObject::tr("One convex brush around all selected brushes"), [editor] { editor->mergeSelection(); });
+	auto* tieRow = new QHBoxLayout;
+	auto* tieClass = new QComboBox;
+	tieClass->setEditable(true);
+	tieClass->addItems({"func_detail", "func_brush", "func_wall_toggle", "func_door", "func_button", "trigger_once", "trigger_multiple", "func_illusionary"});
+	tieClass->setToolTip(QObject::tr("func_detail does not cut visibility: use it for small details, pillars, stairs"));
+	auto* tie = add(tieRow, QObject::tr("Tie to"), "actionTie", QObject::tr("Turn the brushes into this brush entity (Ctrl+T)"), [editor, tieClass] { editor->tieSelectionToEntity(tieClass->currentText()); });
+	tieRow->addWidget(tieClass, 1);
+	v->addLayout(tieRow);
+	auto* toWorld = add(v->layout(), QObject::tr("Move to world"), "actionToWorld", QObject::tr("Brush entities become world brushes again"), [editor] { editor->moveSelectionToWorld(); });
+	auto* flipRow = new QHBoxLayout;
+	add(flipRow, QObject::tr("Flip X"), "actionFlipX", QObject::tr("Mirror left/right"), [editor] { editor->flipSelection(0); });
+	add(flipRow, QObject::tr("Flip Y"), "actionFlipY", QObject::tr("Mirror front/back"), [editor] { editor->flipSelection(1); });
+	add(flipRow, QObject::tr("Flip Z"), "actionFlipZ", QObject::tr("Mirror up/down"), [editor] { editor->flipSelection(2); });
+	v->addLayout(flipRow);
+	add(v->layout(), QObject::tr("Snap to grid"), "actionSnapGrid", QObject::tr("Move the selection so its corner lies on the grid"), [editor] { editor->snapSelectionToGrid(); });
+	add(v->layout(), QObject::tr("Drop to floor"), "actionDrop", QObject::tr("Let the selection fall onto what is below it"), [editor] { editor->dropSelectionToFloor(); });
+	add(v->layout(), QObject::tr("Select similar"), "actionSimilar", QObject::tr("Same class, model or main material"), [editor] { editor->selectSimilar(); });
+	add(v->layout(), QObject::tr("Hide"), "actionHide", QObject::tr("Hide the selection (Show all brings it back)"), [editor] { editor->hideSelection(); });
+	const auto update = [editor, box, merge, hollow, thickness, carve, tie, tieClass, toWorld] {
+		const auto& selection = editor->selection();
+		box->setVisible(selection.hasObjects() && editor->tool() == Editor::Tool::Select && editor->selectMode() == Editor::SelectMode::Object);
+		// Brush work only where brushes are selected (world brushes or brush entities).
+		bool brushes = !selection.solids.empty();
+		for (const int id : selection.entities) {
+			if (const auto* entity = editor->doc().findEntity(id); entity && !entity->solids.empty()) brushes = true;
+		}
+		for (QWidget* w : std::initializer_list<QWidget*>{hollow, thickness, carve, merge, tie, tieClass}) w->setVisible(brushes);
+		toWorld->setVisible(!selection.entities.empty() && brushes);
+		merge->setEnabled(selection.solids.size() >= 2);
+	};
+	QObject::connect(editor, &Editor::selectionChanged, box, update);
+	QObject::connect(editor, &Editor::toolChanged, box, update);
+	update();
+	return box;
+}
+
 /// Vertex tool: what to make of the picked edges (Source 2's Bevel; Hammer++ has none of it).
 QWidget* makeEdgeBox(Editor* editor) {
 	auto* box = new QGroupBox(QObject::tr("Edge"));
@@ -729,6 +795,8 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	hintLayout->addWidget(m_hint);
 	m_edgeBox = makeEdgeBox(editor);
 	hintLayout->addWidget(m_edgeBox);
+	m_selectionBox = makeSelectionBox(editor);
+	hintLayout->addWidget(m_selectionBox);
 	m_keys = new QTableWidget(0, 2);
 	m_keys->setObjectName("toolKeys");
 	m_keys->setHorizontalHeaderLabels({tr("Key"), tr("Operation")});
@@ -804,6 +872,7 @@ void ToolPanel::refresh() {
 		          {tr("Shift+Right click"), tr("Pick the material under the cursor")},
 		          {QStringLiteral("Ctrl+M"), tr("Pick the material under the cursor")},
 		          {"action:Select similar", tr("Faces with the same material")}});
+		styleHint();
 		m_pages->setCurrentWidget(m_hintPage);
 		return;
 	}
@@ -887,7 +956,18 @@ void ToolPanel::refresh() {
 			showKeys({{tr("Enter"), tr("Make the brush")}, {tr("Backspace"), tr("Remove the last corner")}, {tr("Esc"), tr("Cancel")}});
 			break;
 	}
+	styleHint();
 	m_pages->setCurrentWidget(m_hintPage);
+}
+
+void ToolPanel::styleHint() {
+	// "<b>Tool</b><br>text": the name as a heading, the explanation quieter (Source 2's tool properties).
+	static const QRegularExpression head(QStringLiteral("^<b>(.*?)</b><br>"));
+	const QString text = m_hint->text();
+	if (const auto match = head.match(text); match.hasMatch()) {
+		m_hint->setText(QStringLiteral("<div style='font-size:12pt; font-weight:600; color:#f0f0f0'>%1</div><div style='color:#9a9a9a'>%2</div>")
+		                    .arg(match.captured(1), text.mid(match.capturedLength())));
+	}
 }
 
 } // namespace sme::app

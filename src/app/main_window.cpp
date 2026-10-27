@@ -6,6 +6,7 @@
 #include "compile_window.h"
 #include "map_look_panel.h"
 #include "mod_page.h"
+#include "icons.h"
 #include "material_editor.h"
 #include "material_cache.h"
 #include "panels.h"
@@ -112,7 +113,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 		m_columns[static_cast<std::size_t>(r)]->addWidget(m_views[static_cast<std::size_t>(r * 2 + 1)]);
 		m_rows->addWidget(m_columns[static_cast<std::size_t>(r)]);
 	}
-	// Pages of the side bar (like XBLAH): the map (the views and their docks), Materials, Sounds,
+	// Pages of the side bar: the map (the views and their docks), Materials, Sounds,
 	// Particles and the Mod overview, each filling the middle.
 	m_pages = new QStackedWidget;
 	m_pages->setObjectName("workspacePages");
@@ -238,6 +239,14 @@ void MainWindow::createDocks() {
 		auto* dock = new QDockWidget(title, this);
 		dock->setObjectName(title);
 		dock->setWidget(widget);
+		// The tabs name the panels; only the lone panel on the right gets a slim header.
+		if (area == Qt::RightDockWidgetArea) {
+			auto* header = new QLabel(title);
+			header->setObjectName("dockTitle");
+			dock->setTitleBarWidget(header);
+		} else {
+			dock->setTitleBarWidget(new QWidget);
+		}
 		addDockWidget(area, dock);
 		m_docks << dock;
 		return dock;
@@ -277,28 +286,28 @@ void MainWindow::createDocks() {
 	m_pages->addWidget(m_particlesPage);
 	m_pages->addWidget(m_modPage);
 
-	// Tool options on the left next to the tool bar (like XBLAH's "New objects"), properties on the right.
+	// Left: the tool's options, the Outliner and
+	// mapbase-fidelity's look per map as tabs. Right: only the properties of what is selected.
 	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::LeftDockWidgetArea);
-	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
-	auto* outliner = addDock(tr("Outliner"), m_outliner, Qt::RightDockWidgetArea);
-	auto* problems = addDock(tr("Problems"), m_problems, Qt::RightDockWidgetArea);
-	tabifyDockWidget(outliner, problems);
-	// mapbase-fidelity's look per map (clouds, light shafts, grading, water), next to the Outliner.
+	auto* outliner = addDock(tr("Outliner"), m_outliner, Qt::LeftDockWidgetArea);
 	m_mapLook = new MapLookPanel(m_editor);
-	auto* mapLook = addDock(tr("Map Look"), m_mapLook, Qt::RightDockWidgetArea);
-	tabifyDockWidget(outliner, mapLook);
-	outliner->raise();
-	outliner->raise();
+	auto* mapLook = addDock(tr("Map Look"), m_mapLook, Qt::LeftDockWidgetArea);
+	tabifyDockWidget(tool, outliner);
+	tabifyDockWidget(tool, mapLook);
+	tool->raise();
+	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
 	auto* particles = addDock(tr("Particles"), m_particles, Qt::BottomDockWidgetArea);
 	m_soundsDock = sounds;
 	m_particlesDock = particles;
 	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
+	auto* problems = addDock(tr("Problems"), m_problems, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, sounds);
 	tabifyDockWidget(assets, particles);
 	tabifyDockWidget(assets, compile);
+	tabifyDockWidget(assets, problems);
 	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
@@ -321,9 +330,15 @@ void MainWindow::createDocks() {
 		raiseDock("Problems");
 	});
 	assets->raise();
-	resizeDocks({properties, tool}, {420, 300}, Qt::Horizontal);
-	resizeDocks({properties, outliner}, {560, 260}, Qt::Vertical);
-	resizeDocks({assets}, {290}, Qt::Vertical);
+	resizeDocks({properties, tool}, {380, 300}, Qt::Horizontal);
+	resizeDocks({assets}, {210}, Qt::Vertical);
+	// Again once the window has its size: the map views get the most room.
+	QTimer::singleShot(0, this, [this, assets, properties, tool] {
+		resizeDocks({assets}, {std::max(180, height() / 5)}, Qt::Vertical);
+		resizeDocks({properties, tool}, {380, 300}, Qt::Horizontal);
+	});
+	setTabPosition(Qt::LeftDockWidgetArea, QTabWidget::North);
+	setTabPosition(Qt::BottomDockWidgetArea, QTabWidget::North);
 	connect(m_toolPanel, &ToolPanel::wantsAttention, this, [tool] {
 		tool->show();
 		tool->raise();
@@ -604,15 +619,17 @@ void MainWindow::createActions() {
 	action(tr("Rotate up"), QKeySequence("Alt+Up"), [this, rotateStep, pitchAxis] { m_editor->rotateSelection(pitchAxis(), rotateStep()); });
 	action(tr("Rotate down"), QKeySequence("Alt+Down"), [this, rotateStep, pitchAxis] { m_editor->rotateSelection(pitchAxis(), -rotateStep()); });
 
-	// Side bar of pages (like XBLAH), left of the tools.
+	// Side bar of pages, left of the tools.
 	m_pageBar = new QToolBar(tr("Pages"));
 	m_pageBar->setObjectName("Pages");
 	m_pageBar->setMovable(false);
 	m_pageBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+	m_pageBar->setIconSize(QSize(30, 30));
 	addToolBar(Qt::LeftToolBarArea, m_pageBar);
+	addToolBarBreak(Qt::LeftToolBarArea);   // the tools get their own strip next to it
 	m_pageGroup = new QActionGroup(this);
-	const auto pageAction = [&](const QString& glyph, const QString& name, const QString& tip, Page page) {
-		auto* a = new QAction(glyph + "\n" + name, this);
+	const auto pageAction = [&](const QString& iconName, const QString& name, const QString& tip, Page page) {
+		auto* a = new QAction(icon(iconName), name, this);
 		a->setObjectName("page:" + name);
 		a->setToolTip(tip);
 		a->setCheckable(true);
@@ -621,21 +638,24 @@ void MainWindow::createActions() {
 		connect(a, &QAction::triggered, this, [this, page] { showPage(page); });
 		return a;
 	};
-	pageAction(QStringLiteral("▦"), tr("Map"), tr("The map: 3D and 2D views, tools and their panels"), Page::Map)->setChecked(true);
-	pageAction(QStringLiteral("◩"), tr("Materials"), tr("Material Editor: textures, shaders and mapbase-fidelity effects"), Page::Materials);
-	pageAction(QStringLiteral("♪"), tr("Sounds"), tr("Sounds, sound scripts and soundscapes"), Page::Sounds);
-	pageAction(QStringLiteral("✺"), tr("Particles"), tr("Particle systems of the game"), Page::Particles);
-	pageAction(QStringLiteral("⚙"), tr("Mod"), tr("The game or mod: folders, maps, content, entity definitions"), Page::Mod);
+	pageAction("page:map", tr("Map"), tr("The map: 3D and 2D views, tools and their panels"), Page::Map)->setChecked(true);
+	pageAction("page:materials", tr("Materials"), tr("Material Editor: textures, shaders and mapbase-fidelity effects"), Page::Materials);
+	pageAction("page:sounds", tr("Sounds"), tr("Sounds, sound scripts and soundscapes"), Page::Sounds);
+	pageAction("page:particles", tr("Particles"), tr("Particle systems of the game"), Page::Particles);
+	pageAction("page:mod", tr("Mod"), tr("The game or mod: folders, maps, content, entity definitions"), Page::Mod);
 
-	// Tools (left tool bar)
+	// Tools: a narrow strip of icons with their key in the corner.
 	auto* tools = new QToolBar(tr("Tools"));
 	tools->setObjectName("Tools");
-	tools->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+	tools->setMovable(false);
+	tools->setToolButtonStyle(Qt::ToolButtonIconOnly);
+	tools->setIconSize(QSize(26, 26));
 	addToolBar(Qt::LeftToolBarArea, tools);
 	m_toolGroup = new QActionGroup(this);
 	m_toolGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);   // none checked in face mode
-	const auto toolAction = [&](const QString& glyph, const QString& name, const QKeySequence& key, Editor::Tool tool) {
-		auto* a = new QAction(glyph + "\n" + name, this);
+	const auto toolAction = [&](const QString& iconName, const QString& name, const QKeySequence& key, Editor::Tool tool) {
+		const QString letter = key.toString().section('+', -1);
+		auto* a = new QAction(icon(iconName, letter), name, this);
 		a->setObjectName(name);
 		a->setToolTip(QStringLiteral("%1 (%2)").arg(name, key.toString()));
 		a->setShortcut(key);
@@ -646,31 +666,29 @@ void MainWindow::createActions() {
 		connect(a, &QAction::triggered, this, [this, tool] { m_editor->setTool(tool); });
 		return a;
 	};
-	toolAction(QStringLiteral("⬚"), tr("Select"), QKeySequence("Q"), Editor::Tool::Select)->setChecked(true);
-	toolAction(QStringLiteral("✥"), tr("Move"), QKeySequence("T"), Editor::Tool::Move);
-	toolAction(QStringLiteral("⟳"), tr("Rotate"), QKeySequence("R"), Editor::Tool::Rotate);
-	toolAction(QStringLiteral("⤢"), tr("Scale"), QKeySequence("E"), Editor::Tool::Scale);
+	toolAction("tool:select", tr("Select"), QKeySequence("Q"), Editor::Tool::Select)->setChecked(true);
+	toolAction("tool:move", tr("Move"), QKeySequence("T"), Editor::Tool::Move);
+	toolAction("tool:rotate", tr("Rotate"), QKeySequence("R"), Editor::Tool::Rotate);
+	toolAction("tool:scale", tr("Scale"), QKeySequence("E"), Editor::Tool::Scale);
 	tools->addSeparator();
-	toolAction(QStringLiteral("■"), tr("Block"), QKeySequence("Shift+B"), Editor::Tool::Block);
-	toolAction(QStringLiteral("✦"), tr("Entity"), QKeySequence("Shift+E"), Editor::Tool::Entity);
-	toolAction(QStringLiteral("✂"), tr("Clip"), QKeySequence("Shift+X"), Editor::Tool::Clip);
-	toolAction(QStringLiteral("◆"), tr("Vertex"), QKeySequence("Shift+V"), Editor::Tool::Vertex);
-	toolAction(QStringLiteral("⬠"), tr("Polygon"), QKeySequence("Shift+P"), Editor::Tool::Polygon);
-	tools->addSeparator();
+	toolAction("tool:block", tr("Block"), QKeySequence("Shift+B"), Editor::Tool::Block);
+	toolAction("tool:entity", tr("Entity"), QKeySequence("Shift+E"), Editor::Tool::Entity);
+	toolAction("tool:clip", tr("Clip"), QKeySequence("Shift+X"), Editor::Tool::Clip);
+	toolAction("tool:vertex", tr("Vertex"), QKeySequence("Shift+V"), Editor::Tool::Vertex);
+	toolAction("tool:polygon", tr("Polygon"), QKeySequence("Shift+P"), Editor::Tool::Polygon);
 	m_modeGroup = new QActionGroup(this);
-	const auto modeAction = [&](const QString& glyph, const QString& name, const QKeySequence& key, Editor::SelectMode mode) {
-		auto* a = new QAction(glyph + "\n" + name, this);
+	const auto modeAction = [&](const QString& iconName, const QString& name, const QKeySequence& key, Editor::SelectMode mode) {
+		auto* a = new QAction(icon(iconName), name, this);
 		a->setObjectName(name);
 		a->setToolTip(QStringLiteral("%1 (%2)").arg(name, key.toString()));
 		a->setShortcuts({key});
 		a->setCheckable(true);
 		m_modeGroup->addAction(a);
-		tools->addAction(a);
 		connect(a, &QAction::triggered, this, [this, mode] { m_editor->setSelectMode(mode); });
 		return a;
 	};
-	modeAction(QStringLiteral("▱"), tr("Faces"), QKeySequence("3"), Editor::SelectMode::Face);
-	auto* objects = modeAction(QStringLiteral("▣"), tr("Objects"), QKeySequence("5"), Editor::SelectMode::Object);
+	auto* facesMode = modeAction("mode:faces", tr("Faces"), QKeySequence("3"), Editor::SelectMode::Face);
+	auto* objects = modeAction("mode:objects", tr("Objects"), QKeySequence("5"), Editor::SelectMode::Object);
 	objects->setShortcuts({QKeySequence("5"), QKeySequence("4")});
 	objects->setChecked(true);
 	connect(m_editor, &Editor::toolChanged, this, [this] {
@@ -684,8 +702,10 @@ void MainWindow::createActions() {
 	// Top bar
 	auto* top = new QToolBar(tr("Main"));
 	top->setObjectName("Main");
+	top->setMovable(false);
+	top->setIconSize(QSize(18, 18));
+	top->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 	addToolBar(Qt::TopToolBarArea, top);
-	top->addWidget(new QLabel(tr(" Game ")));
 	m_gameButton = new QToolButton;
 	m_gameButton->setPopupMode(QToolButton::InstantPopup);
 	m_gameButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -695,7 +715,14 @@ void MainWindow::createActions() {
 	m_gameMenu->setToolTipsVisible(true);
 	m_gameButton->setMenu(m_gameMenu);
 	top->addWidget(m_gameButton);
-	auto* gameSettings = top->addAction(tr("⚙"));
+	const auto iconOnly = [top](QAction* a) {
+		if (auto* button = qobject_cast<QToolButton*>(top->widgetForAction(a))) {
+			button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+			button->setProperty("iconOnly", true);
+		}
+	};
+	auto* gameSettings = top->addAction(icon("gear"), tr("Game settings"));
+	iconOnly(gameSettings);
 	gameSettings->setToolTip(tr("Game settings: FGDs, compile tools, game executable"));
 	connect(gameSettings, &QAction::triggered, this, [this] {
 		if (m_editor->gameKey().isEmpty()) return;
@@ -705,7 +732,27 @@ void MainWindow::createActions() {
 		}
 	});
 	top->addSeparator();
-	top->addWidget(new QLabel(tr(" Grid ")));
+	for (const char* name : {"Undo", "Redo"}) {
+		for (auto* a : findChildren<QAction*>()) {
+			if (a->objectName() == tr(name)) {
+				a->setIcon(icon(QString::fromLatin1(name).toLower()));
+				top->addAction(a);
+				iconOnly(a);
+				break;
+			}
+		}
+	}
+	top->addSeparator();
+	// Selection modes as one segmented row.
+	top->addAction(objects);
+	top->addAction(facesMode);
+	top->widgetForAction(objects)->setProperty("segment", "first");
+	top->widgetForAction(facesMode)->setProperty("segment", "last");
+	top->addSeparator();
+	auto* gridIcon = new QLabel;
+	gridIcon->setPixmap(icon("grid").pixmap(16, 16));
+	gridIcon->setToolTip(tr("Grid size ([ and ])"));
+	top->addWidget(gridIcon);
 	m_gridCombo = new QComboBox;
 	for (const double g : {0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0}) {   // microgrid like Hammer++
 		m_gridCombo->addItem(QString::number(g), g);
@@ -716,14 +763,16 @@ void MainWindow::createActions() {
 	connect(m_editor, &Editor::settingsChanged, this, [this] { m_gridCombo->setCurrentText(QString::number(m_editor->grid())); });
 	action(tr("Grid smaller"), QKeySequence("["), [this] { m_editor->setGrid(m_editor->grid() / 2); });
 	action(tr("Grid bigger"), QKeySequence("]"), [this] { m_editor->setGrid(m_editor->grid() * 2); });
-	auto* snapAction = top->addAction(tr("Snap"));
+	auto* snapAction = top->addAction(icon("snap"), tr("Snap"));
 	snapAction->setObjectName("Snap");
 	snapAction->setCheckable(true);
 	snapAction->setChecked(m_editor->snapping());
 	snapAction->setShortcut(QKeySequence("Shift+W"));
 	snapAction->setToolTip(tr("Snap to the grid and to the rotation step (Shift+W)"));
 	connect(snapAction, &QAction::toggled, m_editor, &Editor::setSnapping);
-	top->addWidget(new QLabel(tr(" Rotate ")));
+	auto* rotateIcon = new QLabel;
+	rotateIcon->setPixmap(icon("tool:rotate").pixmap(16, 16));
+	top->addWidget(rotateIcon);
 	auto* rotateCombo = new QComboBox;
 	rotateCombo->setToolTip(tr("Rotation snap for the rotate gizmo and Alt+arrow keys (Ctrl+[ / Ctrl+])"));
 	static const double ROTATION_STEPS[] = {1, 5, 15, 22.5, 45, 90};
@@ -749,7 +798,7 @@ void MainWindow::createActions() {
 	};
 	action(tr("Rotation snap smaller"), QKeySequence("Ctrl+["), stepRotation(-1));
 	action(tr("Rotation snap bigger"), QKeySequence("Ctrl+]"), stepRotation(1));
-	m_textureLock = top->addAction(tr("Texture lock"));
+	m_textureLock = top->addAction(icon("lock"), tr("Texture lock"));
 	m_textureLock->setCheckable(true);
 	m_textureLock->setChecked(m_editor->textureLock());
 	m_textureLock->setToolTip(tr("Textures stay glued to faces when moving/rotating"));
@@ -787,23 +836,90 @@ void MainWindow::createActions() {
 		if (index < actions.size()) actions[index]->setChecked(true);
 		if (shadows->isChecked() != m_editor->shadows()) shadows->setChecked(m_editor->shadows());
 	});
-	auto* layout = top->addAction(tr("1 / 4 views"));
+	auto* layout = top->addAction(icon("views"), tr("1 / 4 views"));
 	layout->setObjectName("1 / 4 views");
 	layout->setShortcut(QKeySequence("Shift+Alt+Z"));
 	layout->setToolTip(tr("Switch between one 3D view and 3D + top/front/side (Shift+Alt+Z)"));
 	connect(layout, &QAction::triggered, this, [this] { setQuadLayout(!m_quad); });
 	top->addSeparator();
-	auto* check = top->addAction(tr("✔ Check"));
+	// What the views show: kinds of objects plus names, connection lines and the 3D grid.
+	const auto viewToggle = [&](const QString& iconName, const QString& tip, std::function<bool()> get, std::function<void(bool)> set) {
+		auto* a = top->addAction(icon(iconName), tip);
+		a->setObjectName(QStringLiteral("view:") + iconName.section(':', 1));
+		a->setToolTip(tip);
+		a->setCheckable(true);
+		a->setChecked(get());
+		connect(a, &QAction::toggled, this, [set](bool on) { set(on); });
+		connect(m_editor, &Editor::settingsChanged, a, [a, get] { a->setChecked(get()); });
+		connect(m_editor, &Editor::viewFilterChanged, a, [a, get] { a->setChecked(get()); });
+		iconOnly(a);
+	};
+	const auto kindToggle = [&](const QString& iconName, const QString& tip, ObjectKind kind) {
+		viewToggle(iconName, tip, [this, kind] { return m_editor->kindVisible(kind); }, [this, kind](bool on) { m_editor->setKindVisible(kind, on); });
+	};
+	kindToggle("view:helpers", tr("Show helper entities (logic, info, paths, sounds ...)"), ObjectKind::Helpers);
+	kindToggle("page:models", tr("Show models (props)"), ObjectKind::Models);
+	kindToggle("tool:entity", tr("Show lights"), ObjectKind::Lights);
+	kindToggle("view:cubemaps", tr("Show cubemaps and their room boxes"), ObjectKind::Cubemaps);
+	kindToggle("view:triggers", tr("Show triggers"), ObjectKind::Triggers);
+	kindToggle("view:tools", tr("Show tool brushes and faces (clip, nodraw, hint ...)"), ObjectKind::ToolBrushes);
+	kindToggle("view:sky", tr("Show sky brushes"), ObjectKind::Sky);
+	viewToggle("view:names", tr("Entity names in the 2D views"), [this] { return m_editor->showEntityNames(); },
+	           [this](bool on) { m_editor->setShowEntityNames(on); });
+	viewToggle("view:connections", tr("Lines between the selected entities and what their outputs fire at"), [this] { return m_editor->showConnections(); },
+	           [this](bool on) { m_editor->setShowConnections(on); });
+	viewToggle("view:grid3d", tr("Grid in the 3D view"), [this] { return m_editor->showGrid3D(); }, [this](bool on) { m_editor->setShowGrid3D(on); });
+	auto* showMore = new QToolButton;
+	showMore->setIcon(icon("eye"));
+	showMore->setToolTip(tr("Show: every kind of object"));
+	showMore->setPopupMode(QToolButton::InstantPopup);
+	showMore->setProperty("iconOnly", true);
+	auto* showMenu = new QMenu(showMore);
+	connect(showMenu, &QMenu::aboutToShow, this, [this, showMenu] {
+		showMenu->clear();
+		Viewport::fillShowMenu(showMenu, m_editor);
+	});
+	showMore->setMenu(showMenu);
+	top->addWidget(showMore);
+	auto* spacer = new QWidget;
+	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	top->addWidget(spacer);
+	auto* check = top->addAction(icon("check"), tr("Check"));
 	check->setToolTip(tr("Check the map for problems"));
 	connect(check, &QAction::triggered, this, [this] {
 		m_problems->runChecks();
 		raiseDock("Problems");
 	});
-	auto* run = top->addAction(tr("▶ Compile && Run"));
+	auto* run = top->addAction(icon("run"), tr("Run map"));
 	run->setObjectName("Compile and run");
 	run->setShortcut(QKeySequence("F9"));
 	run->setToolTip(tr("Compile with VBSP/VVIS/VRAD and start the game (F9)"));
 	connect(run, &QAction::triggered, this, &MainWindow::compile);
+	top->widgetForAction(run)->setProperty("accent", true);
+	top->addSeparator();
+	// Panels on and off.
+	const auto panelToggle = [&](const QString& iconName, const QString& tip, std::function<QList<QDockWidget*>()> docks) {
+		auto* a = top->addAction(icon(iconName), tip);
+		a->setObjectName(tip);
+		a->setToolTip(tip);
+		connect(a, &QAction::triggered, this, [docks] {
+			const auto list = docks();
+			const bool anyShown = std::any_of(list.begin(), list.end(), [](QDockWidget* d) { return d->isVisible(); });
+			for (auto* d : list) d->setVisible(!anyShown);
+			if (!anyShown && !list.isEmpty()) list.front()->raise();
+		});
+		iconOnly(a);
+	};
+	const auto docksIn = [this](Qt::DockWidgetArea area) {
+		QList<QDockWidget*> out;
+		for (auto* d : m_docks) {
+			if (dockWidgetArea(d) == area) out << d;
+		}
+		return out;
+	};
+	panelToggle("panel:left", tr("Left panel"), [docksIn] { return docksIn(Qt::LeftDockWidgetArea); });
+	panelToggle("panel:bottom", tr("Bottom panel"), [docksIn] { return docksIn(Qt::BottomDockWidgetArea); });
+	panelToggle("panel:right", tr("Right panel"), [docksIn] { return docksIn(Qt::RightDockWidgetArea); });
 
 	// View
 	auto* view = menuBar()->addMenu(tr("&View"));
@@ -1213,7 +1329,10 @@ void MainWindow::updateStatusInfo() {
 		m_sizeLabel->setText(QStringLiteral("%1w %2l %3h  @(%4 %5 %6)")
 		                         .arg(number(size.x), number(size.y), number(size.z), number(center.x), number(center.y), number(center.z)));
 	}
-	const auto onOff = [this](bool on) { return on ? tr("on") : tr("off"); };
+	// "on" in green, "off" in grey.
+	const auto onOff = [this](bool on) {
+		return on ? QStringLiteral("<span style='color:#5ccf7a'>%1</span>").arg(tr("on")) : QStringLiteral("<span style='color:#7a7a7a'>%1</span>").arg(tr("off"));
+	};
 	m_gridLabel->setText(tr("Grid %1  ·  Snap %2  ·  Angle %3°  ·  Texture lock %4")
 	                         .arg(m_editor->grid())
 	                         .arg(onOff(m_editor->snapping()))

@@ -1,7 +1,7 @@
 # Source Map Editor (hammer-test) – Leitfaden für Claude Code
 
 Moderner, 3D-zentrierter Karten-Editor für **Source 1** (Half-Life 2, Mapbase-Mods, Black Mesa, andere Source-Spiele),
-Bedienung angelehnt an **Source 2 Hammer**, speichert normale `.vmf`. Wie XBLAH's Modding Tool: nichts ist auf HL2
+Bedienung angelehnt an **Source 2 Hammer**, speichert normale `.vmf`. Nichts ist auf HL2
 festgelegt – Spiele/Mods werden über Steam-Bibliotheken, `gameinfo.txt` und Hammer-/Hammer++-Configs gefunden.
 Nutzer: Julius (`29j2003`), macht Mapping/Production, programmiert nicht selbst. Öffentliches Repo (`29j2003/hammer-test`).
 Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Bausteinen dort mitpflegen).
@@ -21,7 +21,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   (Sounds-Tab, Wiedergabe über QAudioSink, optional), `copy_paste`,
   `map_look_panel`, `mod_page` (Seite „Mod“ der Seitenleiste), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
   Justify), `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
-  `shortcut_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste wie XBLAH: Map, Materials, Sounds, Particles, Mod), `style`.
+  `shortcut_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste: Map, Materials, Sounds, Particles, Mod), `style`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
 - `tests/` – doctest; `fixture` (künstliche Steam-Installation, keine Valve-Dateien), `demo` (Demo-Inhalte + Demo-Karte),
   `test_app.cpp` (echte Fenster mit simulierter Maus, Label `ui`, braucht OpenGL → unter Linux `xvfb-run`).

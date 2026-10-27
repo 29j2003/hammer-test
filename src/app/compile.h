@@ -1,5 +1,5 @@
 // compile.h - Compiling and running a map (VBSP -> VVIS -> VRAD -> copy -> cubemaps -> game),
-// the compile dialog (a simple view with cards like XBLAH's and an advanced view with every
+// the compile dialog (a simple view with cards and an advanced view with every
 // parameter of each tool) and the per-game settings dialog.
 
 #pragma once

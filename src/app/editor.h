@@ -100,6 +100,14 @@ public:
 	/// Real-time shadows in the lighting preview.
 	[[nodiscard]] bool shadows() const { return m_shadows; }
 	void setShadows(bool on);
+	/// View options (tool bar "View"): grid in the 3D view, names of entities in the 2D views,
+	/// lines from the selected entities to the entities their outputs fire at (and back).
+	[[nodiscard]] bool showGrid3D() const { return m_showGrid3D; }
+	void setShowGrid3D(bool on);
+	[[nodiscard]] bool showEntityNames() const { return m_showEntityNames; }
+	void setShowEntityNames(bool on);
+	[[nodiscard]] bool showConnections() const { return m_showConnections; }
+	void setShowConnections(bool on);
 	/// The mod has mapbase-fidelity (its cfg/fidelity.cfg or shaders): clouds, grading, relief.
 	[[nodiscard]] bool hasFidelity() const { return m_hasFidelity; }
 	/// Lighting preview shows mapbase-fidelity's look (clouds, colour grading, relief): on by
@@ -235,6 +243,9 @@ private:
 	SelectMode m_selectMode = SelectMode::Object;
 	RenderMode m_renderMode = RenderMode::Lit;
 	bool m_shadows = true;
+	bool m_showGrid3D = true;
+	bool m_showEntityNames = true;
+	bool m_showConnections = true;
 	bool m_hasFidelity = false;
 	int m_fidelityLook = -1;                 ///< -1 automatic, 0 off, 1 on
 	std::map<std::string, std::string> m_lookDefaults;   ///< From the mod's cfg/fidelity.cfg

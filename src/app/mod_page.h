@@ -1,4 +1,4 @@
-// mod_page.h - The "Mod" page of the side bar (like XBLAH's mod dashboard): what the editor
+// mod_page.h - The "Mod" page of the side bar: what the editor
 // knows about the chosen game or mod - title, folders, the maps in its map folder, the search
 // paths of gameinfo.txt with what was found, and the entity definitions (FGDs).
 

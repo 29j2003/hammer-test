@@ -30,7 +30,7 @@ class Editor;
 class MaterialCache;
 class ModelThumbnails;
 
-/// Entity classes of the game's FGDs, like XBLAH's "New objects": point and brush entities with
+/// Entity classes of the game's FGDs, grouped into point and brush entities with
 /// their editor icons, a search, and the class that is "armed" (placed by the next click, or
 /// built from the next box for a brush entity).
 class EntityPicker : public QWidget {
@@ -95,6 +95,8 @@ signals:
 private:
 	void refresh();
 	/// The tool's keys (key text, or "action:<name>" for an action's current shortcut) and what they do.
+	/// Tool name as a heading, its explanation in grey.
+	void styleHint();
 	void showKeys(const std::vector<std::pair<QString, QString>>& rows);
 
 	Editor* m_editor;
@@ -102,7 +104,8 @@ private:
 	QLabel* m_hint;
 	QWidget* m_hintPage;
 	QTableWidget* m_keys;
-	QWidget* m_edgeBox = nullptr;   ///< Vertex tool: wedge / bevel / round the picked edges
+	QWidget* m_edgeBox = nullptr;
+	QWidget* m_selectionBox = nullptr;   ///< Select tool: Hollow, Carve, Merge, Tie ... (Source 2's tool properties)   ///< Vertex tool: wedge / bevel / round the picked edges
 	EntityPicker* m_entities;
 	QWidget* m_block = nullptr;
 };

@@ -28,6 +28,28 @@ namespace sme::app {
 
 namespace {
 
+/// Where lines and names of an entity start: its origin, else the middle of its brushes.
+Vec3 entityCenter(const Entity& entity) {
+	if (entity.hasOrigin() || entity.solids.empty()) {
+		return entity.origin();
+	}
+	Bounds box;
+	for (const auto& solid : entity.solids) {
+		for (const auto& corner : solidCorners(solid)) box.add(corner);
+	}
+	return box.empty() ? entity.origin() : box.center();
+}
+
+/// Output target names may end in '*' (Source matches the start then).
+bool targetMatches(std::string_view target, std::string_view name) {
+	if (target.empty() || name.empty()) return false;
+	if (target.back() == '*') {
+		const auto prefix = target.substr(0, target.size() - 1);
+		return name.size() >= prefix.size() && iequals(name.substr(0, prefix.size()), prefix);
+	}
+	return iequals(target, name);
+}
+
 const QVector4D AXIS_COLORS[3] = {{0.95f, 0.25f, 0.25f, 1}, {0.35f, 0.9f, 0.3f, 1}, {0.3f, 0.5f, 1.0f, 1}};
 const QVector4D HOVER_COLOR{1.0f, 0.85f, 0.2f, 1};
 
@@ -463,7 +485,7 @@ void Viewport::paintGL() {
 		m_renderer.drawPreview(params, m_previewModel);
 	}
 
-	if (!m_camera.is2D()) {
+	if (!m_camera.is2D() && m_editor->showGrid3D()) {
 		drawGrid(lines);
 		m_renderer.drawLines(lines, viewProj, false);
 		lines.clear();
@@ -494,6 +516,7 @@ void Viewport::paintGL() {
 	lines.clear();
 	drawToolLines(lines);
 	drawRoomBox(lines);
+	drawConnections(lines);
 	drawGizmo(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
 
@@ -741,6 +764,32 @@ void Viewport::drawGizmo(std::vector<LineVertex>& lines) const {
 	}
 }
 
+void Viewport::drawConnections(std::vector<LineVertex>& lines) const {
+	// Hammer's entity connection lines: green to what the selection's outputs fire at, blue from
+	// what fires at the selection.
+	if (!m_editor->showConnections() || m_editor->selection().entities.empty()) {
+		return;
+	}
+	const auto& doc = m_editor->doc();
+	const QVector4D outgoing(0.35f, 1.0f, 0.45f, 0.95f), incoming(0.4f, 0.7f, 1.0f, 0.95f);
+	int count = 0;
+	for (const int id : m_editor->selection().entities) {
+		const Entity* source = doc.findEntity(id);
+		if (!source || id == 0) continue;
+		const Vec3 from = entityCenter(*source);
+		const std::string name = source->get("targetname");
+		for (const auto& other : doc.entities) {
+			if (other.id == id || count > 400) continue;
+			bool fires = false, firedAt = false;
+			for (const auto& c : source->connections) fires = fires || targetMatches(c.target, other.get("targetname"));
+			for (const auto& c : other.connections) firedAt = firedAt || targetMatches(c.target, name);
+			if (fires) line(lines, from, entityCenter(other), outgoing);
+			if (firedAt) line(lines, entityCenter(other), from, incoming);
+			count += fires + firedAt;
+		}
+	}
+}
+
 void Viewport::drawOverlay() {
 	// The overlay is recorded first and painted on the CPU only when it changed; the GPU just
 	// draws the finished picture. (QPainter straight onto the GL widget garbles or loses text
@@ -780,6 +829,36 @@ void Viewport::drawOverlay() {
 		p.drawText(QRectF(rect().adjusted(0, 0, 0, -40)), QColor(170, 175, 185), Qt::AlignCenter,
 		           tr("Empty map\nB: block tool - drag on the grid, then set the height\nShift+E: entity tool\n"
 		              "Right mouse: look around, with W A S D Q E to fly\nCtrl+O: open a .vmf"));
+	}
+
+	// Entity names in the 2D views (Hammer's "show entity names"), when zoomed in far enough.
+	if (m_camera.is2D() && m_editor->showEntityNames() && !m_editor->doc().entities.empty()) {
+		// How many pixels 64 units take here (the 2D view shows two of the three axes).
+		const Vec3 probe = m_editor->doc().entities.front().origin();
+		double pixels = 0;
+		QPointF a;
+		if (m_camera.project(probe, width(), height(), a)) {
+			for (const Vec3& step : {Vec3{64, 0, 0}, Vec3{0, 64, 0}, Vec3{0, 0, 64}}) {
+				QPointF b;
+				if (m_camera.project(probe + step, width(), height(), b)) pixels = std::max(pixels, QLineF(a, b).length());
+			}
+		}
+		const bool near = pixels >= 18;
+		if (near) {
+			const auto& hidden = m_editor->hidden().entities;
+			int shown = 0;
+			for (const auto& entity : m_editor->doc().entities) {
+				if (shown >= 400) break;
+				if (std::find(hidden.begin(), hidden.end(), entity.id) != hidden.end()) continue;
+				QPointF at;
+				if (!m_camera.project(entityCenter(entity), width(), height(), at) || !rect().contains(at.toPoint())) continue;
+				const std::string targetname = entity.get("targetname");
+				const QString text = QString::fromStdString(targetname.empty() ? entity.classname() : targetname);
+				p.drawText(QRectF(at.x() - 90, at.y() + 9, 180, 16), text, targetname.empty() ? QColor(150, 150, 150) : QColor(235, 235, 235),
+				           Qt::AlignHCenter | Qt::AlignTop);
+				++shown;
+			}
+		}
 	}
 
 	const bool changed = p.items != m_overlayItems || m_overlayImage.size() != size() * devicePixelRatio();

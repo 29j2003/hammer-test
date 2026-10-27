@@ -43,6 +43,9 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_currentMaterial = settings.value("editor/material", m_currentMaterial).toString();
 	m_snapping = settings.value("editor/snapping", true).toBool();
 	m_shadows = settings.value("editor/shadows", true).toBool();
+	m_showGrid3D = settings.value("view/grid3D", true).toBool();
+	m_showEntityNames = settings.value("view/entityNames", true).toBool();
+	m_showConnections = settings.value("view/connections", true).toBool();
 	m_hiddenKinds = settings.value("view/hiddenKinds", 0u).toUInt() & ALL_OBJECT_KINDS;
 	m_fidelityLook = std::clamp(settings.value("view/fidelityLook", -1).toInt(), -1, 1);
 	// Hidden objects follow every change of the map (and of what was hidden by hand).
@@ -473,6 +476,29 @@ void Editor::setShadows(bool on) {
 		QSettings().setValue("editor/shadows", on);
 		emit settingsChanged();
 	}
+}
+
+namespace {
+
+bool setViewOption(bool& member, bool on, const char* key) {
+	if (member == on) return false;
+	member = on;
+	QSettings().setValue(key, on);
+	return true;
+}
+
+} // namespace
+
+void Editor::setShowGrid3D(bool on) {
+	if (setViewOption(m_showGrid3D, on, "view/grid3D")) emit settingsChanged();
+}
+
+void Editor::setShowEntityNames(bool on) {
+	if (setViewOption(m_showEntityNames, on, "view/entityNames")) emit settingsChanged();
+}
+
+void Editor::setShowConnections(bool on) {
+	if (setViewOption(m_showConnections, on, "view/connections")) emit settingsChanged();
 }
 
 bool Editor::fidelityLook() const {

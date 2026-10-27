@@ -165,6 +165,8 @@ private:
 	/// The room box of the one selected env_cubemap (its id in `cubemapId`), or nullopt.
 	[[nodiscard]] std::optional<Bounds> selectedRoomBox(int* cubemapId = nullptr) const;
 	void drawRoomBox(std::vector<LineVertex>& lines) const;
+	/// Lines between the selected entities and the entities their outputs name (and back).
+	void drawConnections(std::vector<LineVertex>& lines) const;
 	void drawOverlay();
 	void paintOverlayImage();
 	void updateViewButton();
