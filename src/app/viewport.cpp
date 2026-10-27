@@ -112,7 +112,16 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		update();
 	});
 	connect(editor, &Editor::settingsChanged, this, qOverload<>(&QWidget::update));
-	connect(editor, &Editor::toolChanged, this, qOverload<>(&QWidget::update));
+	connect(editor, &Editor::toolChanged, this, &Viewport::resetToolState);
+	connect(editor, &Editor::selectionChanged, this, [this] {
+		// The clip preview and the selected corners belong to the old selection.
+		if (m_drag != Drag::Vertex) {
+			m_vertexSelection.clear();
+		}
+		if (!m_clipPoints.empty() && m_drag != Drag::ClipLine) {
+			updateClipPreview();
+		}
+	});
 	connect(editor, &Editor::gameChanged, this, [this] {
 		m_needsRebuild = true;
 		update();
@@ -286,8 +295,13 @@ void Viewport::paintGL() {
 	}
 
 	const bool dragging = m_drag == Drag::Gizmo;
-	m_renderer.setHideSelected(dragging);
+	// Clip and vertex previews replace the selected brushes while they are shown.
+	const bool toolPreview = m_drag == Drag::Vertex || (m_editor->tool() == Editor::Tool::Clip && clipPlane());
+	m_renderer.setHideSelected(dragging || toolPreview);
 	m_renderer.render(params);
+	if (toolPreview) {
+		m_renderer.drawPreviewSolids(params);
+	}
 	if (dragging && scaling()) {
 		// Brushes are shown scaled with their real texture coordinates (no stretching).
 		m_renderer.drawPreview(params, m_previewModel, false);
@@ -307,6 +321,11 @@ void Viewport::paintGL() {
 		boxLines(lines, m_blockBox, {1.0f, 0.75f, 0.2f, 0.5f});
 		m_renderer.drawPreviewSolids(params);
 	}
+	// Cordons: red while on (only what is inside gets compiled), grey while off.
+	const auto cordons = m_editor->cordons();
+	for (const auto& cordon : cordons.cordons) {
+		boxLines(lines, cordon.box, cordons.active && cordon.active ? QVector4D(1, 0.3f, 0.3f, 0.9f) : QVector4D(0.6f, 0.6f, 0.65f, 0.5f));
+	}
 	if (!m_leak.empty()) {
 		for (std::size_t i = 0; i + 1 < m_leak.size(); ++i) {
 			line(lines, m_leak[i], m_leak[i + 1], {1, 0.1f, 0.1f, 1});
@@ -314,6 +333,7 @@ void Viewport::paintGL() {
 	}
 	m_renderer.drawLines(lines, viewProj, false, 2.f);
 	lines.clear();
+	drawToolLines(lines);
 	drawGizmo(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
 
@@ -499,6 +519,20 @@ void Viewport::drawOverlay() {
 		p.setPen(QColor(255, 200, 80));
 		p.drawText(QRectF(8, height() - 26, width() - 16, 20), tr("Move the mouse to set the height (%1), click or Enter to create, Esc to cancel, right mouse to look around")
 		                                                             .arg(m_blockBox.size().z));
+	}
+	const auto hint = [&](const QString& text) {
+		p.setPen(QColor(150, 230, 255));
+		p.drawText(QRectF(8, height() - 26, width() - 16, 20), text);
+	};
+	if (m_editor->tool() == Editor::Tool::Clip) {
+		const QString keep = m_clipKeep == edit::ClipKeep::Both ? tr("both parts") : (m_clipKeep == edit::ClipKeep::Back ? tr("back part") : tr("front part"));
+		hint(m_camera.is2D() ? tr("Clip: drag a line through the selection - keeps %1 (Tab), Enter cuts").arg(keep)
+		                     : tr("Clip: click three points (%1 of 3) - keeps %2 (Tab), Enter cuts").arg(m_clipPoints.size()).arg(keep));
+	} else if (m_editor->tool() == Editor::Tool::Vertex) {
+		hint(m_editor->selection().solids.empty() ? tr("Vertex: select a brush, then drag its corners or edge middles (Ctrl+click: several)")
+		                                          : tr("Vertex: drag a corner or edge middle; Ctrl+click selects several; brushes stay convex"));
+	} else if (m_editor->tool() == Editor::Tool::Polygon) {
+		hint(tr("Polygon: click the corners of the base (%1), Enter or double-click makes the brush, Backspace removes a corner").arg(m_polygon.size()));
 	}
 	if (m_drag == Drag::Gizmo && m_editor->tool() == Editor::Tool::Rotate) {
 		p.setPen(QColor(255, 220, 120));
@@ -692,6 +726,9 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 		return;
 	}
 
+	if (toolMousePress(event)) {
+		return;
+	}
 	if (tool == Editor::Tool::Block) {
 		if (m_camera.is2D()) {
 			m_blockStart = snap(viewPlanePoint(event->position()), m_editor->snapGrid());
@@ -797,6 +834,13 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 			m_marquee = QRectF(m_pressPos, pos).normalized();
 			update();
 			return;
+		case Drag::ClipLine:
+			m_clipPoints.back() = toolPoint(pos, false);
+			updateClipPreview();
+			return;
+		case Drag::Vertex:
+			updateVertexDrag(pos);
+			return;
 		case Drag::Paint:
 			paintAt(pos);
 			return;
@@ -867,6 +911,27 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 			update();
 			break;
 		}
+		case Drag::ClipLine:
+			m_drag = Drag::None;
+			if (m_clipPoints.size() == 2 && length(m_clipPoints[1] - m_clipPoints[0]) < 0.01) {
+				m_clipPoints.clear();   // a click, not a line
+			}
+			updateClipPreview();
+			break;
+		case Drag::Vertex: {
+			m_drag = Drag::None;
+			setPreviewSolids({});
+			const Vec3 delta = m_vertexDelta;
+			m_vertexDelta = {};
+			if (length(delta) > 0) {
+				const auto corners = m_vertexSelection;
+				m_editor->moveSelectedVertices(corners, delta);
+				m_vertexSelection.clear();
+				for (const auto& c : corners) m_vertexSelection.push_back(c + delta);
+			}
+			update();
+			break;
+		}
 		case Drag::Marquee: {
 			m_drag = Drag::None;
 			if (QLineF(m_pressPos, releasePos).length() < 4) {
@@ -884,6 +949,10 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 
 void Viewport::mouseDoubleClickEvent(QMouseEvent* event) {
 	if (event->button() != Qt::LeftButton) {
+		return;
+	}
+	if (m_editor->tool() == Editor::Tool::Polygon) {
+		finishPolygon();
 		return;
 	}
 	if (m_editor->selectMode() == Editor::SelectMode::Face && !m_camera.is2D()) {
@@ -1300,6 +1369,18 @@ bool Viewport::event(QEvent* event) {
 		event->accept();
 		return true;
 	}
+	// Tab cycles the clip tool's mode (Qt would move the focus otherwise).
+	if (event->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Tab && m_editor->tool() == Editor::Tool::Clip) {
+		return toolKey(static_cast<QKeyEvent*>(event));
+	}
+	// Enter and Backspace belong to the tools while they collect points.
+	if (event->type() == QEvent::ShortcutOverride && (m_editor->tool() == Editor::Tool::Clip || m_editor->tool() == Editor::Tool::Polygon)) {
+		const int key = static_cast<QKeyEvent*>(event)->key();
+		if (key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Backspace || key == Qt::Key_Tab) {
+			event->accept();
+			return true;
+		}
+	}
 	return QOpenGLWidget::event(event);
 }
 
@@ -1429,6 +1510,9 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
 			endLook();
 		}
 		return; // WASD/QE fly while looking; tool shortcuts are off
+	}
+	if (toolKey(event)) {
+		return;
 	}
 	if (event->key() == Qt::Key_Escape) {
 		if (m_drag != Drag::None) {

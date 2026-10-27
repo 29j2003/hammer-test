@@ -56,7 +56,7 @@ protected:
 
 private:
 	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D };
-	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint };
+	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex };
 
 	[[nodiscard]] Ray rayAt(const QPointF& pos) const;
 	[[nodiscard]] double gizmoSize() const;
@@ -86,6 +86,25 @@ private:
 	void showHoverMaterial(const QPointF& pos);
 	void toggleFlyMode();
 	void requestContextMenu(const QPointF& pos);
+
+	// Clip, vertex and polygon tools (viewport_tools.cpp).
+	struct VertexHandle {
+		Vec3 position;
+		std::vector<Vec3> corners;   ///< One corner, or the two ends of an edge
+		bool edge = false;
+	};
+	[[nodiscard]] Vec3 toolPoint(const QPointF& pos, bool keepPlane);   ///< Snapped point under the cursor
+	[[nodiscard]] std::optional<Plane> clipPlane() const;
+	void updateClipPreview();
+	void applyClip();
+	void resetToolState();
+	[[nodiscard]] std::vector<VertexHandle> vertexHandles() const;
+	[[nodiscard]] int hitVertexHandle(const QPointF& pos) const;
+	void updateVertexDrag(const QPointF& pos);
+	void finishPolygon();
+	bool toolMousePress(QMouseEvent* event);   ///< true if the clip/vertex/polygon tool used the click
+	void drawToolLines(std::vector<LineVertex>& lines) const;
+	bool toolKey(QKeyEvent* event);
 	/// Mouse look (right mouse or fly mode). Runs alongside a tool drag, so the camera can
 	/// move while a block is being placed.
 	void beginLook(const QPointF& anchor);
@@ -146,6 +165,16 @@ private:
 
 	// Marquee
 	QRectF m_marquee;
+
+	// Clip tool: two points in a 2D view or three points in the 3D view define the cut.
+	std::vector<Vec3> m_clipPoints;
+	edit::ClipKeep m_clipKeep = edit::ClipKeep::Both;
+	// Vertex tool
+	std::vector<Vec3> m_vertexSelection;   ///< Selected corners
+	Vec3 m_vertexGrab, m_vertexNormal, m_vertexDelta;
+	// Polygon tool
+	std::vector<Vec3> m_polygon;
+	double m_polygonPlane = 0;
 
 	std::vector<Vec3> m_leak;
 

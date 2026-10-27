@@ -527,6 +527,53 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(editor.selection().contains(block));
 	}
 
+	{
+		// Clip, vertex and polygon tools in the top view.
+		const SolidRef small{0, editor.doc().world.solids.back().id};
+		const auto count = editor.doc().world.solids.size();
+		Selection only;
+		only.solids.push_back(small);
+		editor.setSelection(only);
+		editor.setTool(Editor::Tool::Clip);
+		top->setFocus();
+		QTest::mousePress(top, Qt::LeftButton, {}, screen(top, {-224, -320, 0}));
+		QTest::mouseMove(top, screen(top, {-224, -200, 0}));
+		QTest::mouseMove(top, screen(top, {-224, -96, 0}));
+		QTest::mouseRelease(top, Qt::LeftButton, {}, screen(top, {-224, -96, 0}));
+		QTest::keyClick(top, Qt::Key_Return);
+		settle();
+		CHECK(editor.doc().world.solids.size() == count + 1);
+		CHECK(editor.selection().solids.size() == 2);
+		editor.undo();
+		CHECK(editor.doc().world.solids.size() == count);
+
+		editor.setSelection(only);
+		editor.setTool(Editor::Tool::Vertex);
+		settle();
+		const Vec3 corner{-192, -160, 0};
+		QTest::mousePress(top, Qt::LeftButton, {}, screen(top, corner));
+		QTest::mouseMove(top, screen(top, corner + Vec3{16, 0, 0}));
+		QTest::mouseMove(top, screen(top, corner + Vec3{32, 0, 0}));
+		QTest::mouseRelease(top, Qt::LeftButton, {}, screen(top, corner + Vec3{32, 0, 0}));
+		settle();
+		const auto pulled = boundsOf(editor, small);
+		CHECK(pulled.max.x == doctest::Approx(-160));
+		CHECK(isConvexValid(*editor.doc().findSolid(small)));
+		editor.undo();
+		CHECK(boundsOf(editor, small).max.x == doctest::Approx(-192));
+
+		editor.setTool(Editor::Tool::Polygon);
+		for (const Vec3 p : {Vec3{-448, -448, 0}, Vec3{-384, -448, 0}, Vec3{-416, -384, 0}}) {
+			QTest::mouseClick(top, Qt::LeftButton, {}, screen(top, p));
+		}
+		QTest::keyClick(top, Qt::Key_Return);
+		settle();
+		REQUIRE(editor.doc().world.solids.size() == count + 1);
+		CHECK(editor.doc().world.solids.back().sides.size() == 5);   // triangle prism
+		editor.undo();
+		editor.setTool(Editor::Tool::Select);
+	}
+
 	// Save and load again.
 	const QString path = home.filePath("test.vmf");
 	QString error;

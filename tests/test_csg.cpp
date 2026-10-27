@@ -6,7 +6,10 @@
 #include <sme/brush.h>
 #include <sme/csg.h>
 #include <sme/editing.h>
+#include <sme/map_tools.h>
 #include <sme/shapes.h>
+
+#include <algorithm>
 
 using namespace sme;
 
@@ -243,4 +246,76 @@ TEST_CASE("textures across several faces (treat as one)") {
 	(void)edit::justifyFaces(doc, faces, edit::Justify::Fit, false, size);
 	a = sideFacing(*doc.findSolid(left), {0, -1, 0});
 	CHECK(std::abs(u(*a, {128, 0, 0}) - u(*a, {0, 0, 0})) == doctest::Approx(512));
+}
+
+TEST_CASE("vertex tool keeps brushes convex") {
+	MapDocument doc;
+	const Solid cube = makeBlock(doc, box({0, 0, 0}, {64, 64, 64}), "X");
+	const auto top = sideFacing(cube, {0, 0, 1})->id;
+	// Pull one top edge up: a sloped roof, the top side keeps its id.
+	const auto roof = moveVertices(doc, cube, {{0, 0, 64}, {64, 0, 64}}, {0, 0, 32});
+	REQUIRE(roof);
+	CHECK(isConvexValid(roof->solid));
+	CHECK_FALSE(roof->cornersLost);
+	CHECK(solidVolume(roof->solid) == doctest::Approx(64.0 * 64 * 64 + 64.0 * 64 * 32 / 2));
+	CHECK(std::any_of(roof->solid.sides.begin(), roof->solid.sides.end(), [&](const Side& s) { return s.id == top; }));
+	// Pushing a corner inside folds it away: the brush stays convex, a corner is lost.
+	const auto folded = moveVertices(doc, cube, {{64, 64, 64}}, {-48, -48, -48});
+	REQUIRE(folded);
+	CHECK(folded->cornersLost);
+	CHECK(isConvexValid(folded->solid));
+	CHECK(solidCorners(cube).size() == 8);
+}
+
+TEST_CASE("cordons, track chains, drop to floor") {
+	MapDocument doc;
+	auto [c1, near] = edit::createBlock(doc, box({0, 0, 0}, {64, 64, 64}), "X");
+	auto [c2, far] = edit::createBlock(doc, box({2000, 0, 0}, {2064, 64, 64}), "X");
+	CordonSet cordons;
+	cordons.active = true;
+	cordons.cordons.push_back({"main", box({-128, -128, -128}, {256, 256, 256}), true});
+	writeCordons(doc, cordons);
+	const auto read = readCordons(doc);
+	REQUIRE(read.cordons.size() == 1);
+	CHECK(read.active);
+	CHECK(read.cordons[0].name == "main");
+	CHECK(read.cordons[0].box.max.x == doctest::Approx(256));
+	// Save/load keeps them.
+	const auto reloaded = MapDocument::parse(doc.serialize());
+	CHECK(readCordons(reloaded).cordons.size() == 1);
+	const auto cut = cordonedCopy(doc, read, nullptr);
+	CHECK(cut.world.solids.size() == 1 + 6);   // the near block and six sealing slabs
+	CHECK(doc.world.solids.size() == 2);        // the map itself is untouched
+	// The old single-cordon format still loads.
+	MapDocument old;
+	auto block = KvNode::makeBlock("cordon");
+	block.set("mins", "(0 0 0)");
+	block.set("maxs", "(64 64 64)");
+	block.set("active", "1");
+	old.footerBlocks.push_back(block);
+	CHECK(readCordons(old).active);
+
+	// A loop of path_tracks and a train that follows it.
+	const auto track = [&](const char* name, const char* target) {
+		Entity e;
+		e.id = doc.newEntityId();
+		e.set("classname", "path_track");
+		e.set("targetname", name);
+		e.set("target", target);
+		e.setOrigin({0, 0, 0});
+		doc.entities.push_back(e);
+		return e.id;
+	};
+	const int a = track("p1", "p2"), b = track("p2", "p3"), c = track("p3", "p1");
+	track("other", "");
+	const auto chain = trackChain(doc, b);
+	CHECK(chain == std::vector<int>{a, b, c});
+
+	// Drop to floor: a crate floating above the block lands on it.
+	auto [c3, crate] = edit::createBlock(doc, box({8, 8, 200}, {40, 40, 232}), "X");
+	Selection selection;
+	selection.solids.push_back(crate);
+	(void)edit::dropToFloor(doc, selection, nullptr);
+	const auto landed = buildBrushGeometry(*doc.findSolid(crate)).bounds;
+	CHECK(landed.min.z == doctest::Approx(64));
 }

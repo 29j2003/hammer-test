@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include <sme/brush.h>
+#include <sme/csg.h>
 #include <sme/text.h>
 
 namespace sme::app {
@@ -195,6 +196,7 @@ bool Editor::openGame(const QString& key, QString* error) {
 
 void Editor::newMap() {
 	m_lastShape = {};
+	m_footerModified = false;
 	m_doc = MapDocument();
 	m_history.clear();
 	m_selection.clear();
@@ -224,6 +226,7 @@ bool Editor::openMap(const QString& path, QString* error) {
 	}
 	m_history.clear();
 	m_lastShape = {};
+	m_footerModified = false;
 	m_selection.clear();
 	m_hidden.clear();
 	m_filePath = path;
@@ -257,6 +260,7 @@ bool Editor::saveMap(const QString& path, QString* error) {
 	}
 	m_filePath = path;
 	m_history.markSaved();
+	m_footerModified = false;
 	emit documentChanged();
 	emit message(tr("Saved %1").arg(QFileInfo(path).fileName()));
 	return true;
@@ -648,6 +652,73 @@ void Editor::clipSelection(const Plane& plane, edit::ClipKeep keep) {
 	}
 	commit(std::move(change));
 	setSelection(std::move(parts));
+}
+
+void Editor::moveSelectedVertices(const std::vector<Vec3>& corners, const Vec3& delta) {
+	std::vector<SolidRef> refs = m_selection.solids;
+	for (const int id : m_selection.entities) {
+		if (const auto* entity = m_doc.findEntity(id); entity && id != 0) {
+			for (const auto& solid : entity->solids) refs.push_back({id, solid.id});
+		}
+	}
+	auto outcome = edit::moveVertices(m_doc, refs, corners, delta);
+	if (outcome.refused) {
+		emit message(tr("Not moved: the brush would become flat"));
+		return;
+	}
+	commit(std::move(outcome.change));
+	if (outcome.cornersLost) {
+		emit message(tr("The brush folded in - corners merged so it stays convex (Source brushes must be convex). Ctrl+Z undoes"));
+	}
+}
+
+void Editor::createPolygonBrush(const std::vector<Vec3>& base, const Vec3& extrude) {
+	std::vector<Vec3> points = base;
+	for (const auto& p : base) points.push_back(p + extrude);
+	auto solid = solidFromPoints(m_doc, points, m_currentMaterial.toStdString());
+	if (!solid) {
+		emit message(tr("The polygon needs at least three points that are not on one line"));
+		return;
+	}
+	auto [change, refs] = edit::replaceSolids(m_doc, {}, {std::move(*solid)}, "Create polygon");
+	commit(std::move(change));
+	Selection selection;
+	selection.solids = refs;
+	setSelection(std::move(selection));
+}
+
+void Editor::dropSelectionToFloor() {
+	auto change = edit::dropToFloor(m_doc, m_selection, entities());
+	if (change.empty()) {
+		emit message(tr("Nothing to drop: the selection already rests on something (or there is nothing below)"));
+		return;
+	}
+	commit(std::move(change));
+}
+
+void Editor::selectTrackChain() {
+	if (m_selection.entities.empty()) {
+		emit message(tr("Select a path_track (or path_corner) first"));
+		return;
+	}
+	Selection selection;
+	for (const int id : m_selection.entities) {
+		for (const int member : trackChain(m_doc, id)) {
+			if (!selection.containsEntity(member)) selection.entities.push_back(member);
+		}
+	}
+	setSelection(std::move(selection));
+	emit message(tr("%1 entities in the path").arg(m_selection.entities.size()));
+}
+
+CordonSet Editor::cordons() const {
+	return readCordons(m_doc);
+}
+
+void Editor::setCordons(const CordonSet& cordons) {
+	writeCordons(m_doc, cordons);
+	m_footerModified = true;
+	emit documentChanged();
 }
 
 } // namespace sme::app

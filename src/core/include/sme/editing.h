@@ -129,6 +129,14 @@ struct MergeOutcome {
 enum class ClipKeep { Back, Front, Both };
 [[nodiscard]] std::pair<Change, Selection> clip(MapDocument& doc, const Selection& selection, const Plane& plane, ClipKeep keep);
 
+/// Vertex tool: moves the corners at `corners` of the given brushes by `delta` (brushes stay convex).
+struct VertexMoveOutcome {
+	Change change;
+	bool cornersLost = false;   ///< A brush folded in and lost corners
+	bool refused = false;       ///< A brush would have become invalid (flat): nothing changed
+};
+[[nodiscard]] VertexMoveOutcome moveVertices(MapDocument& doc, const std::vector<SolidRef>& solids, const std::vector<Vec3>& corners, const Vec3& delta);
+
 /// Texture justification of faces (Hammer's face edit sheet). With `treatAsOne` the faces are
 /// handled as one surface: coplanar faces share the first face's axes and one texture spans all.
 enum class Justify { Fit, Left, Right, Top, Bottom, Center };

@@ -60,6 +60,18 @@ struct MergeResult {
 /// (side ids) with the given radius. nullopt if the sides do not share an edge.
 [[nodiscard]] std::optional<Solid> roundEdge(MapDocument& doc, const Solid& solid, int sideA, int sideB, double radius, int segments);
 
+/// Vertex tool: moves the brush corners at `corners` by `delta`. The brush stays convex (the
+/// result is the hull of the new corners); sides keep id and texture where they stay recognisable.
+/// `cornersLost` tells whether corners vanished because the shape folded in.
+struct VertexEdit {
+	Solid solid;
+	bool cornersLost = false;
+};
+[[nodiscard]] std::optional<VertexEdit> moveVertices(MapDocument& doc, const Solid& solid, const std::vector<Vec3>& corners, const Vec3& delta);
+
+/// Unique corners of a brush.
+[[nodiscard]] std::vector<Vec3> solidCorners(const Solid& solid);
+
 /// Volume of a convex brush (cubic units).
 [[nodiscard]] double solidVolume(const Solid& solid);
 

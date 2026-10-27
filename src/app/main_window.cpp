@@ -284,7 +284,14 @@ void MainWindow::createActions() {
 	brushes->addAction(carve);
 	brushes->addAction(mergeAction);
 	brushes->addAction(round);
-	m_contextActions = {hollow, carve, mergeAction, round, nullptr};
+	brushes->addSeparator();
+	auto* drop = action(tr("Drop to floor"), QKeySequence("Ctrl+Shift+F"), [this] { m_editor->dropSelectionToFloor(); });
+	drop->setToolTip(tr("Lets the selected objects fall straight down onto what is below them"));
+	brushes->addAction(drop);
+	auto* track = action(tr("Select whole path"), QKeySequence("Ctrl+Shift+P"), [this] { m_editor->selectTrackChain(); });
+	track->setToolTip(tr("Selects every path_track / path_corner of the selected path"));
+	brushes->addAction(track);
+	m_contextActions = {hollow, carve, mergeAction, round, drop, track, nullptr};
 	for (auto* a : editMenu->actions()) {
 		if (a->text().startsWith(tr("Tie to entity")) || a->text() == tr("Move to world") || a->text() == tr("Duplicate") || a->text() == tr("Delete") ||
 		    a->text() == tr("Hide selection") || a->text() == tr("Apply current material")) {
@@ -355,6 +362,9 @@ void MainWindow::createActions() {
 	tools->addSeparator();
 	toolAction(QStringLiteral("■"), tr("Block"), QKeySequence("Shift+B"), Editor::Tool::Block);
 	toolAction(QStringLiteral("✦"), tr("Entity"), QKeySequence("Shift+E"), Editor::Tool::Entity);
+	toolAction(QStringLiteral("✂"), tr("Clip"), QKeySequence("Shift+X"), Editor::Tool::Clip);
+	toolAction(QStringLiteral("◆"), tr("Vertex"), QKeySequence("Shift+V"), Editor::Tool::Vertex);
+	toolAction(QStringLiteral("⬠"), tr("Polygon"), QKeySequence("Shift+P"), Editor::Tool::Polygon);
 	tools->addSeparator();
 	m_modeGroup = new QActionGroup(this);
 	const auto modeAction = [&](const QString& glyph, const QString& name, const QKeySequence& key, Editor::SelectMode mode) {
@@ -405,7 +415,7 @@ void MainWindow::createActions() {
 	top->addSeparator();
 	top->addWidget(new QLabel(tr(" Grid ")));
 	m_gridCombo = new QComboBox;
-	for (const double g : {0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0}) {
+	for (const double g : {0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0}) {   // microgrid like Hammer++
 		m_gridCombo->addItem(QString::number(g), g);
 	}
 	m_gridCombo->setCurrentText(QString::number(m_editor->grid()));
@@ -521,6 +531,41 @@ void MainWindow::createActions() {
 	map->addAction(action(tr("Clear leak line"), QKeySequence(), [this] {
 		for (auto* v : m_views) v->setLeakLine({});
 	}));
+	map->addSeparator();
+	// Cordons: compile only a part of the map (several boxes, like CS:GO Hammer and Hammer++).
+	map->addAction(action(tr("Add cordon around selection"), QKeySequence("Ctrl+Shift+K"), [this] {
+		auto bounds = edit::selectionBounds(m_editor->doc(), m_editor->selection(), m_editor->entities());
+		if (bounds.empty()) {
+			QMessageBox::information(this, tr("Cordon"), tr("Select what should be compiled first."));
+			return;
+		}
+		const double grid = std::max(16.0, m_editor->grid());
+		bounds.min = snap(bounds.min - Vec3{grid, grid, grid}, grid);
+		bounds.max = snap(bounds.max + Vec3{grid, grid, grid}, grid);
+		auto cordons = m_editor->cordons();
+		cordons.cordons.push_back({"cordon " + std::to_string(cordons.cordons.size() + 1), bounds, true});
+		cordons.active = true;
+		m_editor->setCordons(cordons);
+		emit m_editor->message(tr("Cordon added - compiling now only builds what is inside the cordons (Map > Cordons on/off)"));
+	}));
+	auto* cordonToggle = action(tr("Cordons on (compile only inside)"), QKeySequence(), [this] {
+		auto cordons = m_editor->cordons();
+		cordons.active = !cordons.active;
+		m_editor->setCordons(cordons);
+	});
+	cordonToggle->setCheckable(true);
+	connect(m_editor, &Editor::documentChanged, cordonToggle, [this, cordonToggle] {
+		const auto cordons = m_editor->cordons();
+		cordonToggle->setEnabled(!cordons.cordons.empty());
+		cordonToggle->setChecked(cordons.active);
+	});
+	connect(m_editor, &Editor::documentReplaced, cordonToggle, [this, cordonToggle] {
+		const auto cordons = m_editor->cordons();
+		cordonToggle->setEnabled(!cordons.cordons.empty());
+		cordonToggle->setChecked(cordons.active);
+	});
+	map->addAction(cordonToggle);
+	map->addAction(action(tr("Remove all cordons"), QKeySequence(), [this] { m_editor->setCordons({}); }));
 
 	auto* help = menuBar()->addMenu(tr("&Help"));
 	help->addAction(action(tr("Shortcuts"), QKeySequence("F1"), [this] { QMessageBox::information(this, tr("Shortcuts"), SHORTCUT_HELP); }));
@@ -713,8 +758,22 @@ void MainWindow::compile() {
 		view->setLeakLine({});
 	}
 	raiseDock("Compile");
-	m_log->append(tr("--- Compiling %1 ---").arg(QFileInfo(m_editor->filePath()).fileName()), QColor(140, 180, 255));
-	m_compiler.start(m_editor->filePath(), gameDir, m_editor->gameSettings(), dialog.options());
+	QString vmf = m_editor->filePath();
+	const auto cordons = m_editor->cordons();
+	if (cordons.active && std::any_of(cordons.cordons.begin(), cordons.cordons.end(), [](const Cordon& c) { return c.active; })) {
+		// Like Hammer: only what is inside the cordons, sealed with sky brushes (map name + "_cordon").
+		const QFileInfo info(vmf);
+		vmf = info.absolutePath() + "/" + info.completeBaseName() + "_cordon.vmf";
+		QFile file(vmf);
+		const auto text = cordonedCopy(m_editor->doc(), cordons, m_editor->entities()).serialize();
+		if (!file.open(QIODevice::WriteOnly) || file.write(text.data(), static_cast<qint64>(text.size())) != static_cast<qint64>(text.size())) {
+			QMessageBox::warning(this, tr("Compile"), tr("Could not write %1").arg(vmf));
+			return;
+		}
+		m_log->append(tr("Cordons are on: compiling only what is inside them as %1").arg(QFileInfo(vmf).fileName()), QColor(255, 200, 100));
+	}
+	m_log->append(tr("--- Compiling %1 ---").arg(QFileInfo(vmf).fileName()), QColor(140, 180, 255));
+	m_compiler.start(vmf, gameDir, m_editor->gameSettings(), dialog.options());
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos) {

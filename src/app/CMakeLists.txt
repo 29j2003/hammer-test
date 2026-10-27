@@ -22,7 +22,8 @@ add_library(smeapp STATIC
 	sound_player.cpp
 	style.cpp
 	tool_panel.cpp
-	viewport.cpp)
+	viewport.cpp
+	viewport_tools.cpp)
 target_include_directories(smeapp PUBLIC .)
 target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)
 target_link_libraries(smeapp PUBLIC smecore Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent)

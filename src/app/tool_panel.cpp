@@ -412,6 +412,19 @@ void ToolPanel::refresh() {
 		case Editor::Tool::Scale:
 			m_hint->setText(tr("<b>Scale</b><br>Drag a handle on a side of the box. Textures stay in place (texture lock)."));
 			break;
+		case Editor::Tool::Clip:
+			m_hint->setText(tr("<b>Clip</b><br>Select brushes. In a 2D view drag a line through them; in the 3D view click three points "
+			                   "on surfaces.<br>Tab: keep both parts / the back / the front. Enter cuts, Esc starts over."));
+			break;
+		case Editor::Tool::Vertex:
+			m_hint->setText(tr("<b>Vertex</b><br>Select a brush, then drag its corners (white) or edge middles (grey). Ctrl+click selects "
+			                   "several, then drag one of them.<br>In 3D the corner moves across the view; use a 2D view for exact moves. "
+			                   "Brushes always stay convex - corners that fold in are merged."));
+			break;
+		case Editor::Tool::Polygon:
+			m_hint->setText(tr("<b>Polygon</b><br>Click the corners of the base (on the floor in 3D, or in a 2D view). Enter or double-click "
+			                   "makes a brush as high as the last block. Backspace removes the last corner."));
+			break;
 	}
 	m_pages->setCurrentWidget(m_hint);
 }

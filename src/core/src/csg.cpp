@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 namespace sme {
 
@@ -416,6 +417,71 @@ std::optional<Solid> roundEdge(MapDocument& doc, const Solid& solid, int sideA, 
 		return std::nullopt;
 	}
 	return out;
+}
+
+std::vector<Vec3> solidCorners(const Solid& solid) {
+	std::vector<Vec3> corners;
+	for (const auto& face : buildBrushGeometry(solid).faces) {
+		for (const auto& v : face.vertices) {
+			if (std::none_of(corners.begin(), corners.end(), [&](const Vec3& c) { return length(c - v) < EPS; })) {
+				corners.push_back(v);
+			}
+		}
+	}
+	return corners;
+}
+
+std::optional<VertexEdit> moveVertices(MapDocument& doc, const Solid& solid, const std::vector<Vec3>& corners, const Vec3& delta) {
+	const auto geometry = buildBrushGeometry(solid);
+	const auto moved = [&](const Vec3& p) {
+		const bool hit = std::any_of(corners.begin(), corners.end(), [&](const Vec3& c) { return length(c - p) < EPS; });
+		return hit ? Vec3{snapCoordinate(p.x + delta.x), snapCoordinate(p.y + delta.y), snapCoordinate(p.z + delta.z)} : p;
+	};
+	std::vector<Vec3> points;
+	for (const auto& corner : solidCorners(solid)) {
+		points.push_back(moved(corner));
+	}
+	const auto hull = convexHull(points);
+	if (hull.empty()) {
+		return std::nullopt;
+	}
+	// Each new side takes over the old side whose (moved) face lies in it, else the one facing the same way.
+	VertexEdit edit;
+	edit.solid.id = solid.id;
+	edit.solid.extra = solid.extra;
+	std::set<int> usedIds;
+	for (const auto& plane : hull) {
+		const Side* best = nullptr;
+		double bestScore = -1e9;
+		for (const auto& face : geometry.faces) {
+			const Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
+			int onPlane = 0;
+			for (const auto& v : face.vertices) {
+				onPlane += std::abs(dot(plane.plane.normal, moved(v)) - plane.plane.dist) < EPS ? 1 : 0;
+			}
+			const double score = dot(side.plane().normal, plane.plane.normal) + 10.0 * onPlane / std::max<std::size_t>(1, face.vertices.size());
+			if (score > bestScore) {
+				bestScore = score;
+				best = &side;
+			}
+		}
+		Side side;
+		side.planePoints = plane.points;
+		if (best) {
+			copyTexture(side, *best);
+			side.extra = best->extra;   // keeps displacement info on faces that stay
+		} else {
+			side.material = "TOOLS/TOOLSNODRAW";
+			alignToWorld(side);
+		}
+		side.id = best && usedIds.insert(best->id).second ? best->id : doc.newSideId();
+		edit.solid.sides.push_back(std::move(side));
+	}
+	if (!usable(edit.solid)) {
+		return std::nullopt;
+	}
+	edit.cornersLost = solidCorners(edit.solid).size() < points.size();
+	return edit;
 }
 
 double solidVolume(const Solid& solid) {

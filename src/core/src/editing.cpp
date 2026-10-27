@@ -909,5 +909,33 @@ Change justifyFaces(MapDocument& doc, const std::vector<FaceRef>& faces, Justify
 	return t.finish();
 }
 
+VertexMoveOutcome moveVertices(MapDocument& doc, const std::vector<SolidRef>& solids, const std::vector<Vec3>& corners, const Vec3& delta) {
+	VertexMoveOutcome outcome;
+	std::vector<std::pair<SolidRef, Solid>> results;
+	for (const auto& ref : solids) {
+		const auto* solid = doc.findSolid(ref);
+		if (!solid) continue;
+		const auto own = solidCorners(*solid);
+		const bool touched = std::any_of(own.begin(), own.end(), [&](const Vec3& c) {
+			return std::any_of(corners.begin(), corners.end(), [&](const Vec3& k) { return length(c - k) < 0.01; });
+		});
+		if (!touched) continue;
+		auto edit = sme::moveVertices(doc, *solid, corners, delta);
+		if (!edit) {
+			outcome.refused = true;
+			return outcome;
+		}
+		outcome.cornersLost = outcome.cornersLost || edit->cornersLost;
+		results.emplace_back(ref, std::move(edit->solid));
+	}
+	Transaction t(doc, "Move vertices");
+	for (auto& [ref, solid] : results) {
+		t.touchSolid(ref);
+		*doc.findSolid(ref) = std::move(solid);
+	}
+	outcome.change = t.finish();
+	return outcome;
+}
+
 } // namespace edit
 } // namespace sme

@@ -15,6 +15,7 @@ add_library(smecore STATIC
 	src/history.cpp
 	src/keyvalues.cpp
 	src/map.cpp
+	src/map_tools.cpp
 	src/material.cpp
 	src/shapes.cpp
 	src/steam.cpp

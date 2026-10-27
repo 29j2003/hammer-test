@@ -15,6 +15,7 @@
 #include <sme/game.h>
 #include <sme/history.h>
 #include <sme/map.h>
+#include <sme/map_tools.h>
 
 namespace sme::app {
 
@@ -33,7 +34,7 @@ class Editor : public QObject {
 	Q_OBJECT
 
 public:
-	enum class Tool { Select, Move, Rotate, Scale, Block, Entity };
+	enum class Tool { Select, Move, Rotate, Scale, Block, Entity, Clip, Vertex, Polygon };
 	enum class SelectMode { Object, Face };
 	enum class RenderMode { Lit, Unlit, Wireframe };
 
@@ -58,7 +59,7 @@ public:
 	[[nodiscard]] const MapDocument& doc() const { return m_doc; }
 	[[nodiscard]] History& history() { return m_history; }
 	[[nodiscard]] QString filePath() const { return m_filePath; }
-	[[nodiscard]] bool modified() const { return m_history.modified(); }
+	[[nodiscard]] bool modified() const { return m_history.modified() || m_footerModified; }
 	void newMap();
 	bool openMap(const QString& path, QString* error = nullptr);
 	bool saveMap(const QString& path, QString* error = nullptr);
@@ -135,6 +136,17 @@ public:
 	void mergeSelection();
 	void roundSelectedEdge(double radius, int segments);
 	void clipSelection(const Plane& plane, edit::ClipKeep keep);
+	/// Vertex tool: moves corners of the selected brushes.
+	void moveSelectedVertices(const std::vector<Vec3>& corners, const Vec3& delta);
+	/// Polygon tool: a brush from a convex base (points) extruded by `height`.
+	void createPolygonBrush(const std::vector<Vec3>& base, const Vec3& extrude);
+	void dropSelectionToFloor();
+	/// Selects the whole path (path_track, path_corner ...) of the selected entity.
+	void selectTrackChain();
+
+	// --- Cordons (stored in the map, compile only what is inside) -------------
+	[[nodiscard]] CordonSet cordons() const;
+	void setCordons(const CordonSet& cordons);
 
 signals:
 	void gameAboutToChange();   ///< Background readers of the old game's files must stop now
@@ -169,6 +181,7 @@ private:
 	QStringList m_recentMaterials;
 	QString m_currentEntityClass = "info_player_start";
 	ShapeOptions m_shapeOptions;
+	bool m_footerModified = false;   ///< Cordons changed (not part of undo, like in Hammer)
 	struct LastShape {
 		Bounds box;
 		std::vector<SolidRef> refs;
