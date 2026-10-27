@@ -12,6 +12,7 @@
 
 namespace sme {
 
+/// Settings of the shape tool (kind, sides, arc, steps, ...), applied when a box is drawn.
 struct ShapeOptions {
 	enum class Kind { Block, Wedge, Cylinder, Spike, Sphere, Arch, Stairs };
 	Kind kind = Kind::Block;

@@ -16,6 +16,7 @@
 
 namespace sme {
 
+/// One look value: the console variable, where it is shown, its range and default.
 struct LookSetting {
 	std::string cvar;          ///< "r_fidelity_sky_clouds"
 	std::string group;         ///< "Clouds", "Light shafts", "Image", "Water"

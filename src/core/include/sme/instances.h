@@ -44,7 +44,9 @@ struct InstanceSettings {
 	Vec3 angles;                                     ///< pitch yaw roll
 };
 
+/// func_instance (the only class that instances other maps).
 [[nodiscard]] bool isInstanceEntity(const Entity& entity);
+/// Reads the keys of a func_instance (file, name, fixup style, $variables, origin, angles).
 [[nodiscard]] InstanceSettings instanceSettings(const Entity& funcInstance);
 /// Writes the replacements as replace01..NN (the old ones are removed first).
 void setInstanceReplacements(Entity& funcInstance, const std::vector<InstanceReplacement>& replacements);
@@ -65,6 +67,7 @@ public:
 	void clear() { m_entries.clear(); }
 
 private:
+	// Cached map and the file time it was read at.
 	struct Entry {
 		std::filesystem::file_time_type time;
 		std::shared_ptr<const MapDocument> doc;
@@ -88,6 +91,7 @@ struct InstancePreview {
 	std::vector<std::pair<Bounds, std::string>> pointBoxes;   ///< box and classname of each point entity
 	Bounds bounds;
 };
+/// Brushes and point-entity boxes of a prepared instance for the views.
 [[nodiscard]] InstancePreview buildInstancePreview(const MapDocument& prepared, const EntityCatalog* catalog);
 
 /// Replaces the func_instance by the instance's content (new ids, one undo step). `added` gets

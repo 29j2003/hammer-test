@@ -31,6 +31,7 @@ struct HullPlane {
 	Plane plane;
 	std::array<Vec3, 3> points;
 };
+/// Convex hull of the points as outward planes (nearly equal points are merged first).
 [[nodiscard]] std::vector<HullPlane> convexHull(const std::vector<Vec3>& points);
 
 /// Brush around the points (world-aligned textures). nullopt if the points do not span a volume.
@@ -54,6 +55,7 @@ struct MergeResult {
 	Solid solid;
 	bool exact = false;
 };
+/// One brush around all given brushes (their convex hull); nullopt if they do not span a volume.
 [[nodiscard]] std::optional<MergeResult> mergeSolids(MapDocument& doc, const std::vector<Solid>& solids);
 
 /// Rounds (segments > 1) or bevels (segments = 1) the edge between sides `sideA` and `sideB`
@@ -72,6 +74,7 @@ struct VertexEdit {
 	Solid solid;
 	bool cornersLost = false;
 };
+/// Moves the corners; nullopt if the result would be flat or broken.
 [[nodiscard]] std::optional<VertexEdit> moveVertices(MapDocument& doc, const Solid& solid, const std::vector<Vec3>& corners, const Vec3& delta);
 
 /// Unique corners of a brush.

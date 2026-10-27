@@ -39,10 +39,13 @@ struct Side {
 	int smoothingGroups = 0;
 	std::vector<KvNode> extra;           ///< dispinfo and unknown entries, in file order
 
+	/// The plane through the three plane points (normal points out of the brush).
 	[[nodiscard]] Plane plane() const;
+	/// The side's dispinfo block, or nullptr if it is not a displacement.
 	[[nodiscard]] const KvNode* dispInfo() const;
 };
 
+/// A brush: its sides plus everything else of its VMF block.
 struct Solid {
 	int id = 0;
 	std::vector<Side> sides;
@@ -60,6 +63,7 @@ struct Connection {
 	char separator = ',';                ///< ',' (Source 2013) or '\x1B' (newer branches)
 };
 
+/// An entity with its keys, outputs and (for brush entities) brushes. The world is an Entity too.
 struct Entity {
 	int id = 0;
 	std::vector<std::pair<std::string, std::string>> keyValues;   ///< Ordered, including classname/origin
@@ -67,12 +71,18 @@ struct Entity {
 	std::vector<Solid> solids;
 	std::vector<KvNode> extra;           ///< hidden solids, editor block, unknown blocks
 
+	/// Value of a key (case-insensitive), or `fallback`.
 	[[nodiscard]] std::string get(std::string_view key, std::string_view fallback = {}) const;
+	/// Sets a key (case-insensitive; keeps its place if it exists, else appends it).
 	void set(std::string_view key, std::string value);
+	/// Removes a key.
 	void erase(std::string_view key);
 	[[nodiscard]] std::string classname() const { return get("classname"); }
+	/// Whether it has an "origin" key (brush entities usually do not).
 	[[nodiscard]] bool hasOrigin() const;
+	/// The "origin" key as a vector (0 0 0 if missing).
 	[[nodiscard]] Vec3 origin() const;
+	/// Writes the "origin" key.
 	void setOrigin(const Vec3& origin);
 };
 
@@ -83,6 +93,7 @@ struct SolidRef {
 	constexpr bool operator==(const SolidRef&) const = default;
 };
 
+/// A whole VMF map: world, entities and the other blocks, kept so a save writes back what was read.
 class MapDocument {
 public:
 	MapDocument();
@@ -105,10 +116,13 @@ public:
 	void updateIdCounters();
 
 	[[nodiscard]] Entity* findEntity(int entityId);     ///< 0 = world
+	// Same, read-only.
 	[[nodiscard]] const Entity* findEntity(int entityId) const;
+	/// The brush at `ref` (world or brush entity) or nullptr.
 	[[nodiscard]] Solid* findSolid(const SolidRef& ref);
 	[[nodiscard]] const Solid* findSolid(const SolidRef& ref) const;
 
+	/// Brushes in the world and in all brush entities.
 	[[nodiscard]] std::size_t solidCount() const;
 
 private:

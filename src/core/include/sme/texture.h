@@ -20,6 +20,7 @@ struct ImageRgba {
 	std::vector<std::byte> pixels;
 };
 
+/// Header data of a VTF (size, format, flags) without the pixels.
 struct TextureInfo {
 	std::uint16_t width = 0;
 	std::uint16_t height = 0;

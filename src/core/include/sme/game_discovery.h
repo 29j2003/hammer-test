@@ -27,6 +27,7 @@ struct KnownApp {
 /// Known app by id, or nullptr.
 [[nodiscard]] const KnownApp* findKnownApp(AppId appId);
 
+/// A game or mod found on this PC (one folder with a gameinfo.txt).
 struct GameEntry {
 	std::string title;                          ///< From gameinfo.txt (falls back to the folder name)
 	std::string label;                          ///< Unique name for menus ("Half-Life 2 (episodic)")
@@ -51,6 +52,7 @@ struct GameEntry {
 	[[nodiscard]] std::string folder() const;
 };
 
+/// What discoverGames() found: Steam, the games and mods, Hammer configs and warnings.
 struct DiscoveryResult {
 	SteamInstallation steam;
 	std::vector<GameEntry> games;               ///< Sorted: games first, then mods, by title

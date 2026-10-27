@@ -39,12 +39,14 @@ using CompileOptions = CompileSettings;
 [[nodiscard]] CompileOptions loadCompileOptions(const QString& gameKey);
 void saveCompileOptions(const QString& gameKey, const CompileOptions& options);
 
+/// Runs the compile steps one after another as processes and reports output, progress, leaks and problems.
 class CompileRunner : public QObject {
 	Q_OBJECT
 
 public:
 	using QObject::QObject;
 
+	/// Starts compiling a map / stops the running compile / whether one is running.
 	void start(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options);
 	void cancel();
 	[[nodiscard]] bool running() const { return m_process != nullptr; }
@@ -56,8 +58,11 @@ public:
 	[[nodiscard]] QStringList stepNames() const;
 
 signals:
+	/// Output text with the colour it is shown in.
 	void output(const QString& text, const QColor& color);
+	/// VBSP found a leak: the line from its pointfile.
 	void leak(const std::vector<Vec3>& line);
+	/// The whole compile ended; false if a step failed or it was cancelled.
 	void finished(bool ok);
 	// Structured progress for the compile window.
 	void started(const QString& vmfPath, const QStringList& steps);
@@ -93,6 +98,7 @@ private:
 	QString m_phase;
 };
 
+/// The compile dialog: what to run and how (simple cards or every parameter of each tool).
 class CompileDialog : public QDialog {
 	Q_OBJECT
 
@@ -146,11 +152,13 @@ private:
 	QPlainTextEdit* m_commands;
 };
 
+/// Per-game settings: FGDs, compile tools, game executable, launch options and map folder.
 class GameSettingsDialog : public QDialog {
 	Q_OBJECT
 
 public:
 	GameSettingsDialog(Editor* editor, const QString& gameKey, QWidget* parent = nullptr);
+	/// The settings as entered.
 	[[nodiscard]] GameSettings settings() const;
 
 private:

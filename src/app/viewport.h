@@ -34,6 +34,7 @@ struct OverlayItem {
 /// Collects the overlay of a frame, so it is only painted again when something changed.
 struct OverlayRecorder {
 	std::vector<OverlayItem> items;
+	/// Records text (argument orders like QPainter::drawText) and the selection frame.
 	void drawText(const QRectF& rect, const QString& text, const QColor& color, int flags = Qt::AlignLeft | Qt::AlignTop) {
 		items.push_back({rect, text, color, flags, false});
 	}
@@ -42,6 +43,7 @@ struct OverlayRecorder {
 	void drawMarquee(const QRectF& rect) { items.push_back({rect, {}, {}, 0, true}); }
 };
 
+/// One map view, 3D or 2D, with its own camera and renderer (see the file comment).
 class Viewport : public QOpenGLWidget {
 	Q_OBJECT
 
@@ -49,6 +51,8 @@ public:
 	Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, QWidget* parent = nullptr);
 	~Viewport() override;
 
+	/// The view's camera. setCameraKind() switches between 3D and top / front / side (and frames the
+	/// selection when it changes between 3D and 2D).
 	[[nodiscard]] Camera& camera() { return m_camera; }
 	void setCameraKind(Camera::Kind kind);
 	/// Moves the camera so the selection (or the whole map) fills the view.
@@ -66,6 +70,7 @@ public:
 	void setLeakLine(const std::vector<Vec3>& points);
 
 signals:
+	/// World position under the mouse as text, for the status bar.
 	void cursorWorldPosition(const QString& text);
 	/// Right click without moving: the object under the cursor is selected, show the menu.
 	void contextMenuRequested(const QPoint& globalPos);

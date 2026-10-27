@@ -137,6 +137,8 @@ void History::push(Change change, bool merge) {
 	if (change.empty()) {
 		return;
 	}
+	// Merging (slider drags, repeated nudges): fold into the last step of the same name, unless it
+	// was undone or saved since. Each object keeps its oldest "before" and takes the newest "after".
 	if (merge && m_index > 0 && m_index == m_changes.size() && m_changes.back().name == change.name && m_savedIndex != m_index) {
 		auto& last = m_changes.back();
 		for (auto& s : change.solids) {
@@ -170,6 +172,7 @@ void History::push(Change change, bool merge) {
 		++m_revision;
 		return;
 	}
+	// A new step drops the undone steps after the current position (no redo past it).
 	m_changes.resize(m_index);
 	if (m_savedIndex > m_index) {
 		m_savedIndex = std::numeric_limits<std::size_t>::max(); // the saved state can no longer be reached

@@ -3,9 +3,10 @@
 // installs it with a small PowerShell helper that waits for the editor to close, replaces
 // the files and starts the new version.
 //
-// The only network access of the editor: one request to api.github.com per check (at
-// start, can be turned off) and the download when the mapper says yes. Nothing is sent
-// about the user or the maps.
+// The editor's own network access: one request to api.github.com per check (at start, can be
+// turned off) and the download when the mapper says yes. Nothing is sent about the user or the
+// maps. (The only other network use is the system's git, when the mapper presses Fetch, Pull
+// or Push on the Source control tab.)
 
 #pragma once
 
@@ -20,6 +21,7 @@ class QNetworkReply;
 
 namespace sme::app {
 
+/// A release on GitHub: version, notes, and where its Windows package and checksum are.
 struct ReleaseInfo {
 	QString version;       ///< "0.3.0" (tag without "v")
 	QString notes;         ///< Release text
@@ -32,6 +34,7 @@ struct ReleaseInfo {
 /// Reads the GitHub API answer for a release (nullopt if it has no version).
 [[nodiscard]] std::optional<ReleaseInfo> parseRelease(const QByteArray& json);
 
+/// Checks for, downloads and installs updates (see the file comment).
 class Updater : public QObject {
 	Q_OBJECT
 
@@ -54,6 +57,7 @@ public:
 	[[nodiscard]] static bool install(const QString& zipPath, QString* error = nullptr);
 
 signals:
+	/// Answers to check() and download().
 	void updateAvailable(const sme::app::ReleaseInfo& release);
 	void upToDate();
 	void checkFailed(const QString& error);

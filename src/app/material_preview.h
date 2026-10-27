@@ -20,6 +20,7 @@
 
 namespace sme::app {
 
+/// OpenGL widget that draws the material preview (see the file comment).
 class MaterialPreview : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
 	Q_OBJECT
 
@@ -29,6 +30,7 @@ public:
 	enum Slot { Base, Bump, Mask, Detail, Height, SlotCount };
 	enum class Mode { Surface, Water, Liquid };
 
+	/// Material parameters the preview's shader uses (set from the editor's fields).
 	struct Settings {
 		bool ssbump = false;
 		bool envmap = false;
@@ -61,6 +63,7 @@ public:
 	~MaterialPreview() override;
 
 	void setTexture(Slot slot, const QImage& image);   ///< Null image: slot unused
+	/// What to draw: material parameters, shape and light.
 	void setSettings(const Settings& settings);
 	void setShape(Shape shape);
 	void setLighting(Lighting lighting);

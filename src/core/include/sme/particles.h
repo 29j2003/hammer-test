@@ -33,23 +33,29 @@ struct ParticleFunction {
 	std::string name;
 	std::vector<ParticleValue> values;
 
+	/// Value of a key (case-insensitive) or nullptr.
 	[[nodiscard]] const ParticleValue* find(std::string_view key) const;
+	/// The value as a number / vector, or `fallback`.
 	[[nodiscard]] double number(std::string_view key, double fallback) const;
 	[[nodiscard]] Vec3 vector(std::string_view key, const Vec3& fallback) const;
+	/// Whether the key exists.
 	[[nodiscard]] bool has(std::string_view key) const { return find(key) != nullptr; }
 };
 
+/// A child system and when it starts after its parent.
 struct ParticleChild {
 	std::string name;
 	double delay = 0;
 };
 
+/// One particle system of a .pcf: its own values and its parts.
 struct ParticleDefinition {
 	std::string name;
 	ParticleFunction properties;   ///< The system's own values (material, max_particles, radius, color, ...)
 	std::vector<ParticleFunction> emitters, initializers, operators, renderers, forces, constraints;
 	std::vector<ParticleChild> children;
 
+	/// The system's material ("particle/fire"), empty if none.
 	[[nodiscard]] std::string material() const { return properties.find("material") ? properties.find("material")->text : std::string(); }
 };
 
@@ -80,6 +86,7 @@ public:
 	/// Advances by `seconds` (split into small steps).
 	void step(double seconds);
 
+	/// Seconds simulated since the start.
 	[[nodiscard]] double time() const { return m_time; }
 	/// Starts again by itself once everything is over (bursts, emitters with a duration).
 	bool loop = true;
@@ -88,6 +95,7 @@ public:
 	/// Live particles of every system, with their system index.
 	[[nodiscard]] std::vector<ParticleSprite> sprites() const;
 
+	/// Name and drawing hints of every running system (index = ParticleSprite::system).
 	struct SystemInfo {
 		std::string name;
 		std::string material;

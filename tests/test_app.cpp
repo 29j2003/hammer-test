@@ -1076,7 +1076,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(window.currentPage() == MainWindow::Page::Map);
 		CHECK(window.sounds()->isVisible());
 		CHECK(window.sounds()->parentWidget() != window.pages()->widget(2));
-		// Mod page: the game's maps, search paths and FGDs.
+		// Project page, Overview tab: the game's maps, search paths and FGDs.
 		window.showPage(MainWindow::Page::Project);
 		auto* mounts = window.modPage()->findChild<QTreeWidget*>("modMounts");
 		REQUIRE(mounts);
@@ -1288,7 +1288,7 @@ TEST_CASE("editing with the mouse in the real window") {
 	editor.clearSelection();
 
 	{
-		// Sounds tab: sound scripts and soundscapes; dropping them places the matching entity.
+		// Sounds page and dock: sound scripts and soundscapes; dropping them places the matching entity.
 		auto* sounds = window.sounds();
 		if (sounds->tree()->topLevelItemCount() == 0) {
 			QSignalSpy soundsIndexed(sounds, &SoundBrowser::indexed);

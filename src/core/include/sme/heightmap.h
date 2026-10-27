@@ -21,11 +21,13 @@
 
 namespace sme {
 
+/// Heights 0..1 per texel (used for the relief preview and the relief texture).
 struct HeightMap {
 	unsigned width = 0;
 	unsigned height = 0;
 	std::vector<float> values;   ///< 0..1, rows top to bottom
 
+	/// Height at a texel (no bounds check).
 	[[nodiscard]] float at(unsigned x, unsigned y) const { return values[std::size_t(y) * width + x]; }
 };
 
@@ -63,6 +65,7 @@ struct ReliefSource {
 	double depth = 0.02;          ///< $parallaxdepth (texture units)
 };
 struct Material;
+/// Where the relief (Fidelity_Parallax) of this material gets its heights, following the rules of mapbase-fidelity's deploy script; nullopt if the material gets no relief.
 [[nodiscard]] std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, const Material& material);
 
 /// An I8 .vtf with all mip levels (what the Fidelity_Parallax shader reads).

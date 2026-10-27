@@ -8,11 +8,13 @@
 
 namespace sme::app {
 
+/// On/off switch (see the file comment).
 class ToggleSwitch : public QCheckBox {
 	Q_OBJECT
 
 public:
 	explicit ToggleSwitch(QWidget* parent = nullptr);
+	/// Size of the pill.
 	[[nodiscard]] QSize sizeHint() const override;
 	[[nodiscard]] QSize minimumSizeHint() const override { return sizeHint(); }
 

@@ -35,10 +35,12 @@ struct ShipFile {
 	std::uint64_t size = 0;             ///< Bytes (0 when missing)
 };
 
+/// Every file a map needs, with where it comes from, plus the problems found.
 struct MapDependencies {
 	std::vector<ShipFile> files;        ///< Sorted by path, each path once
 	std::vector<std::string> problems;  ///< Missing files and why they are needed
 
+	/// How many files / bytes come from `origin`.
 	[[nodiscard]] std::size_t count(ShipFile::Origin origin) const;
 	[[nodiscard]] std::uint64_t bytes(ShipFile::Origin origin) const;
 };
@@ -99,6 +101,7 @@ struct WorkshopItem {
 	int visibility = 0;                    ///< 0 public, 1 friends only, 2 private, 3 unlisted
 	std::string title, description, changeNote;
 };
+/// The item file (VDF) for `steamcmd +workshop_build_item`.
 [[nodiscard]] std::string workshopItemVdf(const WorkshopItem& item);
 
 } // namespace sme

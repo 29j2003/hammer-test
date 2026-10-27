@@ -20,6 +20,7 @@ namespace sme::app {
 
 class Editor;
 
+/// The Map Look dock (see the file comment).
 class MapLookPanel : public QWidget {
 	Q_OBJECT
 

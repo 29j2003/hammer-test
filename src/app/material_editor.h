@@ -1,4 +1,4 @@
-// material_editor.h - "Material Editor" tab: edits a VMT with fields for what mappers change
+// material_editor.h - The Materials page of the side bar: edits a VMT with fields for what mappers change
 // most and a big live preview with different lights. Laid out like Source 2's material editor:
 // recent materials and a search on the left, then the parameters in groups - a group with a
 // switch in its header is a feature (normal map, relief, reflections, ...) and folds away when
@@ -55,8 +55,10 @@ class HeightZonePainter : public QWidget {
 
 public:
 	HeightZonePainter(const QImage& texture, unsigned zonesWidth, unsigned zonesHeight, std::vector<std::uint8_t> zones, QWidget* parent = nullptr);
+	/// Zone painted with the left mouse button, and the brush size in texels.
 	void setZone(HeightZone zone) { m_zone = zone; }
 	void setBrush(int texels) { m_brush = texels; }
+	/// Removes all zones; zones() holds one HeightZone per texel.
 	void clear();
 	[[nodiscard]] const std::vector<std::uint8_t>& zones() const { return m_zones; }
 	[[nodiscard]] QSize sizeHint() const override;
@@ -77,6 +79,7 @@ private:
 	int m_brush = 12;
 };
 
+/// The Materials page: edits one VMT with a live preview (see the file comment).
 class MaterialEditor : public QWidget {
 	Q_OBJECT
 
@@ -107,6 +110,7 @@ public:
 	[[nodiscard]] QStringList recentMaterials() const;
 
 signals:
+	/// A material was written (the views and the browser read it again).
 	void materialSaved(const QString& name);
 	/// Preview textures were read (tests wait for this).
 	void previewUpdated();

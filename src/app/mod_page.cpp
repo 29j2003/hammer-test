@@ -1,4 +1,4 @@
-// mod_page.cpp - Mod page of the side bar (see mod_page.h).
+// mod_page.cpp - Overview tab of the Project page (see mod_page.h).
 
 #include "mod_page.h"
 

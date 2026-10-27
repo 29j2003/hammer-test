@@ -30,6 +30,7 @@ struct SoundscapeRule {
 	std::vector<KvNode> extra;          ///< Keys and blocks not known above, kept as they were
 };
 
+/// One soundscape of a script file.
 struct SoundscapeScript {
 	std::string name;                   ///< "d1_canals.util_drips"
 	std::string dsp;                    ///< Room effect number ("1"); empty = not set
@@ -56,6 +57,7 @@ struct DspPreset {
 	int id;
 	const char* name;
 };
+/// All known room effects, by number.
 [[nodiscard]] std::span<const DspPreset> dspPresets();
 
 } // namespace sme

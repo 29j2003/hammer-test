@@ -1,5 +1,9 @@
-// main_window.h - The editor window: viewports (single 3D or 3D + three 2D views), tool bar,
-// docks (asset browser, object properties, outliner, problems, log), menus and shortcuts.
+// main_window.h - The editor window of Mapsmith. A side bar on the left switches between whole
+// pages: Map (the views with their docks), Materials (material editor), Sounds, Particles and
+// Project (tabs Overview, Maps, Menu, Source control, Ship). On the Map page the views are a
+// single 3D view or 3D + top/front/side; docks sit left (Tool, Outliner, VisGroups, Map Look),
+// at the bottom (Asset Browser, Sounds, Particles, Compile, Problems, Log, History) and right
+// (Object Properties). Also the menus, tool bars, status bar and shortcuts.
 
 #pragma once
 
@@ -43,15 +47,20 @@ class Updater;
 struct ReleaseInfo;
 class Viewport;
 
+/// The main window: side bar pages, views, docks, menus and tool bars (see the file comment).
 class MainWindow : public QMainWindow {
 	Q_OBJECT
 
 public:
 	explicit MainWindow(Editor* editor, QWidget* parent = nullptr);
 
+	/// Opens a game by its key (errors go to the log).
 	void selectGame(const QString& key);
+	/// Opens a map (offers a newer autosave first); false if it was not opened.
 	bool openMap(const QString& path);
+	/// One 3D view, or the 3D view plus top, front and side views.
 	void setQuadLayout(bool quad);
+	/// Parts of the window, for wiring and tests. view(0) is the 3D view, 1-3 top, front and side.
 	[[nodiscard]] Viewport* view3D() const { return m_views[0]; }
 	[[nodiscard]] Viewport* view(int index) const { return m_views[static_cast<std::size_t>(index)]; }
 	[[nodiscard]] ProblemsPanel* problems() const { return m_problems; }

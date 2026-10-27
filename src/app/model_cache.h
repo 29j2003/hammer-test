@@ -20,6 +20,7 @@ class GameFileSystem;
 
 namespace sme::app {
 
+/// Model triangles by path, loaded in the background (see the file comment).
 class ModelCache : public QObject {
 	Q_OBJECT
 
@@ -36,6 +37,7 @@ public:
 	[[nodiscard]] QString error(const QString& path) const;
 
 signals:
+	/// A model finished loading or failed (see failed()); on the GUI thread.
 	void modelReady(const QString& path);
 
 private:

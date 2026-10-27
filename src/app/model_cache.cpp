@@ -39,6 +39,8 @@ std::shared_ptr<const ModelGeometry> ModelCache::get(const QString& path) {
 	const GameFileSystem* fs = m_fs;
 	const auto generationCounter = m_generation;
 	const int generation = *generationCounter;
+	// Loaded on a pool thread, stored on the GUI thread. The shared generation counter lets a job
+	// see that the game changed (skip the work) and `self` that the cache is gone.
 	QPointer<ModelCache> self(this);
 	m_pool.start([self, fs, path, generationCounter, generation] {
 		if (*generationCounter != generation) {

@@ -15,24 +15,28 @@
 
 namespace sme {
 
+/// One face of a brush: its corner points (in the order the renderer needs) and normal.
 struct FaceGeometry {
 	int sideIndex = 0;
 	std::vector<Vec3> vertices;     ///< Counter-clockwise seen from outside (OpenGL front face)
 	Vec3 normal;
 };
 
+/// All faces of a brush, computed by clipping its planes against each other.
 struct BrushGeometry {
 	std::vector<FaceGeometry> faces;
 	Bounds bounds;
 	bool valid = false;             ///< false if the planes do not form a closed convex solid
 };
 
+/// Builds the faces of a brush from its side planes. `valid` is false for broken brushes.
 [[nodiscard]] BrushGeometry buildBrushGeometry(const Solid& solid);
 
 /// Texture coordinates in texels (divide by texture size for 0..1), like the engine computes them.
 struct TexCoord {
 	double u = 0, v = 0;
 };
+/// Texture coordinate of `point` on `side` (texels).
 [[nodiscard]] TexCoord textureCoordinate(const Side& side, const Vec3& point);
 
 /// Ray against a convex brush: distance (>= 0) and side index, or nullopt.
@@ -40,6 +44,7 @@ struct BrushHit {
 	double distance = 0;
 	int sideIndex = 0;
 };
+/// Nearest hit of the ray with the brush, or nullopt.
 [[nodiscard]] std::optional<BrushHit> intersect(const Ray& ray, const Solid& solid);
 
 /// Hammer's default world-aligned texture axes for a face with this normal.
@@ -69,6 +74,7 @@ struct DisplacementMesh {
 	std::vector<Vec3> positions;        ///< size * size, row-major
 	std::vector<float> alpha;           ///< Blend alpha 0..255 per vertex
 };
+/// The displacement surface of a side from its dispinfo; nullopt if the side is not a displacement.
 [[nodiscard]] std::optional<DisplacementMesh> buildDisplacement(const Side& side, const FaceGeometry& face);
 
 } // namespace sme

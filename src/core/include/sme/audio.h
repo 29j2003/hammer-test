@@ -15,6 +15,7 @@
 
 namespace sme {
 
+/// A sound decoded to 16-bit PCM, ready to play or draw as a waveform.
 struct DecodedAudio {
 	int sampleRate = 0;
 	int channels = 0;
@@ -22,7 +23,9 @@ struct DecodedAudio {
 	std::string format;                  ///< "PCM 16 bit", "MS ADPCM", "MP3", ...
 	std::optional<std::size_t> loopStart; ///< Frame where a looping sound starts again (cue/smpl chunk)
 
+	/// Samples per channel.
 	[[nodiscard]] std::size_t frames() const { return channels > 0 ? samples.size() / static_cast<std::size_t>(channels) : 0; }
+	/// Length in seconds.
 	[[nodiscard]] double seconds() const { return sampleRate > 0 ? double(frames()) / sampleRate : 0.0; }
 };
 

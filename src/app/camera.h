@@ -13,6 +13,7 @@
 
 namespace sme::app {
 
+/// Camera of one view: position, angles and zoom; makes the OpenGL matrices and picking rays.
 struct Camera {
 	enum class Kind { Perspective, Top, Front, Side };
 
@@ -23,8 +24,10 @@ struct Camera {
 	float fov = 80;              ///< vertical field of view in degrees
 	float zoom = 0.5f;           ///< 2D views: pixels per world unit
 
+	/// Top, front or side view (orthographic).
 	[[nodiscard]] bool is2D() const { return kind != Kind::Perspective; }
 
+	/// Direction the camera looks, and its up and right directions (fixed in the 2D views).
 	[[nodiscard]] QVector3D forward() const {
 		switch (kind) {
 			case Kind::Top: return {0, 0, -1};
@@ -54,6 +57,7 @@ struct Camera {
 		return QVector3D::crossProduct(forward(), {0, 0, 1}).normalized();
 	}
 
+	/// View and projection matrices for OpenGL.
 	[[nodiscard]] QMatrix4x4 view() const {
 		QMatrix4x4 m;
 		m.lookAt(position, position + forward(), up());
@@ -98,6 +102,7 @@ struct Camera {
 	}
 };
 
+/// Conversion between the core's Vec3 (double) and Qt's QVector3D (float).
 [[nodiscard]] inline QVector3D toQt(const Vec3& v) {
 	return {float(v.x), float(v.y), float(v.z)};
 }

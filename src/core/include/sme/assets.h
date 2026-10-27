@@ -29,6 +29,7 @@ struct MaterialCategory {
 	bool brush = false;        ///< Usable on world brushes (LightmappedGeneric & co., not model-only)
 };
 
+/// Sorts a material into the browser's categories (brush, blend, model, tool, see-through, water, decal, sky).
 [[nodiscard]] MaterialCategory classifyMaterial(const Material& material);
 
 /// What the editor needs from a .mdl file.

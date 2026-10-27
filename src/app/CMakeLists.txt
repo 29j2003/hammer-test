@@ -1,7 +1,7 @@
 # The Qt editor application. Qt 6.4+ (CI builds with 6.8).
 # Everything except main.cpp is a library so the UI tests can drive the real windows.
 find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent Network)
-# Sound preview in the Sounds tab (optional: without it the editor builds, but cannot play sounds).
+# Sound preview in the Sounds browser (optional: without it the editor builds, but cannot play sounds).
 find_package(Qt6 QUIET COMPONENTS Multimedia)
 set(CMAKE_AUTOMOC ON)
 

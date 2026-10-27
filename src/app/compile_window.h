@@ -19,6 +19,7 @@ namespace sme::app {
 
 class CompileRunner;
 
+/// The Compile dock (see the file comment).
 class CompileWindow : public QWidget {
 	Q_OBJECT
 
@@ -27,6 +28,7 @@ public:
 
 	explicit CompileWindow(CompileRunner* runner, QWidget* parent = nullptr);
 
+	/// State of the steps, the problem counts and a one-line summary (also read by tests).
 	[[nodiscard]] int stepCount() const;
 	[[nodiscard]] StepState stepState(int index) const;
 	[[nodiscard]] int warningCount() const { return m_warnings; }
@@ -34,6 +36,7 @@ public:
 	[[nodiscard]] QString summary() const;
 
 signals:
+	/// The buttons "compile again" and "show leak" were pressed.
 	void compileAgain();
 	void showLeak();
 

@@ -24,6 +24,7 @@ namespace sme::app {
 
 class Editor;
 
+/// The Source control tab of the Project page (see the file comment).
 class SourceControlPanel : public QWidget {
 	Q_OBJECT
 

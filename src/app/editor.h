@@ -36,6 +36,7 @@ struct GameSettings {
 	QString launchOptions = "-novid -dev -console -windowed";
 };
 
+/// Central editor state (see the file comment); views and panels read it and listen to its signals.
 class Editor : public QObject {
 	Q_OBJECT
 
@@ -244,15 +245,23 @@ public:
 
 signals:
 	void gameAboutToChange();   ///< Background readers of the old game's files must stop now
+	/// Another game was opened (file system, FGDs and models are new).
 	void gameChanged();
+	/// The map changed (commit, undo, redo, ...); the views build their geometry again.
 	void documentChanged();
 	void documentReplaced();     ///< New/opened map (views reset the camera)
+	/// The selection changed (views only update flags).
 	void selectionChanged();
+	/// Another tool was chosen.
 	void toolChanged();
+	/// A view or tool setting changed (grid, snapping, render mode, ...).
 	void settingsChanged();
 	void viewFilterChanged();    ///< A kind of object was shown or hidden
+	/// Vertex tool: the chosen corners changed.
 	void vertexCornersChanged();
+	/// The list of recently used materials changed.
 	void recentMaterialsChanged();
+	/// A short message for the status bar and the log.
 	void message(const QString& text);
 
 private:

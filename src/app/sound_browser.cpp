@@ -1,4 +1,4 @@
-// sound_browser.cpp - Sounds tab (see sound_browser.h).
+// sound_browser.cpp - Sounds page and dock (see sound_browser.h).
 
 #include "sound_browser.h"
 

@@ -9,7 +9,7 @@
 //   --camera "x y z yaw pitch"
 //   --render lit|unlit|wire
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
-//   --page NAME          show a page of the side bar (map, materials, sounds, particles, mod)
+//   --page NAME          show a page of the side bar (map, materials, sounds, particles, project; "mod" still works)
 //   --pick-edge          vertex tool with an edge of the first brush picked
 //   --particle NAME      show a particle system in the Particles browser (with --page particles)
 //   --tool NAME          start with a tool (block, entity, ...)

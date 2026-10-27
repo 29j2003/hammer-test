@@ -30,6 +30,8 @@ struct Mount {
 	std::string problem;                ///< Why it is not present
 };
 
+/// The game's files as the engine sees them: folders and VPKs in search path order, first one wins.
+/// Reads are safe from several threads (the background loaders share one instance).
 class GameFileSystem {
 public:
 	GameFileSystem();
@@ -47,14 +49,18 @@ public:
 	/// Appends a VPK; accepts "name.vpk" or "name_dir.vpk".
 	void addVpk(const std::filesystem::path& vpk, std::vector<std::string> pathIds, std::string source = {});
 
+	/// Every mount in order, with whether it was found.
 	[[nodiscard]] const std::vector<Mount>& mounts() const;
 
 	/// Index of the mount that provides `path`, or empty if no mount has it.
 	/// `pathId` filters mounts by search path id ("game" matches "game+mod" etc.); empty = all.
 	[[nodiscard]] std::optional<std::size_t> locate(std::string_view path, std::string_view pathId = "game") const;
 
+	/// Whether a mount has the file (path relative to the game, '/' separated, case-insensitive).
 	[[nodiscard]] bool exists(std::string_view path, std::string_view pathId = "game") const;
+	/// The whole file from the first mount that has it, or nullopt.
 	[[nodiscard]] std::optional<std::vector<std::byte>> read(std::string_view path, std::string_view pathId = "game") const;
+	/// Like read(), as text.
 	[[nodiscard]] std::optional<std::string> readText(std::string_view path, std::string_view pathId = "game") const;
 
 	/// All files below `dir` (normalized, lowercase, unique, sorted) with the given extension

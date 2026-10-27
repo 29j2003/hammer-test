@@ -27,6 +27,7 @@ QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QString
 /// Shows the dialog; true if a mod was created (the editor then has it open).
 bool runNewModDialog(Editor* editor, QWidget* parent = nullptr);
 
+/// The dialog itself; runNewModDialog() shows it and does the work.
 class NewModDialog : public QDialog {
 	Q_OBJECT
 

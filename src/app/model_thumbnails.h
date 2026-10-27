@@ -28,6 +28,7 @@ class ModelCache;
 /// `texture(material)` returns the material's base texture or a null image.
 [[nodiscard]] QImage renderModelPreview(const ModelGeometry& model, int size, const std::function<QImage(const std::string&)>& texture);
 
+/// Model previews for the browser, rendered in the background and kept (see the file comment).
 class ModelThumbnails : public QObject {
 	Q_OBJECT
 
@@ -42,6 +43,7 @@ public:
 	void clear();
 
 signals:
+	/// The picture of a model is ready (a preview, or the "cannot load" / "animations only" image).
 	void thumbnailReady(const QString& path);
 
 private:

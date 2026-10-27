@@ -1,4 +1,4 @@
-// sound_browser.h - Sounds tab: every sound script entry (with its files), every sound file
+// sound_browser.h - Sounds page and dock: every sound script entry (with its files), every sound file
 // and every soundscape of the game, searchable and draggable into the map
 // (sound -> ambient_generic, soundscape -> env_soundscape). A click plays the sound (own
 // decoder, waveform with loop point and playhead); sound script entries can be edited and
@@ -47,10 +47,12 @@ class SoundWaveform : public QWidget {
 
 public:
 	explicit SoundWaveform(QWidget* parent = nullptr);
+	/// Sound to draw (null clears).
 	void setAudio(std::shared_ptr<const DecodedAudio> audio);
 	void setPlayhead(double seconds);   ///< < 0: hidden
 
 signals:
+	/// Click in the waveform: play from there.
 	void seekRequested(double seconds);
 
 protected:
@@ -64,6 +66,7 @@ private:
 	double m_playhead = -1;
 };
 
+/// The Sounds page and dock (see the file comment).
 class SoundBrowser : public QWidget {
 	Q_OBJECT
 
@@ -72,6 +75,7 @@ public:
 
 	explicit SoundBrowser(Editor* editor, QWidget* parent = nullptr);
 	~SoundBrowser() override;
+	/// The tree of script sounds, sound files and soundscapes.
 	[[nodiscard]] QTreeWidget* tree() const { return m_tree; }
 	/// The sound shown in the player (null until one was decoded).
 	[[nodiscard]] std::shared_ptr<const DecodedAudio> currentAudio() const { return m_audio; }
@@ -84,6 +88,7 @@ public:
 	void newSoundscape();
 
 signals:
+	/// Background indexing finished / a sound was decoded and shown.
 	void indexed();
 	void audioLoaded();
 

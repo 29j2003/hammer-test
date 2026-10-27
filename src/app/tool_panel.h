@@ -79,11 +79,13 @@ private:
 	QHash<QString, QList<QTreeWidgetItem*>> m_modelItems;     ///< editor model -> items waiting for its preview
 };
 
+/// The Tool dock: one page per tool (see the file comment).
 class ToolPanel : public QWidget {
 	Q_OBJECT
 
 public:
 	explicit ToolPanel(Editor* editor, QWidget* parent = nullptr);
+	/// The entity list of the entity tool.
 	[[nodiscard]] EntityPicker* entityPicker() const { return m_entities; }
 	/// Adds the page shown for the block tool (built by the block tool options).
 	void setBlockPage(QWidget* page);
