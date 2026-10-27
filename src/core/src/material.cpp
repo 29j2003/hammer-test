@@ -2,6 +2,8 @@
 
 #include <sme/material.h>
 
+#include <sme/keyvalues.h>
+
 #include <sme/filesystem.h>
 #include <sme/text.h>
 
@@ -108,6 +110,71 @@ std::string normalizeMaterialName(std::string_view name) {
 		}
 	}
 	return normalized;
+}
+
+namespace {
+
+void eraseKey(KvNode& block, std::string_view key) {
+	std::erase_if(block.children, [&](const KvNode& child) { return !child.block && iequals(child.key, key); });
+}
+
+KvNode& childBlock(KvNode& parent, std::string_view key) {
+	for (auto& child : parent.children) {
+		if (child.block && iequals(child.key, key)) return child;
+	}
+	parent.children.push_back(KvNode::makeBlock(std::string(key)));
+	return parent.children.back();
+}
+
+} // namespace
+
+std::string editMaterialText(std::string_view vmt, std::string_view shader, const std::vector<MaterialEdit>& edits, const Material* base) {
+	KvNode root = parseKeyValues(vmt);
+	KvNode* material = nullptr;
+	for (auto& child : root.children) {
+		if (child.block) {
+			material = &child;
+			break;
+		}
+	}
+	if (!material) {
+		root.children.push_back(KvNode::makeBlock(shader.empty() ? "LightmappedGeneric" : std::string(shader)));
+		material = &root.children.back();
+	}
+	if (iequals(material->key, "patch")) {
+		KvNode& replace = childBlock(*material, "replace");
+		KvNode& insert = childBlock(*material, "insert");
+		for (const auto& edit : edits) {
+			eraseKey(replace, edit.key);
+			eraseKey(insert, edit.key);
+			if (edit.value) {
+				const bool inBase = base && base->params.contains(toLower(edit.key));
+				(inBase ? replace : insert).set(edit.key, *edit.value);
+			}
+		}
+		std::erase_if(material->children, [](const KvNode& child) { return child.block && child.children.empty() && (iequals(child.key, "replace") || iequals(child.key, "insert")); });
+	} else {
+		if (!shader.empty()) {
+			material->key = std::string(shader);
+		}
+		for (const auto& edit : edits) {
+			if (edit.value) {
+				material->set(edit.key, *edit.value);
+			} else {
+				eraseKey(*material, edit.key);
+			}
+		}
+	}
+	return writeKeyValues(root);
+}
+
+std::string newMaterialText(std::string_view shader, const std::vector<MaterialEdit>& params) {
+	KvNode root;
+	root.children.push_back(KvNode::makeBlock(shader.empty() ? "LightmappedGeneric" : std::string(shader)));
+	for (const auto& edit : params) {
+		if (edit.value) root.children.back().set(edit.key, *edit.value);
+	}
+	return writeKeyValues(root);
 }
 
 std::optional<Material> parseMaterial(std::string_view text, std::string_view name, std::string* error) {

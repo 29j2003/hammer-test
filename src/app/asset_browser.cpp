@@ -16,6 +16,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QListView>
 #include <QListWidget>
 #include <QMimeData>
@@ -306,6 +307,16 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_materialView = makeIconView(page);
 		addCopyShortcut(m_materialView, Qt::UserRole);   // Ctrl+C: the material's name
 		m_materialView->setModel(m_materialFilter);
+		m_materialView->setContextMenuPolicy(Qt::CustomContextMenu);
+		connect(m_materialView, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+			const QModelIndex index = m_materialView->indexAt(pos);
+			if (!index.isValid()) return;
+			const QString name = index.data(Qt::UserRole).toString();
+			QMenu menu;
+			menu.addAction(tr("Edit material ..."), this, [this, name] { emit editMaterialRequested(name); });
+			menu.addAction(tr("Copy name"), this, [name] { QApplication::clipboard()->setText(name); });
+			menu.exec(m_materialView->viewport()->mapToGlobal(pos));
+		});
 		v->addWidget(m_materialView, 1);
 		m_materialInfo = new QLabel(tr("No game loaded"));
 		m_materialInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -461,6 +472,15 @@ std::vector<std::string> AssetBrowser::materialNames() const {
 		out.push_back(item.name.toStdString());
 	}
 	return out;
+}
+
+void AssetBrowser::materialChanged(const QString& name) {
+	m_thumbnails->reload(name);
+	const auto& items = m_materialModel->items();
+	const bool known = std::any_of(items.begin(), items.end(), [&](const auto& item) { return item.name == name; });
+	if (!known) {
+		reload();   // a new material: list it
+	}
 }
 
 void AssetBrowser::reload() {

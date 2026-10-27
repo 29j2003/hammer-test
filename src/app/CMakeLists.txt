@@ -13,6 +13,8 @@ add_library(smeapp STATIC
 	editor.cpp
 	main_window.cpp
 	material_cache.cpp
+	material_editor.cpp
+	material_preview.cpp
 	model_cache.cpp
 	model_thumbnails.cpp
 	panels.cpp

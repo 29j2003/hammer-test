@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "compile_window.h"
+#include "material_editor.h"
 #include "material_cache.h"
 #include "panels.h"
 #include "particle_browser.h"
@@ -226,6 +227,7 @@ void MainWindow::createDocks() {
 	m_sounds = new SoundBrowser(m_editor);
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
+	m_materialEditor = new MaterialEditor(m_editor);
 
 	// Tool options on the left next to the tool bar (like XBLAH's "New objects"), properties on the right.
 	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::LeftDockWidgetArea);
@@ -238,10 +240,25 @@ void MainWindow::createDocks() {
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
 	auto* particles = addDock(tr("Particles"), m_particles, Qt::BottomDockWidgetArea);
 	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
+	auto* materialEditor = addDock(tr("Material Editor"), m_materialEditor, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, sounds);
 	tabifyDockWidget(assets, particles);
 	tabifyDockWidget(assets, compile);
+	tabifyDockWidget(assets, materialEditor);
+	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
+	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
+		m_materialEditor->openMaterial(name);
+		raiseDock("Material Editor");
+	});
+	connect(m_properties, &PropertiesPanel::editMaterialRequested, this, [this](const QString& name) {
+		m_materialEditor->openMaterial(name);
+		raiseDock("Material Editor");
+	});
+	connect(m_materialEditor, &MaterialEditor::materialSaved, this, [this](const QString& name) {
+		m_materials->reload(name);
+		m_assets->materialChanged(name);
+	});
 	tabifyDockWidget(assets, log);
 	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
 	connect(m_compileWindow, &CompileWindow::showLeak, this, [this] {

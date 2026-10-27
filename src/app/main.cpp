@@ -10,6 +10,7 @@
 //   --render lit|unlit|wire
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
 //   --tool NAME          start with a tool (block, entity, ...)
+//   --material NAME      open a material in the Material Editor
 //   --check              run the problem checks after loading
 //   --screenshot FILE    save a picture of the window after loading and quit
 //   --no-update-check    do not ask GitHub for a newer version at start
@@ -25,6 +26,7 @@
 #include "asset_browser.h"
 #include "editor.h"
 #include "main_window.h"
+#include "material_editor.h"
 #include "panels.h"
 #include "style.h"
 #include "viewport.h"
@@ -59,6 +61,7 @@ int main(int argc, char** argv) {
 	parser.addOption({"camera", "Camera \"x y z yaw pitch\".", "camera"});
 	parser.addOption({"render", "lit, unlit or wire.", "mode"});
 	parser.addOption({"dock", "Raise a dock.", "name"});
+	parser.addOption({"material", "Open a material in the Material Editor.", "name"});
 	parser.addOption({"tool", "Start with a tool (select, move, rotate, scale, block, entity, clip, vertex, polygon).", "tool"});
 	parser.addOption({"check", "Run the problem checks."});
 	parser.addOption({"screenshot", "Save a screenshot and quit.", "file"});
@@ -125,6 +128,10 @@ int main(int argc, char** argv) {
 		}
 		if (parser.isSet("dock")) {
 			window.raiseDock(parser.value("dock"));
+		}
+		if (parser.isSet("material")) {
+			window.materialEditor()->openMaterial(parser.value("material"));
+			window.raiseDock("Material Editor");
 		}
 		if (parser.isSet("tool")) {
 			static const QMap<QString, Editor::Tool> TOOLS = {

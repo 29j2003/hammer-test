@@ -1168,6 +1168,12 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 	useCurrent->setToolTip(tr("Apply the material selected in the browser (Shift+T)"));
 	materialRow->addWidget(material, 1);
 	materialRow->addWidget(useCurrent);
+	auto* editMaterial = new QToolButton;
+	editMaterial->setText(tr("Edit"));
+	editMaterial->setToolTip(tr("Open this material in the Material Editor"));
+	const QString materialName = qs(first->material);
+	connect(editMaterial, &QToolButton::clicked, this, [this, materialName] { emit editMaterialRequested(materialName); });
+	materialRow->addWidget(editMaterial);
 	layout->addWidget(new QLabel(tr("Material")));
 	layout->addLayout(materialRow);
 	auto* selectRow = new QHBoxLayout;

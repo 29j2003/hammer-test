@@ -13,6 +13,7 @@
 #include <QTableWidget>
 #include <QLabel>
 #include <QGroupBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -32,6 +33,7 @@
 #include <QToolButton>
 
 #include <sme/brush.h>
+#include <sme/material.h>
 #include <sme/map_tools.h>
 
 #include <functional>
@@ -43,6 +45,8 @@
 #include "copy_paste.h"
 #include "editor.h"
 #include "main_window.h"
+#include "material_preview.h"
+#include "material_editor.h"
 #include "panels.h"
 #include "sound_browser.h"
 #include "tool_panel.h"
@@ -490,6 +494,41 @@ TEST_CASE("editing with the mouse in the real window") {
 		}
 		editor.clearSelection();
 		editor.setTool(Editor::Tool::Entity);
+	}
+	{
+		// Material editor: fields change the VMT, the preview draws it, Save writes into the mod.
+		auto* materials = window.materialEditor();
+		QSignalSpy previewed(materials, &MaterialEditor::previewUpdated);
+		materials->openMaterial("demo/brickwall001");
+		window.raiseDock("Material Editor");
+		REQUIRE(previewed.wait(10000));
+		CHECK(materials->value("$basetexture") == "demo/brickwall001");
+		CHECK(materials->value("$surfaceprop") == "brick");
+		settle();
+		auto* preview = materials->findChild<MaterialPreview*>();
+		REQUIRE(preview);
+		const QImage shot = preview->grabFramebuffer();
+		const QColor middle = shot.pixelColor(shot.width() / 2, shot.height() / 2);
+		CHECK(middle.red() > middle.blue());   // brick red, not the grey background
+		auto* reflection = materials->findChild<QComboBox*>("reflection");
+		REQUIRE(reflection);
+		reflection->setCurrentIndex(1);
+		auto* surface = materials->findChild<QComboBox*>("surfaceprop");
+		REQUIRE(surface);
+		surface->setCurrentText("metal");
+		REQUIRE(materials->save());
+		QFile vmt(materials->savePath("demo/brickwall001"));
+		REQUIRE(vmt.open(QIODevice::ReadOnly));
+		const QString text = vmt.readAll();
+		CHECK(text.contains("\"$envmap\" \"env_cubemap\""));
+		CHECK(text.contains("\"$surfaceprop\" \"metal\""));
+		CHECK(text.contains("demo/brickwall001"));
+		// Save as new: a copy under another name, found by the game's file system right away.
+		REQUIRE(materials->save("demo/brickwall_dark"));
+		CHECK(QFileInfo::exists(materials->savePath("demo/brickwall_dark")));
+		const auto copy = loadMaterial(editor.game()->files, "demo/brickwall_dark");
+		REQUIRE(copy);
+		CHECK(copy->param("$envmap") == "env_cubemap");
 	}
 	{
 		// The corner menu of a view switches the look (and shows it on the button).

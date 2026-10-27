@@ -13,6 +13,7 @@
 #include <sme/compile_log.h>
 #include <sme/game.h>
 #include <sme/keyvalues.h>
+#include <sme/material.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -631,4 +632,38 @@ TEST_CASE("sound script entries: write, replace, manifest") {
 	CHECK(files[1].value == "scripts/game_sounds_mymod.txt");
 	CHECK(addToSoundManifest(added, "scripts/game_sounds_mymod.txt") == added);
 	CHECK(parseKeyValues(addToSoundManifest("", "scripts/a.txt")).children.front().key == "game_sounds_manifest");
+}
+
+TEST_CASE("material editing keeps the rest of the VMT") {
+	const std::string vmt = "// a comment\n\"LightmappedGeneric\"\n{\n\t\"$BaseTexture\" \"brick/wall\"\n\t\"$surfaceprop\" \"brick\"\n"
+	                        "\t\"$envmap\" \"env_cubemap\" [$WIN32]\n"
+	                        "\t\"Proxies\"\n\t{\n\t\t\"AnimatedTexture\"\n\t\t{\n\t\t\t\"animatedtexturevar\" \"$basetexture\"\n\t\t}\n\t}\n}\n";
+	const auto edited = editMaterialText(vmt, "VertexLitGeneric",
+	                                     {{"$basetexture", "brick/wall2"}, {"$bumpmap", "brick/wall_normal"}, {"$surfaceprop", std::nullopt}});
+	const auto material = parseMaterial(edited, "brick/wall");
+	REQUIRE(material);
+	CHECK(material->shader == "VertexLitGeneric");
+	CHECK(material->param("$basetexture") == "brick/wall2");
+	CHECK(material->param("$bumpmap") == "brick/wall_normal");
+	CHECK(material->param("$surfaceprop").empty());
+	CHECK(edited.find("AnimatedTexture") != std::string::npos);
+	CHECK(edited.find("$BaseTexture") != std::string::npos);   // the spelling of the key stays
+	CHECK(edited.find("\"env_cubemap\" [$WIN32]") != std::string::npos);
+
+	// Patch materials: keys of the included material go to "replace", new ones to "insert".
+	Material base;
+	base.params["$basetexture"] = "brick/wall";
+	const std::string patch = "patch\n{\n\tinclude \"materials/brick/wall.vmt\"\n\tinsert\n\t{\n\t\t\"$envmap\" \"env_cubemap\"\n\t}\n}\n";
+	const auto patched = parseKeyValues(editMaterialText(patch, "", {{"$basetexture", "brick/other"}, {"$detail", "detail/noise"}}, &base));
+	const auto& block = patched.children.front();
+	CHECK(block.key == "patch");
+	REQUIRE(block.find("replace"));
+	CHECK(block.find("replace")->get("$basetexture") == "brick/other");
+	CHECK(block.find("insert")->get("$detail") == "detail/noise");
+	CHECK(block.find("insert")->get("$envmap") == "env_cubemap");
+
+	const auto fresh = parseMaterial(newMaterialText("UnlitGeneric", {{"$basetexture", "a/b"}, {"$translucent", "1"}}), "a/b");
+	REQUIRE(fresh);
+	CHECK(fresh->shader == "UnlitGeneric");
+	CHECK(fresh->flag("$translucent"));
 }

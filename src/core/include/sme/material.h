@@ -30,6 +30,22 @@ struct Material {
 	[[nodiscard]] bool isTool() const;
 };
 
+/// One change to a material parameter: a new value, or removed (nullopt).
+struct MaterialEdit {
+	std::string key;                    ///< "$basetexture"
+	std::optional<std::string> value;
+};
+
+/// The VMT text with its shader and parameters changed; everything else (proxies, other blocks,
+/// the order of keys) stays. Patch materials get their changes in the "replace" block when the
+/// material they include (`base`) has the key, else in "insert"; their shader cannot change.
+/// Throws std::runtime_error on broken syntax.
+[[nodiscard]] std::string editMaterialText(std::string_view vmt, std::string_view shader, const std::vector<MaterialEdit>& edits,
+                                           const Material* base = nullptr);
+
+/// A new VMT with the given shader and parameters (removals are ignored).
+[[nodiscard]] std::string newMaterialText(std::string_view shader, const std::vector<MaterialEdit>& params);
+
 /// "materials/concrete/wall.vmt", "concrete\\Wall" and "concrete/wall.vmt" all become "concrete/wall".
 [[nodiscard]] std::string normalizeMaterialName(std::string_view name);
 

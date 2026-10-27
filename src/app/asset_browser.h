@@ -119,11 +119,15 @@ public:
 	[[nodiscard]] const std::vector<ParticleSystem>& particles() const { return m_particles; }
 	void showMaterials();
 	void showModels();
+	/// A material was edited or created: new thumbnail, and listed if it is new.
+	void materialChanged(const QString& name);
 	[[nodiscard]] ModelThumbnails* modelThumbnails() const { return m_modelThumbnails; }
 	[[nodiscard]] QListView* modelView() const { return m_modelView; }
 
 signals:
 	void materialsIndexed();
+	/// "Edit material ..." in the material list's menu.
+	void editMaterialRequested(const QString& name);
 
 private:
 	void reload();

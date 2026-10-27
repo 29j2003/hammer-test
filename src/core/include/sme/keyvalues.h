@@ -16,9 +16,10 @@ struct KvNode {
 	std::string value;                 ///< Empty for blocks
 	std::vector<KvNode> children;
 	bool block = false;                ///< `key { ... }` instead of `"key" "value"`
+	std::string condition;             ///< Platform condition after a value, e.g. "[$WIN32]" (VMT files)
 
-	[[nodiscard]] static KvNode makeBlock(std::string key) { return {std::move(key), {}, {}, true}; }
-	[[nodiscard]] static KvNode makeValue(std::string key, std::string value) { return {std::move(key), std::move(value), {}, false}; }
+	[[nodiscard]] static KvNode makeBlock(std::string key) { return {std::move(key), {}, {}, true, {}}; }
+	[[nodiscard]] static KvNode makeValue(std::string key, std::string value) { return {std::move(key), std::move(value), {}, false, {}}; }
 
 	/// First child with the key (case-insensitive) or nullptr.
 	[[nodiscard]] const KvNode* find(std::string_view childKey) const;

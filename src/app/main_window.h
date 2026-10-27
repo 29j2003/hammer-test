@@ -24,6 +24,7 @@ namespace sme::app {
 
 class AssetBrowser;
 class CompileWindow;
+class MaterialEditor;
 class LogPanel;
 class MaterialCache;
 class Outliner;
@@ -54,6 +55,7 @@ public:
 	[[nodiscard]] SoundBrowser* sounds() const { return m_sounds; }
 	[[nodiscard]] PropertiesPanel* properties() const { return m_properties; }
 	[[nodiscard]] CompileWindow* compileWindow() const { return m_compileWindow; }
+	[[nodiscard]] MaterialEditor* materialEditor() const { return m_materialEditor; }
 	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
 	void raiseDock(const QString& name);
 	/// Update check against the GitHub releases. `manual` also reports "up to date" and errors.
@@ -91,6 +93,7 @@ private:
 	SoundBrowser* m_sounds = nullptr;
 	ParticleBrowser* m_particles = nullptr;
 	CompileWindow* m_compileWindow = nullptr;
+	MaterialEditor* m_materialEditor;
 	std::vector<Vec3> m_lastLeak;
 	Outliner* m_outliner = nullptr;
 	ProblemsPanel* m_problems = nullptr;

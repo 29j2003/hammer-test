@@ -133,9 +133,9 @@ void parseChildren(Tokenizer& tokens, KvNode& parent, bool topLevel, int depth) 
 			parseChildren(tokens, node, false, depth + 1);
 		} else if (after.kind == Tokenizer::Kind::String) {
 			node.value = std::string(tokens.next().text);
-			// Optional conditional like [$WIN32] after a value is kept as part of nothing (VMF never uses it).
+			// Optional conditional like [$WIN32] after a value (VMT files; VMF never uses it).
 			if (auto cond = tokens.peek(); cond.kind == Tokenizer::Kind::String && !cond.quoted && cond.text.starts_with('[')) {
-				tokens.next();
+				node.condition = std::string(tokens.next().text);
 			}
 		} else {
 			tokens.fail("key '" + node.key + "' has no value");
@@ -208,6 +208,10 @@ void writeKeyValueNode(std::string& out, const KvNode& node, int depth) {
 		appendQuoted(out, node.key);
 		out += ' ';
 		appendQuoted(out, node.value);
+		if (!node.condition.empty()) {
+			out += ' ';
+			out += node.condition;
+		}
 		out += '\n';
 	}
 }

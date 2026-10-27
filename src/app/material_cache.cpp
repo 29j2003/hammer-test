@@ -93,6 +93,13 @@ void MaterialCache::clear() {
 	m_pending.clear();
 }
 
+void MaterialCache::reload(const QString& rawName) {
+	const QString name = normalizedMaterialName(rawName);
+	m_loaded.remove(name);
+	m_pending.remove(name);
+	(void)get(name);
+}
+
 std::shared_ptr<const MaterialInfo> MaterialCache::get(const QString& rawName) {
 	const QString name = normalizedMaterialName(rawName);
 	if (const auto it = m_loaded.constFind(name); it != m_loaded.constEnd()) {

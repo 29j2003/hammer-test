@@ -36,6 +36,10 @@ public:
 	/// Rebuilds the panel from the current selection (deferred, so editors can finish their signal).
 	void scheduleRebuild();
 
+signals:
+	/// "Edit material" on selected faces.
+	void editMaterialRequested(const QString& name);
+
 private:
 	void rebuild();
 	void buildEntity(QVBoxLayout* layout, const std::vector<int>& entityIds);

@@ -54,6 +54,8 @@ public:
 	[[nodiscard]] static const QImage& checkerboard();
 
 	void clear();
+	/// Forgets one material and reads it again (after it was edited); materialReady follows.
+	void reload(const QString& name);
 
 signals:
 	void materialReady(const QString& name);
