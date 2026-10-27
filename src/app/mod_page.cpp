@@ -69,6 +69,7 @@ ModPage::ModPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(ed
 		if (const auto* entry = m_editor->gameEntry()) openInSystem(fromPath(entry->gameDir / "gameinfo.txt"));
 	});
 	button(fb, tr("Compile and game settings ..."), [this] { emit compileSettingsRequested(); });
+	button(fb, tr("New mod ..."), [this] { emit newModRequested(); });
 	fb->addStretch(1);
 	v->addWidget(folderButtons);
 

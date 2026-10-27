@@ -117,7 +117,8 @@ VisGroupsPanel::VisGroupsPanel(Editor* editor, QWidget* parent) : QWidget(parent
 		const int id = item->data(0, ID_ROLE).toInt();
 		const bool visible = item->checkState(0) == Qt::Checked;
 		if (visible != m_editor->visGroupVisible(id)) {
-			m_editor->setVisGroupVisible(id, visible);
+			// After Qt is done with the tick: hiding rebuilds this tree, which would delete the item now.
+			QTimer::singleShot(0, this, [this, id, visible] { m_editor->setVisGroupVisible(id, visible); });
 			return;
 		}
 		const auto* group = findVisGroup(visGroups(m_editor->doc()), id);

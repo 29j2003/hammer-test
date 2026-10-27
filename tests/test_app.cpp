@@ -1007,7 +1007,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(window.sounds()->isVisible());
 		CHECK(window.sounds()->parentWidget() != window.pages()->widget(2));
 		// Mod page: the game's maps, search paths and FGDs.
-		window.showPage(MainWindow::Page::Mod);
+		window.showPage(MainWindow::Page::Project);
 		auto* mounts = window.modPage()->findChild<QTreeWidget*>("modMounts");
 		REQUIRE(mounts);
 		CHECK(mounts->topLevelItemCount() > 0);

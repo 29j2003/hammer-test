@@ -29,6 +29,7 @@
 #include <QTimer>
 
 #include "asset_browser.h"
+#include "autosaver.h"
 #include "editor.h"
 #include "icons.h"
 #include "main_window.h"
@@ -112,6 +113,10 @@ int main(int argc, char** argv) {
 
 	Editor editor;
 	editor.discover(parser.value("steam"));
+	// Did the last session crash? Asked before the autosaver starts the new session.
+	const bool automated = parser.isSet("screenshot") || parser.isSet("no-update-check") || qEnvironmentVariableIsSet("SME_NO_UPDATE_CHECK");
+	const auto recovery = automated ? std::nullopt : recoveryAfterCrash();
+	Autosaver autosaver(&editor);
 	MainWindow window(&editor);
 
 	QString game = parser.value("game");
@@ -171,7 +176,7 @@ int main(int argc, char** argv) {
 		}
 		if (parser.isSet("page")) {
 			static const QMap<QString, MainWindow::Page> PAGES = {{"map", MainWindow::Page::Map}, {"materials", MainWindow::Page::Materials},
-				{"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles}, {"mod", MainWindow::Page::Mod}};
+				{"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles}, {"mod", MainWindow::Page::Project}, {"project", MainWindow::Page::Project}};
 			window.showPage(PAGES.value(parser.value("page").toLower(), MainWindow::Page::Map));
 		}
 		if (parser.isSet("particle")) {
@@ -208,8 +213,10 @@ int main(int argc, char** argv) {
 			editor.setTool(TOOLS.value(parser.value("tool").toLower(), Editor::Tool::Select));
 		}
 	});
+	if (recovery) {
+		QTimer::singleShot(0, &window, [&] { offerRecovery(&editor, &window, *recovery); });
+	}
 	// Newer version on GitHub? Asked once at start (Help > Check for updates at start turns it off).
-	const bool automated = parser.isSet("screenshot") || parser.isSet("no-update-check") || qEnvironmentVariableIsSet("SME_NO_UPDATE_CHECK");
 	if (!automated && QSettings().value("update/checkOnStart", true).toBool()) {
 		QTimer::singleShot(1500, &window, [&window] { window.checkForUpdates(false); });
 	}

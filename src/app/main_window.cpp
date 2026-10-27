@@ -6,6 +6,16 @@
 #include "compile_window.h"
 #include "map_look_panel.h"
 #include "mod_page.h"
+#include "maps_panel.h"
+#include "menu_editor.h"
+#include "new_mod_dialog.h"
+#include "source_control_panel.h"
+#include "ship_panel.h"
+#include "history_panel.h"
+#include "visgroups_panel.h"
+#include "find_dialog.h"
+#include "replace_materials_dialog.h"
+#include "autosaver.h"
 #include "icons.h"
 #include "material_editor.h"
 #include "material_cache.h"
@@ -50,6 +60,7 @@
 #include <QSet>
 #include <QTabBar>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -265,10 +276,24 @@ void MainWindow::createDocks() {
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
 	m_materialEditor = new MaterialEditor(m_editor, this);
+	// Project page: everything around the maps - overview, all maps with batch compiling, the
+	// mod's main menu, source control and getting it ready to share.
 	m_modPage = new ModPage(m_editor);
-	connect(m_modPage, &ModPage::openMapRequested, this, [this](const QString& path) {
+	const auto openFromProject = [this](const QString& path) {
 		if (maybeSave() && openMap(path)) showPage(Page::Map);
-	});
+	};
+	connect(m_modPage, &ModPage::openMapRequested, this, openFromProject);
+	connect(m_modPage, &ModPage::newModRequested, this, [this] { runNewModDialog(m_editor, this); });
+	m_mapsPanel = new MapsPanel(m_editor, &m_compiler);
+	connect(m_mapsPanel, &MapsPanel::openMapRequested, this, openFromProject);
+	m_projectPage = new QTabWidget;
+	m_projectPage->setObjectName("projectTabs");
+	m_projectPage->setDocumentMode(true);
+	m_projectPage->addTab(m_modPage, tr("Overview"));
+	m_projectPage->addTab(m_mapsPanel, tr("Maps"));
+	m_projectPage->addTab(new MenuEditor(m_editor), tr("Menu"));
+	m_projectPage->addTab(new SourceControlPanel(m_editor), tr("Source control"));
+	m_projectPage->addTab(new ShipPanel(m_editor), tr("Ship"));
 	connect(m_modPage, &ModPage::compileSettingsRequested, this, [this] {
 		showPage(Page::Map);
 		compile();
@@ -284,7 +309,7 @@ void MainWindow::createDocks() {
 	m_pages->addWidget(m_materialEditor);
 	m_pages->addWidget(m_soundsPage);
 	m_pages->addWidget(m_particlesPage);
-	m_pages->addWidget(m_modPage);
+	m_pages->addWidget(m_projectPage);
 
 	// Left: the tool's options, the Outliner and
 	// mapbase-fidelity's look per map as tabs. Right: only the properties of what is selected.
@@ -292,8 +317,12 @@ void MainWindow::createDocks() {
 	auto* outliner = addDock(tr("Outliner"), m_outliner, Qt::LeftDockWidgetArea);
 	m_mapLook = new MapLookPanel(m_editor);
 	auto* mapLook = addDock(tr("Map Look"), m_mapLook, Qt::LeftDockWidgetArea);
+	auto* visgroups = addDock(tr("VisGroups"), new VisGroupsPanel(m_editor), Qt::LeftDockWidgetArea);
+	auto* history = addDock(tr("History"), new HistoryPanel(m_editor), Qt::LeftDockWidgetArea);
 	tabifyDockWidget(tool, outliner);
+	tabifyDockWidget(tool, visgroups);
 	tabifyDockWidget(tool, mapLook);
+	tabifyDockWidget(tool, history);
 	tool->raise();
 	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
@@ -350,7 +379,7 @@ void MainWindow::showMaterialEditor() {
 }
 
 void MainWindow::showPage(Page page) {
-	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_modPage};
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_projectPage};
 	QWidget* target = widgets[int(page)];
 	// The browsers that are docks while mapping move to their page and back.
 	const auto borrow = [](QWidget* browser, QDockWidget* dock, QWidget* holder, bool toPage) {
@@ -364,7 +393,7 @@ void MainWindow::showPage(Page page) {
 	};
 	borrow(m_sounds, m_soundsDock, m_soundsPage, page == Page::Sounds);
 	borrow(m_particles, m_particlesDock, m_particlesPage, page == Page::Particles);
-	if (page == Page::Mod) m_modPage->refresh();
+	if (page == Page::Project) m_modPage->refresh();
 	m_pages->setCurrentWidget(target);
 	setMapWorkspaceShown(page == Page::Map);
 	if (m_pageGroup) {
@@ -374,7 +403,7 @@ void MainWindow::showPage(Page page) {
 }
 
 MainWindow::Page MainWindow::currentPage() const {
-	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_modPage};
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_projectPage};
 	for (int i = 0; i < 5; ++i) {
 		if (m_pages->currentWidget() == widgets[i]) return Page(i);
 	}
@@ -428,7 +457,7 @@ void MainWindow::raiseDock(const QString& name) {
 		showMaterialEditor();
 		return;
 	}
-	static const QMap<QString, Page> PAGES = {{"Materials", Page::Materials}, {"Mod", Page::Mod}};
+	static const QMap<QString, Page> PAGES = {{"Materials", Page::Materials}, {"Mod", Page::Project}, {"Project", Page::Project}};
 	if (const auto it = PAGES.constFind(name); it != PAGES.constEnd()) {
 		showPage(*it);
 		return;
@@ -464,6 +493,7 @@ void MainWindow::createActions() {
 	file->addAction(action(tr("New map"), QKeySequence::New, [this] {
 		if (maybeSave()) m_editor->newMap();
 	}));
+	file->addAction(action(tr("New mod ..."), QKeySequence(), [this] { runNewModDialog(m_editor, this); }));
 	file->addAction(action(tr("Open ..."), QKeySequence::Open, [this] {
 		if (!maybeSave()) return;
 		const QString dir = m_editor->gameKey().isEmpty() ? QString() : m_editor->gameSettings().mapDir;
@@ -505,7 +535,20 @@ void MainWindow::createActions() {
 	// Edit
 	auto* editMenu = menuBar()->addMenu(tr("&Edit"));
 	editMenu->addAction(action(tr("Undo"), QKeySequence::Undo, [this] { m_editor->undo(); }));
+	// Find and replace (Hammer's Find Entities, Entity Report and Replace Textures, in one place).
+	const auto frame = [this] { activeView()->frameSelection(); };
+	auto* findEntities = action(tr("Find entities ..."), QKeySequence("Ctrl+F"), [this, frame] { showFindDialog(m_editor, this, frame, 0); });
+	auto* entityReport = action(tr("Entity report ..."), QKeySequence(), [this, frame] { showFindDialog(m_editor, this, frame, 1); });
+	auto* replaceMaterials = action(tr("Replace materials ..."), QKeySequence("Ctrl+Alt+R"), [this] {
+		QStringList names;
+		for (const auto& name : m_assets->materialNames()) names << QString::fromStdString(name);
+		showReplaceMaterialsDialog(m_editor, this, names);
+	});
 	editMenu->addAction(action(tr("Redo"), QKeySequence("Ctrl+Y"), [this] { m_editor->redo(); }));
+	editMenu->addSeparator();
+	editMenu->addAction(findEntities);
+	editMenu->addAction(entityReport);
+	editMenu->addAction(replaceMaterials);
 	action(tr("Redo (second key)"), QKeySequence("Ctrl+Shift+Z"), [this] { m_editor->redo(); });
 	editMenu->addSeparator();
 	editMenu->addAction(action(tr("Cut"), QKeySequence::Cut, [this] { m_editor->cutSelection(); }));
@@ -642,7 +685,7 @@ void MainWindow::createActions() {
 	pageAction("page:materials", tr("Materials"), tr("Material Editor: textures, shaders and mapbase-fidelity effects"), Page::Materials);
 	pageAction("page:sounds", tr("Sounds"), tr("Sounds, sound scripts and soundscapes"), Page::Sounds);
 	pageAction("page:particles", tr("Particles"), tr("Particle systems of the game"), Page::Particles);
-	pageAction("page:mod", tr("Mod"), tr("The game or mod: folders, maps, content, entity definitions"), Page::Mod);
+	pageAction("page:mod", tr("Project"), tr("Your mod: overview, all maps (batch compile), main menu, source control, ship"), Page::Project);
 
 	// Tools: a narrow strip of icons with their key in the corner.
 	auto* tools = new QToolBar(tr("Tools"));
@@ -1141,7 +1184,8 @@ void MainWindow::selectGame(const QString& key) {
 
 bool MainWindow::openMap(const QString& path) {
 	QString error;
-	if (!m_editor->openMap(path, &error)) {
+	if (!openMapWithRecovery(m_editor, this, path, &error)) {
+		if (error.isEmpty()) return false;   // the mapper chose not to open it
 		QMessageBox::warning(this, tr("Open map"), tr("Could not open %1:\n%2").arg(path, error));
 		return false;
 	}

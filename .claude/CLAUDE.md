@@ -40,7 +40,9 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Keine Valve-Dateien im Repo (Texturen/Modelle/FGDs) – Testdaten werden erzeugt.
 - Commits als `Claude <noreply@anthropic.com>` (von Julius so gewünscht; seine eigene Adresse nie verwenden), deutsche
   Commit-Nachrichten; keine E-Mail-Adressen in Dateien (`tools/check_privacy.py`, CI-Job `checks`). GitHub Actions nur mit Commit-SHA pinnen, `permissions: contents: read`.
-- Doku nur `README.md` (Nutzer, Englisch, aktueller Stand) und `docs/ENTWICKLUNG.md` (Entwickler, Deutsch).
+- Doku: `README.md` (Nutzer, Englisch, aktueller Stand, kurz), Handbuch `docs/manual/` (Englisch, GitHub Pages, ausführlich,
+  inkl. Mapping-Grundlagen) und `docs/ENTWICKLUNG.md` (Entwickler, Deutsch). Andere Editoren dürfen nur in der README als
+  Inspiration genannt werden („inspired by“); nichts von ihnen übernehmen.
 - Leistung zählt: nichts pro Frame neu aufbauen, was sich nicht geändert hat; Auswahl ändert nur Flags, nicht die Geometrie.
 - Nicht im Spiel/auf Windows getestet heißt nicht getestet: im Bericht ausdrücklich so nennen.
 

@@ -28,7 +28,8 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Sky**: faces with the skybox tool texture show the map's sky (worldspawn *skyname*) as the game does.
 - **Layout**: on the far left the side bar with the pages, next to it the tools (their key in the corner). Left of the
   views the *Tool* panel (options and keys of the current tool; with the Select tool also *Hollow, Carve, Merge, Tie to,
-  Flip, Snap to grid, Drop to floor, Select similar, Hide*), the *Outliner* and *Map Look* as tabs. Right only *Object
+  Flip, Snap to grid, Drop to floor, Select similar, Hide*), the *Outliner*, *VisGroups*, *Map Look* and *History*
+  (every undo step; click one to go back or forward to it) as tabs. Right only *Object
   Properties*. Below: Asset Browser, Sounds, Particles, Compile, Problems, Log. The three buttons at the top right show
   or hide the left, bottom and right panels.
 - **View switches** in the tool bar: helper entities, models, lights, cubemaps, triggers, tool brushes, sky, entity
@@ -121,11 +122,12 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   plays its sound; type a file (it completes) or take the one shown in the player. **Save to the mod** writes
   `scripts/soundscapes_<mod>.txt` and puts it first in the mod's `soundscapes_manifest.txt`, so a changed copy of a
   game soundscape is used instead of the original. Keys the editor does not know stay in the file.
-- **Side bar**: on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Mod* each fill
-  the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
-  shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
-  `gameinfo.txt` with what was found, and the entity definitions (FGDs).
-- **Maps**: every map of the game or mod in one list, with when it was changed, whether its BSP is *up to date*,
+- **Side bar**: on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Project* each fill
+  the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
+  has the tabs *Overview*, *Maps*, *Menu*, *Source control* and *Ship* (below). *Overview* shows the chosen game or
+  mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
+  was found, and the entity definitions (FGDs); **New mod ...** is there and in the File menu.
+- **Maps** (Project page): every map of the game or mod in one list, with when it was changed, whether its BSP is *up to date*,
   *outdated* (the map changed since) or *not compiled*, and what the last compile said. **New map ...**, **Duplicate**,
   **Rename ...** and **Delete** (to the trash) work on the files. Tick maps and press **Compile checked**, or **Compile
   all outdated**: they are compiled one after another with your compile settings (no game in between); with **Run the
@@ -269,6 +271,7 @@ whether a model loads.
 | Ctrl+Shift+H / C / M / R | Hollow / carve / merge / round edge | Ctrl+Shift+F | Drop to floor |
 | F5 / F6 / F8, F7 | Unlit / lighting preview / wireframe, shadows | F9 | Compile & run |
 | Ctrl+C / Ctrl+V | Copy a name / paste into a field or keys into the properties | Enter (block tool) | Create the block |
+| Ctrl+F | Find entities (class, name, key=value, target, model, sound) | Ctrl+Alt+R | Replace materials |
 | Tab, Enter (clip tool) | Which part stays, cut | Enter, Backspace (polygon tool) | Make the brush, remove a corner |
 
 Press **F1** in the editor for the full list.

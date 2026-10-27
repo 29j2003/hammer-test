@@ -25,6 +25,7 @@ public:
 
 signals:
 	void openMapRequested(const QString& path);
+	void newModRequested();
 	void compileSettingsRequested();
 
 private:
