@@ -11,6 +11,7 @@
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
 //   --page NAME          show a page of the side bar (map, materials, sounds, particles, mod)
 //   --pick-edge          vertex tool with an edge of the first brush picked
+//   --particle NAME      show a particle system in the Particles browser (with --page particles)
 //   --tool NAME          start with a tool (block, entity, ...)
 //   --material NAME      open a material in the Material Editor
 //   --check              run the problem checks after loading
@@ -30,6 +31,7 @@
 #include "main_window.h"
 #include "material_editor.h"
 #include "panels.h"
+#include "particle_browser.h"
 #include "style.h"
 #include "viewport.h"
 
@@ -67,6 +69,7 @@ int main(int argc, char** argv) {
 	parser.addOption({"dock", "Raise a dock.", "name"});
 	parser.addOption({"page", "Show a page of the side bar (map, materials, sounds, particles, mod).", "page"});
 	parser.addOption({"pick-edge", "Vertex tool with the top front edge of the first brush picked."});
+	parser.addOption({"particle", "Show a particle system in the Particles browser.", "name"});
 	parser.addOption({"material", "Open a material in the Material Editor.", "name"});
 	parser.addOption({"tool", "Start with a tool (select, move, rotate, scale, block, entity, clip, vertex, polygon).", "tool"});
 	parser.addOption({"check", "Run the problem checks."});
@@ -139,6 +142,17 @@ int main(int argc, char** argv) {
 			static const QMap<QString, MainWindow::Page> PAGES = {{"map", MainWindow::Page::Map}, {"materials", MainWindow::Page::Materials},
 				{"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles}, {"mod", MainWindow::Page::Mod}};
 			window.showPage(PAGES.value(parser.value("page").toLower(), MainWindow::Page::Map));
+		}
+		if (parser.isSet("particle")) {
+			// The systems are read in the background: try until they are there.
+			auto* retry = new QTimer(&window);
+			retry->setInterval(100);
+			QObject::connect(retry, &QTimer::timeout, &window, [&window, retry, name = parser.value("particle")] {
+				auto* particles = window.findChild<ParticleBrowser*>();
+				if (!particles || particles->selectSystem(name) || retry->property("tries").toInt() > 100) retry->stop();
+				retry->setProperty("tries", retry->property("tries").toInt() + 1);
+			});
+			retry->start();
 		}
 		if (parser.isSet("pick-edge") && !editor.doc().world.solids.empty()) {
 			const auto& solid = editor.doc().world.solids.front();
