@@ -70,7 +70,14 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   sonst Raster. Cubemap-Raum-Box: Quadrate auf den Seiten (`Handle::RoomMin…`) bei genau einer ausgewählten
   `env_cubemap` mit Box.
 - Eigenschaften: Schalter „Smart Edit“ (aus = Tabelle aller Keys inkl. nicht gesetzter FGD-Keys), Zeile „neuer Key“,
-  Feld „Name“ bei jeder Entity. Kopieren/Einfügen: `copy_paste` (`addCopyShortcut`, `onStandardKey` – Item-Views
+  Feld „Name“ bei jeder Entity. Kartenobjekte kopieren/einfügen: Kern-Modul `clipboard` (`copyObjects` = VMF-Text,
+  `pasteObjects` mit `PasteOptions`: Anzahl, Versatz und Drehung je Kopie, Mittelpunkt, eindeutige Namen samt Ausgängen,
+  Präfix; ein Undo-Schritt), `Editor::copySelection/cutSelection/paste`, `MainWindow::pasteHere` (unter der Maus über
+  `Viewport::pasteCenter` → `restingPlace`, dieselbe Rechnung wie beim Platzieren) und `pasteSpecialDialog`.
+  Entity-Werkzeug: `Viewport::updateGhost` zeigt die scharfe Klasse unter der Maus (Box + Modell über
+  `SceneRenderer::drawGhostModel`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
+  Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.
+  Namen kopieren/einfügen: `copy_paste` (`addCopyShortcut`, `onStandardKey` – Item-Views
   verschlucken Strg+C/V sonst; `parseKeyValueLines` für Wiki-Text).
 - Material-Editor (`MaterialEditor` + `MaterialPreview`): Felder für die häufigen Parameter, Tabelle für den Rest,
   Vorschau (Wand/Würfel/Kugel, Sonne/Lampe/Nacht/unbeleuchtet; ssbump über die drei Basisvektoren). Speichern schreibt

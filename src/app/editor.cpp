@@ -4,6 +4,8 @@
 
 #include "model_cache.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -554,6 +556,46 @@ void Editor::duplicateSelection() {
 	m_selection = std::move(copies);
 	emit documentChanged();
 	emit selectionChanged();
+}
+
+void Editor::copySelection() {
+	if (!m_selection.hasObjects()) {
+		emit message(tr("Select objects to copy"));
+		return;
+	}
+	QApplication::clipboard()->setText(QString::fromStdString(edit::copyObjects(m_doc, m_selection)));
+	const auto count = m_selection.solids.size() + m_selection.entities.size();
+	emit message(tr("Copied %n object(s) - Ctrl+V pastes them under the mouse, Ctrl+Shift+V several at once", nullptr, int(count)));
+}
+
+void Editor::cutSelection() {
+	if (!m_selection.hasObjects()) {
+		return;
+	}
+	copySelection();
+	deleteSelection();
+}
+
+bool Editor::paste(const PasteOptions& options) {
+	const std::string text = QApplication::clipboard()->text().toStdString();
+	if (!edit::looksLikeMapObjects(text)) {
+		emit message(tr("The clipboard holds no map objects - copy brushes or entities first (Ctrl+C)"));
+		return false;
+	}
+	std::string error;
+	auto pasted = edit::pasteObjects(m_doc, text, options, entities(), &error);
+	if (!pasted) {
+		emit message(tr("Could not paste: %1").arg(QString::fromStdString(error)));
+		return false;
+	}
+	commit(std::move(pasted->first));
+	setSelection(std::move(pasted->second));
+	return true;
+}
+
+std::optional<Bounds> Editor::clipboardBounds() const {
+	const std::string text = QApplication::clipboard()->text().toStdString();
+	return edit::looksLikeMapObjects(text) ? edit::copiedBounds(text, entities()) : std::nullopt;
 }
 
 void Editor::nudgeSelection(const Vec3& delta) {

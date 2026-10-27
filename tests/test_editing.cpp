@@ -3,7 +3,10 @@
 #include <doctest/doctest.h>
 
 #include <sme/brush.h>
+#include <sme/clipboard.h>
 #include <sme/editing.h>
+
+#include <set>
 
 using namespace sme;
 
@@ -202,4 +205,84 @@ TEST_CASE("faces by material, whole walls, merged paint strokes") {
 	CHECK(edit::facesWithMaterial(doc, "PAINT").size() == 2);
 	history.undo(doc);                             // one stroke = one undo step
 	CHECK(edit::facesWithMaterial(doc, "PAINT").empty());
+}
+
+TEST_CASE("copy and paste map objects: in place, at a point, several copies, unique names") {
+	MapDocument doc;
+	History history;
+	auto [create, ref] = edit::createBlock(doc, box({0, 0, 0}, {64, 64, 64}), "DEV/DEV_MEASUREGENERIC01");
+	history.push(std::move(create));
+	auto [placeDoor, door] = edit::placeEntity(doc, "func_door_rotating", {32, 32, 0}, nullptr, {{"targetname", "door"}});
+	history.push(std::move(placeDoor));
+	auto [placeButton, button] = edit::placeEntity(doc, "func_button", {0, 0, 0}, nullptr, {{"targetname", "button"}, {"target", "door"}});
+	history.push(std::move(placeButton));
+	doc.findEntity(button)->connections.push_back({"OnPressed", "door", "Open", "", 0, -1});
+
+	Selection sel;
+	sel.solids.push_back(ref);
+	sel.entities = {door, button};
+	const std::string text = edit::copyObjects(doc, sel);
+	CHECK(edit::looksLikeMapObjects(text));
+	CHECK_FALSE(edit::looksLikeMapObjects("just some words"));
+	CHECK_FALSE(edit::looksLikeMapObjects(""));
+	CHECK(edit::copyObjects(doc, Selection{}).empty());
+
+	// In place: same spot, new ids, names unchanged.
+	{
+		auto pasted = edit::pasteObjects(doc, text, PasteOptions{}, nullptr);
+		REQUIRE(pasted);
+		CHECK(pasted->second.solids.size() == 1);
+		CHECK(pasted->second.entities.size() == 2);
+		const auto* solid = doc.findSolid(pasted->second.solids[0]);
+		REQUIRE(solid);
+		CHECK(solid->id != ref.solidId);
+		CHECK(buildBrushGeometry(*solid).bounds.min.x == doctest::Approx(0));
+		CHECK(doc.findEntity(pasted->second.entities[0])->get("targetname") == "door");
+		history.push(std::move(pasted->first));
+		history.undo(doc);
+		CHECK(doc.world.solids.size() == 1);
+		CHECK(doc.entities.size() == 2);
+	}
+	// At a point, three copies 128 apart along x, names made unique, outputs follow the names.
+	{
+		PasteOptions options;
+		options.center = Vec3{1000, 0, 32};
+		options.copies = 3;
+		options.offset = {128, 0, 0};
+		options.uniqueNames = true;
+		auto pasted = edit::pasteObjects(doc, text, options, nullptr);
+		REQUIRE(pasted);
+		REQUIRE(pasted->second.solids.size() == 3);
+		const auto first = buildBrushGeometry(*doc.findSolid(pasted->second.solids[0])).bounds;
+		const auto third = buildBrushGeometry(*doc.findSolid(pasted->second.solids[2])).bounds;
+		CHECK(third.min.x - first.min.x == doctest::Approx(256));
+		std::set<std::string> names;
+		for (const int id : pasted->second.entities) {
+			const auto* entity = doc.findEntity(id);
+			names.insert(entity->get("targetname"));
+			if (entity->classname() == "func_button") {
+				// The button of each copy opens the door of the same copy.
+				REQUIRE(entity->connections.size() == 1);
+				CHECK(entity->connections[0].target == entity->get("target"));
+				CHECK(entity->get("target") != "door");
+			}
+		}
+		CHECK(names.size() == 6);
+		CHECK_FALSE(names.contains("door"));
+		CHECK(names.contains("door_2"));
+		CHECK(names.contains("door_4"));
+	}
+	// Rotated copies: a quarter turn each, around the copied objects' center.
+	{
+		Selection one;
+		one.solids.push_back(ref);
+		PasteOptions options;
+		options.rotation = {0, 0, 90};
+		auto pasted = edit::pasteObjects(doc, edit::copyObjects(doc, one), options, nullptr);
+		REQUIRE(pasted);
+		CHECK(isConvexValid(*doc.findSolid(pasted->second.solids[0])));
+	}
+	std::string error;
+	CHECK_FALSE(edit::pasteObjects(doc, "world { }", PasteOptions{}, nullptr, &error));
+	CHECK_FALSE(error.empty());
 }

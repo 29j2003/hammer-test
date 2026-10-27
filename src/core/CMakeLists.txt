@@ -11,6 +11,7 @@ add_library(smecore STATIC
 	src/checks.cpp
 	src/compile_log.cpp
 	src/csg.cpp
+	src/clipboard.cpp
 	src/editing.cpp
 	src/entity_catalog.cpp
 	src/filesystem.cpp

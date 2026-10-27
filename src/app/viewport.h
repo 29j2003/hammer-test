@@ -53,6 +53,11 @@ public:
 	void setCameraKind(Camera::Kind kind);
 	/// Moves the camera so the selection (or the whole map) fills the view.
 	void frameSelection();
+	/// Entity tool preview box under the mouse (none while nothing is armed or the mouse is away).
+	[[nodiscard]] std::optional<Bounds> ghostBox() const { return m_ghost ? std::optional<Bounds>(m_ghost->box) : std::nullopt; }
+	/// Where pasted objects with this box go: their center under the mouse (resting on the
+	/// surface in 3D), or nothing when the mouse is not over this view.
+	[[nodiscard]] std::optional<Vec3> pasteCenter(const Bounds& box) const;
 	/// Line from a compile leak (.lin pointfile); empty clears it.
 	void setLeakLine(const std::vector<Vec3>& points);
 
@@ -79,6 +84,7 @@ protected:
 	void dragMoveEvent(QDragMoveEvent* event) override;
 	void dragLeaveEvent(QDragLeaveEvent* event) override;
 	void dropEvent(QDropEvent* event) override;
+	void leaveEvent(QEvent* event) override;
 
 private:
 	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner, RoomMinX, RoomMaxX, RoomMinY, RoomMaxY, RoomMinZ, RoomMaxZ };
@@ -94,12 +100,21 @@ private:
 	void clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers);
 	void marqueeSelect(const QRectF& rect, Qt::KeyboardModifiers modifiers);
 	void placeEntity(const QPointF& pos);
+	/// Moves the entity tool's preview to the mouse (or hides it).
+	void updateGhost(const QPointF* pos);
 	/// Places `classname` on the surface under the cursor (with extra keys, e.g. a dropped model).
+	/// Where an object with box `local` (relative to its origin) comes to rest under `pos`: on the
+	/// surface under the cursor in 3D, on the grid in 2D views.
+	[[nodiscard]] std::optional<Vec3> restingPlace(const QPointF& pos, const Bounds& local) const;
 	void placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys = {});
 	void beginGizmoDrag(Handle handle, const QPointF& pos);
 	void updateGizmoDrag(const QPointF& pos);
 	void finishGizmoDrag(bool clone);
 	[[nodiscard]] bool scaling() const;   ///< Scale handle being dragged
+	/// The selection shows resize squares (Scale tool, or Select tool with brushes selected).
+	[[nodiscard]] bool resizeHandles() const;
+	/// A resize square on that side of the box can be seen (3D: the side faces the camera).
+	[[nodiscard]] bool handleFacesCamera(const Vec3& point, int axis, int side) const;
 	/// Live preview brushes (scaled brushes with their real texture coordinates); empty clears.
 	void setPreviewSolids(const std::vector<Solid>& solids);
 	void updateBlockDrag(const QPointF& pos);
@@ -164,6 +179,13 @@ private:
 	// Input state
 	Drag m_drag = Drag::None;
 	QPointF m_pressPos, m_lastPos;
+	/// Entity tool: the armed point entity where a click would place it (box, model).
+	struct Ghost {
+		Bounds box;
+		QString model;
+		QMatrix4x4 transform;
+	};
+	std::optional<Ghost> m_ghost;
 	Qt::KeyboardModifiers m_pressModifiers;
 	QSet<int> m_keys;
 	QTimer m_moveTimer;

@@ -386,6 +386,12 @@ void Viewport::paintGL() {
 	}
 
 	// Tool overlays.
+	if (m_ghost && m_editor->tool() == Editor::Tool::Entity) {
+		if (!m_ghost->model.isEmpty()) {
+			m_renderer.drawGhostModel(params, m_ghost->model, m_ghost->transform);
+		}
+		boxLines(lines, m_ghost->box, {0.3f, 1.0f, 0.5f, 0.9f});
+	}
 	if (m_drag == Drag::BlockBase || m_drag == Drag::BlockHeight) {
 		boxLines(lines, m_blockBox, {1.0f, 0.75f, 0.2f, 0.5f});
 		m_renderer.drawPreviewSolids(params);
@@ -548,7 +554,7 @@ std::vector<Vec3> Viewport::selectionCorners() const {
 void Viewport::drawGizmo(std::vector<LineVertex>& lines) const {
 	const auto tool = m_editor->tool();
 	const auto& selection = m_editor->selection();
-	if (!selection.hasObjects() || (tool != Editor::Tool::Move && tool != Editor::Tool::Rotate && tool != Editor::Tool::Scale)) {
+	if (!selection.hasObjects() || (tool != Editor::Tool::Move && tool != Editor::Tool::Rotate && !resizeHandles())) {
 		if (!selection.empty() && m_camera.is2D()) {
 			auto box = edit::selectionBounds(m_editor->doc(), selection, m_editor->entities());
 			if (m_drag == Drag::Gizmo) {
@@ -627,7 +633,7 @@ void Viewport::drawGizmo(std::vector<LineVertex>& lines) const {
 				line(lines, center + u * std::cos(a0) + v * std::sin(a0), center + u * std::cos(a1) + v * std::sin(a1), colorOf(h, axis));
 			}
 		}
-	} else if (tool == Editor::Tool::Scale) {
+	} else if (resizeHandles()) {
 		const Bounds box = dragging ? m_dragNewBounds : bounds;
 		boxLines(lines, box, {1, 0.6f, 0.2f, 1});
 		const double hs = size * 0.05;
@@ -841,7 +847,11 @@ Viewport::Handle Viewport::hitHandle(const QPointF& pos) const {
 				havePrev = true;
 			}
 		}
-	} else if (tool == Editor::Tool::Scale) {
+	} else if (resizeHandles()) {
+		// The nearest square on screen; squares on sides facing away from the camera lose ties
+		// (the one on the bottom of a block lies right behind the top one when looking down).
+		Handle best = Handle::None;
+		double bestDistance = 10;
 		for (int axis = 0; axis < 3; ++axis) {
 			if (m_camera.is2D() && axis == viewAxis()) {
 				continue;
@@ -850,11 +860,17 @@ Viewport::Handle Viewport::hitHandle(const QPointF& pos) const {
 				Vec3 p = center;
 				p[axis] = side == 0 ? bounds.min[axis] : bounds.max[axis];
 				QPointF q;
-				if (m_camera.project(p, width(), height(), q) && QLineF(q, pos).length() < 10) {
-					return static_cast<Handle>(static_cast<int>(Handle::ScaleMinX) + axis * 2 + side);
+				if (!m_camera.project(p, width(), height(), q)) {
+					continue;
+				}
+				const double distance = QLineF(q, pos).length() + (handleFacesCamera(p, axis, side) ? 0 : 6);
+				if (distance < bestDistance) {
+					bestDistance = distance;
+					best = static_cast<Handle>(static_cast<int>(Handle::ScaleMinX) + axis * 2 + side);
 				}
 			}
 		}
+		return best;
 	}
 	return Handle::None;
 }
@@ -1043,6 +1059,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 	if (!m_camera.is2D() && m_editor->selectMode() == Editor::SelectMode::Face) {
 		showHoverMaterial(pos);
 	}
+	updateGhost(&pos);
 	const Handle hover = hitHandle(pos);
 	if (hover != m_hover) {
 		m_hover = hover;
@@ -1293,12 +1310,85 @@ void Viewport::marqueeSelect(const QRectF& rect, Qt::KeyboardModifiers modifiers
 	m_editor->setSelection(std::move(selection));
 }
 
+void Viewport::updateGhost(const QPointF* pos) {
+	std::optional<Ghost> ghost;
+	const QString classname = m_editor->currentEntityClass();
+	if (pos && m_editor->tool() == Editor::Tool::Entity && m_drag == Drag::None && !classname.isEmpty() && !m_editor->armedBrushEntity()) {
+		const auto* catalog = m_editor->entities();
+		Entity probe;
+		probe.set("classname", classname.toStdString());
+		probe.setOrigin({0, 0, 0});
+		const Bounds local = edit::entityBounds(probe, catalog);
+		if (const auto origin = restingPlace(*pos, local)) {
+			Ghost g;
+			g.box.add(local.min + *origin);
+			g.box.add(local.max + *origin);
+			g.model = QString::fromStdString(edit::entityModel(probe, catalog));
+			g.transform.translate(float(origin->x), float(origin->y), float(origin->z));
+			ghost = std::move(g);
+		}
+	}
+	const bool changed = ghost.has_value() != m_ghost.has_value() ||
+	                     (ghost && (ghost->box.min != m_ghost->box.min || ghost->box.max != m_ghost->box.max || ghost->model != m_ghost->model));
+	m_ghost = std::move(ghost);
+	if (changed) {
+		update();
+	}
+}
+
+void Viewport::leaveEvent(QEvent* event) {
+	updateGhost(nullptr);
+	QOpenGLWidget::leaveEvent(event);
+}
+
 void Viewport::placeEntity(const QPointF& pos) {
 	if (m_editor->currentEntityClass().isEmpty()) {
 		emit m_editor->message(tr("Nothing armed: pick an entity class in the Tool panel first"));
 		return;
 	}
 	placeEntityAt(pos, m_editor->currentEntityClass().toStdString());
+}
+
+std::optional<Vec3> Viewport::restingPlace(const QPointF& pos, const Bounds& local) const {
+	const double grid = m_editor->snapGrid();
+	Vec3 origin;
+	if (m_camera.is2D()) {
+		origin = snap(viewPlanePoint(pos), grid);
+		origin[viewAxis()] = viewAxis() == 2 ? -local.min.z : 0;
+		return origin;
+	}
+	const Ray ray = rayAt(pos);
+	const auto hit = m_renderer.pick(ray);
+	Vec3 point, normal{0, 0, 1};
+	if (hit) {
+		point = hit->point;
+		normal = hit->normal;
+	} else if (const auto p = rayPlane(ray, {0, 0, 0}, {0, 0, 1})) {
+		point = *p;
+	} else {
+		return std::nullopt;
+	}
+	int axis = 0;
+	for (int i = 1; i < 3; ++i) {
+		if (std::abs(normal[i]) > std::abs(normal[axis])) {
+			axis = i;
+		}
+	}
+	origin = snap(point, grid);
+	// Push the box out of the surface so it rests on it.
+	origin[axis] = point[axis] - (normal[axis] > 0 ? local.min[axis] : local.max[axis]);
+	return origin;
+}
+
+std::optional<Vec3> Viewport::pasteCenter(const Bounds& box) const {
+	const QPointF pos = mapFromGlobal(QCursor::pos());
+	if (!rect().contains(pos.toPoint()) || box.empty()) {
+		return std::nullopt;
+	}
+	Bounds local;
+	local.add(box.min - box.center());
+	local.add(box.max - box.center());
+	return restingPlace(pos, local);
 }
 
 void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys) {
@@ -1316,33 +1406,11 @@ void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, c
 	}
 	probe.setOrigin({0, 0, 0});
 	const Bounds local = edit::entityBounds(probe, catalog);
-	const double grid = m_editor->snapGrid();
-	Vec3 origin;
-	if (m_camera.is2D()) {
-		origin = snap(viewPlanePoint(pos), grid);
-		origin[viewAxis()] = viewAxis() == 2 ? -local.min.z : 0;
-	} else {
-		const Ray ray = rayAt(pos);
-		const auto hit = m_renderer.pick(ray);
-		Vec3 point, normal{0, 0, 1};
-		if (hit) {
-			point = hit->point;
-			normal = hit->normal;
-		} else if (const auto p = rayPlane(ray, {0, 0, 0}, {0, 0, 1})) {
-			point = *p;
-		} else {
-			return;
-		}
-		int axis = 0;
-		for (int i = 1; i < 3; ++i) {
-			if (std::abs(normal[i]) > std::abs(normal[axis])) {
-				axis = i;
-			}
-		}
-		origin = snap(point, grid);
-		// Push the box out of the surface so it rests on it.
-		origin[axis] = point[axis] - (normal[axis] > 0 ? local.min[axis] : local.max[axis]);
+	const auto rest = restingPlace(pos, local);
+	if (!rest) {
+		return;
 	}
+	const Vec3 origin = *rest;
 	auto finalKeys = keys;
 	const bool hasAngles = definition && definition->property("angles");
 	const bool anglesGiven = std::any_of(keys.begin(), keys.end(), [](const auto& kv) { return kv.first == "angles"; });
@@ -1569,6 +1637,36 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 	}
 	m_previewModel.translate(toQt(m_dragDelta));
 	update();
+}
+
+bool Viewport::handleFacesCamera(const Vec3& point, int axis, int side) const {
+	if (m_camera.is2D()) {
+		return true;
+	}
+	const double toCamera = double(m_camera.position[axis]) - point[axis];
+	return side == 0 ? toCamera < 0 : toCamera > 0;
+}
+
+bool Viewport::resizeHandles() const {
+	const auto tool = m_editor->tool();
+	if (tool == Editor::Tool::Scale) {
+		return true;
+	}
+	// Select tool: squares on the sides of selected brushes resize them right away (Hammer's 2D
+	// views, Source 2's bounding box handles) - no need to switch to Scale.
+	if (tool != Editor::Tool::Select || m_editor->selectMode() != Editor::SelectMode::Object) {
+		return false;
+	}
+	const auto& selection = m_editor->selection();
+	if (!selection.solids.empty()) {
+		return true;
+	}
+	for (const int id : selection.entities) {
+		if (const auto* entity = m_editor->doc().findEntity(id); entity && !entity->solids.empty()) {
+			return true;
+		}
+	}
+	return false;
 }
 
 bool Viewport::scaling() const {

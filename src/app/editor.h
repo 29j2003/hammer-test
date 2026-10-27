@@ -11,6 +11,7 @@
 
 #include <memory>
 
+#include <sme/clipboard.h>
 #include <sme/editing.h>
 #include <sme/game.h>
 #include <sme/history.h>
@@ -133,6 +134,14 @@ public:
 	// --- Operations on the selection -----------------------------------------
 	void deleteSelection();
 	void duplicateSelection();
+	/// Ctrl+C / Ctrl+X: the selected objects go to the clipboard as VMF text.
+	void copySelection();
+	void cutSelection();
+	/// Pastes map objects from the clipboard (one undo step) and selects them; false if the
+	/// clipboard holds no map objects.
+	bool paste(const PasteOptions& options);
+	/// Box of the objects in the clipboard (for placing them under the mouse).
+	[[nodiscard]] std::optional<Bounds> clipboardBounds() const;
 	void nudgeSelection(const Vec3& delta);
 	void rotateSelection(int axis, double degrees);
 	void applyMaterialToSelection(const QString& material);

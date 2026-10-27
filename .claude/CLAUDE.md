@@ -11,7 +11,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
   `assets` inkl. Sounds/Soundscapes/Partikel, Höhenkarten für Relief `heightmap`, Sound-Decoder `audio`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
   (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
-  Bearbeiten + Undo (`editing`, `history`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
+  Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
   Export glTF/OBJ (`scene_export`).
 - `src/app/` – Qt-6-Editor (`smeapp` + `SourceMapEditor`): `editor` (Zustand, alle Änderungen über `commit()`),
   `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,

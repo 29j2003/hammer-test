@@ -20,6 +20,8 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   textured and wireframe.
 - **Snap to corners**: the move tool shows small squares on the corners of the selection; drag one onto a corner of
   another brush or model and they line up exactly.
+- **Resize right away**: selected brushes show squares on their sides in the select tool too; drag one to make the
+  brush longer, shorter or taller without switching to the scale tool.
 - **Lighting preview with real-time shadows** from your light entities (light, light_spot, light_environment), using
   VRAD's own falloff formulas: the sun and the nearest spot and point lights cast shadows (F7 turns them off).
   Entities show their editor icons (the sprites and models Hammer uses).
@@ -34,13 +36,17 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   middles (brushes always stay convex); draw a brush from the corners of its base.
 - **Entity tool**: the Tool panel on the left lists every point and brush entity with its icon (search with words like
   "global light", A–Z or in groups). The class you pick is *armed*: the next click places it on the surface under the
-  cursor; a brush entity (trigger, door, …) is built from the next box you drag. **Random yaw** turns every new prop
-  differently.
+  cursor (a preview of it follows the mouse); a brush entity (trigger, door, …) is built from the next box you drag.
+  **Random yaw** turns every new prop differently.
 - **Smart properties for every entity**: each key has a fitting editor (lists, flags, colors, targets, models,
   animations, sounds, particle systems) and a short description of what it does. Outputs are edited as readable cards
   ("When OnTrigger tell door_01 to Open") with drop-downs for the target's inputs. Every entity has a Name field. Turn
   **Smart Edit** off to see every key as plain text, like Hammer; add any key with the *new key | value | + Add* row.
-- **Copy and paste**: Ctrl+C on a material, model, sound, particle or entity class copies its name; Ctrl+V puts it into
+- **Copy and paste objects**: Ctrl+C / Ctrl+X copies or cuts the selected brushes and entities, Ctrl+V pastes them
+  under the mouse (resting on the surface). **Paste special** (Ctrl+Shift+V) makes several copies at once, each moved
+  and turned a step further, and gives entity names a number (door → door_2) so the copies' outputs stay their own.
+  Copied objects are VMF text, so they also paste into another map.
+- **Copy and paste names**: Ctrl+C on a material, model, sound, particle or entity class copies its name; Ctrl+V puts it into
   any field. Lines like `"_light" "255 255 255 200"` or `skyname<Tab>sky_day01_01` (from a wiki or another map) pasted
   into the properties set those keys at once.
 - **NPC helper**: pick an animation from the NPC's model and pose the NPC in it (scripted_sequence) or turn it into a

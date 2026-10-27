@@ -8,6 +8,8 @@
 #include "fixture.h"
 
 #include <QApplication>
+#include <QCursor>
+#include <QAction>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QTableWidget>
@@ -271,12 +273,70 @@ TEST_CASE("editing with the mouse in the real window") {
 		b = boundsOf(editor, block);
 		CHECK(b.max.x == doctest::Approx(128));
 		editor.setTool(Editor::Tool::Select);
+		// Select tool: the same squares are there - drag the top one to make the block taller.
+		view->update();
+		settle();
+		const Vec3 top{b.center().x, b.center().y, b.max.z};
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, top));
+		QTest::mouseMove(view, screen(view, top + Vec3{0, 0, 16}));
+		QTest::mouseMove(view, screen(view, top + Vec3{0, 0, 32}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, top + Vec3{0, 0, 32}));
+		settle();
+		CHECK(boundsOf(editor, block).max.z == doctest::Approx(b.max.z + 32));
+		CHECK(boundsOf(editor, block).min.z == doctest::Approx(b.min.z));
+		CHECK(editor.selection().solids == std::vector<SolidRef>{block});   // still selected, not a marquee
+		editor.undo();
+		CHECK(boundsOf(editor, block).max.z == doctest::Approx(b.max.z));
+	}
+	{
+		// Copy and paste: Ctrl+C puts the block on the clipboard as VMF text, Ctrl+V pastes it
+		// under the mouse (one undo step), Paste special makes several copies.
+		sme::Selection only;
+		only.solids.push_back(block);
+		editor.setSelection(only);
+		editor.copySelection();
+		CHECK(QApplication::clipboard()->text().contains("world"));
+		const std::size_t before = editor.doc().world.solids.size();
+		const Vec3 target{-256, -256, 0};
+		QCursor::setPos(view->mapToGlobal(screen(view, target)));
+		settle();
+		QAction* pasteAction = nullptr;
+		for (auto* a : window.actions()) {
+			if (a->objectName() == "Paste") pasteAction = a;
+		}
+		REQUIRE(pasteAction);
+		pasteAction->trigger();
+		settle();
+		REQUIRE(editor.doc().world.solids.size() == before + 1);
+		REQUIRE(editor.selection().solids.size() == 1);
+		const auto pasted = boundsOf(editor, editor.selection().solids.front());
+		CHECK(pasted.size().x == doctest::Approx(b.size().x));
+		if (view->mapFromGlobal(QCursor::pos()) == screen(view, target)) {   // the platform moved the cursor
+			CHECK(std::abs(pasted.center().x - target.x) <= 64);
+			CHECK(std::abs(pasted.center().y - target.y) <= 64);
+			CHECK(pasted.min.z == doctest::Approx(0));   // rests on the floor
+		}
+		editor.undo();
+		CHECK(editor.doc().world.solids.size() == before);
+		PasteOptions options;
+		options.copies = 3;
+		options.offset = {0, 256, 0};
+		REQUIRE(editor.paste(options));
+		CHECK(editor.doc().world.solids.size() == before + 3);
+		CHECK(editor.selection().solids.size() == 3);
+		editor.undo();
+		CHECK(editor.doc().world.solids.size() == before);
 	}
 
 	// Entity tool: an info_player_start on top of the block stands on it.
 	editor.clearSelection();
 	editor.setCurrentEntityClass("info_player_start");
 	editor.setTool(Editor::Tool::Entity);
+	// Before the click: a preview stands where it would go.
+	QTest::mouseMove(view, screen(view, {64, 0, b.max.z}));
+	settle();
+	REQUIRE(view->ghostBox());
+	CHECK(view->ghostBox()->min.z == doctest::Approx(b.max.z));
 	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {64, 0, b.max.z}));
 	settle();
 	REQUIRE(editor.doc().entities.size() == 1);

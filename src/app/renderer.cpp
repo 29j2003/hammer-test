@@ -1234,6 +1234,52 @@ void SceneRenderer::drawSprites(const Params& params) {
 	glBindVertexArray(0);
 }
 
+void SceneRenderer::drawGhostModel(const Params& params, const QString& path, const QMatrix4x4& transform) {
+	if (!m_initialized) {
+		return;
+	}
+	auto* model = gpuModel(path);
+	if (!model) {
+		return;
+	}
+	const bool flat = params.mode == Mode::Wireframe || params.mode == Mode::Flat2D;
+	glEnable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
+	m_program->bind();
+	setCommonUniforms(*m_program, params, transform);
+	m_program->setUniformValue("u_hideSelected", 0);
+	m_program->setUniformValue("u_onlySelected", 0);
+	m_program->setUniformValue("u_previewTint", 1);
+	m_program->setUniformValue("u_faceOverride", -1);
+	m_program->setUniformValue("u_useColor", 0);
+	m_program->setUniformValue("u_hasTex2", 0);
+	m_program->setUniformValue("u_fullbright", 0);
+	m_program->setUniformValue("u_opacity", 1.f);
+	m_program->setUniformValue("u_texSize", QVector2D(1, 1));
+	m_program->setUniformValue("u_mode", 1);
+	m_program->setUniformValue("u_flatColor", flat ? QVector4D(0.85f, 0.75f, 1.0f, 1) : QVector4D(0, 0, 0, 0));
+	if (flat) {
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+	}
+	glBindVertexArray(model->vao);
+	for (const auto& mesh : model->meshes) {
+		auto& tex = texture(mesh.material);
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
+		m_program->setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
+		glDrawElements(GL_TRIANGLES, mesh.count, GL_UNSIGNED_INT, reinterpret_cast<void*>(static_cast<std::uintptr_t>(mesh.first) * sizeof(std::uint32_t)));
+		++m_drawCalls;
+	}
+	glBindVertexArray(0);
+	if (flat) {
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	}
+	m_program->setUniformValue("u_previewTint", 0);
+	m_program->setUniformValue("u_model", QMatrix4x4());
+	m_program->setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
+	m_program->setUniformValue("u_alphaTest", 0);
+}
+
 void SceneRenderer::drawPreview(const Params& params, const QMatrix4x4& model, bool brushes) {
 	if (!m_initialized) {
 		return;

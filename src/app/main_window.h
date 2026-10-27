@@ -75,6 +75,10 @@ private:
 	void compile();
 	void showContextMenu(const QPoint& globalPos);
 	void roundEdgeDialog();
+	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).
+	void pasteHere();
+	/// Ctrl+Shift+V: several copies with offset, rotation and new names (Hammer's Paste Special).
+	void pasteSpecialDialog();
 	void offerUpdate(const ReleaseInfo& release, bool manual);
 	void runUpdate(const ReleaseInfo& release);
 	[[nodiscard]] Viewport* activeView() const;

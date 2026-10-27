@@ -30,6 +30,7 @@
 #include <QFormLayout>
 #include <QDoubleSpinBox>
 #include <QDialogButtonBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -351,6 +352,10 @@ void MainWindow::createActions() {
 	editMenu->addAction(action(tr("Redo"), QKeySequence("Ctrl+Y"), [this] { m_editor->redo(); }));
 	action(tr("Redo (second key)"), QKeySequence("Ctrl+Shift+Z"), [this] { m_editor->redo(); });
 	editMenu->addSeparator();
+	editMenu->addAction(action(tr("Cut"), QKeySequence::Cut, [this] { m_editor->cutSelection(); }));
+	editMenu->addAction(action(tr("Copy"), QKeySequence::Copy, [this] { m_editor->copySelection(); }));
+	editMenu->addAction(action(tr("Paste"), QKeySequence::Paste, [this] { pasteHere(); }));
+	editMenu->addAction(action(tr("Paste special ..."), QKeySequence("Ctrl+Shift+V"), [this] { pasteSpecialDialog(); }));
 	editMenu->addAction(action(tr("Delete"), QKeySequence::Delete, [this] { m_editor->deleteSelection(); }));
 	editMenu->addAction(action(tr("Duplicate"), QKeySequence("Ctrl+D"), [this] { m_editor->duplicateSelection(); }));
 	editMenu->addAction(action(tr("Select all"), QKeySequence::SelectAll, [this] { m_editor->selectAll(); }));
@@ -970,6 +975,103 @@ void MainWindow::showContextMenu(const QPoint& globalPos) {
 		menu.addAction(tr("Frame selection (F)"), this, [this] { activeView()->frameSelection(); });
 	}
 	menu.exec(globalPos);
+}
+
+void MainWindow::pasteHere() {
+	// Under the mouse when it is over a view, else where the objects were copied.
+	PasteOptions options;
+	if (const auto box = m_editor->clipboardBounds()) {
+		for (auto* view : m_views) {
+			if (const auto center = view->pasteCenter(*box)) {
+				options.center = center;
+				break;
+			}
+		}
+	}
+	m_editor->paste(options);
+}
+
+void MainWindow::pasteSpecialDialog() {
+	const auto box = m_editor->clipboardBounds();
+	if (!box) {
+		statusBar()->showMessage(tr("The clipboard holds no map objects - copy brushes or entities first (Ctrl+C)"), 5000);
+		return;
+	}
+	// Under the mouse: where it is now, before the dialog takes the focus.
+	std::optional<Vec3> underMouse;
+	for (auto* view : m_views) {
+		if ((underMouse = view->pasteCenter(*box))) break;
+	}
+	QSettings settings;
+	QDialog dialog(this);
+	dialog.setWindowTitle(tr("Paste special"));
+	auto* form = new QFormLayout(&dialog);
+	form->setContentsMargins(16, 16, 16, 12);
+	form->setHorizontalSpacing(12);
+	form->setVerticalSpacing(8);
+	auto* copies = new QSpinBox;
+	copies->setRange(1, 1000);
+	copies->setValue(settings.value("pasteSpecial/copies", 1).toInt());
+	form->addRow(tr("Number of copies"), copies);
+	const auto vectorRow = [&](const QString& key, double fallback, double limit, const QString& suffix) {
+		auto* row = new QWidget;
+		auto* h = new QHBoxLayout(row);
+		h->setContentsMargins(0, 0, 0, 0);
+		h->setSpacing(6);
+		std::array<QDoubleSpinBox*, 3> boxes{};
+		const char* axes[3] = {"X", "Y", "Z"};
+		for (int i = 0; i < 3; ++i) {
+			boxes[i] = new QDoubleSpinBox;
+			boxes[i]->setRange(-limit, limit);
+			boxes[i]->setDecimals(2);
+			boxes[i]->setSuffix(suffix);
+			boxes[i]->setPrefix(QString(axes[i]) + "  ");
+			boxes[i]->setValue(settings.value(key + QString::number(i), i == 0 ? fallback : 0.0).toDouble());
+			h->addWidget(boxes[i], 1);
+		}
+		return std::pair{row, boxes};
+	};
+	auto [offsetRow, offset] = vectorRow("pasteSpecial/offset", m_editor->grid() * 4, 65536, QString());
+	form->addRow(tr("Offset per copy"), offsetRow);
+	auto [rotationRow, rotation] = vectorRow("pasteSpecial/rotation", 0, 360, QStringLiteral("°"));
+	form->addRow(tr("Rotation per copy"), rotationRow);
+	auto* place = new QComboBox;
+	place->addItem(tr("Next to the copied objects"));
+	place->addItem(tr("Under the mouse"));
+	place->setCurrentIndex(underMouse ? settings.value("pasteSpecial/place", 0).toInt() : 0);
+	place->setEnabled(underMouse.has_value());
+	form->addRow(tr("First copy"), place);
+	auto* unique = new QCheckBox(tr("Make entity names unique (door -> door_2, outputs follow)"));
+	unique->setChecked(settings.value("pasteSpecial/unique", true).toBool());
+	form->addRow(QString(), unique);
+	auto* prefix = new QLineEdit(settings.value("pasteSpecial/prefix").toString());
+	prefix->setPlaceholderText(tr("optional, e.g. room2_"));
+	form->addRow(tr("Put before names"), prefix);
+	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	buttons->button(QDialogButtonBox::Ok)->setText(tr("Paste"));
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	form->addRow(buttons);
+	if (dialog.exec() != QDialog::Accepted) {
+		return;
+	}
+	PasteOptions options;
+	options.copies = copies->value();
+	options.offset = {offset[0]->value(), offset[1]->value(), offset[2]->value()};
+	options.rotation = {rotation[0]->value(), rotation[1]->value(), rotation[2]->value()};
+	if (place->currentIndex() == 1 && underMouse) options.center = underMouse;
+	options.uniqueNames = unique->isChecked();
+	options.namePrefix = prefix->text().trimmed().toStdString();
+	options.textureLock = m_editor->textureLock();
+	settings.setValue("pasteSpecial/copies", options.copies);
+	for (int i = 0; i < 3; ++i) {
+		settings.setValue("pasteSpecial/offset" + QString::number(i), offset[i]->value());
+		settings.setValue("pasteSpecial/rotation" + QString::number(i), rotation[i]->value());
+	}
+	settings.setValue("pasteSpecial/place", place->currentIndex());
+	settings.setValue("pasteSpecial/unique", options.uniqueNames);
+	settings.setValue("pasteSpecial/prefix", prefix->text().trimmed());
+	m_editor->paste(options);
 }
 
 void MainWindow::roundEdgeDialog() {
