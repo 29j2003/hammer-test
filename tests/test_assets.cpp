@@ -16,6 +16,7 @@
 #include <sme/heightmap.h>
 #include <sme/keyvalues.h>
 #include <sme/material.h>
+#include <sme/particles.h>
 #include <sme/text.h>
 #include <sme/texture.h>
 
@@ -876,4 +877,80 @@ TEST_CASE("relief like mapbase-fidelity's deploy.bat: which walls, from what, ho
 	CHECK_FALSE(fidelityReliefSource("glass/window01", material("LightmappedGeneric { $basetexture a $bumpmap b }")));
 	CHECK_FALSE(fidelityReliefSource("brick/fence", material("LightmappedGeneric { $basetexture a $bumpmap b $alphatest 1 }")));
 	CHECK_FALSE(fidelityReliefSource("brick/wall", material("UnlitGeneric { $basetexture brick/wall }")));
+}
+
+TEST_CASE("particle systems in full and their preview simulation") {
+	const auto definitions = readParticleDefinitions(test::makeDemoFirePcf());
+	REQUIRE(definitions.size() == 2);
+	const auto& fire = definitions[0].name == "demo_fire_small" ? definitions[0] : definitions[1];
+	CHECK(fire.name == "demo_fire_small");
+	CHECK(fire.material() == "particle/demo_flame");
+	CHECK(fire.properties.number("max_particles", 0) == doctest::Approx(200));
+	REQUIRE(fire.emitters.size() == 1);
+	CHECK(fire.emitters[0].name == "emit_continuously");
+	CHECK(fire.emitters[0].number("emission_rate", 0) == doctest::Approx(40));
+	CHECK(fire.initializers.size() == 5);
+	CHECK(fire.operators.size() == 5);
+	REQUIRE(fire.renderers.size() == 1);
+	CHECK(fire.renderers[0].name == "render_animated_sprites");
+	const auto* color = fire.initializers[4].find("color1");
+	REQUIRE(color);
+	CHECK(color->text == "255 210 90 255");
+	CHECK(fire.operators[0].vector("gravity", {}).z == doctest::Approx(30));
+	REQUIRE(fire.children.size() == 1);
+	CHECK(fire.children[0].name == "demo_smoke_column");
+	CHECK(fire.children[0].delay == doctest::Approx(0.3));
+
+	// Broken files: nothing, never a crash.
+	const auto whole = test::makeDemoFirePcf();
+	for (const std::size_t cut : {whole.size() / 3, whole.size() / 2, whole.size() - 5}) {
+		auto part = whole;
+		part.resize(cut);
+		(void)readParticleDefinitions(part);
+	}
+	CHECK(readParticleDefinitions(std::vector<std::byte>(64, std::byte{0x41})).empty());
+
+	// The fire: particles appear, rise, fade; the smoke child starts after its delay.
+	ParticleSimulation simulation(definitions, "demo_fire_small", 7);
+	REQUIRE(simulation.valid());
+	REQUIRE(simulation.systems().size() == 2);
+	CHECK(simulation.systems()[1].name == "demo_smoke_column");
+	simulation.step(0.2);
+	CHECK(simulation.particleCount() > 3);
+	for (const auto& s : simulation.sprites()) CHECK(s.system == 0);   // no smoke yet
+	simulation.step(1.0);
+	std::size_t smoke = 0;
+	double highest = 0;
+	for (const auto& s : simulation.sprites()) {
+		smoke += s.system == 1 ? 1 : 0;
+		highest = std::max(highest, s.position.z);
+		CHECK(s.alpha >= 0);
+		CHECK(s.alpha <= 1);
+	}
+	CHECK(smoke > 0);
+	CHECK(highest > 20);   // rises
+	const auto count = simulation.particleCount();
+	CHECK(count < 120);    // decays, does not pile up
+	// Deterministic for a seed.
+	ParticleSimulation again(definitions, "demo_fire_small", 7);
+	again.step(1.2);
+	CHECK(again.particleCount() == count);
+
+	// Sparks: one burst that falls and then starts again (the preview loops).
+	const auto sparks = readParticleDefinitions(test::makeDemoSparksPcf());
+	ParticleSimulation burst(sparks, "demo_sparks", 1);
+	CHECK(burst.systems()[0].trail);
+	burst.step(1.0 / 60);
+	CHECK(burst.particleCount() == 60);
+	burst.step(0.3);
+	double lowest = 0;
+	for (const auto& s : burst.sprites()) lowest = std::min(lowest, s.velocity.z);
+	CHECK(lowest < -50);   // gravity pulls down
+	burst.step(1.0);
+	burst.step(1.0 / 60);
+	CHECK(burst.particleCount() > 0);   // started again
+	CHECK(burst.time() < 1.0);
+
+	// Unknown system: nothing to simulate.
+	CHECK_FALSE(ParticleSimulation(sparks, "nope").valid());
 }

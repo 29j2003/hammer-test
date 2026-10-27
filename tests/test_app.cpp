@@ -15,6 +15,7 @@
 #include <QTableWidget>
 #include <QTabBar>
 #include <QLabel>
+#include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QComboBox>
@@ -69,6 +70,7 @@
 #include "material_preview.h"
 #include "material_editor.h"
 #include "panels.h"
+#include "particle_browser.h"
 #include "sound_player.h"
 #include "style.h"
 #include "sound_browser.h"
@@ -997,8 +999,50 @@ TEST_CASE("editing with the mouse in the real window") {
 		auto* maps = window.modPage()->findChild<QListWidget*>("modMaps");
 		REQUIRE(maps);
 		CHECK(maps->count() > 0);
+		// Particles page: picking a system shows it moving and lists its parts as cards.
+		window.showPage(MainWindow::Page::Particles);
+		auto* particles = window.findChild<ParticleBrowser*>();
+		REQUIRE(particles);
+		for (int i = 0; i < 200 && particles->tree()->topLevelItemCount() == 0; ++i) QTest::qWait(50);
+		REQUIRE(particles->selectSystem("demo_fire_small"));
+		auto* preview = particles->preview();
+		CHECK(preview->isVisible());
+		for (int i = 0; i < 100 && preview->time() < 0.6; ++i) QTest::qWait(20);   // runs by itself while shown
+		CHECK(preview->time() > 0.3);
+		CHECK(preview->particleCount() > 0);
+		QStringList titles;
+		for (auto* l : particles->findChildren<QLabel*>()) {
+			if (l->property("role").toString() == "cardTitle") titles << l->text();
+		}
+		CHECK(titles.contains("emit_continuously"));
+		CHECK(titles.contains("Lifetime Random"));
+		CHECK(titles.contains("render_animated_sprites"));
+		CHECK(titles.contains("demo_smoke_column"));   // its child
+		// Pause stops it; hidden it does not run.
+		particles->findChild<QPushButton*>("particlePlay")->click();
+		const double paused = preview->time();
+		QTest::qWait(150);
+		CHECK(preview->time() == doctest::Approx(paused));
+		particles->findChild<QPushButton*>("particlePlay")->click();
+		// Sparks: a burst, drawn as streaks.
+		REQUIRE(particles->selectSystem("demo_sparks"));
+		preview->advance(0.1);
+		CHECK(preview->particleCount() == 60);
 		window.showPage(MainWindow::Page::Map);
 		CHECK(window.assets()->isVisible());
+		// Back in its dock while mapping; with the dock closed it is not seen and does not run.
+		QDockWidget* particlesDock = nullptr;
+		for (QWidget* w = particles; w; w = w->parentWidget()) {
+			if (auto* dock = qobject_cast<QDockWidget*>(w)) particlesDock = dock;
+		}
+		REQUIRE(particlesDock);
+		particlesDock->hide();
+		QTest::qWait(50);
+		CHECK_FALSE(preview->isVisible());
+		const double hidden = preview->time();
+		QTest::qWait(150);
+		CHECK(preview->time() == doctest::Approx(hidden));
+		particlesDock->show();
 	}
 	{
 		// View filters: hiding a kind of object (lights here) hides every one of them, the view's

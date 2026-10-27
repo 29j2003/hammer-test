@@ -192,6 +192,16 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   `serialize`), die zuletzt gewählte Ansicht in `compile/advanced`.
   Mit aktiven Cordons wird `<karte>_cordon.vmf` geschrieben und kompiliert.
 - Partikel: `particleSystems()` liest `particles_manifest.txt` und die PCFs mit dem DMX-Leser von sourcepp (`kvpp::DMX`).
+  Kern-Modul `particles`: `readParticleDefinitions` macht daraus Systeme mit ihren Werten und Teilen (emitters,
+  initializers, operators, renderers, forces, constraints, children; Werte als Text + Zahlen). `ParticleSimulation`
+  rechnet die gängigen Funktionen nach Namen nach (emit_continuously/instantaneously/noise, Lifetime/Radius/Color/Alpha/
+  Rotation Random, Position Within Sphere/Box, Velocity Random/Noise, Movement Basic, Lifespan Decay, Alpha Fade
+  (and Decay, In/Out Random), Radius Scale, Color Fade, random force), Kinder mit Verzögerung, fester Zufalls-Seed,
+  höchstens 3000 Partikel und 16 Systeme; ohne Emitter mehr startet sie neu (`loop`). Unbekannte Teile werden gezeigt,
+  ändern aber nichts. UI `particle_browser`: Liste | `ParticlePreview` (QPainter, Sprites aus dem Material, `$additive`
+  → Plus-Mischung, Farben in 32 Stufen zwischengespeichert, Trails als Striche, Kamera passt sich an) | Karten der Teile.
+  Simuliert nur, solange die Vorschau sichtbar ist und läuft. Demo: `makeDemoFirePcf`/`makeDemoSparksPcf` (`PcfWriter`
+  schreibt binäres DMX Version 2). Screenshot: `--page particles --particle demo_fire_small`.
 - Tastenkürzel: Aktionen tragen ihren englischen Namen als `objectName`; `ShortcutDialog` speichert unter `shortcuts/<Name>`.
 - Einrasten: `Editor::snapGrid()` (0 wenn Shift+W aus) für alle Positionen, `Editor::snapAngle()` für Drehungen;
   Drehpunkt wird auf das halbe Raster gesetzt, damit Brushes auf dem Raster bleiben.

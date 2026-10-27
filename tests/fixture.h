@@ -56,6 +56,10 @@ void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFil
 
 /// A particle file (.pcf, binary DMX) holding particle systems with these names.
 [[nodiscard]] std::vector<std::byte> makePcf(const std::vector<std::string>& systems);
+/// The demo's particle files: a fire with a smoke child, and a burst of sparks (with emitters,
+/// initializers, operators and renderers like the game's).
+[[nodiscard]] std::vector<std::byte> makeDemoFirePcf();
+[[nodiscard]] std::vector<std::byte> makeDemoSparksPcf();
 
 /// Creates an RGBA8888 VTF (solid color with a darker checker) of the given size.
 [[nodiscard]] std::vector<std::byte> makeVtf(unsigned size, unsigned char r, unsigned char g, unsigned char b, bool dxt = false);

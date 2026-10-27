@@ -469,8 +469,31 @@ void createDemo(Fixture& f) {
 	          "\t\"playrandom\" { \"time\" \"5,10\" \"rndwave\" { \"wave\" \"ambient/alarm1.wav\" } }\n}\n");
 
 	// Particles (info_particle_system effect names).
-	writeBytes(f.mod / "particles/demo_fire.pcf", makePcf({"demo_fire_small", "demo_smoke_column"}));
-	writeBytes(f.mod / "particles/demo_sparks.pcf", makePcf({"demo_sparks"}));
+	writeBytes(f.mod / "particles/demo_fire.pcf", makeDemoFirePcf());
+	writeBytes(f.mod / "particles/demo_sparks.pcf", makeDemoSparksPcf());
+	{
+		// Their sprites: a soft glow (additive) and a puff of smoke.
+		const auto soft = [](double u, double v, double power) {
+			const double d = std::sqrt((u - 0.5) * (u - 0.5) + (v - 0.5) * (v - 0.5)) * 2;
+			return std::pow(std::clamp(1 - d, 0.0, 1.0), power);
+		};
+		const auto particles = f.mod / "materials/particle";
+		writeBytes(particles / "demo_flame.vtf", makeTexture(64, [&](double u, double v) {
+			const double a = soft(u, v, 1.5);
+			return Rgba{a, a, a, a};
+		}, true));
+		writeBytes(particles / "demo_glow.vtf", makeTexture(32, [&](double u, double v) {
+			const double a = soft(u, v, 2.5);
+			return Rgba{a, a, a, a};
+		}, true));
+		writeBytes(particles / "demo_smoke.vtf", makeTexture(64, [&](double u, double v) {
+			const double a = soft(u, v, 1.0) * (0.75 + 0.25 * std::sin(u * 17 + v * 11));
+			return Rgba{1, 1, 1, a};
+		}, true));
+		writeText(particles / "demo_flame.vmt", vmt("SpriteCard", "\t\"$basetexture\" \"particle/demo_flame\"\n\t\"$additive\" \"1\"\n"));
+		writeText(particles / "demo_glow.vmt", vmt("SpriteCard", "\t\"$basetexture\" \"particle/demo_glow\"\n\t\"$additive\" \"1\"\n"));
+		writeText(particles / "demo_smoke.vmt", vmt("SpriteCard", "\t\"$basetexture\" \"particle/demo_smoke\"\n\t\"$translucent\" \"1\"\n"));
+	}
 	writeText(f.mod / "particles/particles_manifest.txt",
 	          "particles_manifest\n{\n\t\"file\" \"!particles/demo_fire.pcf\"\n\t\"file\" \"particles/demo_sparks.pcf\"\n}\n");
 
@@ -850,39 +873,251 @@ void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFil
 	writeBytes(stem.string() + ".dx90.vtx", files.vtx);
 }
 
-std::vector<std::byte> makePcf(const std::vector<std::string>& systems) {
-	// Binary DMX, encoding version 2 (as Source 2013 writes .pcf files): header line ending in
-	// "\n\0", string table (u16 count), elements (type as u16 string index, name, 16-byte id),
-	// then the attributes of every element (none here).
-	std::vector<std::byte> out;
-	const auto put = [&](const void* data, std::size_t size) {
-		const auto* bytes = static_cast<const std::byte*>(data);
-		out.insert(out.end(), bytes, bytes + size);
-	};
-	const auto putString = [&](const std::string& text) { put(text.c_str(), text.size() + 1); };
-	const std::string header = "<!-- dmx encoding binary 2 format pcf 1 -->\n";
-	put(header.data(), header.size());
-	out.push_back(std::byte{0});
-	const std::vector<std::string> strings{"DmElement", "DmeParticleSystemDefinition"};
-	const auto count = static_cast<std::uint16_t>(strings.size());
-	put(&count, 2);
-	for (const auto& text : strings) putString(text);
-	const auto elements = static_cast<std::int32_t>(systems.size() + 1);
-	put(&elements, 4);
-	const auto element = [&](std::uint16_t type, const std::string& name, unsigned char id) {
-		put(&type, 2);
-		putString(name);
-		std::array<std::byte, 16> uuid{};
-		uuid[0] = std::byte{id};
-		put(uuid.data(), uuid.size());
-	};
-	element(0, "untitled", 0);
-	for (std::size_t i = 0; i < systems.size(); ++i) {
-		element(1, systems[i], static_cast<unsigned char>(i + 1));
+namespace {
+
+/// Writes binary DMX, encoding version 2 (as Source 2013 writes .pcf files): header line ending
+/// in "\n\0", string table (u16 count) with the type and attribute names, the elements (type as
+/// u16 string index, name inline, 16-byte id), then the attributes of every element (name as u16
+/// string index, type byte, value; strings inline).
+class PcfWriter {
+public:
+	int element(const std::string& type, const std::string& name) {
+		m_elements.push_back({type, name, {}});
+		return static_cast<int>(m_elements.size()) - 1;
 	}
-	const std::int32_t noAttributes = 0;
-	for (std::int32_t i = 0; i < elements; ++i) put(&noAttributes, 4);
-	return out;
+	void add(int element, const std::string& key, std::uint8_t type, std::vector<std::byte> data) {
+		m_elements[static_cast<std::size_t>(element)].attributes.push_back({key, type, std::move(data)});
+	}
+	template<typename T>
+	static std::vector<std::byte> raw(const T& value) {
+		std::vector<std::byte> out(sizeof(T));
+		std::memcpy(out.data(), &value, sizeof(T));
+		return out;
+	}
+	void integer(int e, const std::string& key, std::int32_t v) { add(e, key, 2, raw(v)); }
+	void number(int e, const std::string& key, float v) { add(e, key, 3, raw(v)); }
+	void text(int e, const std::string& key, const std::string& v) {
+		std::vector<std::byte> data(v.size() + 1);
+		std::memcpy(data.data(), v.c_str(), v.size() + 1);
+		add(e, key, 5, std::move(data));
+	}
+	void color(int e, const std::string& key, std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a = 255) {
+		add(e, key, 8, {std::byte{r}, std::byte{g}, std::byte{b}, std::byte{a}});
+	}
+	void vector(int e, const std::string& key, float x, float y, float z) {
+		const std::array<float, 3> v{x, y, z};
+		add(e, key, 10, raw(v));
+	}
+	void reference(int e, const std::string& key, std::int32_t target) { add(e, key, 1, raw(target)); }
+	void references(int e, const std::string& key, const std::vector<int>& targets) {
+		auto data = raw(static_cast<std::uint32_t>(targets.size()));
+		for (const int t : targets) {
+			const auto one = raw(static_cast<std::int32_t>(t));
+			data.insert(data.end(), one.begin(), one.end());
+		}
+		add(e, key, 15, std::move(data));
+	}
+
+	/// A part of a system ("emit_continuously" ...) with float values.
+	int function(const std::string& functionName, const std::vector<std::pair<std::string, float>>& values = {}) {
+		const int e = element("DmeParticleOperator", functionName);
+		text(e, "functionName", functionName);
+		for (const auto& [key, value] : values) number(e, key, value);
+		return e;
+	}
+
+	[[nodiscard]] std::vector<std::byte> bytes() const {
+		std::vector<std::string> strings;
+		const auto index = [&](const std::string& text) {
+			const auto it = std::find(strings.begin(), strings.end(), text);
+			if (it != strings.end()) return static_cast<std::uint16_t>(it - strings.begin());
+			strings.push_back(text);
+			return static_cast<std::uint16_t>(strings.size() - 1);
+		};
+		for (const auto& e : m_elements) {
+			(void)index(e.type);
+			for (const auto& a : e.attributes) (void)index(a.key);
+		}
+		std::vector<std::byte> out;
+		const auto put = [&](const void* data, std::size_t size) {
+			const auto* bytes = static_cast<const std::byte*>(data);
+			out.insert(out.end(), bytes, bytes + size);
+		};
+		const std::string header = "<!-- dmx encoding binary 2 format pcf 1 -->\n";
+		put(header.data(), header.size());
+		out.push_back(std::byte{0});
+		const auto count = static_cast<std::uint16_t>(strings.size());
+		put(&count, 2);
+		for (const auto& text : strings) put(text.c_str(), text.size() + 1);
+		const auto elements = static_cast<std::int32_t>(m_elements.size());
+		put(&elements, 4);
+		for (std::size_t i = 0; i < m_elements.size(); ++i) {
+			const auto type = index(m_elements[i].type);
+			put(&type, 2);
+			put(m_elements[i].name.c_str(), m_elements[i].name.size() + 1);
+			std::array<std::byte, 16> uuid{};
+			uuid[0] = std::byte(i & 0xff);
+			uuid[1] = std::byte((i >> 8) & 0xff);
+			put(uuid.data(), uuid.size());
+		}
+		for (const auto& e : m_elements) {
+			const auto attributes = static_cast<std::int32_t>(e.attributes.size());
+			put(&attributes, 4);
+			for (const auto& a : e.attributes) {
+				const auto key = index(a.key);
+				put(&key, 2);
+				put(&a.type, 1);
+				put(a.data.data(), a.data.size());
+			}
+		}
+		return out;
+	}
+
+private:
+	struct Attribute {
+		std::string key;
+		std::uint8_t type;
+		std::vector<std::byte> data;
+	};
+	struct Element {
+		std::string type, name;
+		std::vector<Attribute> attributes;
+	};
+	std::vector<Element> m_elements;
+};
+
+/// One system: its own values and parts (lists of element indices).
+struct PcfSystem {
+	std::string name, material;
+	int maxParticles = 200;
+	std::vector<int> emitters, initializers, operators, renderers, children;
+};
+
+int addSystem(PcfWriter& w, const PcfSystem& system) {
+	const int e = w.element("DmeParticleSystemDefinition", system.name);
+	w.text(e, "material", system.material);
+	w.integer(e, "max_particles", system.maxParticles);
+	w.number(e, "radius", 5);
+	w.color(e, "color", 255, 255, 255);
+	w.references(e, "emitters", system.emitters);
+	w.references(e, "initializers", system.initializers);
+	w.references(e, "operators", system.operators);
+	w.references(e, "renderers", system.renderers);
+	w.references(e, "children", system.children);
+	return e;
+}
+
+int childOf(PcfWriter& w, int system, float delay) {
+	const int c = w.element("DmeParticleChild", "child");
+	w.reference(c, "child", system);
+	w.number(c, "delay", delay);
+	return c;
+}
+
+} // namespace
+
+std::vector<std::byte> makePcf(const std::vector<std::string>& systems) {
+	PcfWriter w;
+	const int root = w.element("DmElement", "untitled");
+	std::vector<int> definitions;
+	for (const auto& name : systems) {
+		PcfSystem system;
+		system.name = name;
+		system.material = "particle/demo_glow";
+		system.emitters = {w.function("emit_continuously", {{"emission_rate", 20}})};
+		system.initializers = {w.function("Lifetime Random", {{"lifetime_min", 1}, {"lifetime_max", 1}})};
+		system.operators = {w.function("Movement Basic"), w.function("Lifespan Decay")};
+		system.renderers = {w.function("render_animated_sprites")};
+		definitions.push_back(addSystem(w, system));
+	}
+	w.references(root, "particleSystemDefinitions", definitions);
+	return w.bytes();
+}
+
+std::vector<std::byte> makeDemoFirePcf() {
+	PcfWriter w;
+	const int root = w.element("DmElement", "untitled");
+	// Smoke rising from the fire (a child of it, starting a bit later).
+	PcfSystem smoke;
+	smoke.name = "demo_smoke_column";
+	smoke.material = "particle/demo_smoke";
+	smoke.emitters = {w.function("emit_continuously", {{"emission_rate", 12}})};
+	smoke.initializers = {w.function("Lifetime Random", {{"lifetime_min", 2}, {"lifetime_max", 3}}),
+	                      w.function("Radius Random", {{"radius_min", 10}, {"radius_max", 18}}),
+	                      w.function("Alpha Random", {{"alpha_min", 60}, {"alpha_max", 120}}),
+	                      w.function("Position Within Sphere Random", {{"distance_max", 6}}),
+	                      w.function("Rotation Random"),
+	                      w.function("Rotation Speed Random", {{"rotation_speed_random_min", -20}, {"rotation_speed_random_max", 20}})};
+	const int smokeVelocity = w.function("Velocity Random");
+	w.vector(smokeVelocity, "speed_in_local_coordinate_system_min", -6, -6, 40);
+	w.vector(smokeVelocity, "speed_in_local_coordinate_system_max", 6, 6, 60);
+	smoke.initializers.push_back(smokeVelocity);
+	const int smokeColor = w.function("Color Random");
+	w.color(smokeColor, "color1", 90, 90, 95);
+	w.color(smokeColor, "color2", 130, 125, 120);
+	smoke.initializers.push_back(smokeColor);
+	const int smokeMove = w.function("Movement Basic", {{"drag", 0.02f}});
+	w.vector(smokeMove, "gravity", 6, 0, 0);
+	smoke.operators = {smokeMove,
+	                   w.function("Lifespan Decay"),
+	                   w.function("Alpha Fade In Random", {{"fade_in_time_min", 0.2f}, {"fade_in_time_max", 0.3f}}),
+	                   w.function("Alpha Fade Out Random", {{"fade_out_time_min", 0.4f}, {"fade_out_time_max", 0.6f}}),
+	                   w.function("Radius Scale", {{"radius_start_scale", 0.6f}, {"radius_end_scale", 2.2f}}),
+	                   w.function("Rotation Basic")};
+	smoke.renderers = {w.function("render_animated_sprites")};
+	const int smokeSystem = addSystem(w, smoke);
+
+	PcfSystem fire;
+	fire.name = "demo_fire_small";
+	fire.material = "particle/demo_flame";
+	fire.emitters = {w.function("emit_continuously", {{"emission_rate", 40}})};
+	fire.initializers = {w.function("Lifetime Random", {{"lifetime_min", 0.5f}, {"lifetime_max", 1.0f}}),
+	                     w.function("Radius Random", {{"radius_min", 6}, {"radius_max", 11}}),
+	                     w.function("Position Within Sphere Random", {{"distance_max", 8}})};
+	const int fireVelocity = w.function("Velocity Random");
+	w.vector(fireVelocity, "speed_in_local_coordinate_system_min", -4, -4, 30);
+	w.vector(fireVelocity, "speed_in_local_coordinate_system_max", 4, 4, 70);
+	fire.initializers.push_back(fireVelocity);
+	const int fireColor = w.function("Color Random");
+	w.color(fireColor, "color1", 255, 210, 90);
+	w.color(fireColor, "color2", 255, 130, 40);
+	fire.initializers.push_back(fireColor);
+	const int fireMove = w.function("Movement Basic", {{"drag", 0.05f}});
+	w.vector(fireMove, "gravity", 0, 0, 30);
+	const int fireFade = w.function("Color Fade", {{"fade_start_time", 0.3f}, {"fade_end_time", 1}});
+	w.color(fireFade, "color_fade", 150, 40, 10);
+	fire.operators = {fireMove, w.function("Lifespan Decay"),
+	                  w.function("Alpha Fade and Decay", {{"start_alpha", 0}, {"end_fade_in_time", 0.15f}, {"start_fade_out_time", 0.5f}}),
+	                  w.function("Radius Scale", {{"radius_start_scale", 1}, {"radius_end_scale", 0.3f}}), fireFade};
+	fire.renderers = {w.function("render_animated_sprites")};
+	fire.children = {childOf(w, smokeSystem, 0.3f)};
+	const int fireSystem = addSystem(w, fire);
+	w.references(root, "particleSystemDefinitions", {fireSystem, smokeSystem});
+	return w.bytes();
+}
+
+std::vector<std::byte> makeDemoSparksPcf() {
+	PcfWriter w;
+	const int root = w.element("DmElement", "untitled");
+	PcfSystem sparks;
+	sparks.name = "demo_sparks";
+	sparks.material = "particle/demo_glow";
+	sparks.maxParticles = 120;
+	sparks.emitters = {w.function("emit_instantaneously", {{"num_to_emit", 60}})};
+	sparks.initializers = {w.function("Lifetime Random", {{"lifetime_min", 0.4f}, {"lifetime_max", 1.0f}}),
+	                       w.function("Radius Random", {{"radius_min", 1}, {"radius_max", 2.5f}}),
+	                       w.function("Position Within Sphere Random", {{"distance_max", 2}, {"speed_min", 120}, {"speed_max", 280}})};
+	const int sparkColor = w.function("Color Random");
+	w.color(sparkColor, "color1", 255, 240, 160);
+	w.color(sparkColor, "color2", 255, 170, 60);
+	sparks.initializers.push_back(sparkColor);
+	const int sparkMove = w.function("Movement Basic", {{"drag", 0.03f}});
+	w.vector(sparkMove, "gravity", 0, 0, -500);
+	sparks.operators = {sparkMove, w.function("Lifespan Decay"),
+	                    w.function("Alpha Fade Out Random", {{"fade_out_time_min", 0.3f}, {"fade_out_time_max", 0.5f}})};
+	sparks.renderers = {w.function("render_sprite_trail")};
+	w.references(root, "particleSystemDefinitions", {addSystem(w, sparks)});
+	return w.bytes();
 }
 
 } // namespace sme::test

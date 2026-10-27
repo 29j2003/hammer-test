@@ -95,6 +95,11 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Browsers**: materials filtered by kind (brush, blend/displacement, model, tool, see-through, water, decals, skybox,
   used in this map), models with previews, a **Sounds** tab with every sound script entry, sound file and soundscape
   and a **Particles** tab (drag a particle system in for an info_particle_system).
+- **Particles**: pick a system to see it move - fire, smoke, sparks with their sprites, child systems included - and
+  turn around it (drag; right drag moves up and down; the wheel zooms), pause, restart, slow down or speed up. Next to it
+  its parts as cards: emitters, initializers, operators, renderers and children with all their values. The preview runs
+  the common parts (emitting, lifetime, size, color, alpha, movement with gravity and drag, fading, scaling, rotation); it
+  is close to the game, not exact.
 - **Sounds**: click a sound to hear it (WAV including ADPCM, MP3, OGG) with its waveform and loop point; click into the
   waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
   entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
@@ -225,7 +230,7 @@ any game installed:
 ## Status
 
 Early version. Tested with generated test data and automated UI tests on Linux, and built on Windows by the CI; it still
-needs testing with real games. Not there yet: editing displacements with the vertex tool, a mesh mode, particle previews
+needs testing with real games. Not there yet: editing displacements with the vertex tool, a mesh mode, particles
 in the 3D view, and a full physics simulation (Drop to floor only lets objects fall straight down).
 
 ## License
