@@ -28,6 +28,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QSettings>
+#include <QStatusBar>
 #include <QSignalSpy>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
@@ -295,6 +296,15 @@ TEST_CASE("editing with the mouse in the real window") {
 		sme::Selection only;
 		only.solids.push_back(block);
 		editor.setSelection(only);
+		{
+			// The status bar names the selection and gives its size and center.
+			QStringList texts;
+			for (auto* label : window.statusBar()->findChildren<QLabel*>()) texts << label->text();
+			CHECK(texts.contains("Brush (6 faces)"));
+			const QString size = QStringLiteral("%1w %2l %3h").arg(b.size().x).arg(b.size().y).arg(b.size().z);
+			CHECK(std::any_of(texts.begin(), texts.end(), [&](const QString& t) { return t.startsWith(size); }));
+			CHECK(std::any_of(texts.begin(), texts.end(), [](const QString& t) { return t.startsWith("Grid 16"); }));
+		}
 		editor.copySelection();
 		CHECK(QApplication::clipboard()->text().contains("world"));
 		const std::size_t before = editor.doc().world.solids.size();

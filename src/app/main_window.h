@@ -82,6 +82,8 @@ private:
 	void roundEdgeDialog();
 	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).
 	void pasteHere();
+	/// Status bar: selection, its size and center, grid / snap / angle.
+	void updateStatusInfo();
 	/// Ctrl+Shift+V: several copies with offset, rotation and new names (Hammer's Paste Special).
 	void pasteSpecialDialog();
 	void offerUpdate(const ReleaseInfo& release, bool manual);
@@ -118,6 +120,9 @@ private:
 	QToolButton* m_gameButton = nullptr;
 	QMenu* m_gameMenu = nullptr;
 	QComboBox* m_gridCombo = nullptr;
+	QLabel* m_selectionLabel = nullptr;
+	QLabel* m_sizeLabel = nullptr;
+	QLabel* m_gridLabel = nullptr;
 	QLabel* m_cursorLabel = nullptr;
 	QLabel* m_statsLabel = nullptr;
 	QActionGroup* m_toolGroup = nullptr;

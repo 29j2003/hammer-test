@@ -456,7 +456,10 @@ void Viewport::paintGL() {
 		m_fps = m_frames * 1000.0 / m_fpsClock.elapsed();
 		m_frames = 0;
 		m_fpsClock.restart();
-		emit statsChanged(tr("%1 triangles, %2 draw calls, %3 lights (%6 with shadows), %4 ms CPU/frame, %5 fps")
+		// The view only draws when something changes, so frames per second say little; the time
+		// a frame takes says what the view could do.
+		emit statsChanged(tr("%1 ms/frame (%2 fps possible)").arg(m_frameMs, 0, 'f', 1).arg(m_frameMs > 0.01 ? std::min(9999.0, 1000.0 / m_frameMs) : 9999.0, 0, 'f', 0));
+		emit statsDetail(tr("%1 triangles, %2 draw calls, %3 lights (%6 with shadows), %4 ms CPU/frame, %5 frames drawn per second")
 		                      .arg(m_renderer.triangleCount())
 		                      .arg(m_renderer.lastDrawCalls())
 		                      .arg(m_renderer.lightCount())
@@ -1089,8 +1092,8 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 		case Drag::None:
 			break;
 	}
-	if (!m_camera.is2D() && m_editor->selectMode() == Editor::SelectMode::Face) {
-		showHoverMaterial(pos);
+	if (!m_camera.is2D()) {
+		showHoverInfo(pos);
 	}
 	updateGhost(&pos);
 	const Handle hover = hitHandle(pos);
@@ -1252,14 +1255,19 @@ void Viewport::setHoverSide(int sideId) {
 	}
 }
 
-void Viewport::showHoverMaterial(const QPointF& pos) {
+void Viewport::showHoverInfo(const QPointF& pos) {
 	if (m_hoverClock.isValid() && m_hoverClock.elapsed() < 60) {
 		return;
 	}
 	m_hoverClock.start();
 	const auto hit = m_renderer.pick(rayAt(pos), true);
 	QString text;
-	if (hit) {
+	if (hit && m_editor->selectMode() != Editor::SelectMode::Face) {
+		// Where the mouse points and how far away that is (Source 2 Hammer's [dist]).
+		const Vec3 p = hit->point;
+		const double distance = length(p - fromQt(m_camera.position));
+		text = tr("Cursor %1 %2 %3  ·  dist %4").arg(std::round(p.x)).arg(std::round(p.y)).arg(std::round(p.z)).arg(distance, 0, 'f', 0);
+	} else if (hit) {
 		if (const auto* solid = m_editor->doc().findSolid(hit->solid)) {
 			for (const auto& side : solid->sides) {
 				if (side.id == hit->sideId) {

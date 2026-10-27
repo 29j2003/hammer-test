@@ -78,6 +78,9 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Brushes einzelne Tool-/Himmelsflächen); `Editor::hidden()` = von Hand versteckt (H) + gefilterte Arten, zwischengespeichert
   und bei jeder Änderung neu (`m_hiddenDirty`), Maske in QSettings `view/hiddenKinds`; Menü `Viewport::fillShowMenu`.
   Versteckt wird nur über Flags (`FLAG_HIDDEN`), die Geometrie bleibt.
+  Statusleiste: `MainWindow::updateStatusInfo` (Auswahl, Maße, Raster/Snap/Winkel), `Viewport::showHoverInfo`
+  (3D: Punkt unter der Maus + Abstand, im Flächenmodus das Material), `statsChanged` = Zeit pro Bild (die Views
+  zeichnen nur bei Änderungen, Bilder pro Sekunde sagen wenig), `statsDetail` als Tooltip.
   Entity-Werkzeug: `Viewport::updateGhost` zeigt die scharfe Klasse unter der Maus (Box + Modell über
   `SceneRenderer::drawGhostModel`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.

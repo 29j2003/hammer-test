@@ -127,10 +127,18 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 		}
 	});
 
+	// Status bar like Source 2 Hammer: what is selected, its size and place, where the mouse is,
+	// grid / snap / rotation step, and how long a frame takes.
+	m_selectionLabel = new QLabel;
+	m_sizeLabel = new QLabel;
+	m_sizeLabel->setToolTip(tr("Size of the selection (width, length, height) and its center"));
 	m_cursorLabel = new QLabel;
+	m_gridLabel = new QLabel;
 	m_statsLabel = new QLabel;
-	statusBar()->addPermanentWidget(m_cursorLabel);
-	statusBar()->addPermanentWidget(m_statsLabel);
+	for (auto* label : {m_selectionLabel, m_sizeLabel, m_cursorLabel, m_gridLabel, m_statsLabel}) {
+		label->setContentsMargins(6, 0, 6, 0);
+		statusBar()->addPermanentWidget(label);
+	}
 	// Version at the bottom right; it becomes the update button when a newer version is out.
 	m_updater = new Updater(this);
 	m_versionButton = new QToolButton;
@@ -175,6 +183,11 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 		connect(view, &Viewport::contextMenuRequested, this, &MainWindow::showContextMenu);
 	}
 	connect(m_views[0], &Viewport::statsChanged, m_statsLabel, &QLabel::setText);
+	connect(m_views[0], &Viewport::statsDetail, m_statsLabel, &QLabel::setToolTip);
+	connect(editor, &Editor::selectionChanged, this, &MainWindow::updateStatusInfo);
+	connect(editor, &Editor::documentChanged, this, &MainWindow::updateStatusInfo);
+	connect(editor, &Editor::settingsChanged, this, &MainWindow::updateStatusInfo);
+	updateStatusInfo();
 
 	createDocks();
 	createActions();
@@ -1054,6 +1067,42 @@ void MainWindow::showContextMenu(const QPoint& globalPos) {
 		menu.addAction(tr("Frame selection (F)"), this, [this] { activeView()->frameSelection(); });
 	}
 	menu.exec(globalPos);
+}
+
+void MainWindow::updateStatusInfo() {
+	const auto& selection = m_editor->selection();
+	const auto& doc = m_editor->doc();
+	QString what;
+	if (!selection.faces.empty()) {
+		what = tr("%n face(s)", nullptr, int(selection.faces.size()));
+	} else if (selection.solids.size() == 1 && selection.entities.empty()) {
+		const auto* solid = doc.findSolid(selection.solids.front());
+		what = tr("Brush (%n faces)", nullptr, solid ? int(solid->sides.size()) : 0);
+	} else if (selection.solids.empty() && selection.entities.size() == 1) {
+		const auto* entity = doc.findEntity(selection.entities.front());
+		what = entity ? QString::fromStdString(entity->classname()) : QString();
+		if (entity && !entity->get("targetname").empty()) what += QStringLiteral(" \"%1\"").arg(QString::fromStdString(entity->get("targetname")));
+	} else if (selection.hasObjects()) {
+		what = tr("%1 brushes, %2 entities").arg(selection.solids.size()).arg(selection.entities.size());
+	} else {
+		what = tr("no selection");
+	}
+	m_selectionLabel->setText(what);
+	const auto box = selection.empty() ? Bounds{} : edit::selectionBounds(doc, selection, m_editor->entities());
+	if (box.empty()) {
+		m_sizeLabel->clear();
+	} else {
+		const Vec3 size = box.size(), center = box.center();
+		const auto number = [](double v) { return QString::number(std::round(v * 100) / 100, 'g', 8); };
+		m_sizeLabel->setText(QStringLiteral("%1w %2l %3h  @(%4 %5 %6)")
+		                         .arg(number(size.x), number(size.y), number(size.z), number(center.x), number(center.y), number(center.z)));
+	}
+	const auto onOff = [this](bool on) { return on ? tr("on") : tr("off"); };
+	m_gridLabel->setText(tr("Grid %1  ·  Snap %2  ·  Angle %3°  ·  Texture lock %4")
+	                         .arg(m_editor->grid())
+	                         .arg(onOff(m_editor->snapping()))
+	                         .arg(m_editor->rotationSnap())
+	                         .arg(onOff(m_editor->textureLock())));
 }
 
 void MainWindow::pasteHere() {

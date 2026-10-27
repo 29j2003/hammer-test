@@ -68,6 +68,8 @@ signals:
 	/// Right click without moving: the object under the cursor is selected, show the menu.
 	void contextMenuRequested(const QPoint& globalPos);
 	void statsChanged(const QString& text);
+	/// Everything about the last frames (triangles, draw calls, lights ...), for a tooltip.
+	void statsDetail(const QString& text);
 
 protected:
 	bool event(QEvent* event) override;
@@ -126,7 +128,7 @@ private:
 	void pickMaterial(const QPointF& pos);
 	void paintAt(const QPointF& pos);
 	void setHoverSide(int sideId);
-	void showHoverMaterial(const QPointF& pos);
+	void showHoverInfo(const QPointF& pos);
 	void toggleFlyMode();
 	void requestContextMenu(const QPointF& pos);
 

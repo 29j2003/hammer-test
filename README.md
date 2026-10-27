@@ -96,6 +96,9 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   **Compile** panel shows every step with time and progress, the warnings and errors with a plain explanation, and a
   summary. A leak is shown as a red line in the 3D view. **Cordons** compile only a part of the map.
 - **Export** the map as glTF or OBJ (meters, Y up, textures as PNG, props included) for Blender, Unity or Unreal.
+- **Status bar**: what is selected, its size (width, length, height) and center, where the mouse points in the 3D
+  view and how far away that is, grid, snap, rotation step, texture lock, and how long a frame takes (hover it for
+  triangles, draw calls and lights).
 - **Your own shortcuts**: Help > Change shortcuts.
 - Opening and saving never loses data: everything the editor does not understand stays in the file as it was.
 
