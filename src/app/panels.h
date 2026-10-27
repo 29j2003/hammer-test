@@ -20,6 +20,7 @@ namespace sme::app {
 class Editor;
 class AssetBrowser;
 
+/// The Outliner dock: world brushes and entities as a tree with a filter; clicking selects.
 class Outliner : public QWidget {
 	Q_OBJECT
 
@@ -31,6 +32,7 @@ public:
 	void refreshIcons();
 
 signals:
+	/// Double-click: frame the selection in the views.
 	void frameRequested();
 
 private:
@@ -45,6 +47,7 @@ private:
 	bool m_updatingSelection = false;
 };
 
+/// The Problems dock: results of the map check with autofix buttons, plus leaks from compiles.
 class ProblemsPanel : public QWidget {
 	Q_OBJECT
 
@@ -58,6 +61,7 @@ public:
 	[[nodiscard]] int errorCount() const;
 
 signals:
+	/// "Show leak line" was pressed / a problem's objects were selected and should be framed.
 	void showLeak(const std::vector<Vec3>& line);
 	void frameRequested();
 
@@ -72,11 +76,13 @@ private:
 	std::vector<Problem> m_leaks;
 };
 
+/// The Log dock: messages and compile output in colour.
 class LogPanel : public QPlainTextEdit {
 	Q_OBJECT
 
 public:
 	explicit LogPanel(QWidget* parent = nullptr);
+	/// Adds a line (default colour when `color` is invalid).
 	void append(const QString& text, const QColor& color = {});
 };
 

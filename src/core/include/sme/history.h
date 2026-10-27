@@ -15,15 +15,19 @@
 
 namespace sme {
 
+/// One undo step: the state before and after of everything it touched.
 struct Change {
+	/// A brush before/after (nullopt: did not exist).
 	struct SolidState {
 		SolidRef ref;
 		std::optional<Solid> before, after;   ///< nullopt = did not exist
 	};
+	/// An entity (with its brushes) before/after.
 	struct EntityState {
 		int entityId = 0;
 		std::optional<Entity> before, after;
 	};
+	/// The world's keys, outputs and extra blocks (not its brushes).
 	struct WorldState {
 		std::vector<std::pair<std::string, std::string>> keyValues;
 		std::vector<Connection> connections;
@@ -37,9 +41,12 @@ struct Change {
 	/// Blocks before the world (visgroups, viewsettings, ...), when the change touched them.
 	std::optional<std::vector<KvNode>> headerBefore, headerAfter;
 
+	/// Nothing was touched.
 	[[nodiscard]] bool empty() const { return solids.empty() && entities.empty() && !worldBefore && !headerBefore; }
 };
 
+/// Records a change while it is made: touch objects before changing them, then finish().
+/// Typical use: `Transaction t(doc, "Move"); t.touchSolid(ref); ...change doc...; editor.commit(t.finish());`
 class Transaction {
 public:
 	Transaction(MapDocument& doc, std::string name);
@@ -61,6 +68,7 @@ private:
 	Change m_change;
 };
 
+/// Undo/redo list of Changes, limited to LIMIT steps.
 class History {
 public:
 	/// Records a change. With `merge`, a change with the same name as the last one is folded into
@@ -70,8 +78,10 @@ public:
 	bool redo(MapDocument& doc);
 	void clear();
 
+	/// Whether undo / redo has something to do.
 	[[nodiscard]] bool canUndo() const { return m_index > 0; }
 	[[nodiscard]] bool canRedo() const { return m_index < m_changes.size(); }
+	/// Names of the next undo / redo step ("Move"), empty if none.
 	[[nodiscard]] std::string undoName() const;
 	[[nodiscard]] std::string redoName() const;
 	/// Recorded changes, oldest first (undone ones stay until something new is pushed).

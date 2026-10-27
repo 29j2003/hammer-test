@@ -16,6 +16,7 @@ namespace sme::app {
 
 class Editor;
 
+/// The VisGroups dock (see the file comment).
 class VisGroupsPanel : public QWidget {
 	Q_OBJECT
 

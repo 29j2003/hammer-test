@@ -20,6 +20,7 @@ struct Material {
 	std::vector<std::string> includeChain;         ///< VMTs a patch material pulled in, in order
 	std::vector<std::string> warnings;
 
+	/// Value of a top-level parameter (case-insensitive, "$basetexture"), empty if missing.
 	[[nodiscard]] std::string param(std::string_view key) const;
 	[[nodiscard]] bool flag(std::string_view key) const;  ///< "$translucent" "1" etc.
 

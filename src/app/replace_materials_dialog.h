@@ -15,6 +15,7 @@ namespace sme::app {
 
 class Editor;
 
+/// The Replace materials dialog (see the file comment).
 class ReplaceMaterialsDialog : public QDialog {
 	Q_OBJECT
 
@@ -22,6 +23,7 @@ public:
 	/// `knownMaterials` feeds the completion of both fields (the map's own materials are always offered).
 	ReplaceMaterialsDialog(Editor* editor, const QStringList& knownMaterials, QWidget* parent = nullptr);
 
+	/// Fill in the fields (from menus and tests).
 	void setFind(const QString& material);
 	void setReplaceWith(const QString& material);
 	void setOnlySelection(bool on);

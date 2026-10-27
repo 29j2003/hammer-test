@@ -36,6 +36,7 @@ class Editor;
 class AssetBrowser;
 class MaterialCache;
 
+/// The Object Properties dock (see the file comment).
 class PropertiesPanel : public QWidget {
 	Q_OBJECT
 

@@ -11,6 +11,7 @@
 
 namespace sme {
 
+/// One node of Valve's KeyValues text format: a `"key" "value"` pair or a `key { ... }` block.
 struct KvNode {
 	std::string key;
 	std::string value;                 ///< Empty for blocks
@@ -18,6 +19,7 @@ struct KvNode {
 	bool block = false;                ///< `key { ... }` instead of `"key" "value"`
 	std::string condition;             ///< Platform condition after a value, e.g. "[$WIN32]" (VMT files)
 
+	/// An empty block / a key-value pair.
 	[[nodiscard]] static KvNode makeBlock(std::string key) { return {std::move(key), {}, {}, true, {}}; }
 	[[nodiscard]] static KvNode makeValue(std::string key, std::string value) { return {std::move(key), std::move(value), {}, false, {}}; }
 

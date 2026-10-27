@@ -179,6 +179,8 @@ std::shared_ptr<const MaterialInfo> MaterialCache::get(const QString& rawName) {
 		const unsigned maxSize = m_size == Size::Thumbnail ? 128 : 1024;
 		const quint64 generation = m_generation;
 		const bool relief = m_relief && m_size == Size::Viewport;
+		// Decoded on a pool thread; the result is handed back to the GUI thread. The generation
+		// number drops results that were started before clear() (game changed).
 		m_pool.start([this, fs, name, maxSize, generation, relief] {
 			auto info = loadInfo(*fs, name, maxSize, relief);
 			QMetaObject::invokeMethod(this, [this, name, info, generation] { finished(name, info, generation); }, Qt::QueuedConnection);

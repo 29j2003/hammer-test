@@ -36,10 +36,13 @@ public:
 	/// detectRoot() + load(); empty installation if Steam is not found.
 	[[nodiscard]] static SteamInstallation detect();
 
+	/// Whether a Steam folder was found.
 	[[nodiscard]] bool found() const { return !m_root.empty(); }
+	/// Steam folder, its library folders and every installed app.
 	[[nodiscard]] const std::filesystem::path& root() const { return m_root; }
 	[[nodiscard]] const std::vector<std::filesystem::path>& libraries() const { return m_libraries; }
 	[[nodiscard]] const std::vector<SteamApp>& apps() const { return m_apps; }
+	/// The installed app with this id, or nullptr.
 	[[nodiscard]] const SteamApp* findApp(AppId appId) const;
 
 	/// Folder for Source mods (registry SourceModInstallPath on Windows, else <root>/steamapps/sourcemods).

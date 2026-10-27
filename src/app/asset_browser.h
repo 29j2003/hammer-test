@@ -1,6 +1,6 @@
 // asset_browser.h - Browser for materials (with category filters and thumbnails) and models
 // (with previews). Items can be dragged into the 3D view: materials onto faces, models
-// become props. Sounds have their own tab (sound_browser.h), entities sit at the entity tool.
+// become props. Sounds have their own page and dock (sound_browser.h), entities sit at the entity tool.
 
 #pragma once
 
@@ -32,6 +32,7 @@ class MaterialListModel : public QAbstractListModel {
 	Q_OBJECT
 
 public:
+	/// One material of the list (`classified`: its category was read from the VMT in the background).
 	struct Item {
 		QString name;                 ///< "concrete/wall01"
 		QString shader;
@@ -40,13 +41,16 @@ public:
 	};
 
 	MaterialListModel(MaterialCache* thumbnails, QObject* parent = nullptr);
+	/// Replaces the whole list (after indexing).
 	void setItems(std::vector<Item> items);
 	[[nodiscard]] const std::vector<Item>& items() const { return m_items; }
+	/// Qt list model interface: rows, name and thumbnail per row, drag and drop into the views.
 	[[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
 	[[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
 	[[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
 	[[nodiscard]] QStringList mimeTypes() const override;
 	[[nodiscard]] QMimeData* mimeData(const QModelIndexList& indexes) const override;
+	/// A thumbnail arrived: repaints that row.
 	void thumbnailReady(const QString& name);
 
 private:
@@ -55,12 +59,14 @@ private:
 	QHash<QString, int> m_rows;
 };
 
+/// Filters the material list by search text, category and "used in this map".
 class MaterialFilter : public QSortFilterProxyModel {
 	Q_OBJECT
 
 public:
 	enum class Category { All, Brush, Blend, Model, Tool, Translucent, Water, Decal, Sky, UsedInMap };
 	using QSortFilterProxyModel::QSortFilterProxyModel;
+	/// Search text, category and the materials the map uses (for the "Used in this map" category).
 	void setText(const QString& text);
 	void setCategory(Category category);
 	void setUsed(const QSet<QString>& used);
@@ -82,12 +88,15 @@ class ModelListModel : public QAbstractListModel {
 
 public:
 	ModelListModel(ModelThumbnails* thumbnails, QObject* parent = nullptr);
+	/// Replaces the whole list (after indexing).
 	void setModels(const QStringList& models);
+	/// Qt list model interface: rows, name and preview per row, drag and drop into the views.
 	[[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
 	[[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
 	[[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
 	[[nodiscard]] QStringList mimeTypes() const override;
 	[[nodiscard]] QMimeData* mimeData(const QModelIndexList& indexes) const override;
+	/// A preview arrived: repaints that row.
 	void thumbnailReady(const QString& path);
 
 private:
@@ -104,6 +113,7 @@ struct AssetIndex {
 	std::vector<ParticleSystem> particles;
 };
 
+/// The Asset Browser dock: materials and models with search, filters and thumbnails.
 class AssetBrowser : public QWidget {
 	Q_OBJECT
 
@@ -125,6 +135,7 @@ public:
 	[[nodiscard]] QListView* modelView() const { return m_modelView; }
 
 signals:
+	/// Background indexing finished (the name lists are filled).
 	void materialsIndexed();
 	/// "Edit material ..." in the material list's menu.
 	void editMaterialRequested(const QString& name);

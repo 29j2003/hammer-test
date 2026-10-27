@@ -21,6 +21,7 @@ class QVBoxLayout;
 
 namespace sme::app {
 
+/// The soundscape editor (see the file comment).
 class SoundscapeEditor : public QWidget {
 	Q_OBJECT
 
@@ -43,6 +44,7 @@ public:
 	[[nodiscard]] QString status() const;
 
 signals:
+	/// Listen to a sound file / save the soundscape / delete it; the Sounds browser does the work.
 	void previewRequested(const QString& file);
 	void saveRequested(const sme::SoundscapeScript& scape);
 	void deleteRequested(const QString& name);

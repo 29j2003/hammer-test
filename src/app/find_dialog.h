@@ -19,6 +19,7 @@ namespace sme::app {
 
 class Editor;
 
+/// The Find entities dialog with its entity report tab (see the file comment).
 class FindDialog : public QDialog {
 	Q_OBJECT
 

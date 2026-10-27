@@ -21,29 +21,34 @@ namespace sme {
 
 class GameFileSystem;
 
+/// One vertex as the renderer uploads it.
 struct ModelVertex {
 	float position[3];
 	float normal[3];
 	float uv[2];
 };
 
+/// Triangles of one material.
 struct ModelMesh {
 	std::string material;          ///< Material name for the cache ("models/props/crate01"), resolved through $cdmaterials
 	std::uint32_t firstIndex = 0;  ///< Range in ModelGeometry::indices
 	std::uint32_t indexCount = 0;
 };
 
+/// A model's triangles (LOD 0) ready for drawing, with its bounds.
 struct ModelGeometry {
 	std::vector<ModelVertex> vertices;
 	std::vector<std::uint32_t> indices;   ///< Triangle list
 	std::vector<ModelMesh> meshes;
 	Bounds bounds;
 
+	/// Number of triangles.
 	[[nodiscard]] std::size_t triangleCount() const { return indices.size() / 3; }
 	/// Models that only hold animations for other models have no triangles.
 	[[nodiscard]] bool empty() const { return indices.empty(); }
 };
 
+/// The raw files of a model (.mdl, .vvd, .vtx), owned by the caller.
 struct ModelFiles {
 	std::span<const std::byte> mdl, vvd, vtx;
 };

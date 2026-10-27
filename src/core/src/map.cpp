@@ -114,6 +114,9 @@ Solid parseSolid(const KvNode& node) {
 	return solid;
 }
 
+// An output line: key = output name, value = "target,input,parameter,delay,times to fire".
+// Newer VMFs separate the fields with ESC (0x1B) instead of commas; the separator found is kept
+// so a save writes the line back the same way. Missing fields get defaults (times to fire -1).
 Connection parseConnection(const KvNode& node) {
 	Connection c;
 	c.output = node.key;
@@ -336,6 +339,9 @@ MapDocument MapDocument::parse(std::string_view vmfText) {
 	doc.headerBlocks.clear();
 	doc.world = {};
 	bool seenWorld = false;
+	// Blocks before the world (versioninfo, visgroups, viewsettings, ...) are header blocks, everything
+	// after the entities (cameras, cordons, unknown blocks) footer blocks; serialize() writes them back
+	// in the same places, so nothing the editor does not understand is lost.
 	for (const auto& node : root.children) {
 		if (!node.block) {
 			doc.footerBlocks.push_back(node);
@@ -373,6 +379,8 @@ std::string MapDocument::serialize() const {
 	return out;
 }
 
+// Finds the highest ids in use (also inside unknown blocks) so new objects get fresh ones. Brushes
+// and entities share one counter, sides have their own.
 void MapDocument::updateIdCounters() {
 	int maxSolid = 0, maxSide = 0, maxEntity = std::max(1, world.id);
 	const auto scanEntity = [&](const Entity& entity) {

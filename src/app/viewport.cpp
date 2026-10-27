@@ -2278,7 +2278,7 @@ void Viewport::dropEvent(QDropEvent* event) {
 		return;
 	}
 	if (mime->hasFormat("application/x-sme-sound")) {
-		// "<kind>:<name>" from the Sounds tab: 3 = soundscape, otherwise a sound.
+		// "<kind>:<name>" from the Sounds browser: 3 = soundscape, otherwise a sound.
 		const QString payload = QString::fromUtf8(mime->data("application/x-sme-sound"));
 		const QString name = payload.section(':', 1);
 		if (payload.section(':', 0, 0).toInt() == 3) {

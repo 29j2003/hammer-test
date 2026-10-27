@@ -12,6 +12,7 @@ class QLabel;
 
 namespace sme::app {
 
+/// The keyboard shortcut editor (see the file comment).
 class ShortcutDialog : public QDialog {
 	Q_OBJECT
 

@@ -25,11 +25,13 @@ struct CompileParameter {
 	std::string value;         ///< Example value when it takes one ("2", "fidelity_lights.rad"), empty for a switch
 	std::string description;
 };
+/// Every parameter the tool understands, for the advanced compile view.
 [[nodiscard]] const std::vector<CompileParameter>& knownParameters(CompileTool tool);
 
 enum class CompileQuality { Fast, Normal, Final };
 enum class LightLevel { Ldr, Hdr, Both };
 
+/// Everything the compile dialog can set: which steps run, their quality, the game window and extra parameters.
 struct CompileSettings {
 	enum class Preset { Fast, Normal, Final, Custom };
 
@@ -57,6 +59,7 @@ struct CompileSettings {
 	/// Parameters added per tool, as typed ("-leaktest", "-lights fidelity_lights.rad").
 	std::array<std::vector<std::string>, COMPILE_TOOL_COUNT> extra;
 
+	/// Extra parameters typed for one tool.
 	[[nodiscard]] std::vector<std::string>& extraFor(CompileTool tool) { return extra[static_cast<std::size_t>(tool)]; }
 	[[nodiscard]] const std::vector<std::string>& extraFor(CompileTool tool) const { return extra[static_cast<std::size_t>(tool)]; }
 	/// Quality presets: Fast (VVIS -fast, VRAD fast), Normal, Final (VRAD -final). Custom changes nothing.

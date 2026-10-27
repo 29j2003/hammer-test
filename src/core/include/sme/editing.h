@@ -25,17 +25,23 @@ struct FaceRef {
 	constexpr bool operator==(const FaceRef&) const = default;
 };
 
+/// What is selected: world brushes, entities (point and brush) and, in face mode, faces.
 struct Selection {
 	std::vector<SolidRef> solids;   ///< World brushes
 	std::vector<int> entities;      ///< Point and brush entities (a brush entity moves as a whole)
 	std::vector<FaceRef> faces;     ///< Face mode
 
+	/// Nothing selected at all.
 	[[nodiscard]] bool empty() const { return solids.empty() && entities.empty() && faces.empty(); }
+	/// Brushes or entities selected (faces do not count).
 	[[nodiscard]] bool hasObjects() const { return !solids.empty() || !entities.empty(); }
+	/// Selects nothing.
 	void clear() { solids.clear(); entities.clear(); faces.clear(); }
+	/// Whether the brush / entity / face is selected.
 	[[nodiscard]] bool contains(const SolidRef& ref) const;
 	[[nodiscard]] bool containsEntity(int entityId) const;
 	[[nodiscard]] bool contains(const FaceRef& ref) const;
+	/// Adds the object if it is not selected, else removes it (Ctrl+click).
 	void toggle(const SolidRef& ref);
 	void toggleEntity(int entityId);
 	void toggle(const FaceRef& ref);
@@ -56,7 +62,9 @@ namespace edit {
 [[nodiscard]] Mat3 anglesToMatrix(const Vec3& pitchYawRoll);
 [[nodiscard]] Vec3 matrixToAngles(const Mat3& m);
 
+/// Moves the selection (brushes, entities with their brushes); texture lock keeps textures on the faces.
 [[nodiscard]] Change translate(MapDocument& doc, const Selection& selection, const Vec3& delta, bool textureLock);
+/// Turns the selection around `center`; entities also get new angles.
 [[nodiscard]] Change rotate(MapDocument& doc, const Selection& selection, const Mat3& rotation, const Vec3& center, bool textureLock);
 /// Resizes the selection from box `from` to box `to`; brushes that would become invalid are left alone.
 [[nodiscard]] Change scale(MapDocument& doc, const Selection& selection, const Bounds& from, const Bounds& to);
@@ -73,6 +81,7 @@ namespace edit {
 /// Copies the selection, moved by `offset`; returns the change and the selection of the copies.
 [[nodiscard]] std::pair<Change, Selection> duplicate(MapDocument& doc, const Selection& selection, const Vec3& offset);
 
+/// A block brush in the world with `material` on every side; returns the change and the new brush.
 [[nodiscard]] std::pair<Change, SolidRef> createBlock(MapDocument& doc, const Bounds& box, const std::string& material);
 
 /// Editor sprite of a class (FGD iconsprite("editor/info_target.vmt")) as a material name; empty if none.
@@ -144,6 +153,7 @@ struct MergeOutcome {
 	SolidRef merged;
 	bool exact = false;
 };
+/// Merges the selected world brushes (see MergeOutcome); nullopt if fewer than two or no volume.
 [[nodiscard]] std::optional<MergeOutcome> merge(MapDocument& doc, const Selection& selection);
 /// Rounds (segments > 1) or bevels the edge between two faces of one brush.
 [[nodiscard]] std::optional<Change> roundEdge(MapDocument& doc, const FaceRef& a, const FaceRef& b, double radius, int segments);
@@ -166,6 +176,7 @@ struct VertexMoveOutcome {
 	bool cornersLost = false;   ///< A brush folded in and lost corners
 	bool refused = false;       ///< A brush would have become invalid (flat): nothing changed
 };
+/// Moves the corners of several brushes at once (one undo step).
 [[nodiscard]] VertexMoveOutcome moveVertices(MapDocument& doc, const std::vector<SolidRef>& solids, const std::vector<Vec3>& corners, const Vec3& delta);
 
 /// Texture justification of faces (Hammer's face edit sheet). With `treatAsOne` the faces are

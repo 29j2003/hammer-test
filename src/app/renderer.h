@@ -34,6 +34,7 @@ namespace sme::app {
 
 class ModelCache;
 
+/// One end of a line, with its colour (gizmos, grid, helper lines).
 struct LineVertex {
 	QVector3D position;
 	QVector4D color;
@@ -49,6 +50,7 @@ struct PickResult {
 	int sideId = 0;          ///< Face that was hit (brushes)
 };
 
+/// Draws the map in one view (see the file comment); every Viewport owns one.
 class SceneRenderer : protected QOpenGLFunctions_3_3_Core {
 public:
 	enum class Mode { Lit, Unlit, Wireframe, Flat2D };
@@ -76,6 +78,7 @@ public:
 	void setHideSelected(bool hide) { m_hideSelected = hide; }
 	void materialReady(const QString& name);
 
+	/// Camera and drawing mode of one frame.
 	struct Params {
 		QMatrix4x4 view, projection;
 		QVector3D cameraPosition;
@@ -83,6 +86,7 @@ public:
 		bool showToolTextures = true;
 		bool shadows = true;          ///< Real-time shadows in the lighting preview
 	};
+	/// Draws the whole scene for one frame.
 	void render(const Params& params);
 	/// mapbase-fidelity's clouds over the sky faces (0 amount = none).
 	struct SkyLook {
@@ -117,6 +121,7 @@ public:
 	/// Ray picking against brushes (incl. displacements) and entity boxes.
 	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false) const;
 
+	/// Numbers about the scene and the last frame (status bar and its tooltip).
 	[[nodiscard]] Bounds sceneBounds() const { return m_sceneBounds; }
 	[[nodiscard]] std::size_t triangleCount() const { return m_triangleCount; }
 	[[nodiscard]] int lastDrawCalls() const { return m_drawCalls; }

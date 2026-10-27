@@ -21,6 +21,7 @@ struct Cordon {
 	bool active = true;
 };
 
+/// The map's cordons (stored in the VMF's cordons block).
 struct CordonSet {
 	bool active = false;           ///< Cordon mode on (compile only what is inside)
 	std::vector<Cordon> cordons;

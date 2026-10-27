@@ -12,6 +12,7 @@ namespace sme::app {
 
 class Editor;
 
+/// The History dock (see the file comment).
 class HistoryPanel : public QWidget {
 	Q_OBJECT
 

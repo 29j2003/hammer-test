@@ -1,4 +1,4 @@
-// material_editor.cpp - Material editor dock (see material_editor.h).
+// material_editor.cpp - The Materials page: material editor with live preview (see material_editor.h).
 
 #include "material_editor.h"
 

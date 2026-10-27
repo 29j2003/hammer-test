@@ -49,6 +49,7 @@ public:
 	void setSystem(std::vector<ParticleDefinition> library, const QString& root, const GameFileSystem* fs);
 	void clear();
 
+	/// Playback: play / pause, restart, speed, grid on the floor.
 	void setPlaying(bool playing);
 	[[nodiscard]] bool playing() const { return m_playing; }
 	void restart();
@@ -57,10 +58,12 @@ public:
 	/// Advances the simulation by hand (also when hidden or paused).
 	void advance(double seconds);
 
+	/// Live particles and seconds since the start (for the info line and tests).
 	[[nodiscard]] std::size_t particleCount() const { return m_simulation ? m_simulation->particleCount() : 0; }
 	[[nodiscard]] double time() const { return m_simulation ? m_simulation->time() : 0; }
 
 signals:
+	/// The simulation moved on (after advance()).
 	void advanced();
 
 protected:
@@ -90,11 +93,13 @@ private:
 	QPointF m_dragFrom;
 };
 
+/// The Particles page and dock (see the file comment).
 class ParticleBrowser : public QWidget {
 	Q_OBJECT
 
 public:
 	ParticleBrowser(Editor* editor, AssetBrowser* assets, QWidget* parent = nullptr);
+	/// Parts of the browser, for tests.
 	[[nodiscard]] QTreeWidget* tree() const { return m_tree; }
 	[[nodiscard]] ParticlePreview* preview() const { return m_preview; }
 	/// Selects a system by name in the list (shows it); false if there is none.

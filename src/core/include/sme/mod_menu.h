@@ -104,6 +104,7 @@ struct MenuCommand {
 	std::string command;
 	std::string description;
 };
+/// Commands offered in the menu editor (OpenNewGameDialog, Quit, ...), with what they do.
 [[nodiscard]] const std::vector<MenuCommand>& commonMenuCommands();
 
 /// English text of the game's own menu tokens ("#GameUI_GameMenu_NewGame" -> "New Game");

@@ -7,21 +7,21 @@ Nutzer: Julius (`29j2003`), macht Mapping/Production, programmiert nicht selbst.
 Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Bausteinen dort mitpflegen).
 
 ## Aufbau
-- `src/core/` – Bibliothek `smecore` ohne Qt (Namespace `sme`): Steam/Spiele (`steam`, `game_discovery`, `gameinfo`,
+- `src/core/` – Bibliothek `smecore` ohne Qt (Namespace `sme`): Text-/Pfad-Helfer (`text`), Versionen + Prüfsummen (`version`), Steam/Spiele (`steam`, `game_discovery`, `gameinfo`,
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
   `assets` inkl. Sounds/Soundscapes/Partikel, Soundscapes bearbeiten `soundscape`, Höhenkarten für Relief `heightmap`, Sound-Decoder `audio`, Partikel aus PCF + Vorschau-Simulation `particles`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
   (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`, Soundscape-Bereich Kugel/Block `soundscape_area`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
-  Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), VisGroups (`visgroups`), func_instance laden/auflösen (`instances`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Hauptmenü der Mod (`mod_menu`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), neue Mod anlegen (`mod_template`), Prüfungen mit Autofix + Leaks (`checks`), Autosave-Namen (`autosave`), Entities finden (`entity_search`), Material ersetzen (`material_replace`), Kompilier-Meldungen (`compile_log`),
+  Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), VisGroups (`visgroups`), func_instance laden/auflösen (`instances`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Hauptmenü der Mod (`mod_menu`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), neue Mod anlegen (`mod_template`), Prüfungen mit Autofix + Leaks (`checks`), Autosave-Namen (`autosave`), Entities finden (`entity_search`), Material ersetzen (`material_replace`), Kompilier-Einstellungen + Befehlszeilen (`compile_options`), Kompilier-Meldungen (`compile_log`),
   Export glTF/OBJ (`scene_export`).
-- `src/app/` – Qt-6-Editor (`smeapp` + Programm `Mapsmith`): `editor` (Zustand, alle Änderungen über `commit()`),
-  `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
+- `src/app/` – Qt-6-Editor (`smeapp` + Programm `Mapsmith`): `main` (Start, Optionen), `editor` (Zustand, alle Änderungen über `commit()`),
+  `camera`, `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
   Licht-Vorschau nach VRAD-Formeln, Schatten in `renderer_shadows`), `material_cache`
   (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
   `asset_browser` (Materialien, Modelle), `material_editor` + `material_preview` (inkl. Schalter für die mapbase-fidelity-Shader der Mod), `sound_browser` + `sound_player` + `soundscape_editor`
-  (Sounds-Tab, Wiedergabe über QAudioSink, optional), `copy_paste`,
-  `map_look_panel`, `menu_editor` (Hauptmenü der Mod), `mod_page` (Seite „Mod“ der Seitenleiste), `maps_panel` (alle Karten, Stapel-Kompilieren), `new_mod_dialog` (neue Mod aus Karten), `source_control_panel` (Git: Änderungen, Commit, Pull/Push), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
+  (Sounds-Seite/-Dock, Wiedergabe über QAudioSink, optional), `copy_paste`,
+  `map_look_panel`, `menu_editor` (Hauptmenü der Mod), `mod_page` (Project-Seite, Tab Overview), `maps_panel` (alle Karten, Stapel-Kompilieren), `new_mod_dialog` (neue Mod aus Karten), `source_control_panel` (Git: Änderungen, Commit, Pull/Push), `ship_panel` (Karte/Mod für Spieler: bspzip, ZIP, Workshop), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
   Justify; func_instance-Kasten in `properties_instance`), `visgroups_panel`, `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
-  `shortcut_dialog`, `autosaver` (Autosave, Wiederherstellen nach Absturz), `history_panel`, `find_dialog`, `replace_materials_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste: Map, Materials, Sounds, Particles, Mod), `style`.
+  `shortcut_dialog`, `autosaver` (Autosave, Wiederherstellen nach Absturz), `history_panel`, `find_dialog`, `replace_materials_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste: Map, Materials, Sounds, Particles, Project), `icons` (gezeichnete Icons), `style`, `toggle_switch`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
 - `tests/` – doctest; `fixture` (künstliche Steam-Installation, keine Valve-Dateien), `demo` (Demo-Inhalte + Demo-Karte),
   `test_app.cpp` (echte Fenster mit simulierter Maus, Label `ui`, braucht OpenGL → unter Linux `xvfb-run`).
@@ -41,8 +41,8 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Commits als `Claude <noreply@anthropic.com>` (von Julius so gewünscht; seine eigene Adresse nie verwenden), deutsche
   Commit-Nachrichten; keine E-Mail-Adressen in Dateien (`tools/check_privacy.py`, CI-Job `checks`). GitHub Actions nur mit Commit-SHA pinnen, `permissions: contents: read`.
 - Doku: `README.md` (Nutzer, Englisch, aktueller Stand, kurz), Handbuch `docs/manual/` (Englisch, GitHub Pages, ausführlich,
-  inkl. Mapping-Grundlagen) und `docs/ENTWICKLUNG.md` (Entwickler, Deutsch). Andere Editoren dürfen nur in der README als
-  Inspiration genannt werden („inspired by“); nichts von ihnen übernehmen.
+  inkl. Mapping-Grundlagen) und `docs/ENTWICKLUNG.md` (Entwickler, Deutsch). XBLAH's Modding Tool nur in der README als Inspiration nennen
+  („inspired by“), sonst nirgends; nichts übernehmen. Valves Hammer/Source 2 als Verhaltens-Referenz in Kommentaren ist ok.
 - Leistung zählt: nichts pro Frame neu aufbauen, was sich nicht geändert hat; Auswahl ändert nur Flags, nicht die Geometrie.
 - Nicht im Spiel/auf Windows getestet heißt nicht getestet: im Bericht ausdrücklich so nennen.
 
@@ -59,4 +59,4 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 
 ## Geplant
 - Siehe „Fahrplan“ in `docs/ENTWICKLUNG.md`: Displacements im Vertex-Werkzeug, Entity-Icons/Overlays, Mesh-Modus
-  (Variante B: konvex zerlegen bzw. als Prop kompilieren), echte Physik, Instanzen/Visgroups, Packen.
+  (Variante B: konvex zerlegen bzw. als Prop kompilieren), echte Physik, Modelle-Seite (Viewer), Texts/Lokalisierung.

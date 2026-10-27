@@ -9,6 +9,7 @@
 
 namespace sme {
 
+/// What Replace materials looks for and where.
 struct MaterialReplaceOptions {
 	std::string find;                 ///< Material to look for, e.g. "dev/dev_measuregeneric01" or "concrete/*"
 	std::string replaceWith;          ///< New material

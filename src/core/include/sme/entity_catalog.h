@@ -16,11 +16,13 @@
 
 namespace sme {
 
+/// One choice of a "choices" property: the value written to the map and the name shown.
 struct EntityChoice {
 	std::string value;
 	std::string displayName;
 };
 
+/// One bit of a "flags" property (spawnflags).
 struct EntityFlag {
 	std::uint64_t value = 0;
 	std::string displayName;
@@ -43,6 +45,7 @@ struct EntityProperty {
 	std::vector<EntityFlag> flags;
 };
 
+/// One input or output of a class.
 struct EntityIo {
 	std::string name;
 	std::string type;            ///< "void", "string", "integer", ...
@@ -55,6 +58,7 @@ struct EntityHelper {
 	std::string arguments;
 };
 
+/// An entity class from the FGD, with everything inherited from its base classes already merged in.
 struct EntityClass {
 	std::string name;            ///< e.g. "prop_physics"
 	std::string classType;       ///< "PointClass", "SolidClass", "BaseClass", "NPCClass", ...
@@ -66,23 +70,28 @@ struct EntityClass {
 	std::vector<EntityIo> outputs;
 	std::filesystem::path sourceFile;         ///< FGD the class was last defined in
 
+	/// BaseClass: only for inheriting, never placed.
 	[[nodiscard]] bool isBase() const;
 	[[nodiscard]] bool isSolid() const;       ///< Brush entity (SolidClass)
+	/// The property with this key (case-insensitive) or nullptr.
 	[[nodiscard]] const EntityProperty* property(std::string_view key) const;
 	[[nodiscard]] std::string helper(std::string_view helperName) const; ///< arguments, empty if absent
 };
 
+/// All entity classes of the loaded FGDs.
 class EntityCatalog {
 public:
 	/// Loads FGDs in order (later files override earlier classes). Returns false if none loaded;
 	/// problems with single files are added to `errors`.
 	bool load(const std::vector<std::filesystem::path>& fgdFiles, std::vector<std::string>* errors = nullptr);
 
+	/// The class with this name (case-insensitive) or nullptr.
 	[[nodiscard]] const EntityClass* find(std::string_view name) const;
 
 	/// Classes a mapper can place (everything except BaseClass), sorted by name.
 	[[nodiscard]] std::vector<const EntityClass*> placeable() const;
 
+	/// Number of classes, base classes included.
 	[[nodiscard]] std::size_t size() const { return m_classes.size(); }
 
 	/// Model sizes the editor learned (filled once a model is loaded; makes prop boxes fit).
@@ -91,6 +100,7 @@ public:
 		const auto it = m_modelBounds.find(model);
 		return it == m_modelBounds.end() ? nullptr : &it->second;
 	}
+	/// The FGD files that were loaded, in order.
 	[[nodiscard]] const std::vector<std::filesystem::path>& files() const { return m_files; }
 
 private:

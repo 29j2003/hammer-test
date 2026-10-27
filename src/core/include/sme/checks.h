@@ -19,8 +19,10 @@ namespace sme {
 
 class GameFileSystem;
 
+/// One thing the map check found: what is wrong, how to fix it, which objects it is about, and the data for an autofix.
 struct Problem {
 	enum class Severity { Error, Warning, Info };
+	/// What kind of problem it is (decides the autofix).
 	enum class Kind {
 		InvalidBrush,
 		MissingMaterial,
@@ -51,6 +53,7 @@ struct Problem {
 	std::vector<Vec3> line;     ///< Leak line
 };
 
+/// What the checks may look at besides the map (all optional: without them some checks are skipped).
 struct CheckContext {
 	const EntityCatalog* entities = nullptr;
 	const GameFileSystem* files = nullptr;
@@ -58,6 +61,7 @@ struct CheckContext {
 	const std::vector<std::string>* materialNames = nullptr;
 };
 
+/// Runs every check on the map (invalid brushes, missing materials/models, unknown classes, broken outputs, ...).
 [[nodiscard]] std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& context);
 
 /// Applies the problem's autofix (empty change if it has none).

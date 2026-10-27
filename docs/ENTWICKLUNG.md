@@ -4,51 +4,150 @@ Ziel: ein Karten-Editor für Source 1, der sich wie Source 2 Hammer bedient (3D-
 Licht-Vorschau), aber normale `.vmf` für HL2, Mapbase, Black Mesa und andere Source-Spiele schreibt. Spiele und Mods
 werden automatisch gefunden.
 
-## Aufbau
+## Architektur im Überblick
 
 ```
-src/core/   smecore   – ohne Qt, vollständig getestet
-src/app/    smeapp    – Qt-6-Oberfläche (+ Mapsmith = main.cpp)
-src/probe/  sme-probe – Diagnose auf der Kommandozeile
-tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
+src/core/   smecore    – Kern ohne Qt (Namespace sme): Formate, Karte, Geometrie, Bearbeiten, Undo, Prüfungen
+src/app/    smeapp     – Qt-6-Oberfläche (Namespace sme::app) + Programm Mapsmith (main.cpp)
+src/probe/  sme-probe  – Diagnose auf der Kommandozeile (nur Kern)
+tests/      doctest    – sme_tests (Kern), sme_app_tests (Label "ui", echtes Fenster), Fixture + Demo
 ```
+
+**Schichten:** Der Kern kennt kein Qt und ist ohne Fenster testbar. `smeapp` baut darauf auf; `sme-probe` und die
+Kern-Tests nutzen nur den Kern, die UI-Tests zusätzlich `smeapp`. Neue Logik gehört in den Kern, die Oberfläche bleibt
+dünn. Jede Datei beginnt mit einem Kopfkommentar, öffentliche Klassen und Funktionen haben `///`-Kommentare im Header.
+
+**Weg einer Änderung:**
+1. Ein Werkzeug oder Panel ruft eine Kern-Funktion `edit::…` auf (oder baut selbst eine `Transaction`: Objekte mit
+   `touch…` anmelden, ändern, `finish()`). Ergebnis ist ein `Change` mit dem Zustand vorher/nachher der berührten Objekte.
+2. `Editor::commit(change)` (beim Ziehen und bei Schiebereglern `commitMerged`) legt ihn in die `History` und sendet
+   `documentChanged`.
+3. Ansichten (`Viewport` → `SceneRenderer::rebuild`) und Panels (Outliner, Eigenschaften, Probleme, History …) hören auf
+   die Signale des `Editor` (`documentChanged`, `selectionChanged`, `gameChanged`, `settingsChanged` …) und zeichnen
+   sich neu. Eine neue Auswahl setzt nur Flags, die Geometrie bleibt.
+
+Undo/Redo spielen die gespeicherten Zustände zurück und senden dieselben Signale. `doc()` nie ohne `Transaction` ändern.
+
+**Fenster (`MainWindow`):** Die Seitenleiste links schaltet ganze Seiten um: **Map** (Ansichten + Docks), **Materials**
+(`MaterialEditor`), **Sounds** (`SoundBrowser`), **Particles** (`ParticleBrowser`) und **Project** mit den Tabs Overview
+(`ModPage`), Maps (`MapsPanel`), Menu (`MenuEditor`), Source control (`SourceControlPanel`) und Ship (`ShipPanel`).
+Docks der Map-Seite: links Tool, Outliner, VisGroups, Map Look (als Tabs); unten Asset Browser, Sounds, Particles,
+Compile, Problems und History (als Tabs) sowie Log; rechts Object Properties. Sounds und Particles wandern zwischen Dock
+und Seite (`MainWindow::showPage`). Alles wird in `MainWindow::createDocks` und `createActions` verdrahtet.
+
+**Ein Feature einbauen:**
+1. Kern: Funktion im passenden Modul (`src/core/include/sme/<modul>.h` + `src/core/src/<modul>.cpp`), Kartenänderungen
+   als `Change`; ein neues Modul in `src/core/CMakeLists.txt` eintragen. Test in `tests/test_*.cpp` (neue Testdatei in
+   `tests/CMakeLists.txt`).
+2. Oberfläche: Widget in `src/app/` (in `src/app/CMakeLists.txt` eintragen); es liest den `Editor` und ändert die Karte
+   nur über `Editor::commit`.
+3. Hauptfenster: in `MainWindow::createDocks` (Dock, Seite oder Project-Tab) bzw. `createActions` (Menü, Knopf, Kürzel;
+   Aktionen tragen ihren englischen Namen als `objectName`) einhängen; ein Schritt in `tests/test_app.cpp`.
+4. Doku: Modultabellen unten, ggf. Rezepte; für Nutzer README und Handbuch (`docs/manual/`); Modulliste in
+   `.claude/CLAUDE.md`.
+
+**Bauen und testen (Linux):**
+```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+ctest --test-dir build -LE ui                  # Kern-Tests (sme_tests)
+xvfb-run -a ctest --test-dir build -L ui       # UI-Tests (sme_app_tests)
+python3 -I tools/check_privacy.py              # Privatsphäre-Prüfung (CI-Job checks)
+```
+Windows und CI: siehe „Bauen, CI, Abgabe“.
+
+## Module
 
 ### Kern (`src/core`, Namespace `sme`)
 
 | Modul | Aufgabe |
 |---|---|
 | `text` | Pfad-Normalisierung (Kleinbuchstaben, `/`), case-insensitive Suche auf der Platte |
+| `version` | Versionsnummern vergleichen, Prüfsummen-Listen lesen (Update-Prüfung) |
+| `math` | nur Header: `Vec3`, `Mat3`, `Plane`, `Bounds`, `Ray` |
 | `steam` | Steam finden (Registry, Standardordner, `SME_STEAM_ROOT`), `libraryfolders.vdf`, `appmanifest_*.acf` |
 | `gameinfo` | `gameinfo.txt` lesen, `SearchPaths` auflösen (`|gameinfo_path|`, `|all_source_engine_paths|`, `|appid_N|`, `custom/*`, `[$WIN32]`) |
 | `filesystem` | `GameFileSystem`: Ordner + VPKs in Suchreihenfolge, erster Treffer gewinnt; `pak01_dir.vpk` vor dem Ordner; thread-sicher (Ordner-Index einmal gebaut, `noteWrittenFile` trägt vom Editor geschriebene Dateien nach) |
 | `game_discovery` | alle Spiele (App-Ordner mit `gameinfo.txt`) und Mods (`sourcemods`), eindeutige Namen (`label`), FGD-Vorschläge (Hammer++ > Hammer > Mod > Haupt-FGD des Spiels); Mapbase-Mods bekommen die Mapbase-FGD aus `sourcemods/mapbase_shared` dazu, wenn keine geladen ist (`isMapbaseFgd`: Text oder `@include`-Kette erwähnt Mapbase); Spiele auf Mapbase-Basis (bekannte App, z. B. Entropy : Zero 2) nehmen die FGD, die die Haupt-FGD einbindet (`ez2.fgd`); Ordner ohne eigene `client.dll` neben einem spielbaren Ordner derselben App = `baseContent` (unten in der Liste, Warnung beim Kompilieren) |
 | `hammer_config` | `GameConfig.txt` / `hammerplusplus_gameconfig.txt` importieren (FGDs, Tools, Ordner) |
+| `game` | `LoadedGame`: das geöffnete Spiel – gameinfo, Dateisystem, Entity-Klassen |
 | `material`, `texture`, `assets` | VMT inkl. `patch`, VTF → RGBA (vtfpp), Material-Kategorien, MDL-Kopf (Sequenzen, `$includemodel`), Soundscripts (mit Dateien, Kanal, Lautstärke, Pitch, Soundlevel; schreiben/ersetzen, Manifest ergänzen), Soundscapes (Übersicht; Bearbeiten in `soundscape`), „Meintest du …“; `editMaterialText` ändert nur die genannten Parameter im VMT-Text (Proxies, Reihenfolge, `[$WIN32]` bleiben; Patch → `insert`/`replace`) |
 | `audio` | Sounds decodieren: WAV (PCM 8/16/24/32, Float, MS-ADPCM, IMA-ADPCM, MP3 in WAV), MP3 (minimp3), OGG (stb_vorbis; beide als Einzeldatei mit Hash gepinnt, gebaut in `codecs*.c`); Loop-Punkt aus `cue`/`smpl`; Wellenform |
+| `soundscape` | Soundscape-Skripte lesen und schreiben (Regeln, DSP-Namen, Manifest), Details unter „Oberfläche – Einzelheiten“ |
 | `studio_model` | Dreiecke eines Modells aus `.mdl` (Bodyparts, Meshes, Skins, `$cdmaterials`), `.vvd` (Vertices, Fixups) und `.dx90.vtx` (LOD 0, Strip-Groups 25/33 Byte); Referenz-Pose, alles grenzgeprüft |
+| `particles` | Partikelsysteme aus PCF (DMX über sourcepp), Vorschau-Simulation `ParticleSimulation`, Demo-PCF schreiben |
 | `entity_catalog` | FGDs laden (toolpp), Basisklassen auflösen, Helfer (`studio`, `size`, `color`, `iconsprite`); Editor-Sprite einer Klasse/Entity: `edit::classSprite`, `edit::entitySprite` (`sprite()` → eigenes `model`) |
+| `entity_search` | Entities finden: Klasse, Name, `key=value` (Platzhalter `*`/`?`, `wildcardMatch`), Ausgangsziel, Modell, Sound; Abfrage-Syntax mit `class:`/`name:`/`target:`/`model:`/`sound:`, alle Begriffe müssen passen |
 | `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei) |
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
-| `editing`, `history` | Operationen als Undo-Schritte (`Transaction` merkt sich nur berührte Objekte) |
-| `checks` | Prüfungen mit Autofix, Leak aus `.lin` |
 | `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Keil/Fase an einer Kante (`cutEdge`), Vertex verschieben (bleibt konvex) |
 | `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
-| `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
-| `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
-| `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
-| `soundscape_area` | Wo ein Soundscape-Entity zu hören ist: Kugel (`radius`, −1 = überall; `soundscapeRadius`) oder Block (`trigger_soundscape`, dessen Key `soundscape` den Namen trägt; `soundscapeTrigger`). `setSoundscapeRadius`, `makeSoundscapeBlock` (macht `env_soundscape` zu `env_soundscape_triggerable`, vergibt einen Namen, legt den Trigger an oder ändert seine Größe), `removeSoundscapeBlock` (zurück zur Kugel) – je ein Undo-Schritt |
-| `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
+| `editing`, `history` | Operationen als Undo-Schritte (`Transaction` merkt sich nur berührte Objekte) |
+| `clipboard` | Kartenobjekte kopieren/einfügen als VMF-Text (`PasteOptions`: Anzahl, Versatz, Drehung, eindeutige Namen) |
+| `visibility` | Arten zum Ausblenden (`ObjectKind`, `objectsOfKinds`) |
 | `visgroups` | VisGroups: Liste aus dem Block `visgroups` vor der Welt (verschachtelt, `name`/`visgroupid`/`color`), Mitglieder über `visgroupid` im `editor`-Block von Welt-Brushes und Entities (mehrere möglich, bleiben in `extra`); Änderungen als Transaction (Gruppe anlegen – auch aus der Auswahl und unter einer Gruppe –, umbenennen, Farbe, löschen: Untergruppen rücken hoch, Mitglieder verlieren nur diese Id; Auswahl hinzufügen/entfernen). Die Gruppenliste ist ein Kopfblock: `Change` merkt sich dafür `headerBefore/After` (`Transaction::touchHeader`). Sichtbarkeit ist keine Kartenänderung: der Editor hält die versteckten Gruppen, `hiddenByVisGroups` liefert die Objekte (auch über Eltern-Gruppen), `writeVisGroupShown` schreibt beim Speichern `visgroupshown` in eine Kopie, `hiddenVisGroupsInFile` liest es beim Öffnen |
 | `instances` | `func_instance`: Einstellungen (`file`, `targetname`, `fixup_style`, `replaceNN` = „$var Wert“), Datei suchen (Ordner der Karte, Kartenordner des Spiels, ohne Endung → `.vmf`, `\` → `/`), `InstanceCache` (pro Pfad + Änderungszeit), `prepareInstance` (Variablen ersetzen – längste zuerst, Vorgaben aus `func_instance_parms` –, Namen mit Prefix/Postfix wie VBSP, `@`/`!` bleiben, Keys mit FGD-Typ `target_source/target_destination/target_name_or_class`, ohne FGD eine feste Liste; Ausgänge; drehen + verschieben mit Texture Lock), `buildInstancePreview`, `collapseInstance` (neue Ids, VisGroup-Ids der Instanz entfernt, ein Undo-Schritt) |
+| `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
+| `soundscape_area` | Wo ein Soundscape-Entity zu hören ist: Kugel (`radius`, −1 = überall; `soundscapeRadius`) oder Block (`trigger_soundscape`, dessen Key `soundscape` den Namen trägt; `soundscapeTrigger`). `setSoundscapeRadius`, `makeSoundscapeBlock` (macht `env_soundscape` zu `env_soundscape_triggerable`, vergibt einen Namen, legt den Trigger an oder ändert seine Größe), `removeSoundscapeBlock` (zurück zur Kugel) – je ein Undo-Schritt |
+| `checks` | Prüfungen mit Autofix, Leak aus `.lin` |
+| `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
+| `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
+| `heightmap` | Höhenkarten fürs Relief: aus der Normal-Map (Frankot-Chellappa) oder der Helligkeit, Zonen, VTF schreiben, `fidelityReliefSource` (Regeln von `deploy.ps1`) |
+| `fidelity_look` | Look-Werte von mapbase-fidelity pro Karte (Liste, `cfg/fidelity.cfg` lesen, in der Karte lesen/schreiben) |
+| `sky_presets` | Licht passend zum Himmel (`applySky`, Tabelle der Himmel) |
+| `material_replace` | Material ersetzen (ganze Karte, Auswahl oder gewählte Flächen; exakt oder Platzhalter; Ausrichtung behalten oder an der Welt ausrichten; Overlays/Decals), `countMaterialMatches` für die Vorschau |
+| `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
+| `git_status` | Git-Ausgaben lesen (`status`, `log` ohne E-Mail), Remote → Web-Adresse |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
+| `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
 
-| `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
-| `entity_search` | Entities finden: Klasse, Name, `key=value` (Platzhalter `*`/`?`, `wildcardMatch`), Ausgangsziel, Modell, Sound; Abfrage-Syntax mit `class:`/`name:`/`target:`/`model:`/`sound:`, alle Begriffe müssen passen |
-| `material_replace` | Material ersetzen (ganze Karte, Auswahl oder gewählte Flächen; exakt oder Platzhalter; Ausrichtung behalten oder an der Welt ausrichten; Overlays/Decals), `countMaterialMatches` für die Vorschau |
+### Oberfläche (`src/app`, Namespace `sme::app`)
 
-### Oberfläche (`src/app`)
+| Datei(en) | Aufgabe |
+|---|---|
+| `main` | Start, Kommandozeilen-Optionen (Automatik, Screenshots), alte Einstellungen übernehmen |
+| `editor` | `Editor`: Spiel, Karte, Undo, Auswahl, Werkzeug, Einstellungen; alle Änderungen über `commit()` |
+| `main_window` | Hauptfenster: Seitenleiste, Ansichten, Docks, Menüs, Werkzeugleisten, Statusleiste |
+| `camera` | Kamera einer Ansicht (Matrizen, Strahlen) |
+| `viewport`, `viewport_tools` | eine Ansicht: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools` |
+| `renderer`, `renderer_shadows` | OpenGL 3.3: Brushes, Displacements, Entities, Modelle, Himmel, Licht-Vorschau; Schattenkarten |
+| `material_cache` | Materialien/Texturen im Hintergrund laden (auch Relief-Höhen) |
+| `model_cache`, `model_thumbnails` | Modelle im Hintergrund laden; Vorschaubilder per CPU-Rasterizer |
+| `asset_browser` | Dock Asset Browser: Materialien und Modelle, Indizierung im Hintergrund |
+| `material_editor`, `material_preview` | Seite Materials: VMT bearbeiten, Live-Vorschau (OpenGL), Schalter für die mapbase-fidelity-Shader |
+| `sound_browser`, `sound_player`, `soundscape_editor` | Seite/Dock Sounds: Liste, Wiedergabe (QAudioSink, optional), Soundscript- und Soundscape-Editor |
+| `particle_browser` | Seite/Dock Particles: Liste, Vorschau (`ParticlePreview`), Teile als Karten |
+| `tool_panel` | Dock Tool: Optionen des Werkzeugs, Formen, Entity-Liste (`EntityPicker`) |
+| `properties_panel`, `properties_instance` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose, Justify; func_instance-Kasten |
+| `panels` | Docks Outliner, Problems, Log |
+| `visgroups_panel` | Dock VisGroups |
+| `map_look_panel` | Dock Map Look (mapbase-fidelity-Look der Karte) |
+| `history_panel` | Dock History (alle Undo-Schritte) |
+| `compile`, `compile_window` | Kompilieren (`CompileRunner`), Kompilier-Dialog, Spiel-Einstellungen; Dock Compile |
+| `mod_page` | Project › Overview: Spiel/Mod, Ordner, Karten, Suchpfade, FGDs |
+| `maps_panel` | Project › Maps: alle Karten, Stapel-Kompilieren, Dateiaktionen |
+| `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
+| `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf) |
+| `ship_panel` | Project › Ship: Abhängigkeiten, bspzip, ZIPs, Workshop |
+| `new_mod_dialog` | „New mod …“: neue Mod aus Karten |
+| `find_dialog`, `replace_materials_dialog` | Entities finden + Entity-Bericht; Materialien ersetzen |
+| `shortcut_dialog` | Tastenkürzel-Editor |
+| `autosaver` | Autosave, Wiederherstellen nach Absturz |
+| `updater` | Update-Prüfung, Download, Installation |
+| `copy_paste` | Strg+C/V-Helfer für Namen und Key/Values |
+| `icons`, `style`, `toggle_switch` | gezeichnete Icons, dunkles Theme, Ein/Aus-Schalter |
+
+### Probe und Tests
+
+| Datei(en) | Aufgabe |
+|---|---|
+| `src/probe/main`, `report` | `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, `model` …) |
+| `tests/fixture`, `demo`, `make_fixture` | künstliche Steam-Installation (keine Valve-Dateien), Demo-Inhalte + Demo-Karte; `sme-make-fixture` schreibt sie auf die Platte |
+| `tests/test_*.cpp`, `main` | Kern-Tests (`sme_tests`); `test_app.cpp` = UI-Tests (`sme_app_tests`) |
+| `tests/export_web` | `sme-export-web`: Demo-Karte als JSON für die Browser-Vorschau (Entwicklungswerkzeug) |
+
+### Oberfläche – Einzelheiten
 
 - `Editor` hält Spiel, Karte, Undo, Auswahl, Werkzeug. **Jede Änderung** läuft über `Editor::commit(Change)`.
   Formen: `Editor::createShape` merkt sich die zuletzt erstellte Form; `setShapeOptions` baut sie neu und fasst das mit
@@ -62,11 +161,11 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - `AssetBrowser` indiziert im Hintergrund alle Materialien (mit Kategorie) und Modelle. Modelle: `ModelCache` (gehört dem
   `Editor`, lädt in Threads, meldet `modelReady`, trägt die Modellgröße in den `EntityCatalog` ein → Auswahlbox passt),
   `ModelThumbnails` zeichnet Vorschaubilder per CPU (kein GL-Kontext nötig) nur für sichtbare Einträge.
-- Sounds-Tab (`SoundBrowser`): drei Spalten – Liste (Soundscripts gruppiert, Dateien, Soundscapes) | Player mit
+- Sounds-Seite bzw. -Dock (`SoundBrowser`): drei Spalten – Liste (Soundscripts gruppiert, Dateien, Soundscapes) | Player mit
   Wellenform (`SoundWaveform`) | Soundscript-Eintrag (speichert in `scripts/game_sounds_<mod>.txt` + Manifest). Klick
   decodiert im Hintergrund (`decodeAudio`) und spielt über `SoundPlayer` (QAudioSink im Format des Geräts, eigene
   Umrechnung von Rate/Kanälen; kein FFmpeg-Plugin nötig, Gerät erst beim ersten Abspielen geöffnet).
-- Soundscape-Editor (`SoundscapeEditor`, `soundscape_editor.cpp`): rechte Spalte des Sounds-Tabs (Stapel mit dem
+- Soundscape-Editor (`SoundscapeEditor`, `soundscape_editor.cpp`): rechte Spalte des Sound-Browsers (Stapel mit dem
   Soundscript-Eintrag). Kern-Modul `soundscape`: `parseSoundscapes` liest alle Regeln (`playlooping`, `playrandom` mit
   `rndwave`, `playsoundscape`, unbekannte Blöcke als `Other`), Unbekanntes bleibt in `extra`; `upsertSoundscape`/
   `removeSoundscape` schreiben die Datei, `addToSoundscapeManifest` setzt die Mod-Datei an den Anfang des Manifests
@@ -141,17 +240,18 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   (neutrale Grautöne, ein Orange). Werkzeugleisten: „Pages“ (Seiten), „Tools“ (nur Icons, Taste in der Ecke, eigene
   Spalte über `addToolBarBreak`), „Main“ (Spiel, Undo/Redo, Objects/Faces als Segment, Raster, Snap, Drehschritt,
   Texture lock, 1/4 Ansichten, Ansicht-Schalter `view:*`, Check, „Run map“ orange, Panel-Schalter links/unten/rechts).
-  Docks links (Tool, Outliner, Map Look) und unten haben keine Titelleiste (Tabs benennen sie), rechts nur „Object
-  Properties“ mit schmalem Kopf. Brush-Aktionen stehen im Werkzeug-Panel (Kasten „selectionTools“), nicht mehr rechts.
+  Docks links (Tool, Outliner, VisGroups, Map Look) und unten (Asset Browser, Sounds, Particles, Compile, Problems,
+  History, Log) haben keine Titelleiste (Tabs benennen sie), rechts nur „Object Properties“ mit schmalem Kopf. Brush-Aktionen stehen im Werkzeug-Panel (Kasten „selectionTools“), nicht mehr rechts.
   Ansicht-Optionen im Editor: `showGrid3D`, `showEntityNames` (2D, ab 64 Einheiten ≥ 18 px, max. 400), `showConnections`
   (`Viewport::drawConnections`, Ziele auch mit `*` am Ende).
 - Seitenleiste: `MainWindow` hat links die Werkzeugleiste „Pages“ (vor den Werkzeugen) und in der Mitte
   einen `QStackedWidget` (`workspacePages`) mit den Seiten aus `MainWindow::Page`: Map (die Views), Materials
-  (`MaterialEditor`), Sounds, Particles, Mod (`ModPage`, `mod_page.cpp`). Sound- und Partikel-Browser sind beim Mappen
+  (`MaterialEditor`), Sounds, Particles, Project (`QTabWidget` „projectTabs“: Overview = `ModPage`, Maps, Menu,
+  Source control, Ship). Sound- und Partikel-Browser sind beim Mappen
   Docks; `showPage()` hängt sie in ihre Seite um und beim Zurückgehen wieder ins Dock. Solange nicht „Map“ vorn ist,
   blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
-  der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Mod")` zeigt die Seite, jeder
-  andere Dock-Name die Karte mit dem Dock. Screenshots: `--page mod|sounds|…`, `--pick-edge` (Kante gewählt).
+  der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Project")` zeigt die Seite ("Mod" geht
+  weiterhin), jeder andere Dock-Name die Karte mit dem Dock. Screenshots: `--page project|sounds|…`, `--pick-edge` (Kante gewählt).
 - Karten-Übersicht: `MapsPanel` (`maps_panel.cpp`, eigenständiges Widget mit `(Editor*, CompileRunner*)`, die
   Project-Seite des Hauptfensters zeigt es). Liste aller `.vmf` im Kartenordner (`GameSettings::mapDir`, rekursiv,
   ohne `*_cordon.vmf`); `bspState` vergleicht die BSP in `<mod>/maps` (sonst neben der VMF) mit der VMF. Letztes
@@ -182,16 +282,16 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   `games/<key>/repository`, Standard = Mod-Ordner. Commit = `add -A -- <angehakte Pfade>` + `commit -m … -- <Pfade>`,
   also nur die angehakten Dateien. Netzwerk nur bei Fetch/Pull/Push durch den Nutzer. Test: `test_git.cpp` (Parser),
   `test_app.cpp` („source control“: echtes Repo im Temp-Ordner, Identität über Umgebungsvariablen).
-  Aufbau wie in Source 2: links Suche + zuletzt bearbeitete (`QSettings` `materialEditor/recent`), Mitte Gruppen
-  (`FeatureGroup`: Kopf mit Pfeil und ggf. Schalter; Schalter aus = zugeklappt), rechts die Vorschau mit Werkzeugleiste.
-  Feature-Schalter (`setFeature`: `bump`, `env`, `detail`, `phong`) legen ihre Parameter beim Ausschalten in
-  `m_parked` und holen sie beim Einschalten zurück; Relief/Wasserglanz/Flüssigkeit wechseln den Shader (`setShader`).
-  Texturfelder zeigen ein 64-px-Bild (aus denselben Hintergrund-Ladungen wie die Vorschau).
 - Material-Editor (`MaterialEditor` + `MaterialPreview`): Felder für die häufigen Parameter, Tabelle für den Rest,
   Vorschau (Wand/Würfel/Kugel, Sonne/Lampe/Nacht/unbeleuchtet; ssbump über die drei Basisvektoren). Speichern schreibt
   nach `<mod>/materials/<name>.vmt` (VPK-Material → Kopie in der Mod) und meldet `materialSaved` → `MaterialCache::reload`.
   Gruppen je Art (`Kind`: Wand, Überblendung, Modell, Wasser, unbeleuchtet), Reihenfolge: Material, Wasser,
   Wasserglanz, Flüssigkeit, Normal-Map, Relief, Spiegelung, Transparenz, Detail, Glanzlichter, Rest.
+  Aufbau: links Suche + zuletzt bearbeitete (`QSettings` `materialEditor/recent`), Mitte Gruppen
+  (`FeatureGroup`: Kopf mit Pfeil und ggf. Schalter; Schalter aus = zugeklappt), rechts die Vorschau mit Werkzeugleiste.
+  Feature-Schalter (`setFeature`: `bump`, `env`, `detail`, `phong`) legen ihre Parameter beim Ausschalten in
+  `m_parked` und holen sie beim Einschalten zurück; Relief/Wasserglanz/Flüssigkeit wechseln den Shader (`setShader`).
+  Texturfelder zeigen ein 64-px-Bild (aus denselben Hintergrund-Ladungen wie die Vorschau).
 - mapbase-fidelity im Material-Editor (Shader der Mod `29j2003/mymod`, `sp/src/materialsystem/fidelity/`): Schalter
   immer nutzbar (ausprobieren ohne deploy); findet `fidelityShaders()` die Shader nicht
   (`shaders/fxc/fidelity_parallax_ps30.vcs` oder `bin/game_shader_dx6.dll` der Mod), steht in der Gruppe ein leiser
@@ -273,7 +373,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   (1 s Spielraum), `offerRecovery()` fragt, `openMapWithRecovery()` öffnet mit Nachfrage. `Editor::openRecovered`
   setzt den Pfad der Originalkarte und `m_recovered` (zählt als ungespeichert). `Editor::saveMap` legt vorher
   `<karte>.vmx` an (`editor/vmxBackup`, Standard an).
-- `history_panel.{h,cpp}`: `HistoryPanel` – Zeile 0 = geöffnete Karte, Zeile i = nach Änderung i; Klick →
+- `history_panel.{h,cpp}`: `HistoryPanel` (Dock History unten, Tab neben dem Asset Browser) – Zeile 0 = geöffnete Karte, Zeile i = nach Änderung i; Klick →
   `Editor::undoTo` (verzögert, weil das die Liste neu aufbaut). `History::size/index/nameAt`.
 - `find_dialog.{h,cpp}`: `FindDialog` (nicht modal, Tabs Find / Entity report), `showFindDialog(editor, parent,
   frame, tab)` hält ein Exemplar pro Fenster. `replace_materials_dialog.{h,cpp}`: `ReplaceMaterialsDialog`,
@@ -303,7 +403,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Partikel, Kompilier-Meldungen, Export, Prüfungen + Autofix, Leak, Probe-Bericht (keine persönlichen Pfade).
 - `sme_app_tests` (Label `ui`) – startet das echte Hauptfenster und klickt: Spielemenü, Block-Werkzeug (auch Umsehen
   während des Platzierens), Auswahl, Gizmo (auch Shift-Kopie), Skalieren, Undo, Entity-Werkzeug + Entity-Liste,
-  Modell-Vorschaubilder, Sounds-Tab, Ziehen von Sounds/Soundscapes/Modellen/Partikeln in die Karte, Drehen mit
+  Modell-Vorschaubilder, Sounds-Seite, Ziehen von Sounds/Soundscapes/Modellen/Partikeln in die Karte, Drehen mit
   Rotations-Raster, Flächenmodus, Autofix-Knopf, Malen, ganze Wand, Block im 2D-View, Kompilier-Fenster (mit
   Shell-Skripten als Tools, nur Linux), Formen mit Live-Ändern, Hollow/Merge, Rechtsklick-Menü, Clip/Vertex/Polygon
   im 2D-View, Speichern/Laden, Text-Overlay, Blöcke nacheinander, Entity-Liste (Icons, Suche „global light“, Brush-Entity
@@ -394,6 +494,6 @@ mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo un
 
 1. Rückmeldung von echten Installationen (Probe-Bericht, `sme-probe model`), Fehler beheben.
 2. Displacements mit dem Vertex-Werkzeug bearbeiten (Reddit-Wunsch), Displacement-Malen.
-3. Overlays/Decals, Partikel-Vorschau.
+3. Overlays/Decals im Viewport zeichnen.
 4. Mesh-Modus (Variante B): freie Meshes → beim Kompilieren konvex zerlegen bzw. als Static Prop + Nodraw-Hülle.
-5. Echte Physik-Simulation (Hammer++ Physics), Instanzen, Visgroups, VRAD-Schnellvorschau, Packen (wie CompilePal).
+5. Echte Physik-Simulation, VRAD-Schnellvorschau.

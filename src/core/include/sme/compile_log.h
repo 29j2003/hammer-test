@@ -9,6 +9,7 @@
 
 namespace sme {
 
+/// What one line of compile output means for the mapper (see classifyCompileLine).
 struct CompileMessage {
 	enum class Severity { Info, Warning, Error };
 	Severity severity = Severity::Info;

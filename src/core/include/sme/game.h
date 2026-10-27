@@ -14,6 +14,7 @@
 
 namespace sme {
 
+/// Everything the editor needs of the chosen game: where it is, its gameinfo.txt, its files and its entity classes.
 struct LoadedGame {
 	GameEntry entry;
 	GameInfo info;

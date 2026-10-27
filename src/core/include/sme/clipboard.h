@@ -15,6 +15,7 @@
 
 namespace sme {
 
+/// How pasted objects are placed (Paste and Paste special).
 struct PasteOptions {
 	int copies = 1;
 	Vec3 offset;                    ///< Added per copy: copy i (from 1) is moved by offset * i

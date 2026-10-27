@@ -10,9 +10,11 @@
 
 namespace sme {
 
+/// 3D vector in Source units (x east, y north, z up).
 struct Vec3 {
 	double x = 0, y = 0, z = 0;
 
+	/// Zero vector / the given components.
 	constexpr Vec3() = default;
 	constexpr Vec3(double x_, double y_, double z_) : x(x_), y(y_), z(z_) {}
 
@@ -29,6 +31,7 @@ struct Vec3 {
 	constexpr double& operator[](int i) { return i == 0 ? x : (i == 1 ? y : z); }
 };
 
+/// Dot product, cross product, length, unit vector (zero stays zero), per-component min/max.
 [[nodiscard]] constexpr double dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 [[nodiscard]] constexpr Vec3 cross(const Vec3& a, const Vec3& b) {
 	return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
@@ -82,10 +85,12 @@ inline Mat3 Mat3::rotation(int axis, double degrees) {
 	return out;
 }
 
+/// A plane: points p with dot(normal, p) == dist.
 struct Plane {
 	Vec3 normal;    ///< Unit length, points out of the brush
 	double dist = 0;
 
+	/// Signed distance (positive in front, outside the brush).
 	[[nodiscard]] double distanceTo(const Vec3& p) const { return dot(normal, p) - dist; }
 };
 
@@ -94,13 +99,17 @@ struct Bounds {
 	Vec3 min{std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
 	Vec3 max{std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
 
+	/// Nothing added yet.
 	[[nodiscard]] bool empty() const { return min.x > max.x; }
+	/// Grows the box to include a point or another box.
 	void add(const Vec3& p) { min = componentMin(min, p); max = componentMax(max, p); }
 	void add(const Bounds& b) { if (!b.empty()) { add(b.min); add(b.max); } }
+	/// Middle and size of the box.
 	[[nodiscard]] Vec3 center() const { return (min + max) * 0.5; }
 	[[nodiscard]] Vec3 size() const { return max - min; }
 };
 
+/// A ray for picking: start point and direction.
 struct Ray {
 	Vec3 origin;
 	Vec3 direction;   ///< Unit length

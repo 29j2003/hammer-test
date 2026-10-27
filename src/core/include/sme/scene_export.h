@@ -19,6 +19,7 @@ class GameFileSystem;
 
 enum class ExportFormat { Obj, Gltf };
 
+/// What goes into an export.
 struct ExportOptions {
 	ExportFormat format = ExportFormat::Gltf;
 	bool tools = false;        ///< Include tool textures (nodraw, skybox, triggers, clips)
@@ -26,6 +27,7 @@ struct ExportOptions {
 	bool textures = true;      ///< Write the textures as PNG files (needs the game's files)
 };
 
+/// What the export wrote.
 struct ExportResult {
 	std::size_t triangles = 0;
 	std::size_t materials = 0;

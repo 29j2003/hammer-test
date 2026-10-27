@@ -10,6 +10,9 @@ namespace sme {
 
 namespace {
 
+// Splits KeyValues text into tokens: quoted or bare strings, '{' and '}'. Skips whitespace,
+// // comments and a UTF-8 byte order mark. Quoted strings may span lines and have no escapes
+// (a backslash is kept as it is, as in VMF paths). Errors throw with the line number.
 class Tokenizer {
 public:
 	explicit Tokenizer(std::string_view text) : m_text(text) {
@@ -103,6 +106,8 @@ private:
 	int m_line = 1;
 };
 
+// Reads `key value` pairs and `key { ... }` blocks until the matching '}' (or the end of the
+// text at the top level). The depth limit keeps broken or hostile files from overflowing the stack.
 void parseChildren(Tokenizer& tokens, KvNode& parent, bool topLevel, int depth) {
 	if (depth > 256) {
 		tokens.fail("blocks nested too deep");

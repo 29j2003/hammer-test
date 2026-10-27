@@ -13,6 +13,7 @@
 
 namespace sme {
 
+/// The light that suits one sky (values from the maps that ship with it).
 struct SkyPreset {
 	static constexpr double none = -1000;   ///< number not given
 

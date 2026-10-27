@@ -28,6 +28,7 @@ namespace sme::app {
 
 class Editor;
 
+/// The Ship tab of the Project page (see the file comment).
 class ShipPanel : public QWidget {
 	Q_OBJECT
 
@@ -39,6 +40,7 @@ public:
 	void scan();
 	[[nodiscard]] const MapDependencies& dependencies() const { return m_deps; }
 
+	/// The BSP the jobs work on (by default the open map's BSP in the mod's maps folder).
 	[[nodiscard]] QString bspPath() const;
 	void setBspPath(const QString& path);
 
@@ -55,6 +57,7 @@ public:
 	[[nodiscard]] QString bspzipPath() const;
 
 signals:
+	/// The scan / a background job finished.
 	void scanned();
 	void taskFinished(bool ok, const QString& message);
 

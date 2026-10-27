@@ -6,6 +6,7 @@ class QApplication;
 
 namespace sme::app {
 
+/// Applies the dark theme to the whole application (call once at start).
 void applyDarkStyle(QApplication& app);
 
 } // namespace sme::app

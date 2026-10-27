@@ -15,6 +15,7 @@
 
 namespace sme::test {
 
+/// A fake Steam installation on disk for tests (no Valve files): Steam root, libraries, games and mods.
 struct Fixture {
 	std::filesystem::path root;        ///< Folder that holds everything (deleted by the destructor if owned)
 	std::filesystem::path steam;       ///< Steam root
@@ -49,6 +50,7 @@ void createDemo(Fixture& fixture);
 struct StudioModelFiles {
 	std::vector<std::byte> mdl, vvd, vtx;
 };
+/// Builds the model files (see StudioModelFiles).
 [[nodiscard]] StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes, const std::vector<std::string>& sequences,
                                                const std::string& include, const std::string& texture, const std::string& cdmaterials);
 /// Writes the three files next to each other ("models/x.mdl" -> x.mdl, x.vvd, x.dx90.vtx).

@@ -20,6 +20,7 @@ class GameFileSystem;
 
 namespace sme::app {
 
+/// A loaded material: what the views need of its VMT, plus the decoded textures.
 struct MaterialInfo {
 	enum class Kind { Opaque, AlphaTest, Translucent, Additive };
 
@@ -37,6 +38,8 @@ struct MaterialInfo {
 	QString error;
 };
 
+/// Loads materials in the background and keeps them (see the file comment). `Size` picks full
+/// textures for the views or small images for thumbnails.
 class MaterialCache : public QObject {
 	Q_OBJECT
 
@@ -55,6 +58,7 @@ public:
 	/// Placeholder image for missing/not yet loaded materials.
 	[[nodiscard]] static const QImage& checkerboard();
 
+	/// Forgets every material; loads still running are ignored when they finish.
 	void clear();
 	/// Relief preview (mapbase-fidelity): materials deploy.bat would put on Fidelity_Parallax get
 	/// their height map, made in the background. Changing it reads the loaded materials again.
@@ -64,6 +68,7 @@ public:
 	void reload(const QString& name);
 
 signals:
+	/// A material finished loading (on the GUI thread).
 	void materialReady(const QString& name);
 
 private:

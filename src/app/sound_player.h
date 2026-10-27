@@ -15,6 +15,7 @@
 
 namespace sme::app {
 
+/// Plays one sound at a time (see the file comment).
 class SoundPlayer : public QObject {
 	Q_OBJECT
 
@@ -22,6 +23,7 @@ public:
 	explicit SoundPlayer(QObject* parent = nullptr);
 	~SoundPlayer() override;
 
+	/// False when the build has no Qt Multimedia (then play() only reports an error).
 	[[nodiscard]] static bool available();
 	/// Plays from `fromSeconds`; a looping sound (cue point) repeats while loop() is on.
 	void play(std::shared_ptr<const DecodedAudio> audio, double fromSeconds = 0);
@@ -37,6 +39,7 @@ public:
 	[[nodiscard]] static float gain(float position);
 
 signals:
+	/// Playing started or stopped / position while playing / something went wrong.
 	void stateChanged(bool playing);
 	void positionChanged(double seconds);
 	void error(const QString& text);

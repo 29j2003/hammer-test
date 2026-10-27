@@ -30,6 +30,7 @@ enum class BspState { NotCompiled, UpToDate, Outdated };
 /// BspState of a map (compares modification times).
 [[nodiscard]] BspState bspState(const QString& vmfPath, const QString& gameDir);
 
+/// The Maps tab of the Project page (see the file comment).
 class MapsPanel : public QWidget {
 	Q_OBJECT
 
@@ -64,6 +65,7 @@ public:
 	[[nodiscard]] QString lastResult(const QString& vmfPath) const;
 
 signals:
+	/// The mapper wants to open this map.
 	void openMapRequested(const QString& vmfPath);
 	/// A batch began (the main window shows the Compile panel).
 	void compileStarted();

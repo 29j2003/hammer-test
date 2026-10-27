@@ -12,6 +12,7 @@
 
 namespace sme {
 
+/// One changed file in `git status`.
 struct GitFileChange {
 	enum class Kind { Changed, Renamed, Untracked, Conflicted, Ignored };
 
@@ -21,11 +22,13 @@ struct GitFileChange {
 	char staged = ' ';           ///< Index state: 'M', 'A', 'D', 'R', 'C', 'T' or ' '
 	char unstaged = ' ';         ///< Work tree state, same letters
 
+	/// Has changes in the index (staged).
 	[[nodiscard]] bool isStaged() const { return staged != ' '; }
 	/// One letter for lists: 'A' added, 'M' modified, 'D' deleted, 'R' renamed, 'U' conflict, '?' new.
 	[[nodiscard]] char letter() const;
 };
 
+/// The repository state: branch, upstream, ahead/behind and the changed files.
 struct GitStatus {
 	std::string branch;          ///< Empty when detached
 	std::string commit;          ///< Current commit id, empty before the first commit
@@ -38,6 +41,7 @@ struct GitStatus {
 /// Parses `git status --porcelain=v2 --branch -z`. nullopt if the text is not that format.
 [[nodiscard]] std::optional<GitStatus> parseGitStatus(std::string_view porcelainZ);
 
+/// One commit of `git log` (no e-mail addresses are read).
 struct GitCommit {
 	std::string hash;            ///< Short id
 	std::string author;          ///< Name only

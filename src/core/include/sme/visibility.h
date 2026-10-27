@@ -11,6 +11,7 @@
 
 namespace sme {
 
+/// Kinds of objects the View > Show switches hide (bit flags).
 enum class ObjectKind : std::uint32_t {
 	World = 1u << 0,           ///< World brushes with normal materials
 	BrushEntities = 1u << 1,   ///< func_door, func_detail, ...

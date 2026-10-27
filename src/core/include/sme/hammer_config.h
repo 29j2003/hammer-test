@@ -13,6 +13,7 @@
 
 namespace sme {
 
+/// One game configuration of Hammer's or Hammer++'s settings.
 struct HammerGameConfig {
 	std::string name;                               ///< Config name shown in Hammer
 	std::filesystem::path gameDir;                  ///< Folder with gameinfo.txt
@@ -30,6 +31,7 @@ struct HammerGameConfig {
 	int defaultLightmapScale = 16;
 };
 
+/// A Hammer config file with all its game configurations.
 struct HammerConfigFile {
 	std::filesystem::path path;
 	std::string flavor;                             ///< "Hammer" or "Hammer++"
