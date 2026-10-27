@@ -48,6 +48,8 @@ public:
 signals:
 	/// "Edit material" on selected faces.
 	void editMaterialRequested(const QString& name);
+	/// "Edit soundscape" on a soundscape entity: the soundscape's name (open it on the Sounds page).
+	void editSoundscapeRequested(const QString& name);
 
 private:
 	void rebuild();
@@ -77,6 +79,9 @@ private:
 	void buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap);
 	/// func_instance: its file, the $variables it fills in, collapse (properties_instance.cpp).
 	void buildInstanceBox(QVBoxLayout* layout, const Entity& funcInstance);
+	/// Soundscape entities: which soundscape (with a button to edit it), and where it is heard -
+	/// a sphere (radius, or the whole map) or a block (trigger_soundscape) with its size.
+	void buildSoundscapeArea(QVBoxLayout* layout, const Entity& soundscape);
 	void buildBrushes(QVBoxLayout* layout);
 	QWidget* makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed);
 	void setKey(const std::vector<int>& ids, const std::string& key, const QString& value);

@@ -36,6 +36,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
+| `soundscape_area` | Wo ein Soundscape-Entity zu hören ist: Kugel (`radius`, −1 = überall; `soundscapeRadius`) oder Block (`trigger_soundscape`, dessen Key `soundscape` den Namen trägt; `soundscapeTrigger`). `setSoundscapeRadius`, `makeSoundscapeBlock` (macht `env_soundscape` zu `env_soundscape_triggerable`, vergibt einen Namen, legt den Trigger an oder ändert seine Größe), `removeSoundscapeBlock` (zurück zur Kugel) – je ein Undo-Schritt |
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
 | `visgroups` | VisGroups: Liste aus dem Block `visgroups` vor der Welt (verschachtelt, `name`/`visgroupid`/`color`), Mitglieder über `visgroupid` im `editor`-Block von Welt-Brushes und Entities (mehrere möglich, bleiben in `extra`); Änderungen als Transaction (Gruppe anlegen – auch aus der Auswahl und unter einer Gruppe –, umbenennen, Farbe, löschen: Untergruppen rücken hoch, Mitglieder verlieren nur diese Id; Auswahl hinzufügen/entfernen). Die Gruppenliste ist ein Kopfblock: `Change` merkt sich dafür `headerBefore/After` (`Transaction::touchHeader`). Sichtbarkeit ist keine Kartenänderung: der Editor hält die versteckten Gruppen, `hiddenByVisGroups` liefert die Objekte (auch über Eltern-Gruppen), `writeVisGroupShown` schreibt beim Speichern `visgroupshown` in eine Kopie, `hiddenVisGroupsInFile` liest es beim Öffnen |
 | `instances` | `func_instance`: Einstellungen (`file`, `targetname`, `fixup_style`, `replaceNN` = „$var Wert“), Datei suchen (Ordner der Karte, Kartenordner des Spiels, ohne Endung → `.vmf`, `\` → `/`), `InstanceCache` (pro Pfad + Änderungszeit), `prepareInstance` (Variablen ersetzen – längste zuerst, Vorgaben aus `func_instance_parms` –, Namen mit Prefix/Postfix wie VBSP, `@`/`!` bleiben, Keys mit FGD-Typ `target_source/target_destination/target_name_or_class`, ohne FGD eine feste Liste; Ausgänge; drehen + verschieben mit Texture Lock), `buildInstancePreview`, `collapseInstance` (neue Ids, VisGroup-Ids der Instanz entfernt, ein Undo-Schritt) |
@@ -86,7 +87,11 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   wenn ausgewählt).
 - Verschieben: Ecken-Quadrate (`Handle::Corner`) rasten auf Ecken anderer Brushes/Entity-Boxen ein (14 px am Bildschirm),
   sonst Raster. Cubemap-Raum-Box: Quadrate auf den Seiten (`Handle::RoomMin…`) bei genau einer ausgewählten
-  `env_cubemap` mit Box.
+  `env_cubemap` mit Box. Soundscape-Kugel: `Viewport::selectedSoundscapeSphere` (genau ein Soundscape-Entity, Radius > 0,
+  kein Trigger), drei Kreise + Quadrate (`Handle::RadiusMin…`); beim Ziehen nur Vorschau (`m_dragRadius`, Text im
+  Overlay), beim Loslassen ein Commit. Eigenschaften: Kasten „soundscapeArea“ (`PropertiesPanel::buildSoundscapeArea`,
+  Signal `editSoundscapeRequested` für die Sounds-Seite); der Schieberegler ändert die Karte erst beim Loslassen, weil
+  das Panel nach jeder Änderung neu aufgebaut wird.
 - Eigenschaften: Schalter „Smart Edit“ (aus = Tabelle aller Keys inkl. nicht gesetzter FGD-Keys), Zeile „neuer Key“,
   Feld „Name“ bei jeder Entity. Smart Edit: Klassen-Combo oben, `QTabBar` „propertyTabs“ (Keyvalues/Outputs/
   Inputs mit Zahlen, gewählter Tab in `properties/tab`), Gruppen nach `EntityProperty::origin` (die FGD-Klasse, die den

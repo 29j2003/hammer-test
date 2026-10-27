@@ -93,7 +93,8 @@ protected:
 	void leaveEvent(QEvent* event) override;
 
 private:
-	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner, RoomMinX, RoomMaxX, RoomMinY, RoomMaxY, RoomMinZ, RoomMaxZ };
+	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner, RoomMinX, RoomMaxX, RoomMinY, RoomMaxY, RoomMinZ, RoomMaxZ,
+	                    RadiusMinX, RadiusMaxX, RadiusMinY, RadiusMaxY, RadiusMinZ, RadiusMaxZ };
 	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex };
 
 	[[nodiscard]] Ray rayAt(const QPointF& pos) const;
@@ -167,6 +168,11 @@ private:
 	/// The room box of the one selected env_cubemap (its id in `cubemapId`), or nullopt.
 	[[nodiscard]] std::optional<Bounds> selectedRoomBox(int* cubemapId = nullptr) const;
 	void drawRoomBox(std::vector<LineVertex>& lines) const;
+	/// The one selected soundscape entity whose area is a sphere (radius > 0, no trigger block),
+	/// or nullptr. Only while a selection tool is active.
+	[[nodiscard]] const Entity* selectedSoundscapeSphere() const;
+	/// Its sphere (three circles) with a square on each side to drag the radius.
+	void drawSoundscapeSphere(std::vector<LineVertex>& lines) const;
 	/// Lines between the selected entities and the entities their outputs name (and back).
 	void drawConnections(std::vector<LineVertex>& lines) const;
 	void drawOverlay();
@@ -228,6 +234,8 @@ private:
 	Vec3 m_dragDelta;             ///< Move
 	double m_dragAngle = 0;       ///< Rotate (degrees)
 	Bounds m_dragNewBounds;       ///< Scale
+	double m_dragRadius = 0;      ///< Soundscape radius while its square is dragged
+	double m_dragStartRadius = 0;
 	Bounds m_previewBounds;       ///< Scale bounds the preview brushes were made for
 	QMatrix4x4 m_previewModel;
 

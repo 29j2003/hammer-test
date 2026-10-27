@@ -212,6 +212,15 @@ constexpr std::string_view DEMO_FGD = R"FGD(
 	soundscape(string) : "Soundscape" : "Nothing" : "Name of the soundscape from scripts/soundscapes_*.txt."
 ]
 
+@PointClass base(env_soundscape) iconsprite("editor/env_soundscape.vmt") color(255 128 0) = env_soundscape_triggerable : "A soundscape that trigger_soundscape brushes switch to."
+[
+]
+
+@SolidClass base(Targetname) = trigger_soundscape : "Switches to the named env_soundscape_triggerable while a player is inside."
+[
+	soundscape(target_destination) : "Soundscape" : "" : "The env_soundscape_triggerable to use."
+]
+
 @PointClass base(Targetname) iconsprite("editor/ambient_generic.vmt") color(80 200 255) = ambient_generic : "Plays and controls a single sound."
 [
 	message(sound) : "Sound Name" : "" : "Name of the sound script entry (or .wav file) to play."

@@ -40,6 +40,7 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QTest>
@@ -59,6 +60,7 @@
 #include <sme/texture.h>
 #include <sme/map_tools.h>
 #include <sme/shipping.h>
+#include <sme/soundscape_area.h>
 
 #include <cmath>
 #include <functional>
@@ -768,6 +770,74 @@ TEST_CASE("editing with the mouse in the real window") {
 		while (editor.doc().entities.size() > entitiesBefore || editor.doc().world.solids.size() > solidsBefore) {
 			editor.undo();
 		}
+		editor.clearSelection();
+		editor.setTool(Editor::Tool::Entity);
+	}
+	{
+		// Soundscape area: a sphere whose radius follows its top square, or a trigger_soundscape block.
+		const std::size_t entitiesBefore = editor.doc().entities.size();
+		const auto* scapeClass = editor.entities()->find("env_soundscape");
+		REQUIRE(scapeClass);
+		auto [placed, scapeId] = edit::placeEntity(editor.doc(), "env_soundscape", {-384, 428, 64}, scapeClass);
+		editor.commit(std::move(placed));
+		editor.commit(edit::setKeyValue(editor.doc(), {scapeId}, "soundscape", std::string("Demo.Outside")));
+		Selection scapeSel;
+		scapeSel.entities.push_back(scapeId);
+		editor.setSelection(scapeSel);
+		editor.setTool(Editor::Tool::Select);
+		window.raiseDock("Object Properties");
+		settle();
+		auto* area = window.properties()->findChild<QGroupBox*>("soundscapeArea");
+		REQUIRE(area);
+		CHECK(area->findChild<QLabel*>("soundscapeName")->text().contains("Demo.Outside"));
+		QSignalSpy editRequest(window.properties(), &PropertiesPanel::editSoundscapeRequested);
+		area->findChild<QPushButton*>("editSoundscape")->click();
+		REQUIRE(editRequest.count() == 1);
+		CHECK(editRequest.front().front().toString() == "Demo.Outside");
+		// The window opens it on the Sounds page; back to the map for the rest.
+		CHECK(window.currentPage() == MainWindow::Page::Sounds);
+		window.showPage(MainWindow::Page::Map);
+		settle();
+		CHECK(area->findChild<QPushButton*>("soundscapeSphere")->isChecked());
+		CHECK(area->findChild<QSpinBox*>("soundscapeRadius")->value() == 128);
+
+		// Drag the top square of the sphere up by 32: radius 160, one undo step.
+		view->update();
+		settle();
+		const Vec3 top{-384, 428, 64 + 128};
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, top));
+		QTest::mouseMove(view, screen(view, top + Vec3{0, 0, 16}));
+		QTest::mouseMove(view, screen(view, top + Vec3{0, 0, 32}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, top + Vec3{0, 0, 32}));
+		settle();
+		CHECK(editor.doc().findEntity(scapeId)->get("radius") == "160");
+		CHECK(editor.selection().entities == std::vector<int>{scapeId});
+		editor.undo();
+		CHECK(soundscapeRadius(*editor.doc().findEntity(scapeId)) == doctest::Approx(128));
+
+		// Block: a trigger_soundscape naming the (now triggerable) soundscape; undo brings the sphere back.
+		settle();
+		area = window.properties()->findChild<QGroupBox*>("soundscapeArea");
+		REQUIRE(area);
+		area->findChild<QPushButton*>("soundscapeBlock")->click();
+		settle();
+		const Entity* scape = editor.doc().findEntity(scapeId);
+		CHECK(scape->classname() == "env_soundscape_triggerable");
+		const Entity* trigger = soundscapeTrigger(editor.doc(), *scape);
+		REQUIRE(trigger);
+		CHECK(trigger->get("soundscape") == scape->get("targetname"));
+		area = window.properties()->findChild<QGroupBox*>("soundscapeArea");
+		REQUIRE(area);
+		CHECK(area->findChild<QPushButton*>("soundscapeBlock")->isChecked());
+		CHECK(area->findChild<QDoubleSpinBox*>("soundscapeBlockSize0")->value() == doctest::Approx(256));
+		const int triggerId = trigger->id;
+		area->findChild<QPushButton*>("selectSoundscapeBlock")->click();
+		CHECK(editor.selection().entities == std::vector<int>{triggerId});
+		editor.undo();
+		scape = editor.doc().findEntity(scapeId);
+		CHECK(scape->classname() == "env_soundscape");
+		CHECK_FALSE(soundscapeTrigger(editor.doc(), *scape));
+		while (editor.doc().entities.size() > entitiesBefore) editor.undo();
 		editor.clearSelection();
 		editor.setTool(Editor::Tool::Entity);
 	}

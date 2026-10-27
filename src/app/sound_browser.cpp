@@ -32,6 +32,7 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
@@ -538,7 +539,9 @@ void SoundBrowser::load(const QString& file, bool play) {
 		return;
 	}
 	if (file == m_file && m_audio) {
+		// Already read (e.g. by the soundscape shown before): ready at once.
 		if (play) m_player->play(m_audio);
+		QTimer::singleShot(0, this, [this] { emit audioLoaded(); });   // like a fresh load: after this call
 		return;
 	}
 	m_player->stop();

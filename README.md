@@ -175,6 +175,12 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Parallax-corrected cubemaps (Mapbase)**: select an env_cubemap and press *Add room box*: the box is fitted to the
   walls around it; drag the squares on its sides in the view to change it. The editor creates and names the
   parallax_obb and links it to the cubemap.
+- **Soundscape areas**: select an env_soundscape and its *Soundscape area* box shows which soundscape plays (*Edit
+  soundscape* opens it on the Sounds page) and where it is heard. *Sphere*: a pink sphere in the views; drag its squares
+  or use the radius field and slider; *Whole map* sets radius -1. *Block*: puts a trigger_soundscape around the entity
+  (the entity becomes an env_soundscape_triggerable with a name the trigger points at); type its width, depth and
+  height or *Select the block* and drag its sides. Switching back to *Sphere* removes the block. Each change is one undo
+  step.
 - **Problem check with autofix**: broken brushes, misspelled materials or entity classes ("did you mean …?"), outputs
   to entities that do not exist, unknown inputs, missing player start, zero texture scale, … Each problem has a
   **Select** button and, where the fix is obvious, a fix button.

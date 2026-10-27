@@ -61,6 +61,7 @@
 #include <QTabBar>
 #include <QStackedWidget>
 #include <QTabWidget>
+#include <QTreeWidget>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -342,6 +343,12 @@ void MainWindow::createDocks() {
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
+	});
+	// "Edit soundscape" on a soundscape entity: the Sounds page with that soundscape open.
+	connect(m_properties, &PropertiesPanel::editSoundscapeRequested, this, [this](const QString& name) {
+		showPage(Page::Sounds);
+		const auto found = m_sounds->tree()->findItems(name, Qt::MatchFixedString | Qt::MatchRecursive);
+		if (!found.isEmpty()) m_sounds->tree()->setCurrentItem(found.front());
 	});
 	connect(m_properties, &PropertiesPanel::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);

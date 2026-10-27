@@ -10,7 +10,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - `src/core/` – Bibliothek `smecore` ohne Qt (Namespace `sme`): Steam/Spiele (`steam`, `game_discovery`, `gameinfo`,
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
   `assets` inkl. Sounds/Soundscapes/Partikel, Soundscapes bearbeiten `soundscape`, Höhenkarten für Relief `heightmap`, Sound-Decoder `audio`, Partikel aus PCF + Vorschau-Simulation `particles`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
-  (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
+  (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`, Soundscape-Bereich Kugel/Block `soundscape_area`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
   Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), VisGroups (`visgroups`), func_instance laden/auflösen (`instances`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Hauptmenü der Mod (`mod_menu`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), neue Mod anlegen (`mod_template`), Prüfungen mit Autofix + Leaks (`checks`), Autosave-Namen (`autosave`), Entities finden (`entity_search`), Material ersetzen (`material_replace`), Kompilier-Meldungen (`compile_log`),
   Export glTF/OBJ (`scene_export`).
 - `src/app/` – Qt-6-Editor (`smeapp` + Programm `Mapsmith`): `editor` (Zustand, alle Änderungen über `commit()`),

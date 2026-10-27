@@ -7,6 +7,7 @@
 #include <sme/csg.h>
 #include <sme/fidelity_look.h>
 #include <sme/sky_presets.h>
+#include <sme/soundscape_area.h>
 #include <sme/visibility.h>
 #include <sme/editing.h>
 
@@ -531,4 +532,78 @@ TEST_CASE("edges from the vertex tool: wedge, bevel, round") {
 		auto [s2, r2] = make(other);
 		CHECK_FALSE(edit::shapeEdges(other, edit::edgesAtCorners(other, s2, edge), edit::EdgeShape::Bevel, 100, 0));
 	}
+}
+
+TEST_CASE("soundscape area: radius sphere or trigger_soundscape block, one undo step each") {
+	MapDocument doc;
+	History history;
+	Entity scape;
+	scape.id = doc.newEntityId();
+	scape.set("classname", "env_soundscape");
+	scape.set("soundscape", "Demo.Outside");
+	scape.setOrigin({100, 0, 64});
+	doc.entities.push_back(scape);
+	const int id = scape.id;
+	const auto entity = [&] { return doc.findEntity(id); };
+
+	CHECK(isSoundscapeEntity(*entity()));
+	CHECK(soundscapeRadius(*entity()) == doctest::Approx(DEFAULT_SOUNDSCAPE_RADIUS));
+	CHECK_FALSE(soundscapeTrigger(doc, *entity()));
+
+	// Radius: rounded, -1 kept for "everywhere", undo restores the missing key.
+	history.push(edit::setSoundscapeRadius(doc, id, 300.4));
+	CHECK(entity()->get("radius") == "300");
+	history.push(edit::setSoundscapeRadius(doc, id, -5));
+	CHECK(soundscapeRadius(*entity()) == doctest::Approx(-1));
+	history.undo(doc);
+	history.undo(doc);
+	CHECK(entity()->get("radius").empty());
+	history.push(edit::setSoundscapeRadius(doc, id, 200));
+
+	// Block: a trigger around the entity naming it; the entity becomes triggerable and gets a name.
+	auto [change, triggerId] = edit::makeSoundscapeBlock(doc, id);
+	REQUIRE(triggerId != 0);
+	history.push(std::move(change));
+	CHECK(entity()->classname() == "env_soundscape_triggerable");
+	const std::string name = entity()->get("targetname");
+	CHECK_FALSE(name.empty());
+	const Entity* trigger = soundscapeTrigger(doc, *entity());
+	REQUIRE(trigger);
+	CHECK(trigger->id == triggerId);
+	CHECK(trigger->classname() == "trigger_soundscape");
+	CHECK(trigger->get("soundscape") == name);
+	REQUIRE(trigger->solids.size() == 1);
+	CHECK(trigger->solids.front().sides.front().material == "TOOLS/TOOLSTRIGGER");
+	const Bounds expected = soundscapeBlockFor(*entity());
+	CHECK(expected.size().x == doctest::Approx(400));
+
+	// A second call resizes the same trigger instead of adding one.
+	Bounds bigger = expected;
+	bigger.max.z += 64;
+	auto [resize, sameId] = edit::makeSoundscapeBlock(doc, id, bigger);
+	CHECK(sameId == triggerId);
+	history.push(std::move(resize));
+	int triggers = 0;
+	for (const auto& e : doc.entities) triggers += e.classname() == "trigger_soundscape";
+	CHECK(triggers == 1);
+
+	// Back to a sphere: trigger gone, class restored, radius kept.
+	history.push(edit::removeSoundscapeBlock(doc, id));
+	CHECK(entity()->classname() == "env_soundscape");
+	CHECK_FALSE(soundscapeTrigger(doc, *entity()));
+	CHECK(entity()->get("radius") == "200");
+	history.undo(doc);
+	CHECK(soundscapeTrigger(doc, *entity()));
+	history.undo(doc);
+	history.undo(doc);
+	CHECK(entity()->classname() == "env_soundscape");
+	CHECK(entity()->get("targetname").empty());
+	CHECK(doc.entities.size() == 1);
+
+	// Not a soundscape: nothing happens.
+	Entity light;
+	light.id = doc.newEntityId();
+	light.set("classname", "light");
+	doc.entities.push_back(light);
+	CHECK(edit::makeSoundscapeBlock(doc, light.id).second == 0);
 }
