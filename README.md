@@ -94,6 +94,12 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
   shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
   `gameinfo.txt` with what was found, and the entity definitions (FGDs).
+- **Source control** (Git, e.g. your mod's code on GitHub): pick the repository once per game (the mod folder or the
+  mod's source code). You see the branch, how many commits are waiting to be pushed or pulled, and the changed files
+  with check boxes. Write a message and *Commit* the checked files. *Fetch*, *Pull* and *Push* talk to the remote,
+  and only when you press them. *Open on GitHub* shows the repository's page; the history lists the last 30 commits.
+  *Open in Visual Studio* appears when the folder has a solution; *Run update.bat* appears when it has that script
+  (Windows). Needs Git installed.
 - **Material editor**: the *Materials* page (right-click a material > *Edit material*, *Edit* next to a selected
   face, or *View > Material Editor*). On the left: *Open a material ...* and the materials you edited lately. In the
   middle the parameters in groups; a group with a switch in its header is a feature (*Normal map*, *Relief*,

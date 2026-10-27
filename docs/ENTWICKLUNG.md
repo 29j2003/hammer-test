@@ -122,6 +122,15 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
   der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Mod")` zeigt die Seite, jeder
   andere Dock-Name die Karte mit dem Dock. Screenshots: `--page mod|sounds|…`, `--pick-edge` (Kante gewählt).
+- Quellcode-Verwaltung: `SourceControlPanel` (`source_control_panel.cpp`, eigenständiges Widget für die
+  Project-Seite) ruft das System-`git` per `QProcess` auf, nacheinander aus einer Warteschlange (`run` → `startNext`),
+  nie blockierend; `GIT_TERMINAL_PROMPT=0`, damit nichts auf ein Passwort in einer unsichtbaren Konsole wartet.
+  Auslesen im Kern `git_status`: `parseGitStatus` (`status --porcelain=v2 --branch -z`, auch Umbenennungen und
+  Konflikte), `parseGitLog` (Format `gitLogFormat()`: Kurz-Id, Autor-**Name**, relative Zeit, Betreff – nie die
+  E-Mail), `remoteWebUrl` (https/ssh/scp-Form → Webseite, Zugangsdaten fallen weg). Ordner je Spiel in `QSettings`
+  `games/<key>/repository`, Standard = Mod-Ordner. Commit = `add -A -- <angehakte Pfade>` + `commit -m … -- <Pfade>`,
+  also nur die angehakten Dateien. Netzwerk nur bei Fetch/Pull/Push durch den Nutzer. Test: `test_git.cpp` (Parser),
+  `test_app.cpp` („source control“: echtes Repo im Temp-Ordner, Identität über Umgebungsvariablen).
   Aufbau wie in Source 2: links Suche + zuletzt bearbeitete (`QSettings` `materialEditor/recent`), Mitte Gruppen
   (`FeatureGroup`: Kopf mit Pfeil und ggf. Schalter; Schalter aus = zugeklappt), rechts die Vorschau mit Werkzeugleiste.
   Feature-Schalter (`setFeature`: `bump`, `env`, `detail`, `phong`) legen ihre Parameter beim Ausschalten in

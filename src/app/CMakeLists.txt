@@ -27,6 +27,7 @@ add_library(smeapp STATIC
 	shortcut_dialog.cpp
 	sound_browser.cpp
 	sound_player.cpp
+	source_control_panel.cpp
 	style.cpp
 	tool_panel.cpp
 	toggle_switch.cpp

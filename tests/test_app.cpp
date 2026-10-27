@@ -30,6 +30,8 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QPixmap>
+#include <QPlainTextEdit>
+#include <QProcess>
 #include <QStackedWidget>
 #include <QTreeWidget>
 #include <QPushButton>
@@ -70,6 +72,7 @@
 #include "sound_player.h"
 #include "style.h"
 #include "sound_browser.h"
+#include "source_control_panel.h"
 #include "tool_panel.h"
 #include "updater.h"
 #include "viewport.h"
@@ -1635,6 +1638,130 @@ TEST_CASE("update check: release information and the version button") {
 		found = found || b->text().contains("Update to v9.1.0");
 	}
 	CHECK(found);
+}
+
+TEST_CASE("source control: a new repository, its changes, a commit and the history") {
+	const QString gitProgram = SourceControlPanel::gitProgram();
+	if (gitProgram.isEmpty()) {
+		MESSAGE("git is not installed - skipped");
+		return;
+	}
+	QTemporaryDir home;
+	QTemporaryDir repo;
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	// Who commits, for this test only (environment, not a file; the address is put together here so
+	// no address stands in the source).
+	QFile emptyConfig(home.filePath("gitconfig"));
+	REQUIRE(emptyConfig.open(QIODevice::WriteOnly));
+	emptyConfig.close();
+	const QByteArray address = QByteArray("test") + '@' + "example.invalid";
+	const QList<QPair<const char*, QByteArray>> environment{{"GIT_AUTHOR_NAME", "Test"},     {"GIT_COMMITTER_NAME", "Test"},
+	                                                        {"GIT_AUTHOR_EMAIL", address},   {"GIT_COMMITTER_EMAIL", address},
+	                                                        {"GIT_CONFIG_GLOBAL", emptyConfig.fileName().toUtf8()}, {"GIT_CONFIG_NOSYSTEM", "1"}};
+	for (const auto& [name, value] : environment) qputenv(name, value);
+	const auto git = [&](const QStringList& args) {
+		QProcess process;
+		process.setWorkingDirectory(repo.path());
+		process.start(gitProgram, args);
+		process.waitForFinished(10000);
+		return process.exitCode();
+	};
+	const auto write = [&](const QString& name, const QByteArray& text) {
+		QFile file(QDir(repo.path()).filePath(name));
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(text);
+	};
+
+	Editor editor;
+	SourceControlPanel panel(&editor);
+	panel.resize(1000, 700);
+	panel.show();
+	// Waits until every queued git command is done.
+	const auto idle = [&] {
+		for (int i = 0; i < 500; ++i) {
+			QTest::qWait(20);
+			if (!panel.busy()) {
+				QTest::qWait(40);
+				if (!panel.busy()) return true;
+			}
+		}
+		return false;
+	};
+	auto* changes = panel.findChild<QTreeWidget*>("scmChanges");
+	auto* history = panel.findChild<QTreeWidget*>("scmHistory");
+	auto* message = panel.findChild<QPlainTextEdit*>("scmMessage");
+	auto* commit = panel.findChild<QPushButton*>("scmCommit");
+	auto* init = panel.findChild<QPushButton*>("scmInit");
+	REQUIRE(changes);
+	REQUIRE(history);
+	REQUIRE(message);
+	REQUIRE(commit);
+	REQUIRE(init);
+	const auto changedFiles = [&] {
+		QStringList out;
+		for (int i = 0; i < changes->topLevelItemCount(); ++i) out << changes->topLevelItem(i)->text(0);
+		return out;
+	};
+
+	// An empty folder: not a repository yet, one click starts one.
+	panel.setRepository(repo.path());
+	REQUIRE(idle());
+	CHECK(init->isVisible());
+	init->click();
+	REQUIRE(idle());
+	CHECK_FALSE(init->isVisible());
+	CHECK(changes->topLevelItemCount() == 0);
+
+	// A new file shows up as new; committing it puts it into the history.
+	write("map_notes.txt", "first\n");
+	panel.refresh();
+	REQUIRE(idle());
+	REQUIRE(changedFiles() == QStringList{"map_notes.txt"});
+	CHECK(changes->topLevelItem(0)->text(1) == "?");
+	CHECK(changes->topLevelItem(0)->checkState(0) == Qt::Checked);
+	message->setPlainText("Notizen zur Karte");
+	QSignalSpy finished(&panel, &SourceControlPanel::commandFinished);
+	commit->click();
+	REQUIRE(idle());
+	REQUIRE(!finished.isEmpty());
+	CHECK(finished.last().at(0).toBool());
+	CHECK(changes->topLevelItemCount() == 0);
+	REQUIRE(history->topLevelItemCount() == 1);
+	CHECK(history->topLevelItem(0)->text(1) == "Notizen zur Karte");
+	CHECK(history->topLevelItem(0)->text(2) == "Test");
+	CHECK(message->toPlainText().isEmpty());
+
+	// Only checked files go into a commit.
+	write("map_notes.txt", "second\n");
+	write("later.txt", "not yet\n");
+	panel.refresh();
+	REQUIRE(idle());
+	REQUIRE(changes->topLevelItemCount() == 2);
+	for (int i = 0; i < changes->topLevelItemCount(); ++i) {
+		auto* item = changes->topLevelItem(i);
+		if (item->text(0) == "later.txt") item->setCheckState(0, Qt::Unchecked);
+		if (item->text(0) == "map_notes.txt") CHECK(item->text(1) == "M");
+	}
+	message->setPlainText("Nur die Notizen");
+	commit->click();
+	REQUIRE(idle());
+	CHECK(changedFiles() == QStringList{"later.txt"});
+	CHECK(history->topLevelItemCount() == 2);
+
+	// A remote gives a web page and the network buttons (not pressed here: no network in tests).
+	CHECK(git({"remote", "add", "origin", "https://github.com/example/mymod.git"}) == 0);
+	panel.refresh();
+	REQUIRE(idle());
+	CHECK(panel.findChild<QLabel*>("scmRemote")->text() == "https://github.com/example/mymod");
+	CHECK(panel.findChild<QPushButton*>("scmOpenRemote")->isVisible());
+	CHECK(panel.findChild<QPushButton*>("scmPush")->isEnabled());
+	CHECK(panel.findChild<QLabel*>("scmBranch")->text().contains("<b>"));
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		panel.grab().save(QDir(shots).filePath("source_control.png"));
+	}
+
+	for (const auto& entry : environment) qunsetenv(entry.first);
 }
 
 int main(int argc, char** argv) {
