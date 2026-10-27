@@ -268,6 +268,9 @@ std::vector<SoundScriptEntry> soundScripts(const GameFileSystem& fs) {
 				entry.name = block.key;
 				entry.script = script;
 				entry.channel = block.get("channel");
+				entry.volume = block.get("volume");
+				entry.pitch = block.get("pitch");
+				entry.soundlevel = block.get("soundlevel");
 				collectWaves(block, entry.waves);
 				const auto key = toLower(entry.name);
 				if (const auto it = index.find(key); it != index.end()) {
@@ -283,6 +286,92 @@ std::vector<SoundScriptEntry> soundScripts(const GameFileSystem& fs) {
 	}
 	std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return toLower(a.name) < toLower(b.name); });
 	return entries;
+}
+
+namespace {
+
+std::string kvQuoted(std::string_view text) {
+	std::string out = "\"";
+	for (const char c : text) {
+		if (c != '"') out += c;   // KeyValues has no escaping for quotes
+	}
+	return out + "\"";
+}
+
+/// Generic writer with every key and value quoted (sound scripts, manifests).
+void writeQuotedNode(std::string& out, const KvNode& node, int depth) {
+	const std::string indent(static_cast<std::size_t>(depth), '\t');
+	if (node.block) {
+		out += indent + kvQuoted(node.key) + "\n" + indent + "{\n";
+		for (const auto& child : node.children) {
+			writeQuotedNode(out, child, depth + 1);
+		}
+		out += indent + "}\n";
+	} else {
+		out += indent + kvQuoted(node.key) + "\t" + kvQuoted(node.value) + "\n";
+	}
+}
+
+} // namespace
+
+std::string writeSoundScriptEntry(const SoundScriptEntry& entry) {
+	KvNode block = KvNode::makeBlock(entry.name);
+	block.set("channel", entry.channel.empty() ? "CHAN_AUTO" : entry.channel);
+	block.set("volume", entry.volume.empty() ? "1" : entry.volume);
+	block.set("pitch", entry.pitch.empty() ? "PITCH_NORM" : entry.pitch);
+	block.set("soundlevel", entry.soundlevel.empty() ? "SNDLVL_NORM" : entry.soundlevel);
+	if (entry.waves.size() == 1) {
+		block.set("wave", entry.waves.front());
+	} else if (!entry.waves.empty()) {
+		KvNode random = KvNode::makeBlock("rndwave");
+		for (const auto& wave : entry.waves) {
+			random.children.push_back(KvNode::makeValue("wave", wave));
+		}
+		block.children.push_back(std::move(random));
+	}
+	std::string out;
+	writeQuotedNode(out, block, 0);
+	return out;
+}
+
+std::string upsertSoundScriptEntry(std::string_view scriptText, const SoundScriptEntry& entry) {
+	const KvNode root = parseKeyValues(scriptText);
+	std::string out;
+	for (const auto& node : root.children) {
+		if (node.block && iequals(node.key, entry.name)) {
+			continue;   // replaced below
+		}
+		writeQuotedNode(out, node, 0);
+		out += "\n";
+	}
+	return out + writeSoundScriptEntry(entry);
+}
+
+std::string addToSoundManifest(std::string_view manifestText, std::string_view file) {
+	KvNode root = manifestText.empty() ? KvNode{} : parseKeyValues(manifestText);
+	KvNode* manifest = nullptr;
+	for (auto& node : root.children) {
+		if (node.block) {
+			manifest = &node;
+			break;
+		}
+	}
+	if (!manifest) {
+		root.children.push_back(KvNode::makeBlock("game_sounds_manifest"));
+		manifest = &root.children.back();
+	}
+	const auto wanted = normalizePath(file);
+	for (const auto& child : manifest->children) {
+		if (!child.block && normalizePath(child.value) == wanted) {
+			return std::string(manifestText);   // already there
+		}
+	}
+	manifest->children.push_back(KvNode::makeValue("precache_file", std::string(file)));
+	std::string out;
+	for (const auto& node : root.children) {
+		writeQuotedNode(out, node, 0);
+	}
+	return out;
 }
 
 std::vector<Soundscape> soundscapes(const GameFileSystem& fs) {

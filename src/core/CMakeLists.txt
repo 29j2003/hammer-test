@@ -1,6 +1,12 @@
+# Third-party sound decoders (C, compiled as they are, without our warning flags).
+add_library(smecodecs STATIC src/codecs.c src/codecs_mp3.c)
+target_include_directories(smecodecs SYSTEM PRIVATE ${stb_vorbis_SOURCE_DIR} ${minimp3_SOURCE_DIR})
+set_target_properties(smecodecs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # smecore: everything that does not need Qt (file formats, games, map document, geometry, undo).
 add_library(smecore STATIC
 	src/assets.cpp
+	src/audio.cpp
 	src/brush.cpp
 	src/checks.cpp
 	src/compile_log.cpp
@@ -25,9 +31,10 @@ add_library(smecore STATIC
 	src/texture.cpp
 	src/version.cpp)
 target_include_directories(smecore PUBLIC include)
+target_include_directories(smecore SYSTEM PRIVATE ${stb_vorbis_SOURCE_DIR} ${minimp3_SOURCE_DIR})
 target_link_libraries(smecore
 	PUBLIC sourcepp::kvpp
-	PRIVATE sourcepp::toolpp sourcepp::vpkpp sourcepp::vtfpp)
+	PRIVATE sourcepp::toolpp sourcepp::vpkpp sourcepp::vtfpp smecodecs)
 target_compile_features(smecore PUBLIC cxx_std_20)
 if(MSVC)
 	target_compile_options(smecore PRIVATE /W4 /permissive- /utf-8)

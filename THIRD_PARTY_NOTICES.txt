@@ -13,6 +13,12 @@ Qt 6 (https://www.qt.io) - GNU Lesser General Public License v3
     own build of Qt. Source code: https://download.qt.io/official_releases/qt/
     License text: https://www.gnu.org/licenses/lgpl-3.0.html
 
+stb_vorbis (https://github.com/nothings/stb) - Public Domain (Unlicense) or MIT License
+    Ogg Vorbis decoding for the sound preview. Copyright (c) 2017 Sean Barrett.
+
+minimp3 (https://github.com/lieff/minimp3) - CC0 1.0 (public domain dedication)
+    MP3 decoding for the sound preview.
+
 doctest (https://github.com/doctest/doctest) - MIT License
     Only used by the tests; not part of the released program.
 

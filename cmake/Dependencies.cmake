@@ -26,6 +26,18 @@ FetchContent_Declare(sourcepp
 	SYSTEM)
 FetchContent_MakeAvailable(sourcepp)
 
+# Sound decoders for the sound preview: single files, pinned to a commit and checked by hash.
+# stb_vorbis (Ogg Vorbis): public domain / MIT. minimp3 (MP3): CC0.
+FetchContent_Declare(stb_vorbis
+	URL      https://raw.githubusercontent.com/nothings/stb/003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5/stb_vorbis.c
+	URL_HASH SHA256=4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636
+	DOWNLOAD_NO_EXTRACT TRUE)
+FetchContent_Declare(minimp3
+	URL      https://raw.githubusercontent.com/lieff/minimp3/ea99364f61c14656440e8d77e9c233ccf3124633/minimp3.h
+	URL_HASH SHA256=57e437c5c1f0e8b243885d3929c8973b5e6c778451e0100ab4251d19915cb3ad
+	DOWNLOAD_NO_EXTRACT TRUE)
+FetchContent_MakeAvailable(stb_vorbis minimp3)
+
 if(SME_BUILD_TESTS)
 	# doctest: single-header unit test framework. MIT license.
 	FetchContent_Declare(doctest

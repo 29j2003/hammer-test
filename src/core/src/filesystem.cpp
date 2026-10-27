@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <fstream>
 #include <mutex>
+#include <shared_mutex>
 #include <set>
 #include <system_error>
 #include <unordered_map>
@@ -83,6 +84,7 @@ struct GameFileSystem::MountData {
 	std::unique_ptr<vpkpp::PackFile> vpk;
 	// Directory mounts: lowercase relative path -> real path, built on first use.
 	std::once_flag indexOnce;
+	std::shared_mutex indexMutex;   ///< Readers share it; noteWrittenFile() adds entries
 	std::unordered_map<std::string, std::filesystem::path> index;
 
 	void buildIndex(const std::filesystem::path& root) {
@@ -257,6 +259,7 @@ std::optional<std::size_t> GameFileSystem::locate(std::string_view path, std::st
 			}
 		} else {
 			data.buildIndex(m_mounts[i].path);
+			const std::shared_lock lock(data.indexMutex);
 			if (data.index.contains(relative)) {
 				return i;
 			}
@@ -281,7 +284,11 @@ std::optional<std::vector<std::byte>> GameFileSystem::read(std::string_view path
 		return data.vpk->readEntry(relative);
 	}
 
-	const auto& file = data.index.at(relative);
+	std::filesystem::path file;
+	{
+		const std::shared_lock lock(data.indexMutex);
+		file = data.index.at(relative);
+	}
 	std::error_code ec;
 	const auto size = std::filesystem::file_size(file, ec);
 	if (ec || size > MAX_FILE_SIZE) {
@@ -334,6 +341,7 @@ std::vector<std::string> GameFileSystem::list(std::string_view dir, std::string_
 			});
 		} else {
 			data.buildIndex(m_mounts[i].path);
+			const std::shared_lock lock(data.indexMutex);
 			for (const auto& [relative, real] : data.index) {
 				consider(relative);
 			}
@@ -352,7 +360,25 @@ std::size_t GameFileSystem::fileCount(std::size_t mountIndex) const {
 		return data.vpk->getEntryCount();
 	}
 	data.buildIndex(m_mounts[mountIndex].path);
+	const std::shared_lock lock(data.indexMutex);
 	return data.index.size();
+}
+
+void GameFileSystem::noteWrittenFile(const std::filesystem::path& file) {
+	for (std::size_t i = 0; i < m_mounts.size(); ++i) {
+		if (m_mounts[i].kind != Mount::Kind::Directory || !m_mounts[i].present) {
+			continue;
+		}
+		const auto relative = file.lexically_normal().lexically_relative(m_mounts[i].path.lexically_normal());
+		const auto text = normalizePath(displayPath(relative));
+		if (relative.empty() || text.starts_with("..") || relative.is_absolute()) {
+			continue;
+		}
+		auto& data = *m_data[i];
+		data.buildIndex(m_mounts[i].path);
+		const std::unique_lock lock(data.indexMutex);
+		data.index.emplace(text, file);
+	}
 }
 
 } // namespace sme

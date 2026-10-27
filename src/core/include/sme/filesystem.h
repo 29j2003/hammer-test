@@ -61,6 +61,10 @@ public:
 	/// (e.g. ".vmt"; empty = any). Searches recursively.
 	[[nodiscard]] std::vector<std::string> list(std::string_view dir, std::string_view extension = {}, std::string_view pathId = "game") const;
 
+	/// Tells the file system about a file the editor just wrote into one of the game's folders
+	/// (folder contents are indexed once; without this the new file would stay unseen).
+	void noteWrittenFile(const std::filesystem::path& file);
+
 	/// Number of files a mount provides (builds its index if needed).
 	[[nodiscard]] std::size_t fileCount(std::size_t mountIndex) const;
 

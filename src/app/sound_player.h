@@ -1,14 +1,17 @@
-// sound_player.h - Plays a sound file of the game (WAV, MP3, OGG) straight from the game's
-// folders or VPKs. Uses Qt Multimedia when the editor was built with it, otherwise playing
-// is unavailable and available() returns false.
+// sound_player.h - Plays decoded sounds (sme::decodeAudio) through the default audio output.
+//
+// The sound is converted to the output's own format (rate, channels, sample type) and played
+// with QAudioSink, so playing needs no media backend plugin (FFmpeg) - only an audio device.
+// Without Qt Multimedia in the build, available() is false.
 
 #pragma once
 
-#include <QByteArray>
 #include <QObject>
 #include <QString>
 
 #include <memory>
+
+#include <sme/audio.h>
 
 namespace sme::app {
 
@@ -20,18 +23,26 @@ public:
 	~SoundPlayer() override;
 
 	[[nodiscard]] static bool available();
-	/// Starts playing the file contents (the name only tells the format).
-	void play(const QString& name, QByteArray data);
+	/// Plays from `fromSeconds`; a looping sound (cue point) repeats while loop() is on.
+	void play(std::shared_ptr<const DecodedAudio> audio, double fromSeconds = 0);
 	void stop();
 	[[nodiscard]] bool playing() const;
+	/// Seconds into the sound that are being heard now.
+	[[nodiscard]] double position() const;
+	void setLoop(bool on);
+	[[nodiscard]] bool loop() const { return m_loop; }
+	void setVolume(float volume);   ///< 0..1
 
 signals:
 	void stateChanged(bool playing);
+	void positionChanged(double seconds);
 	void error(const QString& text);
 
 private:
 	struct Impl;
 	std::unique_ptr<Impl> m_impl;
+	bool m_loop = true;
+	float m_volume = 0.8f;
 };
 
 } // namespace sme::app

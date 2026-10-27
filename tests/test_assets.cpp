@@ -5,15 +5,19 @@
 #include "fixture.h"
 
 #include <sme/assets.h>
+#include <sme/audio.h>
 #include <sme/scene_export.h>
 #include <sme/studio_model.h>
 #include <sme/brush.h>
 #include <sme/checks.h>
 #include <sme/compile_log.h>
 #include <sme/game.h>
+#include <sme/keyvalues.h>
 #include <sme/text.h>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 #include <cstring>
 #include <fstream>
 
@@ -398,4 +402,233 @@ TEST_CASE("map export to glTF and OBJ") {
 	REQUIRE(bare);
 	CHECK(bare->textures == 0);
 	CHECK(bare->models == 0);
+}
+
+namespace {
+
+void put16(std::vector<std::byte>& out, int v) {
+	out.push_back(std::byte(v & 0xff));
+	out.push_back(std::byte((v >> 8) & 0xff));
+}
+void put32(std::vector<std::byte>& out, std::uint32_t v) {
+	put16(out, int(v & 0xffff));
+	put16(out, int(v >> 16));
+}
+void putTag(std::vector<std::byte>& out, const char* tag) {
+	for (int i = 0; i < 4; ++i) out.push_back(std::byte(tag[i]));
+}
+
+/// RIFF WAVE file from a "fmt " body, the data and an optional cue point.
+std::vector<std::byte> wavFile(const std::vector<std::byte>& fmt, const std::vector<std::byte>& data, std::optional<std::uint32_t> cue = {}) {
+	std::vector<std::byte> out;
+	putTag(out, "RIFF");
+	put32(out, 0);
+	putTag(out, "WAVE");
+	putTag(out, "fmt ");
+	put32(out, std::uint32_t(fmt.size()));
+	out.insert(out.end(), fmt.begin(), fmt.end());
+	if (cue) {
+		putTag(out, "cue ");
+		put32(out, 28);
+		put32(out, 1);
+		for (std::uint32_t v : {0u, 0u, 0x61746164u, 0u, 0u, *cue}) put32(out, v);
+	}
+	putTag(out, "data");
+	put32(out, std::uint32_t(data.size()));
+	out.insert(out.end(), data.begin(), data.end());
+	const auto size = std::uint32_t(out.size() - 8);
+	for (int i = 0; i < 4; ++i) out[4 + i] = std::byte((size >> (8 * i)) & 0xff);
+	return out;
+}
+
+std::vector<std::byte> fmtChunk(int tag, int channels, int rate, int blockAlign, int bits, const std::vector<std::byte>& extra = {}) {
+	std::vector<std::byte> f;
+	put16(f, tag);
+	put16(f, channels);
+	put32(f, std::uint32_t(rate));
+	put32(f, std::uint32_t(rate * blockAlign));
+	put16(f, blockAlign);
+	put16(f, bits);
+	if (!extra.empty()) {
+		put16(f, int(extra.size()));
+		f.insert(f.end(), extra.begin(), extra.end());
+	}
+	return f;
+}
+
+std::vector<int> sine(int count, double frequency, int rate) {
+	std::vector<int> out;
+	for (int i = 0; i < count; ++i) out.push_back(int(std::sin(i * frequency * 2 * 3.14159265 / rate) * 12000));
+	return out;
+}
+
+} // namespace
+
+TEST_CASE("sound decoding: WAV PCM, IMA ADPCM, MS ADPCM, loops, waveform") {
+	constexpr int RATE = 22050;
+	const auto wave = sine(1000, 440, RATE);
+	{
+		std::vector<std::byte> data;
+		for (const int v : wave) put16(data, v);
+		const auto file = wavFile(fmtChunk(1, 1, RATE, 2, 16), data, 250u);
+		std::string error;
+		const auto audio = decodeAudio(file, "loop.wav", &error);
+		REQUIRE_MESSAGE(audio, error);
+		CHECK(audio->channels == 1);
+		CHECK(audio->sampleRate == RATE);
+		REQUIRE(audio->frames() == 1000);
+		CHECK(audio->samples[123] == wave[123]);
+		CHECK(audio->format == "PCM 16 bit");
+		REQUIRE(audio->loopStart);
+		CHECK(*audio->loopStart == 250);
+		CHECK(audio->seconds() == doctest::Approx(1000.0 / RATE));
+		const auto peaks = waveformPeaks(*audio, 10);
+		REQUIRE(peaks.size() == 10);
+		CHECK(peaks[3].second == doctest::Approx(12000 / 32768.0).epsilon(0.02));
+		CHECK(peaks[3].first == doctest::Approx(-12000 / 32768.0).epsilon(0.02));
+	}
+	{
+		// 8-bit unsigned stereo.
+		std::vector<std::byte> data;
+		for (int i = 0; i < 100; ++i) {
+			data.push_back(std::byte(128 + wave[std::size_t(i)] / 256));
+			data.push_back(std::byte(128));
+		}
+		const auto audio = decodeAudio(wavFile(fmtChunk(1, 2, RATE, 2, 8), data));
+		REQUIRE(audio);
+		CHECK(audio->channels == 2);
+		CHECK(audio->frames() == 100);
+		CHECK(std::abs(audio->samples[40] - wave[20]) < 300);
+		CHECK(audio->samples[41] == 0);
+	}
+	{
+		// IMA ADPCM, encoded here with the standard algorithm; decoding must follow the wave closely.
+		constexpr int STEPS[89] = {7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
+		                           130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060,
+		                           1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484,
+		                           7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767};
+		constexpr int INDEX[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
+		constexpr int BLOCK = 256, PER_BLOCK = (BLOCK - 4) * 2 + 1;   // 505 samples
+		std::vector<std::byte> data;
+		std::vector<int> expected;   // what a decoder must give back exactly
+		int predictor = 0, index = 0;
+		for (int start = 0; start + PER_BLOCK <= int(wave.size()); start += PER_BLOCK) {
+			predictor = wave[std::size_t(start)];
+			expected.push_back(predictor);
+			put16(data, predictor);
+			data.push_back(std::byte(index));
+			data.push_back(std::byte(0));
+			std::vector<int> nibbles;
+			for (int i = 1; i < PER_BLOCK; ++i) {
+				const int step = STEPS[index];
+				int diff = wave[std::size_t(start + i)] - predictor, code = 0;
+				if (diff < 0) { code = 8; diff = -diff; }
+				int delta = step >> 3;
+				if (diff >= step) { code |= 4; diff -= step; delta += step; }
+				if (diff >= step >> 1) { code |= 2; diff -= step >> 1; delta += step >> 1; }
+				if (diff >= step >> 2) { code |= 1; delta += step >> 2; }
+				predictor = std::clamp(predictor + ((code & 8) ? -delta : delta), -32768, 32767);
+				index = std::clamp(index + INDEX[code], 0, 88);
+				nibbles.push_back(code);
+				expected.push_back(predictor);
+			}
+			for (std::size_t i = 0; i + 1 < nibbles.size(); i += 2) data.push_back(std::byte(nibbles[i] | (nibbles[i + 1] << 4)));
+		}
+		std::vector<std::byte> extra;
+		put16(extra, PER_BLOCK);
+		const auto audio = decodeAudio(wavFile(fmtChunk(0x11, 1, RATE, BLOCK, 4, extra), data));
+		REQUIRE(audio);
+		CHECK(audio->format == "IMA ADPCM");
+		REQUIRE(audio->frames() == PER_BLOCK);
+		int same = 0;
+		for (std::size_t i = 0; i < audio->frames(); ++i) same += audio->samples[i] == expected[i] ? 1 : 0;
+		CHECK(same == PER_BLOCK);
+	}
+	{
+		// MS ADPCM with the first predictor (coefficients 256, 0: "same as the last sample").
+		constexpr int ADAPT[16] = {230, 230, 230, 230, 307, 409, 512, 614, 768, 614, 512, 409, 307, 230, 230, 230};
+		constexpr int BLOCK = 128, PER_BLOCK = (BLOCK - 7) * 2 + 2;   // 244 samples
+		std::vector<std::byte> data;
+		std::vector<int> expected;
+		int delta = 64;
+		for (int start = 0; start + PER_BLOCK <= int(wave.size()); start += PER_BLOCK) {
+			int s1 = wave[std::size_t(start + 1)], s2 = wave[std::size_t(start)];
+			expected.push_back(s2);
+			expected.push_back(s1);
+			data.push_back(std::byte(0));
+			put16(data, delta);
+			put16(data, s1);
+			put16(data, s2);
+			std::vector<int> nibbles;
+			for (int i = 2; i < PER_BLOCK; ++i) {
+				const int predicted = s1;
+				const int code = std::clamp(int(std::lround(double(wave[std::size_t(start + i)] - predicted) / delta)), -8, 7);
+				const int sample = std::clamp(predicted + code * delta, -32768, 32767);
+				s2 = s1;
+				s1 = sample;
+				const int n = code & 15;
+				delta = std::max(16, ADAPT[n] * delta / 256);
+				nibbles.push_back(n);
+				expected.push_back(sample);
+			}
+			for (std::size_t i = 0; i + 1 < nibbles.size(); i += 2) data.push_back(std::byte((nibbles[i] << 4) | nibbles[i + 1]));
+		}
+		std::vector<std::byte> extra;
+		put16(extra, PER_BLOCK);
+		put16(extra, 7);
+		for (const auto& [a, b] : std::vector<std::pair<int, int>>{{256, 0}, {512, -256}, {0, 0}, {192, 64}, {240, 0}, {460, -208}, {392, -232}}) {
+			put16(extra, a);
+			put16(extra, b);
+		}
+		const auto audio = decodeAudio(wavFile(fmtChunk(2, 1, RATE, BLOCK, 4, extra), data));
+		REQUIRE(audio);
+		CHECK(audio->format == "MS ADPCM");
+		REQUIRE(audio->frames() == std::size_t(PER_BLOCK) * 4);
+		int same = 0;
+		double worst = 0;
+		for (std::size_t i = 0; i < audio->frames(); ++i) {
+			same += audio->samples[i] == expected[i] ? 1 : 0;
+			worst = std::max(worst, std::abs(double(audio->samples[i] - wave[i])));
+		}
+		CHECK(same == PER_BLOCK * 4);
+		CHECK(worst < 4000);   // and it still sounds like the wave
+	}
+	// Broken or foreign data never crashes.
+	std::string error;
+	CHECK_FALSE(decodeAudio(std::vector<std::byte>(64, std::byte(0x7f)), "x.mp3", &error));
+	CHECK_FALSE(decodeAudio(std::vector<std::byte>{std::byte('O'), std::byte('g'), std::byte('g'), std::byte('S'), std::byte(0)}, "x.ogg", &error));
+	auto truncated = wavFile(fmtChunk(1, 1, RATE, 2, 16), std::vector<std::byte>(10, std::byte(1)));
+	truncated.resize(30);
+	CHECK_FALSE(decodeAudio(truncated, "x.wav", &error));
+}
+
+TEST_CASE("sound script entries: write, replace, manifest") {
+	SoundScriptEntry entry;
+	entry.name = "MyMod.Door";
+	entry.channel = "CHAN_STATIC";
+	entry.volume = "0.8";
+	entry.soundlevel = "SNDLVL_75dB";
+	entry.waves = {"doors/door1.wav", "doors/door2.wav"};
+	const std::string original = "// comment\n\"MyMod.Other\"\n{\n\t\"channel\" \"CHAN_AUTO\"\n\t\"wave\" \"other.wav\"\n}\n"
+	                             "\"MyMod.Door\"\n{\n\t\"wave\" \"old.wav\"\n}\n";
+	const auto text = upsertSoundScriptEntry(original, entry);
+	const auto root = parseKeyValues(text);
+	REQUIRE(root.children.size() == 2);
+	CHECK(root.children[0].key == "MyMod.Other");
+	const auto& door = root.children[1];
+	CHECK(door.key == "MyMod.Door");
+	CHECK(door.get("channel") == "CHAN_STATIC");
+	CHECK(door.get("volume") == "0.8");
+	CHECK(door.get("pitch") == "PITCH_NORM");
+	REQUIRE(door.find("rndwave"));
+	CHECK(door.find("rndwave")->children.size() == 2);
+	CHECK(text.find("old.wav") == std::string::npos);
+
+	const std::string manifest = "game_sounds_manifest\n{\n\t\"precache_file\" \"scripts/game_sounds.txt\"\n}\n";
+	const auto added = addToSoundManifest(manifest, "scripts/game_sounds_mymod.txt");
+	const auto files = parseKeyValues(added).children.front().children;
+	REQUIRE(files.size() == 2);
+	CHECK(files[1].value == "scripts/game_sounds_mymod.txt");
+	CHECK(addToSoundManifest(added, "scripts/game_sounds_mymod.txt") == added);
+	CHECK(parseKeyValues(addToSoundManifest("", "scripts/a.txt")).children.front().key == "game_sounds_manifest");
 }

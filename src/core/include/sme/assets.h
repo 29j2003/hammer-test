@@ -58,11 +58,21 @@ struct SoundScriptEntry {
 	std::string name;
 	std::string script;                 ///< File it came from ("scripts/game_sounds_weapons.txt")
 	std::string channel;                ///< CHAN_WEAPON, ...
+	std::string volume;                 ///< "1", "0.7", "0.5,0.8" (as written; empty = engine default)
+	std::string pitch;                  ///< "100", "PITCH_NORM", "95,105"
+	std::string soundlevel;             ///< "SNDLVL_75dB", "SNDLVL_NORM"
 	std::vector<std::string> waves;     ///< Files below sound/ (sound characters like ")" removed)
 };
 
 /// Every sound script entry (later scripts override earlier ones with the same name, as in the engine).
 [[nodiscard]] std::vector<SoundScriptEntry> soundScripts(const GameFileSystem& fs);
+
+/// One entry in the engine's format ("wave", or an "rndwave" block for several files).
+[[nodiscard]] std::string writeSoundScriptEntry(const SoundScriptEntry& entry);
+/// The script text with `entry` replaced (same name) or added at the end. Throws on broken syntax.
+[[nodiscard]] std::string upsertSoundScriptEntry(std::string_view scriptText, const SoundScriptEntry& entry);
+/// game_sounds_manifest.txt text that also precaches `file` ("scripts/game_sounds_mymod.txt").
+[[nodiscard]] std::string addToSoundManifest(std::string_view manifestText, std::string_view file);
 
 /// A soundscape (env_soundscape "soundscape" key) from scripts/soundscapes_*.txt.
 struct Soundscape {

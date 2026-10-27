@@ -418,6 +418,39 @@ TEST_CASE("editing with the mouse in the real window") {
 		}
 		CHECK_FALSE(sounds->tree()->findItems("demo.outside", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
 		CHECK_FALSE(sounds->tree()->findItems("Demo.Wind", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+		{
+			// A click shows the sound: decoded with its loop point (playing needs an audio device).
+			const auto wind = sounds->tree()->findItems("wind1.wav", Qt::MatchExactly | Qt::MatchRecursive);
+			REQUIRE_FALSE(wind.isEmpty());
+			QSignalSpy loaded(sounds, &SoundBrowser::audioLoaded);
+			sounds->tree()->setCurrentItem(wind.front());
+			REQUIRE(loaded.wait(10000));
+			const auto audio = sounds->currentAudio();
+			REQUIRE(audio);
+			CHECK(audio->sampleRate == 22050);
+			CHECK(audio->seconds() == doctest::Approx(2.0));
+			REQUIRE(audio->loopStart);
+			CHECK(*audio->loopStart == 0);
+
+			// Sound script editor: a new entry goes into the mod's own script and its manifest.
+			auto* name = sounds->findChild<QLineEdit*>("soundEntryName");
+			REQUIRE(name);
+			name->setText("MyMod.Wind");
+			for (auto* button : sounds->findChildren<QPushButton*>()) {
+				if (button->text().startsWith("+")) button->click();
+			}
+			QSignalSpy reindexed(sounds, &SoundBrowser::indexed);
+			for (auto* button : sounds->findChildren<QPushButton*>()) {
+				if (button->text() == "Save to the mod") button->click();
+			}
+			REQUIRE(reindexed.wait(10000));
+			CHECK_FALSE(sounds->tree()->findItems("MyMod.Wind", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+			QFile manifest(fromPath(f.mod / "scripts/game_sounds_manifest.txt"));
+			REQUIRE(manifest.open(QIODevice::ReadOnly));
+			const QString text = manifest.readAll();
+			CHECK(text.contains("scripts/game_sounds_mymod.txt"));
+			CHECK(text.contains("scripts/game_sounds_demo.txt"));
+		}
 		const auto drop = [&](const char* format, const QByteArray& data) {
 			QMimeData mime;
 			mime.setData(format, data);

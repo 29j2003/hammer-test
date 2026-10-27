@@ -6,6 +6,7 @@
 #include "report.h"
 
 #include <sme/assets.h>
+#include <sme/audio.h>
 #include <sme/brush.h>
 #include <sme/entity_catalog.h>
 #include <sme/game.h>
@@ -18,6 +19,8 @@
 
 #include <cstdio>
 #include <fstream>
+#include <iterator>
+#include <span>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -40,6 +43,7 @@ Usage:
   sme-probe texture GAME NAME OUT.png [--max N]  decode a texture to PNG
   sme-probe fgd FILE.fgd... [--class NAME]    load FGDs, optionally show one class
   sme-probe vmf FILE.vmf                      check a map: load, save again, compare, find broken brushes
+  sme-probe sound FILE [--out RAW]            decode a sound file (WAV/MP3/OGG): format, length, loop
 
 GAME is a key from "games" (e.g. 220/hl2, sourcemods/mymod) or a folder with gameinfo.txt.
 Options: --steam DIR uses another Steam folder (also: environment variable SME_STEAM_ROOT).
@@ -319,6 +323,32 @@ int cmdFgd(const Args& args) {
 	return errors.empty() || catalog.size() > 0 ? 0 : 1;
 }
 
+int cmdSound(const Args& args) {
+	std::ifstream file(toNativePath(args.positional.at(1)), std::ios::binary);
+	if (!file) {
+		std::cerr << "error: cannot read file\n";
+		return 1;
+	}
+	const std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+	std::string error;
+	const auto audio = decodeAudio(std::as_bytes(std::span(bytes.data(), bytes.size())), args.positional.at(1), &error);
+	if (!audio) {
+		std::cerr << "error: " << error << "\n";
+		return 1;
+	}
+	std::cout << audio->format << ", " << audio->sampleRate << " Hz, " << audio->channels << " channel(s), " << audio->seconds() << " s";
+	if (audio->loopStart) {
+		std::cout << ", loops from sample " << *audio->loopStart;
+	}
+	std::cout << "\n";
+	if (!args.out.empty()) {
+		// Raw 16-bit little-endian samples, interleaved (for comparing with other decoders).
+		std::ofstream raw(toNativePath(args.out), std::ios::binary);
+		raw.write(reinterpret_cast<const char*>(audio->samples.data()), static_cast<std::streamsize>(audio->samples.size() * 2));
+	}
+	return 0;
+}
+
 int cmdVmf(const Args& args) {
 	const auto text = readFileText(toNativePath(args.positional.at(1)));
 	if (!text) {
@@ -390,6 +420,7 @@ int main(int argc, char** argv) {
 		if (command == "texture" && need(4)) return cmdTexture(args);
 		if (command == "fgd" && need(2)) return cmdFgd(args);
 		if (command == "vmf" && need(2)) return cmdVmf(args);
+		if (command == "sound" && need(2)) return cmdSound(args);
 	} catch (const std::exception& e) {
 		std::cerr << "error: " << e.what() << "\n";
 		return 2;

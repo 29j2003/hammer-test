@@ -10,7 +10,9 @@
 #include <sme/text.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <optional>
 #include <fstream>
 #include <tuple>
 #include <functional>
@@ -367,7 +369,52 @@ void createDemo(Fixture& f) {
 	writeText(f.mod / "scripts/game_sounds_demo.txt",
 	          "\"Demo.Wind\" { \"channel\" \"CHAN_STATIC\" \"wave\" \"ambient/wind1.wav\" }\n"
 	          "\"Demo.Alarm\" { \"wave\" \"ambient/alarm1.wav\" }\n\"NPC_Citizen.Hello\" { \"wave\" \"vo/hello.wav\" }\n");
-	writeText(f.mod / "sound/ambient/wind1.wav", "RIFF");
+	// Real WAV files (16-bit mono): a wind loop with a cue point and a short alarm beep.
+	const auto writeWav = [](const std::filesystem::path& path, const std::vector<std::int16_t>& samples, std::optional<std::uint32_t> loop) {
+		std::vector<std::byte> out;
+		const auto put = [&](std::uint32_t v, int bytes) {
+			for (int i = 0; i < bytes; ++i) out.push_back(std::byte((v >> (8 * i)) & 0xff));
+		};
+		const auto tag = [&](const char* t) {
+			for (int i = 0; i < 4; ++i) out.push_back(std::byte(t[i]));
+		};
+		tag("RIFF");
+		put(0, 4);
+		tag("WAVE");
+		tag("fmt ");
+		put(16, 4);
+		put(1, 2);
+		put(1, 2);
+		put(22050, 4);
+		put(44100, 4);
+		put(2, 2);
+		put(16, 2);
+		if (loop) {
+			tag("cue ");
+			put(28, 4);
+			put(1, 4);
+			for (const std::uint32_t v : {0u, 0u, 0x61746164u, 0u, 0u, *loop}) put(v, 4);
+		}
+		tag("data");
+		put(std::uint32_t(samples.size() * 2), 4);
+		for (const auto v : samples) put(std::uint16_t(v), 2);
+		const auto size = std::uint32_t(out.size() - 8);
+		for (int i = 0; i < 4; ++i) out[std::size_t(4 + i)] = std::byte((size >> (8 * i)) & 0xff);
+		writeBytes(path, out);
+	};
+	{
+		std::vector<std::int16_t> wind, alarm;
+		double low = 0;
+		for (int i = 0; i < 22050 * 2; ++i) {
+			low = low * 0.97 + (hash(i, 7, 3) - 0.5) * 0.03;   // filtered noise
+			wind.push_back(std::int16_t(low * 60000 * (0.6 + 0.4 * std::sin(i / 22050.0 * 3))));
+		}
+		for (int i = 0; i < 22050 / 2; ++i) {
+			alarm.push_back(std::int16_t(std::sin(i * 2 * 3.14159265 * (i % 5512 < 2756 ? 880 : 660) / 22050) * 9000));
+		}
+		writeWav(f.mod / "sound/ambient/wind1.wav", wind, 0u);
+		writeWav(f.mod / "sound/ambient/alarm1.wav", alarm, std::nullopt);
+	}
 	writeText(f.mod / "scripts/soundscapes_manifest.txt", "soundscapes_manifest\n{\n\t\"file\" \"scripts/soundscapes_demo.txt\"\n}\n");
 	writeText(f.mod / "scripts/soundscapes_demo.txt",
 	          "\"demo.outside\"\n{\n\t\"dsp\" \"0\"\n\t\"playlooping\" { \"volume\" \"0.4\" \"wave\" \"ambient/wind1.wav\" }\n"
