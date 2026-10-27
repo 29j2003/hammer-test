@@ -1,0 +1,17 @@
+# GitHub Pages site of Mapsmith (Settings > Pages > Deploy from a branch > /docs).
+# The manual lives in docs/manual/; docs/ENTWICKLUNG.md is for developers and not part of the site.
+title: Mapsmith
+description: A modern, 3D-first map editor for Source 1 games and mods.
+remote_theme: just-the-docs/just-the-docs@v0.10.0
+plugins:
+  - jekyll-remote-theme
+color_scheme: dark
+search_enabled: true
+heading_anchors: true
+aux_links:
+  "Mapsmith on GitHub": "https://github.com/29j2003/hammer-test"
+  "Download": "https://github.com/29j2003/hammer-test/releases/latest"
+footer_content: "Mapsmith is not affiliated with Valve. Half-Life 2, Source and Steam are trademarks of Valve."
+exclude:
+  - ENTWICKLUNG.md
+  - images/

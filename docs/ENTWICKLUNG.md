@@ -349,6 +349,26 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   „Source Map Editor“; `main.cpp` übernimmt dessen Einstellungen einmal (`migrateOldSettings`).
 - Abhängigkeiten auf Commit-SHAs (`cmake/Dependencies.cmake`); Actions auf SHAs, Dependabot hält sie aktuell.
 
+## Handbuch (GitHub Pages)
+
+Das Nutzer-Handbuch liegt in `docs/` und wird von GitHub Pages mit Jekyll gebaut (kein eigener Workflow):
+`docs/_config.yml` (Theme `just-the-docs` als `remote_theme`, `ENTWICKLUNG.md` ausgeschlossen), Startseite
+`docs/index.md`, Seiten in `docs/manual/*.md` (Front Matter `title` + `nav_order`), Bilder in `docs/manual/images/`.
+Adresse: <https://29j2003.github.io/hammer-test/> (die README verlinkt sie oben).
+
+**Einmalig einschalten** (braucht Admin-Rechte am Repo):
+
+1. Auf GitHub im Repo **Settings → Pages** öffnen.
+2. Unter *Build and deployment* bei **Source** „**Deploy from a branch**“ wählen.
+3. Bei **Branch** `main` und den Ordner **`/docs`** wählen, **Save**.
+4. Nach ein bis zwei Minuten steht die Seite unter der Adresse oben; jeder Push auf den Branch baut sie neu
+   (Fortschritt unter *Actions* → „pages build and deployment“).
+
+Regeln fürs Handbuch: Englisch, nur der aktuelle Stand, Knopf- und Menünamen genau wie im Code (`tr("…")`), keine
+anderen Editoren nennen (nur die README als „inspired by“), keine E-Mail-Adressen. Bilder höchstens 1600 px breit und
+mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo und `--screenshot` (siehe Befehle in
+`.claude/CLAUDE.md`). Neue Funktion → passende Handbuch-Seite mitpflegen; neue Seite → Link in `docs/index.md`.
+
 ## Offene Punkte / Annahmen (noch nicht am echten Spiel geprüft)
 
 - Alles ist bisher nur mit erzeugten Testdaten geprüft – **nicht** mit echten HL2/Mapbase/Black-Mesa-Installationen und
