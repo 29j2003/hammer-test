@@ -666,6 +666,27 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(editor.doc().world.get("skyname") == "sky_demo01");
 		editor.undo();
 		CHECK(editor.doc().world.get("skyname") == skyBefore);
+		// A sky from the games' list brings its light: typed in, one undo step.
+		settle();
+		sky = panel->findChild<QComboBox*>("skyPicker");
+		REQUIRE(sky);
+		const auto lights = [&] {
+			int n = 0;
+			for (const auto& e : editor.doc().entities) n += e.classname() == "light_environment";
+			return n;
+		};
+		const int lightsBefore = lights();
+		sky->setEditText("sky_day02_05");
+		emit sky->lineEdit()->editingFinished();
+		settle();
+		CHECK(editor.doc().world.get("skyname") == "sky_day02_05");
+		CHECK(lights() == std::max(lightsBefore, 1));
+		for (const auto& e : editor.doc().entities) {
+			if (e.classname() == "light_environment") CHECK(e.get("_light") == "255 255 249 448");
+		}
+		editor.undo();
+		CHECK(editor.doc().world.get("skyname") == skyBefore);
+		CHECK(lights() == lightsBefore);
 		while (editor.doc().entities.size() > entitiesBefore) editor.undo();
 		editor.clearSelection();
 	}

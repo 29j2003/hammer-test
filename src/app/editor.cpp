@@ -15,6 +15,7 @@
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/sky_presets.h>
 #include <sme/text.h>
 
 namespace sme::app {
@@ -922,6 +923,21 @@ void Editor::selectSimilar() {
 	const auto count = similar.solids.size() + similar.entities.size();
 	setSelection(std::move(similar));
 	emit message(tr("%n similar object(s) selected", nullptr, int(count)));
+}
+
+void Editor::setSky(const QString& name) {
+	const std::string sky = name.trimmed().toStdString();
+	if (sky.empty() || sky == m_doc.world.get("skyname")) {
+		return;
+	}
+	// New light goes above the player start, else to the middle of the map.
+	Bounds box;
+	for (const auto& solid : m_doc.world.solids) {
+		for (const auto& side : solid.sides) {
+			for (const auto& p : side.planePoints) box.add(p);
+		}
+	}
+	commit(applySky(m_doc, sky, box.empty() ? Vec3{} : box.center()));
 }
 
 bool Editor::selectById(int id) {

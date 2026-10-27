@@ -62,7 +62,9 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   field. Turn **Smart Edit** off to see every key as plain text, like Hammer; add any key with the
   *new key | value | + Add* row.
 - **Sky and map settings**: with nothing selected (or **Map > Map properties**) the panel shows the world's keys; the
-  sky is picked from the game's skies, each with a small picture.
+  sky is picked from the game's skies, each with a small picture. A sky from Valve's games brings its matching sun and
+  ambient light (as in the maps that use it): *light_environment* (added above the player start if the map has none),
+  *env_sun*, *shadow_control* and *env_global_light* take it over in one undo step; change them afterwards as you like.
 - **Copy and paste objects**: Ctrl+C / Ctrl+X copies or cuts the selected brushes and entities, Ctrl+V pastes them
   under the mouse (resting on the surface). **Paste special** (Ctrl+Shift+V) makes several copies at once, each moved
   and turned a step further, and gives entity names a number (door → door_2) so the copies' outputs stay their own.

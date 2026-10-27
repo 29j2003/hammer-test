@@ -5,6 +5,7 @@
 #include <sme/brush.h>
 #include <sme/clipboard.h>
 #include <sme/fidelity_look.h>
+#include <sme/sky_presets.h>
 #include <sme/visibility.h>
 #include <sme/editing.h>
 
@@ -404,4 +405,79 @@ TEST_CASE("flip, select similar, go to id") {
 	CHECK(edit::objectWithId(doc, other.solidId).solids == std::vector<SolidRef>{other});
 	CHECK(edit::objectWithId(doc, prop3).entities == std::vector<int>{prop3});
 	CHECK(edit::objectWithId(doc, 99999).empty());
+}
+
+TEST_CASE("choosing a sky takes over its light: light_environment, env_sun, shadow_control, env_global_light") {
+	CHECK(skyPresets().size() > 100);
+	REQUIRE(findSkyPreset("sky_day01_01"));
+	CHECK(findSkyPreset("SKY_DAY01_01") == findSkyPreset("sky_day01_01"));
+	CHECK(findSkyPreset("sky_ep02_01") == findSkyPreset("sky_ep02_01_hdr"));       // "_hdr" added
+	CHECK(findSkyPreset("sky_day01_01_hdr") == findSkyPreset("sky_day01_01"));     // and removed
+	CHECK_FALSE(findSkyPreset("sky_made_up"));
+	CHECK_FALSE(findSkyPreset(""));
+
+	MapDocument doc;
+	History history;
+	Entity start;
+	start.id = doc.newEntityId();
+	start.set("classname", "info_player_start");
+	start.setOrigin({128, 0, 0});
+	doc.entities.push_back(start);
+	for (const char* classname : {"env_sun", "shadow_control", "env_global_light"}) {
+		Entity entity;
+		entity.id = doc.newEntityId();
+		entity.set("classname", classname);
+		entity.set("angles", "10 20 0");
+		doc.entities.push_back(entity);
+	}
+	const auto find = [&](std::string_view classname) -> const Entity* {
+		for (const auto& entity : doc.entities) {
+			if (entity.classname() == classname) return &entity;
+		}
+		return nullptr;
+	};
+
+	// Unknown sky: only the name changes.
+	history.push(applySky(doc, "sky_made_up", {}));
+	CHECK(doc.world.get("skyname") == "sky_made_up");
+	CHECK_FALSE(find("light_environment"));
+
+	// Known sky: a light_environment above the player start, the others turned the same way.
+	history.push(applySky(doc, "sky_day01_01", {}));
+	CHECK(doc.world.get("skyname") == "sky_day01_01");
+	const Entity* light = find("light_environment");
+	REQUIRE(light);
+	CHECK(light->origin().x == doctest::Approx(128));
+	CHECK(light->origin().z == doctest::Approx(64));
+	CHECK(light->get("angles") == "0 165 0");
+	CHECK(light->get("pitch") == "-35");
+	CHECK(light->get("_light") == "237 218 143 800");
+	CHECK(light->get("_ambient") == "190 201 220 100");
+	CHECK(light->get("_lightscaleHDR") == "0.7");
+	CHECK(find("env_sun")->get("angles") == "0 165 0");
+	CHECK(find("env_sun")->get("pitch") == "-35");
+	CHECK(find("shadow_control")->get("angles") == "35 165 0");
+	CHECK(find("env_global_light")->get("angles") == "35 165 0");
+
+	// An existing light is changed, not doubled; the mapper's own keys stay.
+	history.undo(doc);
+	CHECK_FALSE(find("light_environment"));
+	CHECK(find("shadow_control")->get("angles") == "10 20 0");
+	CHECK(doc.world.get("skyname") == "sky_made_up");
+	history.redo(doc);
+	Entity* own = const_cast<Entity*>(find("light_environment"));
+	own->set("targetname", "sun");
+	history.push(applySky(doc, "sky_ep02_01_hdr", {}));
+	int count = 0;
+	for (const auto& entity : doc.entities) count += entity.classname() == "light_environment";
+	CHECK(count == 1);
+	CHECK(find("light_environment")->get("targetname") == "sun");
+	CHECK(find("light_environment")->get("angles") == "0 145 0");
+	CHECK(find("light_environment")->get("SunSpreadAngle") == "1");
+
+	// Sky with colours only (no direction known): the direction stays.
+	history.push(applySky(doc, "sky_dod_08_hdr", {}));
+	CHECK(find("light_environment")->get("_light") == "197 205 214 750");
+	CHECK(find("light_environment")->get("angles") == "0 145 0");
+	CHECK(find("shadow_control")->get("angles") == "35 145 0");
 }

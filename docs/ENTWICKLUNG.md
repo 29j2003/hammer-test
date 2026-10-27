@@ -78,7 +78,10 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Hilfebereich unten (`showHelp` über `QApplication::focusChanged`), ohne Fokus die Klassenbeschreibung. Ja/Nein-Listen
   (0 No / 1 Yes) und Flags als `ToggleSwitch` (QCheckBox, eigene Zeichnung). Himmel: `skyboxNames` (Kern, `assets`)
   + Bild der Vorderseite im Hintergrund (`loadSkies`, einmal pro Spiel), Combo „skyPicker“; Karte > Map properties
-  wählt nichts aus und zeigt die Welt. Kartenobjekte kopieren/einfügen: Kern-Modul `clipboard` (`copyObjects` = VMF-Text,
+  wählt nichts aus und zeigt die Welt. Himmel wählen → `Editor::setSky` → Kern `applySky` (`sky_presets`): Tabelle aus
+  Valves „List of skies“ (erste Beispielkarte je Himmel, 132 Einträge, auch `_hdr`-Varianten), ein Undo-Schritt; setzt
+  `light_environment` (fehlt er, neu über `info_player_start`), `env_sun` (gleiche angles/pitch) sowie `shadow_control`
+  und `env_global_light` (angles = −pitch, yaw) – nur vorhandene; ohne bekannte Richtung nur Farben. Kartenobjekte kopieren/einfügen: Kern-Modul `clipboard` (`copyObjects` = VMF-Text,
   `pasteObjects` mit `PasteOptions`: Anzahl, Versatz und Drehung je Kopie, Mittelpunkt, eindeutige Namen samt Ausgängen,
   Präfix; ein Undo-Schritt), `Editor::copySelection/cutSelection/paste`, `MainWindow::pasteHere` (unter der Maus über
   `Viewport::pasteCenter` → `restingPlace`, dieselbe Rechnung wie beim Platzieren) und `pasteSpecialDialog`.

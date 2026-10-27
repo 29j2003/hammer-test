@@ -183,6 +183,8 @@ public:
 	void selectSimilar();
 	/// Hammer's Go to Brush Number: selects the brush or entity with this id; false if none.
 	bool selectById(int id);
+	/// Sets the map's sky; a known sky also brings its sun and ambient light (sky_presets.h).
+	void setSky(const QString& name);
 	/// Cubemap room boxes (Mapbase parallax correction): set/resize, fit to the room around
 	/// the cubemap, remove.
 	void setCubemapRoomBox(int cubemapId, const Bounds& box);

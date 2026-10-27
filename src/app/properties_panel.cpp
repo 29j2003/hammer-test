@@ -45,6 +45,7 @@
 #include <sme/brush.h>
 #include <sme/game.h>
 #include <sme/history.h>
+#include <sme/sky_presets.h>
 #include <sme/text.h>
 #include <sme/texture.h>
 
@@ -527,6 +528,9 @@ QWidget* PropertiesPanel::makeSkyPicker(const QString& value) {
 	QStringList names;
 	for (const auto& [name, picture] : m_skies) {
 		combo->addItem(picture.isNull() ? QIcon() : QIcon(QPixmap::fromImage(picture)), name);
+		if (const auto* preset = findSkyPreset(name.toStdString())) {
+			combo->setItemData(combo->count() - 1, tr("Brings its sun and ambient light (as in %1)").arg(QString::fromUtf8(preset->game)), Qt::ToolTipRole);
+		}
 		names << name;
 	}
 	auto* completer = new QCompleter(names, combo);
@@ -544,13 +548,10 @@ QWidget* PropertiesPanel::makeSkyPicker(const QString& value) {
 		combo->setToolTip(tr("This game has no sky called \"%1\" (materials/skybox/%1up.vmt)").arg(value));
 		combo->setProperty("problem", true);
 	}
-	const std::vector<int> world{0};
-	connect(combo, &QComboBox::activated, this, [this, combo, world, value] {
-		if (combo->currentText() != value) setKey(world, "skyname", combo->currentText());
-	});
-	connect(combo->lineEdit(), &QLineEdit::editingFinished, this, [this, combo, world, value] {
-		if (combo->currentText() != value) setKey(world, "skyname", combo->currentText());
-	});
+	// The light that belongs to the sky comes along (one undo step); a second signal for the
+	// same name does nothing.
+	connect(combo, &QComboBox::activated, this, [this, combo] { m_editor->setSky(combo->currentText()); });
+	connect(combo->lineEdit(), &QLineEdit::editingFinished, this, [this, combo] { m_editor->setSky(combo->currentText()); });
 	return combo;
 }
 
