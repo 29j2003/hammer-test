@@ -28,8 +28,8 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Fremde Dateien (VPK, VTF, MDL, VMF) sind nicht vertrauenswürdig: Grenzen prüfen, keine Pfade aus Mounts heraus (`..`).
 - Kein Netzwerkzugriff, keine Telemetrie. Der Probe-Bericht maskiert Benutzernamen und Home-Ordner.
 - Keine Valve-Dateien im Repo (Texturen/Modelle/FGDs) – Testdaten werden erzeugt.
-- Commits nur als `29j2003 <44442596+29j2003@users.noreply.github.com>`, deutsche Commit-Nachrichten; keine E-Mail-Adressen
-  in Dateien (`tools/check_privacy.py`, CI-Job `checks`). GitHub Actions nur mit Commit-SHA pinnen, `permissions: contents: read`.
+- Commits als `Claude <noreply@anthropic.com>` (von Julius so gewünscht; seine eigene Adresse nie verwenden), deutsche
+  Commit-Nachrichten; keine E-Mail-Adressen in Dateien (`tools/check_privacy.py`, CI-Job `checks`). GitHub Actions nur mit Commit-SHA pinnen, `permissions: contents: read`.
 - Doku nur `README.md` (Nutzer, Englisch, aktueller Stand) und `docs/ENTWICKLUNG.md` (Entwickler, Deutsch).
 - Leistung zählt: nichts pro Frame neu aufbauen, was sich nicht geändert hat; Auswahl ändert nur Flags, nicht die Geometrie.
 - Nicht im Spiel/auf Windows getestet heißt nicht getestet: im Bericht ausdrücklich so nennen.
