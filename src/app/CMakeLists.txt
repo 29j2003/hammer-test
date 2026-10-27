@@ -29,6 +29,7 @@ add_library(smeapp STATIC
 	sound_browser.cpp
 	sound_player.cpp
 	soundscape_editor.cpp
+	source_control_panel.cpp
 	style.cpp
 	tool_panel.cpp
 	toggle_switch.cpp

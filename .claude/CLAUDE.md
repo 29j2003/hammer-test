@@ -11,7 +11,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
   `assets` inkl. Sounds/Soundscapes/Partikel, Soundscapes bearbeiten `soundscape`, Höhenkarten für Relief `heightmap`, Sound-Decoder `audio`, Partikel aus PCF + Vorschau-Simulation `particles`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
   (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
-  Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Licht passend zum Himmel (`sky_presets`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
+  Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
   Export glTF/OBJ (`scene_export`).
 - `src/app/` – Qt-6-Editor (`smeapp` + `SourceMapEditor`): `editor` (Zustand, alle Änderungen über `commit()`),
   `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
@@ -19,7 +19,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
   `asset_browser` (Materialien, Modelle), `material_editor` + `material_preview` (inkl. Schalter für die mapbase-fidelity-Shader der Mod), `sound_browser` + `sound_player` + `soundscape_editor`
   (Sounds-Tab, Wiedergabe über QAudioSink, optional), `copy_paste`,
-  `map_look_panel`, `mod_page` (Seite „Mod“ der Seitenleiste), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
+  `map_look_panel`, `mod_page` (Seite „Mod“ der Seitenleiste), `source_control_panel` (Git: Änderungen, Commit, Pull/Push), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
   Justify), `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
   `shortcut_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste: Map, Materials, Sounds, Particles, Mod), `style`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
@@ -34,7 +34,8 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Jede Kartenänderung als `Transaction`/`edit::…` → `Editor::commit()` (Undo!). Nie `doc()` direkt ändern ohne Transaction.
 - Daten nie verlieren: Unbekanntes aus der VMF bleibt in `extra` erhalten; `sme-probe vmf` muss „stable“ melden.
 - Fremde Dateien (VPK, VTF, MDL, VMF) sind nicht vertrauenswürdig: Grenzen prüfen, keine Pfade aus Mounts heraus (`..`).
-- Keine Telemetrie. Netzwerk nur für Updates (`updater`: GitHub Releases dieses Repos, abschaltbar, Prüfsumme Pflicht).
+- Keine Telemetrie. Netzwerk nur für Updates (`updater`: GitHub Releases dieses Repos, abschaltbar, Prüfsumme Pflicht)
+  und über das System-`git` der Quellcode-Verwaltung – nur wenn der Nutzer Fetch/Pull/Push drückt.
   Der Probe-Bericht maskiert Benutzernamen und Home-Ordner.
 - Keine Valve-Dateien im Repo (Texturen/Modelle/FGDs) – Testdaten werden erzeugt.
 - Commits als `Claude <noreply@anthropic.com>` (von Julius so gewünscht; seine eigene Adresse nie verwenden), deutsche
