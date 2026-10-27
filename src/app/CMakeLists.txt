@@ -8,6 +8,7 @@ set(CMAKE_AUTOMOC ON)
 add_library(smeapp STATIC
 	asset_browser.cpp
 	compile.cpp
+	compile_window.cpp
 	editor.cpp
 	main_window.cpp
 	material_cache.cpp

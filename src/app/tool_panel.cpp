@@ -5,6 +5,9 @@
 #include "editor.h"
 
 #include <QHeaderView>
+#include <QSpinBox>
+#include <QFormLayout>
+#include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
@@ -14,7 +17,10 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <memory>
+
 #include <sme/entity_catalog.h>
+#include <sme/shapes.h>
 #include <sme/game.h>
 #include <sme/text.h>
 
@@ -241,6 +247,108 @@ void EntityPicker::remember(const QString& name) {
 	}
 }
 
+// --- Block tool: shapes --------------------------------------------------------------------
+
+namespace {
+
+/// Shape settings; every change also rebuilds the shape made last (live editing).
+QWidget* makeShapePage(Editor* editor) {
+	auto* page = new QWidget;
+	auto* v = new QVBoxLayout(page);
+	v->setContentsMargins(8, 8, 8, 8);
+	auto* title = new QLabel(QObject::tr("<b>Block tool</b> - drag the base, move up for the height, click."));
+	title->setWordWrap(true);
+	v->addWidget(title);
+	auto* form = new QFormLayout;
+	auto* kind = new QComboBox;
+	const std::pair<ShapeOptions::Kind, QString> kinds[] = {
+		{ShapeOptions::Kind::Block, QObject::tr("Block")},       {ShapeOptions::Kind::Wedge, QObject::tr("Wedge (ramp)")},
+		{ShapeOptions::Kind::Cylinder, QObject::tr("Cylinder")}, {ShapeOptions::Kind::Spike, QObject::tr("Spike (pyramid / cone)")},
+		{ShapeOptions::Kind::Sphere, QObject::tr("Sphere")},     {ShapeOptions::Kind::Arch, QObject::tr("Arch / ring / spiral")},
+		{ShapeOptions::Kind::Stairs, QObject::tr("Stairs")},
+	};
+	for (const auto& [k, name] : kinds) {
+		kind->addItem(name, int(k));
+	}
+	const auto spin = [](int min, int max, int step, const QString& suffix = {}) {
+		auto* s = new QSpinBox;
+		s->setRange(min, max);
+		s->setSingleStep(step);
+		s->setSuffix(suffix);
+		s->setKeyboardTracking(false);
+		return s;
+	};
+	auto* sides = spin(3, 64, 1);
+	auto* arc = spin(1, 360, 15, QStringLiteral("°"));
+	auto* start = spin(-360, 360, 15, QStringLiteral("°"));
+	auto* width = spin(1, 4096, 8, QObject::tr(" units"));
+	auto* addHeight = spin(-1024, 1024, 8, QObject::tr(" units"));
+	auto* steps = spin(1, 256, 1);
+	form->addRow(QObject::tr("Shape"), kind);
+	form->addRow(QObject::tr("Sides / pieces"), sides);
+	form->addRow(QObject::tr("Arc"), arc);
+	form->addRow(QObject::tr("Start angle"), start);
+	form->addRow(QObject::tr("Wall width"), width);
+	form->addRow(QObject::tr("Add height"), addHeight);
+	form->addRow(QObject::tr("Steps"), steps);
+	v->addLayout(form);
+	auto* live = new QLabel;
+	live->setWordWrap(true);
+	live->setStyleSheet("color: #8a90a0;");
+	v->addWidget(live);
+	v->addStretch(1);
+
+	auto updating = std::make_shared<bool>(false);
+	const auto load = [=] {
+		*updating = true;
+		const auto& o = editor->shapeOptions();
+		kind->setCurrentIndex(kind->findData(int(o.kind)));
+		sides->setValue(o.sides);
+		arc->setValue(int(o.arc));
+		start->setValue(int(o.startAngle));
+		width->setValue(int(o.wallWidth));
+		addHeight->setValue(int(o.addHeight));
+		steps->setValue(o.steps);
+		const bool round = o.kind == ShapeOptions::Kind::Cylinder || o.kind == ShapeOptions::Kind::Spike || o.kind == ShapeOptions::Kind::Sphere;
+		const bool isArch = o.kind == ShapeOptions::Kind::Arch;
+		for (auto* w : std::initializer_list<QWidget*>{sides}) {
+			w->setVisible(round || isArch);
+			form->labelForField(w)->setVisible(round || isArch);
+		}
+		for (auto* w : {arc, start, width, addHeight}) {
+			w->setVisible(isArch);
+			form->labelForField(w)->setVisible(isArch);
+		}
+		steps->setVisible(o.kind == ShapeOptions::Kind::Stairs);
+		form->labelForField(steps)->setVisible(o.kind == ShapeOptions::Kind::Stairs);
+		live->setText(editor->shapeEditable() ? QObject::tr("Changes here rebuild the shape you just made (still one undo step).")
+		                                      : QObject::tr("Arch: 360° makes a ring, Add height a spiral staircase."));
+		*updating = false;
+	};
+	const auto store = [=] {
+		if (*updating) return;
+		ShapeOptions o = editor->shapeOptions();
+		o.kind = static_cast<ShapeOptions::Kind>(kind->currentData().toInt());
+		o.sides = sides->value();
+		o.arc = arc->value();
+		o.startAngle = start->value();
+		o.wallWidth = width->value();
+		o.addHeight = addHeight->value();
+		o.steps = steps->value();
+		editor->setShapeOptions(o);
+	};
+	QObject::connect(kind, &QComboBox::currentIndexChanged, page, store);
+	for (auto* s : {sides, arc, start, width, addHeight, steps}) {
+		QObject::connect(s, &QSpinBox::valueChanged, page, store);
+	}
+	QObject::connect(editor, &Editor::settingsChanged, page, load);
+	QObject::connect(editor, &Editor::documentChanged, page, load);
+	load();
+	return page;
+}
+
+} // namespace
+
 // --- Tool panel ----------------------------------------------------------------------------
 
 ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
@@ -256,6 +364,8 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	m_pages->addWidget(m_hint);
 	m_entities = new EntityPicker(editor);
 	m_pages->addWidget(m_entities);
+	m_block = makeShapePage(editor);
+	m_pages->addWidget(m_block);
 	connect(editor, &Editor::toolChanged, this, [this] {
 		refresh();
 		if (m_editor->tool() == Editor::Tool::Entity && m_editor->selectMode() == Editor::SelectMode::Object) {

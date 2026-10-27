@@ -16,6 +16,7 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+#include <QSettings>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
@@ -995,40 +996,68 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 	addButton(tr("Face align"), tr("Lay the texture flat on each face"), 0, 1, [modify] {
 		modify("Face align", [](Side& s) { alignToFace(s, s.u.scale != 0 ? std::abs(s.u.scale) : 0.25); });
 	});
-	addButton(tr("Fit"), tr("Stretch the texture exactly once over each face"), 1, 0, [this, faces] {
-		auto& d = m_editor->doc();
-		Transaction t(d, "Fit texture");
-		for (const auto& face : faces) {
-			t.touchSolid(face.solid);
-			auto* solid = d.findSolid(face.solid);
-			if (!solid) continue;
-			const auto geometry = buildBrushGeometry(*solid);
-			for (auto& side : solid->sides) {
-				if (side.id != face.sideId) continue;
-				QSize size(512, 512);
-				if (const auto info = m_materials->get(qs(side.material)); info && !info->image.isNull()) {
-					size = info->image.size();
-				}
-				for (const auto& f : geometry.faces) {
-					if (solid->sides[static_cast<std::size_t>(f.sideIndex)].id != side.id) continue;
-					double minU = 1e30, maxU = -1e30, minV = 1e30, maxV = -1e30;
-					for (const auto& p : f.vertices) {
-						minU = std::min(minU, dot(p, side.u.axis));
-						maxU = std::max(maxU, dot(p, side.u.axis));
-						minV = std::min(minV, dot(p, side.v.axis));
-						maxV = std::max(maxV, dot(p, side.v.axis));
-					}
-					side.u.scale = (maxU - minU) / size.width();
-					side.v.scale = (maxV - minV) / size.height();
-					side.u.shift = -minU / side.u.scale;
-					side.v.shift = -minV / side.v.scale;
-				}
-			}
-		}
-		m_editor->commit(t.finish());
-	});
 	addButton(tr("Reset"), tr("World align with scale 0.25, no shift"), 1, 1, [modify] { modify("Reset texture", [](Side& s) { alignToWorld(s, 0.25); }); });
 	layout->addLayout(buttons);
+
+	// Justify like Hammer's face edit sheet; "treat as one" spans one texture over all selected faces.
+	auto* justifyBox = new QGroupBox(tr("Justify"));
+	auto* jv = new QVBoxLayout(justifyBox);
+	auto* asOne = new QCheckBox(tr("Treat as one face"));
+	asOne->setToolTip(tr("The selected faces are textured as one surface: one texture spans all of them, seamless where they meet"));
+	asOne->setChecked(faces.size() > 1 && QSettings().value("faces/treatAsOne", true).toBool());
+	connect(asOne, &QCheckBox::toggled, this, [](bool on) { QSettings().setValue("faces/treatAsOne", on); });
+	jv->addWidget(asOne);
+	auto* jg = new QGridLayout;
+	const auto textureSize = [this](const std::string& material) {
+		if (const auto info = m_materials->get(qs(material)); info && !info->image.isNull()) {
+			return std::pair<int, int>{info->image.width(), info->image.height()};
+		}
+		return std::pair<int, int>{512, 512};
+	};
+	const std::pair<edit::Justify, QString> modes[] = {{edit::Justify::Fit, tr("Fit")},       {edit::Justify::Left, tr("Left")},
+	                                                   {edit::Justify::Right, tr("Right")},   {edit::Justify::Top, tr("Top")},
+	                                                   {edit::Justify::Bottom, tr("Bottom")}, {edit::Justify::Center, tr("Center")}};
+	int index = 0;
+	for (const auto& [mode, label] : modes) {
+		auto* b = new QPushButton(label);
+		b->setToolTip(mode == edit::Justify::Fit ? tr("Stretch the texture exactly once over the face (or all faces as one)")
+		                                         : tr("Move the texture so its edge lines up with the face's edge"));
+		connect(b, &QPushButton::clicked, this, [this, faces, mode, asOne, textureSize] {
+			m_editor->commit(edit::justifyFaces(m_editor->doc(), faces, mode, asOne->isChecked(), textureSize));
+		});
+		jg->addWidget(b, index / 3, index % 3);
+		++index;
+	}
+	jv->addLayout(jg);
+	layout->addWidget(justifyBox);
+
+	if (faces.size() == 2 && faces[0].solid == faces[1].solid) {
+		// Two faces of one brush: the edge between them can be rounded or bevelled.
+		auto* edgeBox = new QGroupBox(tr("Edge between the two faces"));
+		auto* ef = new QFormLayout(edgeBox);
+		auto* radius = new QDoubleSpinBox;
+		radius->setRange(1, 4096);
+		radius->setSuffix(tr(" units"));
+		radius->setValue(QSettings().value("brushes/roundRadius", 16.0).toDouble());
+		auto* segments = new QSpinBox;
+		segments->setRange(1, 32);
+		segments->setValue(QSettings().value("brushes/roundSegments", 4).toInt());
+		ef->addRow(tr("Radius"), radius);
+		ef->addRow(tr("Segments"), segments);
+		auto* row = new QHBoxLayout;
+		auto* roundButton = new QPushButton(tr("Round"));
+		auto* bevelButton = new QPushButton(tr("Bevel"));
+		row->addWidget(roundButton);
+		row->addWidget(bevelButton);
+		ef->addRow(row);
+		connect(roundButton, &QPushButton::clicked, this, [this, radius, segments] {
+			QSettings().setValue("brushes/roundRadius", radius->value());
+			QSettings().setValue("brushes/roundSegments", segments->value());
+			m_editor->roundSelectedEdge(radius->value(), std::max(2, segments->value()));
+		});
+		connect(bevelButton, &QPushButton::clicked, this, [this, radius] { m_editor->roundSelectedEdge(radius->value(), 1); });
+		layout->addWidget(edgeBox);
+	}
 	layout->addWidget(descriptionLabel(tr("Fast texturing: Ctrl+right mouse paints the current material over faces. Double-click a face selects the "
 	                                      "whole wall. Shift+right click (or Ctrl+M) picks a material. Drag materials from the browser onto faces.")));
 }
@@ -1039,6 +1068,33 @@ void PropertiesPanel::buildBrushes(QVBoxLayout* layout) {
 	auto* apply = new QPushButton(tr("Apply current material to all faces (Shift+T)"));
 	connect(apply, &QPushButton::clicked, this, [this] { m_editor->applyMaterialToSelection(m_editor->currentMaterial()); });
 	layout->addWidget(apply);
+
+	// Brush tools (also in the right-click menu and the Brushes menu).
+	auto* toolsBox = new QGroupBox(tr("Brush tools"));
+	auto* tg = new QGridLayout(toolsBox);
+	auto* thickness = new QSpinBox;
+	thickness->setRange(-4096, 4096);
+	thickness->setSuffix(tr(" units"));
+	thickness->setValue(QSettings().value("brushes/hollow", 16.0).toInt());
+	thickness->setToolTip(tr("Wall thickness; negative puts the walls outside"));
+	auto* hollowButton = new QPushButton(tr("Hollow"));
+	hollowButton->setToolTip(tr("Walls around the inside (a room from a block)"));
+	auto* carveButton = new QPushButton(tr("Carve"));
+	carveButton->setToolTip(tr("Cut these brushes out of every brush they touch"));
+	auto* mergeButton = new QPushButton(tr("Merge"));
+	mergeButton->setToolTip(tr("One convex brush around all selected brushes"));
+	mergeButton->setEnabled(count >= 2);
+	tg->addWidget(hollowButton, 0, 0);
+	tg->addWidget(thickness, 0, 1);
+	tg->addWidget(carveButton, 1, 0);
+	tg->addWidget(mergeButton, 1, 1);
+	connect(hollowButton, &QPushButton::clicked, this, [this, thickness] {
+		QSettings().setValue("brushes/hollow", double(thickness->value()));
+		m_editor->hollowSelection(thickness->value());
+	});
+	connect(carveButton, &QPushButton::clicked, this, [this] { m_editor->carveWithSelection(); });
+	connect(mergeButton, &QPushButton::clicked, this, [this] { m_editor->mergeSelection(); });
+	layout->addWidget(toolsBox);
 
 	auto* tieBox = new QGroupBox(tr("Tie to entity"));
 	auto* v = new QVBoxLayout(tieBox);

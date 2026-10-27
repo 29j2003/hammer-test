@@ -16,6 +16,7 @@
 #include <cmath>
 
 #include <sme/brush.h>
+#include <sme/shapes.h>
 #include <sme/text.h>
 
 namespace sme::app {
@@ -302,7 +303,8 @@ void Viewport::paintGL() {
 
 	// Tool overlays.
 	if (m_drag == Drag::BlockBase || m_drag == Drag::BlockHeight) {
-		boxLines(lines, m_blockBox, {1.0f, 0.75f, 0.2f, 1});
+		boxLines(lines, m_blockBox, {1.0f, 0.75f, 0.2f, 0.5f});
+		m_renderer.drawPreviewSolids(params);
 	}
 	if (!m_leak.empty()) {
 		for (std::size_t i = 0; i + 1 < m_leak.size(); ++i) {
@@ -784,6 +786,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 				const double z0 = m_blockPlane, z1 = m_blockPlane + m_blockHeight;
 				m_blockBox.min.z = std::min(z0, z1);
 				m_blockBox.max.z = std::max(z0, z1);
+				updateShapePreview();
 			}
 			update();
 			return;
@@ -812,8 +815,18 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 	const Drag drag = m_drag;
 	if (event->button() == Qt::RightButton && m_looking) {
 		if (!m_flyMode) {
+			const bool click = m_lookTravel <= 3;
+			const QPointF at = mapFromGlobal(m_lookAnchor);
 			endLook();
+			if (click && m_drag == Drag::None) {
+				requestContextMenu(at);
+			}
 		}
+		return;
+	}
+	if (event->button() == Qt::RightButton && drag == Drag::Pan && m_camera.is2D() && QLineF(m_pressPos, event->position()).length() < 4) {
+		m_drag = Drag::None;
+		requestContextMenu(event->position());
 		return;
 	}
 	// While looking the cursor is parked: finish with the last position before the look.
@@ -1227,6 +1240,16 @@ void Viewport::finishGizmoDrag(bool clone) {
 	update();
 }
 
+void Viewport::updateShapePreview() {
+	// The shape itself (not just its box) while dragging, for everything but plain blocks.
+	if (m_editor->shapeOptions().kind == ShapeOptions::Kind::Block || m_blockBox.empty()) {
+		setPreviewSolids({});
+		return;
+	}
+	MapDocument scratch;
+	setPreviewSolids(makeShape(scratch, m_blockBox, m_editor->shapeOptions(), m_editor->currentMaterial().toStdString()));
+}
+
 void Viewport::updateBlockDrag(const QPointF& pos) {
 	const double grid = m_editor->snapGrid();
 	if (m_camera.is2D()) {
@@ -1252,6 +1275,7 @@ void Viewport::updateBlockDrag(const QPointF& pos) {
 			m_blockBox.add(m_blockEnd);
 		}
 	}
+	updateShapePreview();
 	update();
 }
 
@@ -1263,11 +1287,8 @@ void Viewport::createBlockFromDrag() {
 		return;
 	}
 	m_lastBlockDepth = m_blockBox;
-	auto [change, ref] = edit::createBlock(m_editor->doc(), m_blockBox, m_editor->currentMaterial().toStdString());
-	m_editor->commit(std::move(change));
-	Selection selection;
-	selection.solids.push_back(ref);
-	m_editor->setSelection(std::move(selection));
+	setPreviewSolids({});
+	m_editor->createShape(m_blockBox);   // block, wedge, cylinder, arch, ... (Tool panel)
 	update();
 }
 
@@ -1307,6 +1328,22 @@ void Viewport::toggleFlyMode() {
 	} else {
 		endLook();
 	}
+}
+
+void Viewport::requestContextMenu(const QPointF& pos) {
+	// Like Hammer: the menu works on what was clicked; an unselected object becomes the selection.
+	const bool faceMode = m_editor->selectMode() == Editor::SelectMode::Face;
+	if (!m_camera.is2D()) {
+		if (const auto hit = m_renderer.pick(rayAt(pos), faceMode)) {
+			const auto& selection = m_editor->selection();
+			const bool selected = faceMode ? selection.contains(FaceRef{hit->solid, hit->sideId})
+			                               : (hit->entityId != 0 ? selection.containsEntity(hit->entityId) : selection.contains(hit->solid));
+			if (!selected) {
+				clickSelect(pos, {});
+			}
+		}
+	}
+	emit contextMenuRequested(mapToGlobal(pos.toPoint()));
 }
 
 void Viewport::beginLook(const QPointF& anchor) {
@@ -1356,6 +1393,9 @@ void Viewport::applyLook() {
 
 void Viewport::cancelInteraction() {
 	endLook();
+	if (m_drag == Drag::BlockBase || m_drag == Drag::BlockHeight) {
+		setPreviewSolids({});
+	}
 	if (scaling()) {
 		m_previewBounds = {};
 		setPreviewSolids({});

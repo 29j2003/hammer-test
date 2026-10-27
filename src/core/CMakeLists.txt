@@ -3,6 +3,8 @@ add_library(smecore STATIC
 	src/assets.cpp
 	src/brush.cpp
 	src/checks.cpp
+	src/compile_log.cpp
+	src/csg.cpp
 	src/editing.cpp
 	src/entity_catalog.cpp
 	src/filesystem.cpp
@@ -14,6 +16,7 @@ add_library(smecore STATIC
 	src/keyvalues.cpp
 	src/map.cpp
 	src/material.cpp
+	src/shapes.cpp
 	src/steam.cpp
 	src/studio_model.cpp
 	src/text.cpp

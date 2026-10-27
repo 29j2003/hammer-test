@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@
 #include <sme/entity_catalog.h>
 #include <sme/history.h>
 #include <sme/map.h>
+#include <sme/shapes.h>
 
 namespace sme {
 
@@ -103,6 +105,36 @@ template<typename F>
 
 /// Sets (or with an empty optional removes) a key on several entities (0 = world).
 [[nodiscard]] Change setKeyValue(MapDocument& doc, const std::vector<int>& entityIds, const std::string& key, const std::optional<std::string>& value);
+// --- Shapes and brush tools (csg.h, shapes.h) -------------------------------------------
+
+/// Brushes of a shape fitted into `box` (block tool). Undo name "Create <shape>".
+[[nodiscard]] std::pair<Change, std::vector<SolidRef>> createShape(MapDocument& doc, const Bounds& box, const ShapeOptions& options, const std::string& material);
+/// Removes `remove` and adds `add` in the same entity as the first removed brush (world if none).
+[[nodiscard]] std::pair<Change, std::vector<SolidRef>> replaceSolids(MapDocument& doc, const std::vector<SolidRef>& remove, std::vector<Solid> add,
+                                                                     const std::string& name);
+/// Hollow every selected brush (walls of `thickness`, negative = outside). Selects the walls.
+[[nodiscard]] std::pair<Change, Selection> hollow(MapDocument& doc, const Selection& selection, double thickness);
+/// Carve: the selected brushes cut themselves out of every other brush they touch.
+[[nodiscard]] Change carve(MapDocument& doc, const Selection& selection);
+/// Merge the selected world brushes into one convex brush; `exact` false if gaps were filled.
+struct MergeOutcome {
+	Change change;
+	SolidRef merged;
+	bool exact = false;
+};
+[[nodiscard]] std::optional<MergeOutcome> merge(MapDocument& doc, const Selection& selection);
+/// Rounds (segments > 1) or bevels the edge between two faces of one brush.
+[[nodiscard]] std::optional<Change> roundEdge(MapDocument& doc, const FaceRef& a, const FaceRef& b, double radius, int segments);
+/// Clip the selected brushes with a plane: keep the part behind it, in front of it or both.
+enum class ClipKeep { Back, Front, Both };
+[[nodiscard]] std::pair<Change, Selection> clip(MapDocument& doc, const Selection& selection, const Plane& plane, ClipKeep keep);
+
+/// Texture justification of faces (Hammer's face edit sheet). With `treatAsOne` the faces are
+/// handled as one surface: coplanar faces share the first face's axes and one texture spans all.
+enum class Justify { Fit, Left, Right, Top, Bottom, Center };
+[[nodiscard]] Change justifyFaces(MapDocument& doc, const std::vector<FaceRef>& faces, Justify mode, bool treatAsOne,
+                                  const std::function<std::pair<int, int>(const std::string&)>& textureSize);
+
 /// Replaces the outputs of one entity.
 [[nodiscard]] Change setConnections(MapDocument& doc, int entityId, const std::vector<Connection>& connections);
 

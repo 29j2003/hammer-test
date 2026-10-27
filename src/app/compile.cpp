@@ -20,6 +20,7 @@
 #include <QVBoxLayout>
 
 #include <sme/checks.h>
+#include <sme/compile_log.h>
 
 namespace sme::app {
 
@@ -82,40 +83,89 @@ QStringList CompileRunner::describe(const QString& vmfPath, const QString& gameD
 	return lines;
 }
 
+QStringList CompileRunner::stepNames() const {
+	QStringList names;
+	for (const auto& step : m_steps) {
+		names << step.name;
+	}
+	return names;
+}
+
 void CompileRunner::start(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options) {
 	if (running()) {
 		return;
 	}
 	m_steps = plan(vmfPath, gameDir, settings, options);
 	m_index = 0;
+	m_current = -1;
 	m_vmfPath = vmfPath;
 	m_gameDir = gameDir;
 	m_leaked = false;
+	m_cancelled = false;
+	emit started(vmfPath, stepNames());
 	// An old pointfile would show a stale leak.
 	QFile::remove(QFileInfo(vmfPath).absolutePath() + "/" + QFileInfo(vmfPath).completeBaseName() + ".lin");
 	next();
 }
 
 void CompileRunner::cancel() {
-	if (m_process) {
-		m_process->kill();
+	if (!m_process) {
+		return;
 	}
-	m_steps.clear();
+	m_cancelled = true;
+	m_process->kill();   // finished() reports the cancel
+}
+
+void CompileRunner::fail(const QString& text) {
+	emit output(text, QColor(255, 110, 110));
+	emit problem(m_current, text, 2, {});
+	emit stepFinished(m_current, false, m_stepClock.elapsed());
+	for (int i = m_current + 1; i < static_cast<int>(m_steps.size()); ++i) {
+		emit stepSkipped(i, tr("not run"));
+	}
+	emit finished(false);
+}
+
+void CompileRunner::handleLine(const QString& raw) {
+	const QString line = raw.trimmed();
+	if (line.isEmpty()) {
+		return;
+	}
+	QColor color;
+	if (const auto message = classifyCompileLine(line.toStdString())) {
+		if (message->leak) {
+			m_leaked = true;
+		}
+		const int severity = message->severity == CompileMessage::Severity::Error ? 2 : (message->severity == CompileMessage::Severity::Warning ? 1 : 0);
+		color = severity == 2 ? QColor(255, 110, 110) : QColor(255, 200, 100);
+		if (severity > 0) {
+			emit problem(m_current, line, severity, QString::fromStdString(message->explanation));
+		}
+	}
+	emit output(line, color);
 }
 
 void CompileRunner::next() {
+	if (m_current >= 0 && m_current < static_cast<int>(m_steps.size()) && m_index > static_cast<std::size_t>(m_current)) {
+		// The previous step ended well.
+		emit stepFinished(m_current, true, m_stepClock.elapsed());
+	}
 	if (m_index >= m_steps.size()) {
 		emit output(tr("Compile finished."), QColor(120, 220, 120));
 		emit finished(true);
 		return;
 	}
+	m_current = static_cast<int>(m_index);
 	const Step step = m_steps[m_index++];
+	m_stepClock.start();
+	m_phase.clear();
+	m_partial.clear();
 	if (step.copy) {
+		emit stepStarted(m_current, tr("copy to %1").arg(step.arguments[1]));
 		QDir().mkpath(QFileInfo(step.arguments[1]).absolutePath());
 		QFile::remove(step.arguments[1]);
 		if (!QFile::copy(step.arguments[0], step.arguments[1])) {
-			emit output(tr("Could not copy %1 to %2").arg(step.arguments[0], step.arguments[1]), QColor(255, 110, 110));
-			emit finished(false);
+			fail(tr("Could not copy %1 to %2").arg(step.arguments[0], step.arguments[1]));
 			return;
 		}
 		emit output(tr("Copied the map to %1").arg(step.arguments[1]), {});
@@ -124,19 +174,25 @@ void CompileRunner::next() {
 	}
 	if (step.name == "VVIS" && m_leaked) {
 		emit output(tr("Skipping VVIS and VRAD: the map leaks (see Problems)."), QColor(255, 180, 80));
+		for (int i = m_current; i < static_cast<int>(m_steps.size()); ++i) {
+			emit stepSkipped(i, tr("map leaks"));
+		}
 		emit finished(false);
 		return;
 	}
 	if (step.program.isEmpty() || (!QFileInfo::exists(step.program) && QStandardPaths::findExecutable(step.program).isEmpty())) {
-		emit output(tr("%1 not found: \"%2\" - set the path in Game > Game settings.").arg(step.name, step.program), QColor(255, 110, 110));
-		emit finished(false);
+		emit stepStarted(m_current, step.program);
+		fail(tr("%1 not found: \"%2\" - set the path in the game settings (⚙).").arg(step.name, step.program));
 		return;
 	}
 	const auto [program, arguments] = wrap(step.program, step.arguments);
-	emit output(QStringLiteral("> \"%1\" %2").arg(program, arguments.join(' ')), QColor(140, 180, 255));
+	const QString command = QStringLiteral("\"%1\" %2").arg(program, arguments.join(' '));
+	emit stepStarted(m_current, command);
+	emit output(QStringLiteral("> ") + command, QColor(140, 180, 255));
 	if (step.detached) {
 		if (!QProcess::startDetached(program, arguments, QFileInfo(step.program).absolutePath())) {
-			emit output(tr("Could not start the game."), QColor(255, 110, 110));
+			fail(tr("Could not start the game."));
+			return;
 		}
 		next();
 		return;
@@ -145,25 +201,37 @@ void CompileRunner::next() {
 	m_process->setProcessChannelMode(QProcess::MergedChannels);
 	m_process->setWorkingDirectory(QFileInfo(step.program).absolutePath());
 	connect(m_process, &QProcess::readyRead, this, [this] {
-		const QString text = QString::fromLocal8Bit(m_process->readAll());
-		for (const auto& line : text.split('\n')) {
-			const QString trimmed = line.trimmed();
-			if (trimmed.isEmpty()) continue;
-			QColor color;
-			if (trimmed.contains("LEAKED", Qt::CaseInsensitive)) {
-				m_leaked = true;
-				color = QColor(255, 110, 110);
-			} else if (trimmed.contains("error", Qt::CaseInsensitive)) {
-				color = QColor(255, 110, 110);
-			} else if (trimmed.contains("warning", Qt::CaseInsensitive)) {
-				color = QColor(255, 200, 100);
+		m_partial += QString::fromLocal8Bit(m_process->readAll()).remove('\r');
+		const auto newline = m_partial.lastIndexOf('\n');
+		if (newline >= 0) {
+			for (const auto& line : m_partial.left(newline).split('\n')) {
+				if (const auto phase = compilePhase(line.toStdString()); !phase.empty()) {
+					m_phase = QString::fromStdString(phase);
+				}
+				if (const auto percent = compileProgress(line.toStdString())) {
+					emit stepProgress(m_current, m_phase, *percent);
+				}
+				handleLine(line);
 			}
-			emit output(trimmed, color);
+			m_partial = m_partial.mid(newline + 1);
+		}
+		// Progress dots arrive without a line break ("PortalFlow: 0...1...2").
+		if (const auto phase = compilePhase(m_partial.toStdString()); !phase.empty()) {
+			m_phase = QString::fromStdString(phase);
+		}
+		if (const auto percent = compileProgress(m_partial.toStdString())) {
+			emit stepProgress(m_current, m_phase, *percent);
 		}
 	});
 	connect(m_process, &QProcess::finished, this, [this, step](int code, QProcess::ExitStatus status) {
+		handleLine(m_partial);
+		m_partial.clear();
 		m_process->deleteLater();
 		m_process = nullptr;
+		if (m_cancelled) {
+			fail(tr("Compile cancelled."));
+			return;
+		}
 		if (step.name == "VBSP") {
 			const QFileInfo vmf(m_vmfPath);
 			QFile lin(vmf.absolutePath() + "/" + vmf.completeBaseName() + ".lin");
@@ -174,15 +242,17 @@ void CompileRunner::next() {
 			}
 		}
 		if (status != QProcess::NormalExit || code != 0) {
-			emit output(tr("%1 failed (exit code %2).").arg(step.name).arg(code), QColor(255, 110, 110));
-			emit finished(false);
+			fail(tr("%1 failed (exit code %2).").arg(step.name).arg(code));
 			return;
 		}
 		next();
 	});
 	connect(m_process, &QProcess::errorOccurred, this, [this, step](QProcess::ProcessError error) {
-		if (error == QProcess::FailedToStart) {
-			emit output(tr("%1 could not be started.").arg(step.name), QColor(255, 110, 110));
+		if (error == QProcess::FailedToStart && m_process) {
+			// finished() never comes for a program that did not start.
+			m_process->deleteLater();
+			m_process = nullptr;
+			fail(tr("%1 could not be started.").arg(step.name));
 		}
 	});
 	m_process->start(program, arguments);

@@ -8,6 +8,7 @@
 #include <sme/studio_model.h>
 #include <sme/brush.h>
 #include <sme/checks.h>
+#include <sme/compile_log.h>
 #include <sme/game.h>
 
 #include <cstring>
@@ -191,6 +192,32 @@ TEST_CASE("model triangles from .mdl, .vvd and .vtx") {
 	auto truncated = files.vvd;
 	truncated.resize(200);
 	CHECK_FALSE(buildModelGeometry({files.mdl, truncated, files.vtx}, 0, &error));
+}
+
+TEST_CASE("compile output: errors, warnings, explanations, progress") {
+	const auto leak = classifyCompileLine("**** leaked ****");
+	REQUIRE(leak);
+	CHECK(leak->severity == CompileMessage::Severity::Error);
+	CHECK(leak->leak);
+	CHECK_FALSE(leak->explanation.empty());
+	const auto model = classifyCompileLine("Warning: Error loading studio model \"models/props/missing.mdl\"!");
+	REQUIRE(model);
+	CHECK(model->severity == CompileMessage::Severity::Warning);
+	CHECK(model->explanation.find("model") != std::string::npos);
+	CHECK(classifyCompileLine("Brush 12: WARNING, portal clipped away (ptr 0x0)")->severity == CompileMessage::Severity::Warning);
+	CHECK(classifyCompileLine("Error: MAX_MAP_BRUSHES")->severity == CompileMessage::Severity::Error);
+	CHECK(classifyCompileLine("some unexpected error happened")->severity == CompileMessage::Severity::Error);
+	CHECK(classifyCompileLine("some unexpected error happened")->explanation.empty());
+	CHECK_FALSE(classifyCompileLine("0 errors, 0 warnings"));
+	CHECK_FALSE(classifyCompileLine("ProcessBlock_Thread: 0...1...2...3"));
+	CHECK_FALSE(classifyCompileLine("terrorist spawn"));    // "error" only as a word
+
+	CHECK(compileProgress("BuildFacelights: 0...1...2...3...4") == 40);
+	CHECK(compileProgress("...7...8...9...10") == 100);
+	CHECK(compileProgress("5...6") == 60);
+	CHECK_FALSE(compileProgress("Valve Software - vrad.exe (Jul 2023)"));
+	CHECK(compilePhase("PortalFlow: 0...1...2") == "PortalFlow");
+	CHECK(compilePhase("Loading c:/maps/demo.bsp").empty());
 }
 
 TEST_CASE("did you mean") {

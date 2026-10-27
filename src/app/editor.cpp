@@ -39,6 +39,13 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_currentMaterial = settings.value("editor/material", m_currentMaterial).toString();
 	m_snapping = settings.value("editor/snapping", true).toBool();
 	m_recentMaterials = settings.value("editor/recentMaterials").toStringList();
+	m_shapeOptions.kind = static_cast<ShapeOptions::Kind>(std::clamp(settings.value("shape/kind", 0).toInt(), 0, int(ShapeOptions::Kind::Stairs)));
+	m_shapeOptions.sides = settings.value("shape/sides", m_shapeOptions.sides).toInt();
+	m_shapeOptions.arc = settings.value("shape/arc", m_shapeOptions.arc).toDouble();
+	m_shapeOptions.startAngle = settings.value("shape/start", m_shapeOptions.startAngle).toDouble();
+	m_shapeOptions.wallWidth = settings.value("shape/width", m_shapeOptions.wallWidth).toDouble();
+	m_shapeOptions.addHeight = settings.value("shape/addHeight", m_shapeOptions.addHeight).toDouble();
+	m_shapeOptions.steps = settings.value("shape/steps", m_shapeOptions.steps).toInt();
 	m_rotationSnap = settings.value("editor/rotationSnap", 15.0).toDouble();
 }
 
@@ -186,6 +193,7 @@ bool Editor::openGame(const QString& key, QString* error) {
 }
 
 void Editor::newMap() {
+	m_lastShape = {};
 	m_doc = MapDocument();
 	m_history.clear();
 	m_selection.clear();
@@ -214,6 +222,7 @@ bool Editor::openMap(const QString& path, QString* error) {
 		return false;
 	}
 	m_history.clear();
+	m_lastShape = {};
 	m_selection.clear();
 	m_hidden.clear();
 	m_filePath = path;
@@ -519,6 +528,117 @@ void Editor::tieSelectionToEntity(const QString& classname) {
 
 void Editor::moveSelectionToWorld() {
 	commit(edit::moveToWorld(m_doc, m_selection));
+}
+
+// --- Shapes ----------------------------------------------------------------------------
+
+void Editor::setShapeOptions(const ShapeOptions& options) {
+	m_shapeOptions = options;
+	QSettings settings;
+	settings.setValue("shape/kind", int(options.kind));
+	settings.setValue("shape/sides", options.sides);
+	settings.setValue("shape/arc", options.arc);
+	settings.setValue("shape/start", options.startAngle);
+	settings.setValue("shape/width", options.wallWidth);
+	settings.setValue("shape/addHeight", options.addHeight);
+	settings.setValue("shape/steps", options.steps);
+	if (shapeEditable()) {
+		// Rebuild the shape just made; merged into its "Create" step.
+		auto solids = makeShape(m_doc, m_lastShape.box, m_shapeOptions, m_lastShape.material);
+		if (!solids.empty()) {
+			auto [change, refs] = edit::replaceSolids(m_doc, m_lastShape.refs, std::move(solids), m_lastShape.name);
+			commitMerged(std::move(change));
+			m_lastShape.refs = refs;
+			m_lastShape.revision = m_history.revision();
+			Selection selection;
+			selection.solids = refs;
+			setSelection(std::move(selection));
+		}
+	}
+	emit settingsChanged();
+}
+
+bool Editor::shapeEditable() const {
+	// Only right after making it: still in the block tool, nothing changed, the shape still selected.
+	if (!m_lastShape.valid || m_tool != Tool::Block || m_history.revision() != m_lastShape.revision || m_lastShape.refs.empty()) {
+		return false;
+	}
+	return m_selection.solids == m_lastShape.refs && m_selection.entities.empty() && m_selection.faces.empty();
+}
+
+void Editor::createShape(const Bounds& box) {
+	const std::string material = m_currentMaterial.toStdString();
+	auto [change, refs] = edit::createShape(m_doc, box, m_shapeOptions, material);
+	if (refs.empty()) {
+		emit message(tr("The %1 does not fit into this box - make it bigger or change the settings in the Tool panel")
+		                 .arg(QString::fromStdString(shapeName(m_shapeOptions.kind))));
+		return;
+	}
+	m_lastShape = {box, refs, change.name, material, 0, true};
+	commit(std::move(change));
+	m_lastShape.revision = m_history.revision();
+	Selection selection;
+	selection.solids = refs;
+	setSelection(std::move(selection));
+}
+
+// --- Brush tools ---------------------------------------------------------------------------
+
+void Editor::hollowSelection(double thickness) {
+	auto [change, walls] = edit::hollow(m_doc, m_selection, thickness);
+	if (change.empty()) {
+		emit message(tr("Nothing hollowed: the walls (%1 units) are too thick for the selected brushes").arg(thickness));
+		return;
+	}
+	commit(std::move(change));
+	setSelection(std::move(walls));
+	emit message(tr("Hollowed: %1 wall brushes").arg(m_selection.solids.size() + m_selection.entities.size()));
+}
+
+void Editor::carveWithSelection() {
+	auto change = edit::carve(m_doc, m_selection);
+	if (change.empty()) {
+		emit message(tr("Nothing to carve: the selected brushes do not cut into other brushes"));
+		return;
+	}
+	commit(std::move(change));
+	emit message(tr("Carved - the selected brushes cut themselves out of the brushes they touched (delete them now if they were only for cutting)"));
+}
+
+void Editor::mergeSelection() {
+	auto outcome = edit::merge(m_doc, m_selection);
+	if (!outcome) {
+		emit message(tr("Select two or more brushes to merge"));
+		return;
+	}
+	commit(std::move(outcome->change));
+	Selection selection;
+	selection.solids.push_back(outcome->merged);
+	setSelection(std::move(selection));
+	emit message(outcome->exact ? tr("Merged into one brush")
+	                            : tr("Merged into one brush - it also fills the space between them (Source brushes are always convex; Ctrl+Z undoes)"));
+}
+
+void Editor::roundSelectedEdge(double radius, int segments) {
+	if (m_selection.faces.size() != 2) {
+		emit message(tr("Select the two faces next to the edge (face mode, Ctrl+click)"));
+		return;
+	}
+	auto change = edit::roundEdge(m_doc, m_selection.faces[0], m_selection.faces[1], radius, segments);
+	if (!change) {
+		emit message(tr("These faces do not share an edge of one brush, or the radius is too big"));
+		return;
+	}
+	commit(std::move(*change));
+}
+
+void Editor::clipSelection(const Plane& plane, edit::ClipKeep keep) {
+	auto [change, parts] = edit::clip(m_doc, m_selection, plane, keep);
+	if (change.empty()) {
+		return;
+	}
+	commit(std::move(change));
+	setSelection(std::move(parts));
 }
 
 } // namespace sme::app

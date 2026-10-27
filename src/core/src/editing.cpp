@@ -3,6 +3,7 @@
 #include <sme/editing.h>
 
 #include <sme/brush.h>
+#include <sme/csg.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -602,6 +603,308 @@ Change setConnections(MapDocument& doc, int entityId, const std::vector<Connecti
 	if (auto* entity = doc.findEntity(entityId)) {
 		t.touchEntity(entityId);
 		entity->connections = connections;
+	}
+	return t.finish();
+}
+
+// --- Shapes and brush tools -------------------------------------------------------------
+
+namespace {
+
+/// Selected brushes: world brushes and the brushes of selected brush entities (or faces' brushes).
+std::vector<SolidRef> selectedSolids(const MapDocument& doc, const Selection& selection) {
+	std::vector<SolidRef> refs = selection.solids;
+	for (const int id : selection.entities) {
+		if (const auto* entity = doc.findEntity(id); entity && id != 0) {
+			for (const auto& solid : entity->solids) {
+				refs.push_back({id, solid.id});
+			}
+		}
+	}
+	for (const auto& face : selection.faces) {
+		if (std::find(refs.begin(), refs.end(), face.solid) == refs.end()) {
+			refs.push_back(face.solid);
+		}
+	}
+	return refs;
+}
+
+} // namespace
+
+std::pair<Change, std::vector<SolidRef>> createShape(MapDocument& doc, const Bounds& box, const ShapeOptions& options, const std::string& material) {
+	Transaction t(doc, "Create " + shapeName(options.kind));
+	std::vector<SolidRef> refs;
+	for (auto& solid : makeShape(doc, box, options, material)) {
+		const SolidRef ref{0, solid.id};
+		t.touchSolid(ref);
+		doc.world.solids.push_back(std::move(solid));
+		refs.push_back(ref);
+	}
+	return {t.finish(), refs};
+}
+
+std::pair<Change, std::vector<SolidRef>> replaceSolids(MapDocument& doc, const std::vector<SolidRef>& remove, std::vector<Solid> add, const std::string& name) {
+	Transaction t(doc, name);
+	const int owner = remove.empty() ? 0 : remove.front().entityId;
+	for (const auto& ref : remove) {
+		t.touchSolid(ref);
+		if (auto* entity = doc.findEntity(ref.entityId)) {
+			std::erase_if(entity->solids, [&](const Solid& solid) { return solid.id == ref.solidId; });
+		}
+	}
+	std::vector<SolidRef> added;
+	auto* target = doc.findEntity(owner);
+	if (!target) {
+		target = &doc.world;
+	}
+	for (auto& solid : add) {
+		const SolidRef ref{target == &doc.world ? 0 : owner, solid.id};
+		t.touchSolid(ref);
+		target->solids.push_back(std::move(solid));
+		added.push_back(ref);
+	}
+	return {t.finish(), added};
+}
+
+std::pair<Change, Selection> hollow(MapDocument& doc, const Selection& selection, double thickness) {
+	Transaction t(doc, "Hollow");
+	Selection walls;
+	for (const auto& ref : selectedSolids(doc, selection)) {
+		const auto* solid = doc.findSolid(ref);
+		if (!solid) {
+			continue;
+		}
+		auto pieces = hollowSolid(doc, *solid, thickness);
+		if (pieces.empty()) {
+			continue;   // too thin for these walls: left as it is
+		}
+		t.touchSolid(ref);
+		auto* entity = doc.findEntity(ref.entityId);
+		std::erase_if(entity->solids, [&](const Solid& s) { return s.id == ref.solidId; });
+		for (auto& piece : pieces) {
+			const SolidRef pieceRef{ref.entityId, piece.id};
+			t.touchSolid(pieceRef);
+			entity->solids.push_back(std::move(piece));
+			if (ref.entityId == 0) {
+				walls.solids.push_back(pieceRef);
+			} else if (!walls.containsEntity(ref.entityId)) {
+				walls.entities.push_back(ref.entityId);
+			}
+		}
+	}
+	return {t.finish(), walls};
+}
+
+Change carve(MapDocument& doc, const Selection& selection) {
+	Transaction t(doc, "Carve");
+	const auto cutters = selectedSolids(doc, selection);
+	std::vector<Solid> cutterCopies;
+	for (const auto& ref : cutters) {
+		if (const auto* solid = doc.findSolid(ref)) {
+			cutterCopies.push_back(*solid);
+		}
+	}
+	// Every other brush (world and brush entities) that a cutter touches.
+	std::vector<SolidRef> targets;
+	const auto collect = [&](const Entity& entity, int entityId) {
+		for (const auto& solid : entity.solids) {
+			const SolidRef ref{entityId, solid.id};
+			if (std::find(cutters.begin(), cutters.end(), ref) == cutters.end()) {
+				targets.push_back(ref);
+			}
+		}
+	};
+	collect(doc.world, 0);
+	for (const auto& entity : doc.entities) {
+		collect(entity, entity.id);
+	}
+	for (const auto& ref : targets) {
+		const auto* original = doc.findSolid(ref);
+		if (!original) {
+			continue;
+		}
+		std::vector<Solid> pieces{*original};
+		bool changed = false;
+		for (const auto& cutter : cutterCopies) {
+			std::vector<Solid> next;
+			for (const auto& piece : pieces) {
+				auto parts = subtractSolid(doc, piece, cutter);
+				if (parts.size() != 1 || parts.front().id != piece.id || parts.front().sides.size() != piece.sides.size()) {
+					changed = true;
+				}
+				next.insert(next.end(), parts.begin(), parts.end());
+			}
+			pieces = std::move(next);
+		}
+		if (!changed) {
+			continue;
+		}
+		t.touchSolid(ref);
+		auto* entity = doc.findEntity(ref.entityId);
+		std::erase_if(entity->solids, [&](const Solid& s) { return s.id == ref.solidId; });
+		for (auto& piece : pieces) {
+			t.touchSolid({ref.entityId, piece.id});
+			entity->solids.push_back(std::move(piece));
+		}
+	}
+	return t.finish();
+}
+
+std::optional<MergeOutcome> merge(MapDocument& doc, const Selection& selection) {
+	const auto refs = selectedSolids(doc, selection);
+	std::vector<Solid> solids;
+	for (const auto& ref : refs) {
+		if (const auto* solid = doc.findSolid(ref)) {
+			solids.push_back(*solid);
+		}
+	}
+	auto result = mergeSolids(doc, solids);
+	if (!result) {
+		return std::nullopt;
+	}
+	auto [change, added] = replaceSolids(doc, refs, {std::move(result->solid)}, "Merge brushes");
+	return MergeOutcome{std::move(change), added.front(), result->exact};
+}
+
+std::optional<Change> roundEdge(MapDocument& doc, const FaceRef& a, const FaceRef& b, double radius, int segments) {
+	if (!(a.solid == b.solid)) {
+		return std::nullopt;
+	}
+	const auto* solid = doc.findSolid(a.solid);
+	if (!solid) {
+		return std::nullopt;
+	}
+	auto rounded = sme::roundEdge(doc, *solid, a.sideId, b.sideId, radius, segments);
+	if (!rounded) {
+		return std::nullopt;
+	}
+	Transaction t(doc, segments > 1 ? "Round edge" : "Bevel edge");
+	t.touchSolid(a.solid);
+	*doc.findSolid(a.solid) = std::move(*rounded);
+	return t.finish();
+}
+
+std::pair<Change, Selection> clip(MapDocument& doc, const Selection& selection, const Plane& plane, ClipKeep keep) {
+	Transaction t(doc, "Clip");
+	Selection result;
+	for (const auto& ref : selectedSolids(doc, selection)) {
+		const auto* solid = doc.findSolid(ref);
+		if (!solid) {
+			continue;
+		}
+		// The new face gets the texture of the side facing most like the cut.
+		const Side* cap = &solid->sides.front();
+		for (const auto& side : solid->sides) {
+			if (dot(side.plane().normal, plane.normal) > dot(cap->plane().normal, plane.normal)) {
+				cap = &side;
+			}
+		}
+		auto [front, back] = splitSolid(doc, *solid, plane, *cap);
+		if (!front || !back) {
+			// Not cut: only removed when it lies entirely on the side that is thrown away.
+			const bool removeIt = (keep == ClipKeep::Back && front && !back) || (keep == ClipKeep::Front && back && !front);
+			if (removeIt) {
+				t.touchSolid(ref);
+				std::erase_if(doc.findEntity(ref.entityId)->solids, [&](const Solid& s) { return s.id == ref.solidId; });
+			} else {
+				result.solids.push_back(ref);
+			}
+			continue;
+		}
+		t.touchSolid(ref);
+		auto* entity = doc.findEntity(ref.entityId);
+		std::erase_if(entity->solids, [&](const Solid& s) { return s.id == ref.solidId; });
+		for (auto* part : {keep != ClipKeep::Front ? &*back : nullptr, keep != ClipKeep::Back ? &*front : nullptr}) {
+			if (!part) {
+				continue;
+			}
+			const SolidRef partRef{ref.entityId, part->id};
+			t.touchSolid(partRef);
+			entity->solids.push_back(std::move(*part));
+			result.solids.push_back(partRef);
+		}
+	}
+	return {t.finish(), result};
+}
+
+Change justifyFaces(MapDocument& doc, const std::vector<FaceRef>& faces, Justify mode, bool treatAsOne,
+                    const std::function<std::pair<int, int>(const std::string&)>& textureSize) {
+	Transaction t(doc, "Justify texture");
+	// Corners of every face (for "treat as one" the extents of all of them count).
+	std::vector<std::vector<Vec3>> corners(faces.size());
+	std::vector<Side*> sides(faces.size(), nullptr);
+	for (std::size_t i = 0; i < faces.size(); ++i) {
+		t.touchSolid(faces[i].solid);
+		auto* solid = doc.findSolid(faces[i].solid);
+		if (!solid) continue;
+		const auto geometry = buildBrushGeometry(*solid);
+		for (const auto& face : geometry.faces) {
+			auto& side = solid->sides[static_cast<std::size_t>(face.sideIndex)];
+			if (side.id == faces[i].sideId) {
+				corners[i] = face.vertices;
+				sides[i] = &side;
+			}
+		}
+	}
+	const Side* first = nullptr;
+	for (auto* side : sides) {
+		if (side) {
+			first = side;
+			break;
+		}
+	}
+	if (!first) {
+		return t.finish();
+	}
+	const Side reference = *first;
+	for (std::size_t i = 0; i < faces.size(); ++i) {
+		Side* side = sides[i];
+		if (!side) continue;
+		// One surface: faces in the same plane direction take the first face's texture axes.
+		if (treatAsOne && dot(side->plane().normal, reference.plane().normal) > 0.999) {
+			side->u.axis = reference.u.axis;
+			side->v.axis = reference.v.axis;
+			side->u.scale = reference.u.scale;
+			side->v.scale = reference.v.scale;
+			side->rotation = reference.rotation;
+		}
+		double minU = 1e30, maxU = -1e30, minV = 1e30, maxV = -1e30;
+		for (std::size_t j = 0; j < faces.size(); ++j) {
+			if (!treatAsOne && j != i) continue;
+			for (const auto& p : corners[j]) {
+				minU = std::min(minU, dot(p, side->u.axis));
+				maxU = std::max(maxU, dot(p, side->u.axis));
+				minV = std::min(minV, dot(p, side->v.axis));
+				maxV = std::max(maxV, dot(p, side->v.axis));
+			}
+		}
+		const auto [width, height] = textureSize ? textureSize(side->material) : std::pair<int, int>{512, 512};
+		const double w = std::max(1, width), h = std::max(1, height);
+		auto& u = side->u;
+		auto& v = side->v;
+		if (u.scale == 0) u.scale = 0.25;
+		if (v.scale == 0) v.scale = 0.25;
+		switch (mode) {
+			case Justify::Fit:
+				u.scale = (maxU - minU) / w;
+				v.scale = (maxV - minV) / h;
+				if (u.scale == 0) u.scale = 0.25;
+				if (v.scale == 0) v.scale = 0.25;
+				u.shift = -minU / u.scale;
+				v.shift = -minV / v.scale;
+				break;
+			case Justify::Left: u.shift = -minU / u.scale; break;
+			case Justify::Right: u.shift = w - maxU / u.scale; break;
+			case Justify::Top: v.shift = -minV / v.scale; break;
+			case Justify::Bottom: v.shift = h - maxV / v.scale; break;
+			case Justify::Center:
+				u.shift = w / 2 - (minU + maxU) / 2 / u.scale;
+				v.shift = h / 2 - (minV + maxV) / 2 / v.scale;
+				break;
+		}
+		// Keep the shift small (same picture).
+		u.shift = std::fmod(u.shift, w);
+		v.shift = std::fmod(v.shift, h);
 	}
 	return t.finish();
 }

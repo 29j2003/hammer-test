@@ -3,6 +3,7 @@
 #include "main_window.h"
 
 #include "asset_browser.h"
+#include "compile_window.h"
 #include "material_cache.h"
 #include "panels.h"
 #include "properties_panel.h"
@@ -18,6 +19,11 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QSpinBox>
+#include <QInputDialog>
+#include <QFormLayout>
+#include <QDoubleSpinBox>
+#include <QDialogButtonBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -104,6 +110,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	statusBar()->addPermanentWidget(m_statsLabel);
 	for (auto* view : m_views) {
 		connect(view, &Viewport::cursorWorldPosition, m_cursorLabel, &QLabel::setText);
+		connect(view, &Viewport::contextMenuRequested, this, &MainWindow::showContextMenu);
 	}
 	connect(m_views[0], &Viewport::statsChanged, m_statsLabel, &QLabel::setText);
 
@@ -128,6 +135,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	});
 	connect(&m_compiler, &CompileRunner::output, m_log, &LogPanel::append);
 	connect(&m_compiler, &CompileRunner::leak, this, [this](const std::vector<Vec3>& line) {
+		m_lastLeak = line;
 		m_problems->addLeak(line);
 		m_views[0]->setLeakLine(line);
 		raiseDock("Problems");
@@ -163,6 +171,7 @@ void MainWindow::createDocks() {
 	m_log = new LogPanel;
 	m_toolPanel = new ToolPanel(m_editor);
 	m_sounds = new SoundBrowser(m_editor);
+	m_compileWindow = new CompileWindow(&m_compiler);
 
 	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::RightDockWidgetArea);
 	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
@@ -172,9 +181,18 @@ void MainWindow::createDocks() {
 	outliner->raise();
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
+	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, sounds);
+	tabifyDockWidget(assets, compile);
 	tabifyDockWidget(assets, log);
+	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
+	connect(m_compileWindow, &CompileWindow::showLeak, this, [this] {
+		for (auto* view : m_views) {
+			view->setLeakLine(m_lastLeak);
+		}
+		raiseDock("Problems");
+	});
 	assets->raise();
 	resizeDocks({properties}, {420}, Qt::Horizontal);
 	resizeDocks({tool, properties, outliner}, {260, 460, 220}, Qt::Vertical);
@@ -243,6 +261,36 @@ void MainWindow::createActions() {
 	editMenu->addAction(action(tr("Hide selection"), QKeySequence("H"), [this] { m_editor->hideSelection(); }));
 	editMenu->addAction(action(tr("Hide others"), QKeySequence("Ctrl+H"), [this] { m_editor->hideUnselected(); }));
 	editMenu->addAction(action(tr("Show all"), QKeySequence("U"), [this] { m_editor->unhideAll(); }));
+
+	// Brushes: Hammer's carve / hollow, merging, rounding edges.
+	auto* brushes = menuBar()->addMenu(tr("&Brushes"));
+	auto* hollow = action(tr("Hollow ..."), QKeySequence("Ctrl+Shift+H"), [this] {
+		bool ok = false;
+		const double thickness = QInputDialog::getDouble(this, tr("Hollow"),
+		                                                 tr("Wall thickness in units\n(negative: the walls go outside, the inside stays as it is)"),
+		                                                 QSettings().value("brushes/hollow", 16.0).toDouble(), -4096, 4096, 0, &ok);
+		if (ok) {
+			QSettings().setValue("brushes/hollow", thickness);
+			m_editor->hollowSelection(thickness);
+		}
+	});
+	hollow->setToolTip(tr("Turns the selected brushes into walls around their inside (a room from a block)"));
+	auto* carve = action(tr("Carve with selection"), QKeySequence("Ctrl+Shift+C"), [this] { m_editor->carveWithSelection(); });
+	carve->setToolTip(tr("The selected brushes cut themselves out of every brush they touch (doors, windows)"));
+	auto* mergeAction = action(tr("Merge into one brush"), QKeySequence("Ctrl+Shift+M"), [this] { m_editor->mergeSelection(); });
+	auto* round = action(tr("Round or bevel edge ..."), QKeySequence("Ctrl+Shift+R"), [this] { roundEdgeDialog(); });
+	round->setToolTip(tr("Select the two faces next to an edge (Faces mode, Ctrl+click), then round or bevel the edge"));
+	brushes->addAction(hollow);
+	brushes->addAction(carve);
+	brushes->addAction(mergeAction);
+	brushes->addAction(round);
+	m_contextActions = {hollow, carve, mergeAction, round, nullptr};
+	for (auto* a : editMenu->actions()) {
+		if (a->text().startsWith(tr("Tie to entity")) || a->text() == tr("Move to world") || a->text() == tr("Duplicate") || a->text() == tr("Delete") ||
+		    a->text() == tr("Hide selection") || a->text() == tr("Apply current material")) {
+			m_contextActions << a;
+		}
+	}
 
 	// Nudging and rotating by keys.
 	const auto nudge = [this](int axis, double sign) {
@@ -658,9 +706,59 @@ void MainWindow::compile() {
 	for (auto* view : m_views) {
 		view->setLeakLine({});
 	}
-	raiseDock("Log");
+	raiseDock("Compile");
 	m_log->append(tr("--- Compiling %1 ---").arg(QFileInfo(m_editor->filePath()).fileName()), QColor(140, 180, 255));
 	m_compiler.start(m_editor->filePath(), gameDir, m_editor->gameSettings(), dialog.options());
+}
+
+void MainWindow::showContextMenu(const QPoint& globalPos) {
+	QMenu menu(this);
+	const auto& selection = m_editor->selection();
+	if (selection.empty()) {
+		menu.addAction(tr("Nothing selected - right click an object"))->setEnabled(false);
+	} else {
+		menu.addSection(selection.faces.empty() ? tr("%1 selected").arg(selection.solids.size() + selection.entities.size())
+		                                        : tr("%1 face(s)").arg(selection.faces.size()));
+		for (auto* a : m_contextActions) {
+			if (a) {
+				menu.addAction(a);
+			} else {
+				menu.addSeparator();
+			}
+		}
+		menu.addSeparator();
+		menu.addAction(tr("Frame selection (F)"), this, [this] { activeView()->frameSelection(); });
+	}
+	menu.exec(globalPos);
+}
+
+void MainWindow::roundEdgeDialog() {
+	if (m_editor->selection().faces.size() != 2) {
+		QMessageBox::information(this, tr("Round edge"),
+		                         tr("Select the two faces next to the edge first:\nFaces mode (3), click one face, Ctrl+click the other."));
+		return;
+	}
+	QDialog dialog(this);
+	dialog.setWindowTitle(tr("Round or bevel edge"));
+	auto* form = new QFormLayout(&dialog);
+	auto* radius = new QDoubleSpinBox;
+	radius->setRange(1, 4096);
+	radius->setValue(QSettings().value("brushes/roundRadius", 16.0).toDouble());
+	radius->setSuffix(tr(" units"));
+	auto* segments = new QSpinBox;
+	segments->setRange(1, 32);
+	segments->setValue(QSettings().value("brushes/roundSegments", 4).toInt());
+	form->addRow(tr("Radius"), radius);
+	form->addRow(tr("Segments (1 = bevel)"), segments);
+	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	form->addRow(buttons);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	if (dialog.exec() == QDialog::Accepted) {
+		QSettings().setValue("brushes/roundRadius", radius->value());
+		QSettings().setValue("brushes/roundSegments", segments->value());
+		m_editor->roundSelectedEdge(radius->value(), segments->value());
+	}
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

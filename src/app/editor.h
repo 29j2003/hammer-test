@@ -108,6 +108,16 @@ public:
 	[[nodiscard]] QString currentEntityClass() const { return m_currentEntityClass; }
 	void setCurrentEntityClass(const QString& classname);
 
+	// --- Shapes (block tool) --------------------------------------------------
+	[[nodiscard]] const ShapeOptions& shapeOptions() const { return m_shapeOptions; }
+	/// Changes the shape settings; the shape created last is rebuilt with them as long as
+	/// nothing else changed since (live editing, still one undo step).
+	void setShapeOptions(const ShapeOptions& options);
+	/// Creates the current shape in `box` with the current material and selects it.
+	void createShape(const Bounds& box);
+	/// The shape created last can still be changed through setShapeOptions().
+	[[nodiscard]] bool shapeEditable() const;
+
 	// --- Operations on the selection -----------------------------------------
 	void deleteSelection();
 	void duplicateSelection();
@@ -116,6 +126,12 @@ public:
 	void applyMaterialToSelection(const QString& material);
 	void tieSelectionToEntity(const QString& classname);
 	void moveSelectionToWorld();
+	// Brush tools (Hammer: carve, hollow, merge; rounding edges between two selected faces).
+	void hollowSelection(double thickness);
+	void carveWithSelection();
+	void mergeSelection();
+	void roundSelectedEdge(double radius, int segments);
+	void clipSelection(const Plane& plane, edit::ClipKeep keep);
 
 signals:
 	void gameAboutToChange();   ///< Background readers of the old game's files must stop now
@@ -148,6 +164,15 @@ private:
 	QString m_currentMaterial = "DEV/DEV_MEASUREGENERIC01";
 	QStringList m_recentMaterials;
 	QString m_currentEntityClass = "info_player_start";
+	ShapeOptions m_shapeOptions;
+	struct LastShape {
+		Bounds box;
+		std::vector<SolidRef> refs;
+		std::string name;
+		std::string material;
+		unsigned revision = 0;
+		bool valid = false;
+	} m_lastShape;
 };
 
 /// Path helpers between Qt and std::filesystem (UTF-8 safe on Windows).

@@ -355,6 +355,49 @@ void createDemo(Fixture& f) {
 	solid({512, -128, 224}, {528, 128, 320}, CONCRETE);
 	solid({-528, -528, 320}, {528, 0, 336}, CONCRETE);
 	solid({-528, 0, 320}, {528, 528, 336}, "TOOLS/TOOLSSKYBOX");
+	// Shapes from the block tool: an arch over the doorway, round pillars, stairs, a rounded ledge.
+	const auto shape = [&](Vec3 a, Vec3 b, ShapeOptions options, const char* material) {
+		auto [change, refs] = edit::createShape(doc, box(a, b), options, material);
+		return refs;
+	};
+	ShapeOptions arch;
+	arch.kind = ShapeOptions::Kind::Arch;
+	arch.sides = 8;
+	arch.arc = 180;
+	arch.wallWidth = 24;
+	arch.startAngle = 0;
+	arch.wallWidth = 16;
+	// Arch in the top of the doorway: built lying flat, then stood up (turned around the X axis).
+	auto archRefs = shape({-64, 0, 512}, {64, 128, 528}, arch, CONCRETE);
+	Selection archSelection;
+	archSelection.solids = archRefs;
+	(void)edit::rotate(doc, archSelection, Mat3::rotation(0, 90), {0, 0, 0}, true);
+	ShapeOptions pillar;
+	pillar.kind = ShapeOptions::Kind::Cylinder;
+	pillar.sides = 16;
+	for (const double y : {-64.0, 160.0}) {
+		shape({232, y, 0}, {280, y + 48, 320}, pillar, "DEMO/CONCRETEWALL001");
+	}
+	ShapeOptions stairs;
+	stairs.kind = ShapeOptions::Kind::Stairs;
+	stairs.steps = 6;
+	shape({-512, -160, 0}, {-416, 32, 96}, stairs, CONCRETE);
+	ShapeOptions spike;
+	spike.kind = ShapeOptions::Kind::Spike;
+	spike.sides = 4;
+	shape({-200, 380, 0}, {-120, 460, 96}, spike, "DEMO/METAL001");
+	auto ledge = solid({-512, 400, 0}, {-400, 512, 48}, CONCRETE);
+	if (auto* s = doc.findSolid(ledge)) {
+		int top = 0, south = 0;
+		for (const auto& side : s->sides) {
+			const auto n = side.plane().normal;
+			if (n.z > 0.9) top = side.id;
+			if (n.y < -0.9) south = side.id;
+		}
+		if (auto change = edit::roundEdge(doc, {ledge, top}, {ledge, south}, 16, 4)) {
+			(void)change;
+		}
+	}
 	// Pillars and crates.
 	std::vector<SolidRef> details;
 	for (const double x : {-256.0, 256.0}) {

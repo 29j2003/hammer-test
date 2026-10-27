@@ -9,6 +9,8 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QMenu>
 #include <QMimeData>
 #include <QListView>
@@ -20,12 +22,15 @@
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 
 #include <sme/brush.h>
 
 #include <functional>
 
 #include "asset_browser.h"
+#include "compile.h"
+#include "compile_window.h"
 #include "editor.h"
 #include "main_window.h"
 #include "panels.h"
@@ -49,6 +54,13 @@ void settle() {
 		QApplication::processEvents();
 		QTest::qWait(20);
 	}
+}
+
+Bounds box(Vec3 a, Vec3 b) {
+	Bounds out;
+	out.add(a);
+	out.add(b);
+	return out;
 }
 
 Bounds boundsOf(const Editor& editor, const SolidRef& ref) {
@@ -389,6 +401,131 @@ TEST_CASE("editing with the mouse in the real window") {
 	const auto b2 = buildBrushGeometry(editor.doc().world.solids.back()).bounds;
 	CHECK(b2.size().x == doctest::Approx(64));
 	CHECK(b2.size().y == doctest::Approx(96));
+
+#ifndef _WIN32
+	{
+		// Compile window: steps, progress, warnings with explanations (tools faked by shell scripts).
+		const auto script = [&](const QString& name, const QString& body) {
+			const QString path = home.filePath(name);
+			QFile file(path);
+			REQUIRE(file.open(QIODevice::WriteOnly));
+			file.write(("#!/bin/sh\n" + body + "\n").toUtf8());
+			file.close();
+			file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+			return path;
+		};
+		GameSettings tools;
+		tools.vbsp = script("vbsp", "printf 'ProcessBlock_Thread: 0...1...2...3...4...5...6...7...8...9...10\\n'\n"
+		                            "echo 'Warning: Error loading studio model \"models/missing.mdl\"!'\n"
+		                            "for last; do :; done; echo BSP > \"$last.bsp\"");
+		tools.vvis = script("vvis", "printf 'PortalFlow: 0...5...10\\n'");
+		tools.vrad = script("vrad", "printf 'BuildFacelights: 0...1...2'; sleep 0.2; printf '...10\\n'");
+		const QString vmf = home.filePath("compiled.vmf");
+		QString saveError;
+		REQUIRE(editor.saveMap(vmf, &saveError));
+		CompileOptions options;
+		options.run = false;
+		QSignalSpy done(&window.compiler(), &CompileRunner::finished);
+		window.compiler().start(vmf, home.filePath("game"), tools, options);
+		REQUIRE(done.wait(20000));
+		CHECK(done.front().front().toBool());
+		auto* compile = window.compileWindow();
+		REQUIRE(compile->stepCount() == 4);
+		for (int i = 0; i < 4; ++i) {
+			CHECK(compile->stepState(i) == CompileWindow::StepState::Done);
+		}
+		CHECK(compile->warningCount() == 1);
+		CHECK(compile->errorCount() == 0);
+		CHECK(compile->summary().contains("Finished"));
+		CHECK(QFileInfo::exists(home.filePath("game/maps/compiled.bsp")));
+		window.raiseDock("Compile");
+		settle();
+		compile->grab().save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/compile.png");
+
+		// A missing tool stops the compile with an error; later steps are skipped.
+		tools.vvis = home.filePath("missing-vvis");
+		QSignalSpy failed(&window.compiler(), &CompileRunner::finished);
+		window.compiler().start(vmf, home.filePath("game"), tools, options);
+		REQUIRE(failed.wait(20000));
+		CHECK_FALSE(failed.front().front().toBool());
+		CHECK(compile->stepState(0) == CompileWindow::StepState::Done);
+		CHECK(compile->stepState(1) == CompileWindow::StepState::Failed);
+		CHECK(compile->stepState(2) == CompileWindow::StepState::Skipped);
+		CHECK(compile->errorCount() == 1);
+	}
+#endif
+
+	{
+		// Shapes: an arch from the block tool, changed afterwards in the Tool panel (live, one undo step).
+		const auto before = editor.doc().world.solids.size();
+		ShapeOptions arch;
+		arch.kind = ShapeOptions::Kind::Arch;
+		arch.sides = 4;
+		arch.arc = 180;
+		arch.wallWidth = 32;
+		editor.clearSelection();
+		editor.setShapeOptions(arch);   // nothing selected: changes no shape that is already there
+		CHECK(editor.doc().world.solids.size() == before);
+		editor.setTool(Editor::Tool::Block);
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {-256, 128, 0}));
+		QTest::mouseMove(view, screen(view, {-64, 320, 0}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {-64, 320, 0}));
+		QTest::mouseMove(view, screen(view, {-160, 224, 64}));
+		settle();
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, {-160, 224, 64}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, {-160, 224, 64}));
+		settle();
+		CHECK(editor.doc().world.solids.size() == before + 4);
+		CHECK(editor.selection().solids.size() == 4);
+		CHECK(editor.shapeEditable());
+		arch.sides = 8;
+		editor.setShapeOptions(arch);
+		CHECK(editor.doc().world.solids.size() == before + 8);
+		editor.undo();   // one step removes the whole (changed) arch
+		CHECK(editor.doc().world.solids.size() == before);
+		editor.setShapeOptions(ShapeOptions{});
+		CHECK(editor.doc().world.solids.size() == before);
+
+		// Brush tools: hollow a block into a room, merge two blocks, then undo both.
+		editor.createShape(box({512, 512, 0}, {640, 640, 128}));
+		const auto room = editor.selection();
+		REQUIRE(room.solids.size() == 1);
+		editor.hollowSelection(16);
+		CHECK(editor.selection().solids.size() == 6);
+		editor.undo();
+		CHECK(editor.doc().findSolid(room.solids.front()));
+		editor.createShape(box({640, 512, 0}, {704, 640, 128}));
+		Selection pair = room;
+		pair.solids.push_back(editor.selection().solids.front());
+		editor.setSelection(pair);
+		editor.mergeSelection();
+		REQUIRE(editor.selection().solids.size() == 1);
+		CHECK(boundsOf(editor, editor.selection().solids.front()).size().x == doctest::Approx(192));
+		editor.undo();
+		editor.undo();
+		editor.undo();
+
+		// A right click without moving opens the context menu for the object under the cursor.
+		editor.setTool(Editor::Tool::Select);
+		editor.clearSelection();
+		QSignalSpy menu(view, &Viewport::contextMenuRequested);
+		const QPoint onBlock = screen(view, {16, -48, boundsOf(editor, block).max.z});   // beside the player start
+		QCursor::setPos(view->mapToGlobal(onBlock));
+		QTimer closer;   // the menu waits for a click: close it as soon as it is open
+		closer.setInterval(50);
+		QObject::connect(&closer, &QTimer::timeout, [&closer] {
+			if (auto* popup = QApplication::activePopupWidget()) {
+				popup->close();
+				closer.stop();
+			}
+		});
+		closer.start();
+		QTest::mousePress(view, Qt::RightButton, {}, onBlock);
+		QTest::mouseRelease(view, Qt::RightButton, {}, onBlock);
+		settle();
+		CHECK(menu.size() == 1);
+		CHECK(editor.selection().contains(block));
+	}
 
 	// Save and load again.
 	const QString path = home.filePath("test.vmf");

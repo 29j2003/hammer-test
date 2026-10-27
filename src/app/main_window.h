@@ -22,6 +22,7 @@ class QDockWidget;
 namespace sme::app {
 
 class AssetBrowser;
+class CompileWindow;
 class LogPanel;
 class MaterialCache;
 class Outliner;
@@ -47,6 +48,8 @@ public:
 	[[nodiscard]] QMenu* gameMenu() const { return m_gameMenu; }
 	[[nodiscard]] ToolPanel* toolPanel() const { return m_toolPanel; }
 	[[nodiscard]] SoundBrowser* sounds() const { return m_sounds; }
+	[[nodiscard]] CompileWindow* compileWindow() const { return m_compileWindow; }
+	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
 	void raiseDock(const QString& name);
 
 protected:
@@ -60,6 +63,8 @@ private:
 	bool maybeSave();
 	bool save(bool saveAs);
 	void compile();
+	void showContextMenu(const QPoint& globalPos);
+	void roundEdgeDialog();
 	[[nodiscard]] Viewport* activeView() const;
 
 	Editor* m_editor;
@@ -74,6 +79,8 @@ private:
 	PropertiesPanel* m_properties = nullptr;
 	ToolPanel* m_toolPanel = nullptr;
 	SoundBrowser* m_sounds = nullptr;
+	CompileWindow* m_compileWindow = nullptr;
+	std::vector<Vec3> m_lastLeak;
 	Outliner* m_outliner = nullptr;
 	ProblemsPanel* m_problems = nullptr;
 	LogPanel* m_log = nullptr;
@@ -89,6 +96,7 @@ private:
 	QActionGroup* m_renderGroup = nullptr;
 	QAction* m_textureLock = nullptr;
 	CompileRunner m_compiler;
+	QList<QAction*> m_contextActions;   ///< Right-click menu of the views (nullptr = separator)
 };
 
 } // namespace sme::app

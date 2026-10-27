@@ -32,6 +32,8 @@ public:
 
 signals:
 	void cursorWorldPosition(const QString& text);
+	/// Right click without moving: the object under the cursor is selected, show the menu.
+	void contextMenuRequested(const QPoint& globalPos);
 	void statsChanged(const QString& text);
 
 protected:
@@ -76,12 +78,14 @@ private:
 	void setPreviewSolids(const std::vector<Solid>& solids);
 	void updateBlockDrag(const QPointF& pos);
 	void createBlockFromDrag();
+	void updateShapePreview();
 	void cancelInteraction();
 	void pickMaterial(const QPointF& pos);
 	void paintAt(const QPointF& pos);
 	void setHoverSide(int sideId);
 	void showHoverMaterial(const QPointF& pos);
 	void toggleFlyMode();
+	void requestContextMenu(const QPointF& pos);
 	/// Mouse look (right mouse or fly mode). Runs alongside a tool drag, so the camera can
 	/// move while a block is being placed.
 	void beginLook(const QPointF& anchor);
