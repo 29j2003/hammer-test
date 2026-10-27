@@ -29,9 +29,17 @@ std::string lowerGeneric(const std::filesystem::path& path) {
 	return text;
 }
 
+/// The same folder can be written in different ways (on Windows e.g. the short 8.3 form
+/// "RUNNER~1" of the temp folder): compare the resolved paths where they exist.
+std::filesystem::path resolved(const std::filesystem::path& path) {
+	std::error_code ec;
+	auto out = std::filesystem::weakly_canonical(path, ec);
+	return ec ? path : out;
+}
+
 bool isInside(const std::filesystem::path& path, const std::filesystem::path& folder) {
 	if (folder.empty()) return false;
-	const auto p = lowerGeneric(path), f = lowerGeneric(folder);
+	const auto p = lowerGeneric(resolved(path)), f = lowerGeneric(resolved(folder));
 	return p == f || (p.size() > f.size() && p.starts_with(f) && p[f.size()] == '/');
 }
 
