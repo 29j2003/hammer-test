@@ -38,6 +38,7 @@
 #include <QToolButton>
 
 #include <sme/brush.h>
+#include <sme/fidelity_look.h>
 #include <sme/heightmap.h>
 #include <sme/material.h>
 #include <sme/texture.h>
@@ -52,6 +53,7 @@
 #include "copy_paste.h"
 #include "editor.h"
 #include "main_window.h"
+#include "map_look_panel.h"
 #include "material_preview.h"
 #include "material_editor.h"
 #include "panels.h"
@@ -823,6 +825,31 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK_FALSE(editor.hidden().containsEntity(lightId));
 		CHECK_FALSE(button->text().contains("hidden"));
 		if (placed) editor.undo();
+	}
+	{
+		// Map Look: a slider sets the value in the map (logic_auto -> point_clientcommand, one undo
+		// step per drag), the reset button takes it out again; the preview switch is the editor's.
+		auto* panel = window.findChild<MapLookPanel*>();
+		REQUIRE(panel);
+		const std::size_t entitiesBefore = editor.doc().entities.size();
+		auto* clouds = panel->findChild<QSlider*>("r_fidelity_sky_clouds");
+		REQUIRE(clouds);
+		clouds->setValue(300);   // 0.3
+		CHECK(sme::mapLookValues(editor.doc()).at("r_fidelity_sky_clouds") == "0.3");
+		CHECK(editor.lookValue("r_fidelity_sky_clouds") == doctest::Approx(0.3));
+		CHECK(editor.doc().entities.size() == entitiesBefore + 2);
+		panel->setValue("r_fidelity_temperature", 0.4);
+		CHECK(sme::mapLookValues(editor.doc()).size() == 2);
+		panel->resetValue("r_fidelity_temperature");
+		CHECK(sme::mapLookValues(editor.doc()).size() == 1);
+		auto* preview = panel->findChild<QCheckBox*>("lookPreview");
+		REQUIRE(preview);
+		const bool wasOn = editor.fidelityLook();
+		preview->setChecked(!wasOn);
+		CHECK(editor.fidelityLook() == !wasOn);
+		editor.setFidelityLook(wasOn);
+		while (editor.doc().entities.size() > entitiesBefore) editor.undo();
+		CHECK(sme::mapLookValues(editor.doc()).empty());
 	}
 	{
 		// The corner menu of a view switches the look (and shows it on the button).

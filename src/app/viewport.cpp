@@ -112,6 +112,13 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 			frameSelection();
 		});
 	});
+	// mapbase-fidelity look (clouds, grading): read again when the map, the game or the switch changes.
+	for (const auto signal : {&Editor::documentChanged, &Editor::settingsChanged, &Editor::gameChanged}) {
+		connect(editor, signal, this, [this] {
+			m_lookDirty = true;
+			update();
+		});
+	}
 	connect(editor, &Editor::selectionChanged, this, [this] {
 		m_selectionDirty = true;
 		update();
@@ -208,7 +215,39 @@ void Viewport::fillViewMenu(QMenu* menu) {
 	shadows->setEnabled(m_editor->renderMode() == Editor::RenderMode::Lit);
 	shadows->setToolTip(tr("Sun, nearest spot and point lights cast shadows in the lighting preview"));
 	connect(shadows, &QAction::toggled, m_editor, &Editor::setShadows);
+	auto* look = menu->addAction(tr("mapbase-fidelity look (clouds, colour grading)"));
+	look->setCheckable(true);
+	look->setChecked(m_editor->fidelityLook());
+	look->setObjectName("fidelityLook");
+	look->setToolTip(m_editor->hasFidelity() ? tr("As the mod's graphics add-on shows the map in the game (Map > Map look sets the values)")
+	                                         : tr("This mod does not have mapbase-fidelity - try its look anyway"));
+	connect(look, &QAction::toggled, m_editor, &Editor::setFidelityLook);
 	fillShowMenu(menu, m_editor);
+}
+
+void Viewport::updateLook() {
+	SceneRenderer::SkyLook sky;
+	SceneRenderer::Grade grade;
+	if (m_editor->fidelityLook()) {
+		const auto value = [this](const char* cvar) { return float(m_editor->lookValue(cvar)); };
+		sky.clouds = value("r_fidelity_sky_clouds");
+		sky.coverage = value("r_fidelity_sky_clouds_coverage");
+		sky.darkness = value("r_fidelity_sky_clouds_darkness");
+		sky.scale = value("r_fidelity_sky_clouds_scale");
+		grade.on = true;
+		grade.exposure = value("r_fidelity_exposure");
+		grade.contrast = value("r_fidelity_contrast");
+		grade.saturation = value("r_fidelity_saturation");
+		grade.vibrance = value("r_fidelity_vibrance");
+		grade.temperature = value("r_fidelity_temperature");
+		grade.tint = value("r_fidelity_tint");
+		grade.lift = value("r_fidelity_lift");
+		grade.gamma = value("r_fidelity_gamma");
+		grade.gain = value("r_fidelity_gain");
+		grade.vignette = value("r_fidelity_vignette");
+	}
+	m_renderer.setSkyLook(sky);
+	m_renderer.setGrade(grade);
 }
 
 void Viewport::fillShowMenu(QMenu* menu, Editor* editor) {
@@ -367,6 +406,10 @@ void Viewport::paintGL() {
 		m_renderer.rebuild(m_editor->doc(), m_editor->entities());
 		m_needsRebuild = false;
 		m_selectionDirty = true;
+	}
+	if (m_lookDirty) {
+		updateLook();
+		m_lookDirty = false;
 	}
 	if (m_selectionDirty) {
 		m_renderer.setSelection(m_editor->doc(), m_editor->selection(), m_editor->hidden(), m_hoverSide);

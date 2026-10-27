@@ -81,6 +81,14 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   Statusleiste: `MainWindow::updateStatusInfo` (Auswahl, Maße, Raster/Snap/Winkel), `Viewport::showHoverInfo`
   (3D: Punkt unter der Maus + Abstand, im Flächenmodus das Material), `statsChanged` = Zeit pro Bild (die Views
   zeichnen nur bei Änderungen, Bilder pro Sekunde sagen wenig), `statsDetail` als Tooltip.
+  Himmel: `SceneRenderer::bindSky` bindet die sechs Seiten `skybox/<skyname>{rt,lf,bk,ft,up,dn}` auf Einheiten 5–10,
+  Himmelsflächen (`%compilesky` oder Name `tools/toolsskybox*`) zeigen sie per Blickrichtung (Abbildung wie Quake II,
+  das GoldSrc/Source übernommen haben – im Spiel nicht verglichen). Wolken: GLSL-Port von `fidelity_sky_ps30.fxc`
+  (mymod), stehend. Farbkorrektur: Port von `fidelity_grade_ps2x.fxc` ohne Schärfe/Clarity, nur im Lighting-Preview.
+  Werte: Kern-Modul `fidelity_look` (Liste der Werte, die Karten setzen dürfen = `FCVAR_SERVER_CAN_EXECUTE` in mymod,
+  `parseCfgValues` für `cfg/fidelity.cfg`, `mapLookValues`/`setMapLookValues` über `logic_auto` „fidelity_look“ →
+  `point_clientcommand` „fidelity_look_command“, OnMapSpawn mit 0,1 s Verzögerung), `Editor::lookValue` (Karte → cfg →
+  Standard), `Editor::fidelityLook` (automatisch an, wenn die Mod mapbase-fidelity hat), Panel `MapLookPanel`.
   Entity-Werkzeug: `Viewport::updateGhost` zeigt die scharfe Klasse unter der Maus (Box + Modell über
   `SceneRenderer::drawGhostModel`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.

@@ -24,6 +24,12 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   another brush or model and they line up exactly.
 - **Resize right away**: selected brushes show squares on their sides in the select tool too; drag one to make the
   brush longer, shorter or taller without switching to the scale tool.
+- **Sky**: faces with the skybox tool texture show the map's sky (worldspawn *skyname*) as the game does.
+- **Map Look (mapbase-fidelity)**: the *Map Look* panel (next to the Outliner) sets what the mod's graphics add-on shows
+  in this map: drifting clouds, light shafts, colour grading (exposure, contrast, saturation, temperature, vignette …)
+  and water glint and foam. The lighting preview shows the clouds and the grading at once (view menu: *mapbase-fidelity
+  look*; also for mods without the add-on, to try it). The map sets the values when it loads through a `logic_auto`
+  and a `point_clientcommand` the editor keeps itself; values you leave alone are the mod's own (`cfg/fidelity.cfg`).
 - **Lighting preview with real-time shadows** from your light entities (light, light_spot, light_environment), using
   VRAD's own falloff formulas: the sun and the nearest spot and point lights cast shadows (F7 turns them off).
   Entities show their editor icons (the sprites and models Hammer uses).

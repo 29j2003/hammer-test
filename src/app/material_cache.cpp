@@ -7,6 +7,7 @@
 
 #include <sme/filesystem.h>
 #include <sme/material.h>
+#include <sme/visibility.h>
 #include <sme/texture.h>
 
 namespace sme::app {
@@ -24,6 +25,8 @@ QImage toQImage(const ImageRgba& image) {
 std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& name, unsigned maxSize) {
 	auto info = std::make_shared<MaterialInfo>();
 	info->name = name;
+	// Sky by name too: the sky shows even where the game's toolsskybox material is missing.
+	info->isSky = isSkyMaterialName(name.toStdString());
 	std::string error;
 	const auto material = loadMaterial(fs, name.toStdString(), &error);
 	if (!material) {
@@ -33,7 +36,7 @@ std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& 
 	info->found = true;
 	info->shader = QString::fromStdString(material->shader);
 	info->isTool = material->isTool();
-	info->isSky = material->flag("%compilesky") || material->flag("%compile2dsky");
+	info->isSky = info->isSky || material->flag("%compilesky") || material->flag("%compile2dsky");
 	info->isNodraw = material->flag("%compilenodraw");
 	if (material->flag("$additive")) {
 		info->kind = MaterialInfo::Kind::Additive;

@@ -98,7 +98,123 @@ uniform mat4 u_tileMatrix[16];
 uniform vec4 u_lightShadow[64];        // x: first tile or -1, y: 1 = point light (six tiles)
 uniform float u_sunTexel;
 uniform float u_atlasTexel;
+uniform int u_skyFace;                 // this batch is a toolsskybox face
+uniform int u_hasSky;                  // the six faces of the map's skybox are loaded (units 5..10)
+uniform sampler2D u_sky0, u_sky1, u_sky2, u_sky3, u_sky4, u_sky5;   // rt lf bk ft up dn
+uniform vec3 u_camPos;
+uniform vec4 u_clouds;                 // mapbase-fidelity clouds: amount, scale, coverage, darkness
+uniform vec4 u_cloudSun;               // direction to the sun, w 1 = there is one
+uniform int u_grade;                   // mapbase-fidelity colour grading (fidelity_grade_ps2x.fxc)
+uniform vec4 u_balance;                // rgb: temperature/tint times exposure
+uniform vec4 u_tone;                   // contrast, saturation, vibrance, vignette softness
+uniform vec4 u_lgg;                    // lift, 1/gamma, gain, vignette radius
+uniform vec2 u_vignette;               // strength, aspect (height / width)
+uniform vec2 u_viewport;
 out vec4 fragColor;
+
+vec3 grade(vec3 c) {
+	if (u_grade == 0) return c;
+	c *= u_balance.rgb;
+	c = clamp(c * u_lgg.z + u_lgg.x * (1.0 - c), 0.0, 1.0);
+	c = pow(c, vec3(u_lgg.y));
+	c = mix(c, c * c * (3.0 - 2.0 * c), u_tone.x);
+	float luma = dot(c, vec3(0.299, 0.587, 0.114));
+	float chroma = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+	c = mix(vec3(luma), c, u_tone.y * (1.0 + u_tone.z * (1.0 - chroma)));
+	vec2 centered = (gl_FragCoord.xy / u_viewport - 0.5) * vec2(1.0 / u_vignette.y, 1.0);
+	c *= 1.0 - u_vignette.x * smoothstep(u_lgg.w, u_lgg.w + u_tone.w, length(centered));
+	return clamp(c, 0.0, 1.0);
+}
+
+// The 2D skybox as the engine maps it (Quake II's sky: rt +X, lf -X, bk +Y, ft -Y, up, dn).
+vec3 skyTexture(vec3 v) {
+	vec3 a = abs(v);
+	vec2 st;
+	int face;
+	if (a.x >= a.y && a.x >= a.z) {
+		face = v.x >= 0.0 ? 0 : 1;
+		st = v.x >= 0.0 ? vec2(-v.y, v.z) / a.x : vec2(v.y, v.z) / a.x;
+	} else if (a.y >= a.z) {
+		face = v.y >= 0.0 ? 2 : 3;
+		st = v.y >= 0.0 ? vec2(v.x, v.z) / a.y : vec2(-v.x, v.z) / a.y;
+	} else {
+		face = v.z >= 0.0 ? 4 : 5;
+		st = v.z >= 0.0 ? vec2(-v.y, -v.x) / a.z : vec2(-v.y, v.x) / a.z;
+	}
+	vec2 uv = vec2((st.x + 1.0) * 0.5, 1.0 - (st.y + 1.0) * 0.5);
+	uv = clamp(uv, vec2(0.002), vec2(0.998));   // no seams from the neighbouring edge
+	if (face == 0) return texture(u_sky0, uv).rgb;
+	if (face == 1) return texture(u_sky1, uv).rgb;
+	if (face == 2) return texture(u_sky2, uv).rgb;
+	if (face == 3) return texture(u_sky3, uv).rgb;
+	if (face == 4) return texture(u_sky4, uv).rgb;
+	return texture(u_sky5, uv).rgb;
+}
+
+// mapbase-fidelity's drifting clouds (fidelity_sky_ps30.fxc), standing still in the editor.
+float skyHash(vec2 p) {
+	vec3 p3 = fract(p.xyx * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+float valueNoise(vec2 p) {
+	vec2 i = floor(p), f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(skyHash(i), skyHash(i + vec2(1, 0)), u.x), mix(skyHash(i + vec2(0, 1)), skyHash(i + vec2(1, 1)), u.x), u.y);
+}
+float cloudNoise(vec2 p) {
+	float v = 0.0, a = 0.5;
+	for (int k = 0; k < 4; ++k) {
+		v += a * valueNoise(p);
+		p = p * 2.03 + vec2(17.1, 9.3);
+		a *= 0.5;
+	}
+	return v;
+}
+float cloudBase(vec2 p) { return cloudNoise(p) * 0.65 + cloudNoise(p * 0.47 + 31.7) * 0.35; }
+float cloudAt(float n, float h) {
+	float need = u_clouds.z + h * h * 0.22;
+	return clamp((n - need) / 0.22, 0.0, 1.0) * smoothstep(0.0, 0.12, h);
+}
+vec3 skyClouds(vec3 dir, vec3 color) {
+	float fade = smoothstep(-0.01, 0.04, dir.z);
+	if (u_clouds.x <= 0.0 || fade <= 0.0) return color;
+	float lum = dot(color, vec3(0.299, 0.587, 0.114));
+	vec3 grey = mix(color, vec3(lum), 0.8);
+	vec3 shadow = grey * (1.0 - 0.75 * u_clouds.w);
+	vec3 lit = grey * 1.3 + 0.02;
+	bool sun = u_cloudSun.w > 0.5;
+	vec2 toSun = u_cloudSun.xy / max(length(u_cloudSun.xy), 0.05) * 0.3;
+	vec2 along = dir.xy / max(dir.z, 0.012) * u_clouds.y * 1.6;
+	const int STEPS = 6;
+	const float THICKNESS = 0.35;
+	float stepDepth = min(THICKNESS / max(dir.z, 0.012), 3.0) / float(STEPS) * 12.0;
+	float jitter = skyHash(floor(dir.xy * 2048.0)) - 0.5;
+	float transmit = 1.0;
+	vec3 cloud = vec3(0.0);
+	for (int k = 0; k < STEPS; ++k) {
+		float h = clamp((float(k) + 0.5 + jitter * 0.8) / float(STEPS), 0.0, 1.0);
+		vec2 p = along * (1.0 + h * THICKNESS);
+		float detail = valueNoise(p * 6.3) - 0.5;
+		float density = cloudAt(cloudBase(p) + detail * 0.1, h);
+		if (density > 0.001) {
+			float light = sun ? exp(-cloudAt(cloudBase(p + toSun), clamp(h + 0.35 * clamp(u_cloudSun.z, 0.0, 1.0), 0.0, 1.0)) * 2.5) * mix(0.75, 1.0, h)
+			                  : mix(0.3, 0.85, h);
+			float powder = 1.0 - exp(-density * 3.0);
+			vec3 sampleColor = mix(shadow, lit, clamp(light * mix(1.0, 0.75, powder), 0.0, 1.0));
+			float alpha = 1.0 - exp(-density * stepDepth);
+			cloud += transmit * alpha * sampleColor;
+			transmit *= 1.0 - alpha;
+			if (transmit < 0.02) break;
+		}
+	}
+	float coverage = 1.0 - transmit;
+	if (sun) cloud += grey * pow(clamp(dot(dir, u_cloudSun.xyz), 0.0, 1.0), 12.0) * coverage * transmit * 3.0;
+	float haze = smoothstep(0.0, 0.15, dir.z);
+	cloud = mix(mix(color, grey, 0.5) * coverage, cloud, haze);
+	float amount = fade * u_clouds.x;
+	return color * (1.0 - coverage * amount) + cloud * amount;
+}
 
 vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
 
@@ -158,6 +274,15 @@ void main() {
 	}
 	vec3 n = normalize(v_normal);
 	vec3 color;
+	if (u_skyFace == 1 && u_hasSky == 1) {
+		// Sky faces show the map's sky (and the mod's clouds), seen through them as in the game.
+		vec3 dir = normalize(v_world - u_camPos);
+		color = skyClouds(dir, skyTexture(dir));
+		color = grade(color);
+		if ((v_flag & 1u) != 0u) color = mix(color, vec3(1.0, 0.45, 0.1), 0.35);
+		fragColor = vec4(color, 1.0);
+		return;
+	}
 	if (u_mode == 1 || u_fullbright == 1) {
 		float shade = 0.78 + 0.22 * dot(n, normalize(vec3(0.35, 0.55, 0.75)));
 		color = base.rgb * shade;
@@ -192,7 +317,7 @@ void main() {
 		}
 		// Soft filmic curve: keeps hot spots near lights from clipping to white.
 		vec3 hdr = toLinear(base.rgb) * light * u_exposure;
-		color = toGamma(vec3(1.0) - exp(-hdr * 1.25));
+		color = grade(toGamma(vec3(1.0) - exp(-hdr * 1.25)));
 	}
 	if ((v_flag & 1u) != 0u) {
 		color = mix(color, vec3(1.0, 0.45, 0.1), 0.35);
@@ -557,6 +682,7 @@ void SceneRenderer::ensureFlagTexture() {
 }
 
 void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog) {
+	m_skyName = QString::fromStdString(doc.world.get("skyname")).trimmed();
 	m_doc = &doc;
 	std::unordered_map<QString, std::vector<float>> byMaterial;
 	std::unordered_map<QString, std::vector<int>> facesByMaterial;
@@ -1021,9 +1147,46 @@ void SceneRenderer::setCommonUniforms(QOpenGLShaderProgram& program, const Param
 	program.setUniformValue("u_viewProj", params.projection * params.view);
 	program.setUniformValue("u_model", model);
 	program.setUniformValue("u_flags", 2);
+	if (&program == m_program.get()) {
+		program.setUniformValue("u_skyFace", 0);
+	}
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, m_flagTexture);
 	glActiveTexture(GL_TEXTURE0);
+}
+
+void SceneRenderer::bindSky(QOpenGLShaderProgram& program, const Params& params) {
+	// The six faces of the map's skybox ("skybox/<skyname>rt" ...), in the shader's order.
+	static const char* SUFFIXES[6] = {"rt", "lf", "bk", "ft", "up", "dn"};
+	bool all = !m_skyName.isEmpty();
+	for (int i = 0; i < 6 && all; ++i) {
+		auto& tex = texture(QStringLiteral("skybox/%1%2").arg(m_skyName, QLatin1String(SUFFIXES[i])));
+		all = tex.found && tex.id != 0;
+		glActiveTexture(GL_TEXTURE5 + GLenum(i));
+		glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
+		program.setUniformValue(QStringLiteral("u_sky%1").arg(i).toLatin1().constData(), 5 + i);
+	}
+	glActiveTexture(GL_TEXTURE0);
+	program.setUniformValue("u_hasSky", all ? 1 : 0);
+	program.setUniformValue("u_camPos", params.cameraPosition);
+	program.setUniformValue("u_clouds", QVector4D(m_skyLook.clouds, std::max(m_skyLook.scale, 0.05f), m_skyLook.coverage, m_skyLook.darkness));
+	program.setUniformValue("u_cloudSun", QVector4D(-m_sunDirection, m_hasSun ? 1.f : 0.f));
+	// Colour grading only in the lighting preview (the game grades the lit picture).
+	const bool grading = m_grade.on && params.mode == Mode::Lit;
+	program.setUniformValue("u_grade", grading ? 1 : 0);
+	if (grading) {
+		const auto& g = m_grade;
+		const float temperature = std::clamp(g.temperature, -1.f, 1.f), tint = std::clamp(g.tint, -1.f, 1.f);
+		const float exposure = std::max(0.f, g.exposure);
+		program.setUniformValue("u_balance", QVector4D((1 + 0.10f * temperature - 0.03f * tint) * exposure, (1 + 0.08f * tint) * exposure,
+		                                               (1 - 0.10f * temperature - 0.03f * tint) * exposure, 0));
+		program.setUniformValue("u_tone", QVector4D(g.contrast, std::max(0.f, g.saturation), g.vibrance, 0.45f));
+		program.setUniformValue("u_lgg", QVector4D(g.lift, 1.f / std::max(0.1f, g.gamma), g.gain, 0.55f));
+		GLint viewport[4] = {0, 0, 1, 1};
+		glGetIntegerv(GL_VIEWPORT, viewport);
+		program.setUniformValue("u_viewport", QVector2D(float(std::max(1, viewport[2])), float(std::max(1, viewport[3]))));
+		program.setUniformValue("u_vignette", QVector2D(std::clamp(g.vignette, 0.f, 1.f), float(std::max(1, viewport[3])) / float(std::max(1, viewport[2]))));
+	}
 }
 
 void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass) {
@@ -1042,6 +1205,7 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 		program.setUniformValue("u_hasTex2", tex.id2 ? 1 : 0);
 		program.setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
 		program.setUniformValue("u_fullbright", (tex.isTool || tex.isSky) ? 1 : 0);
+		program.setUniformValue("u_skyFace", tex.isSky ? 1 : 0);
 		program.setUniformValue("u_opacity", translucent && tex.isTool ? 0.55f : 1.f);
 		if (tex.kind == MaterialInfo::Kind::Additive) {
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -1051,6 +1215,7 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 		glDrawArrays(GL_TRIANGLES, batch.first, batch.count);
 		++m_drawCalls;
 	}
+	program.setUniformValue("u_skyFace", 0);
 }
 
 void SceneRenderer::render(const Params& params) {
@@ -1104,6 +1269,7 @@ void SceneRenderer::render(const Params& params) {
 	m_program->setUniformValue("u_sunDir", m_sunDirection);
 	m_program->setUniformValue("u_sunColor", m_sunColor);
 	m_program->setUniformValue("u_ambient", m_ambient);
+	bindSky(*m_program, params);
 
 	// The 64 lights closest to the camera.
 	std::vector<const Light*> lights;

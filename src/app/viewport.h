@@ -117,6 +117,8 @@ private:
 	[[nodiscard]] bool scaling() const;   ///< Scale handle being dragged
 	/// The selection shows resize squares (Scale tool, or Select tool with brushes selected).
 	[[nodiscard]] bool resizeHandles() const;
+	/// Clouds and colour grading of mapbase-fidelity from the editor's look values.
+	void updateLook();
 	/// A resize square on that side of the box can be seen (3D: the side faces the camera).
 	[[nodiscard]] bool handleFacesCamera(const Vec3& point, int axis, int side) const;
 	/// Live preview brushes (scaled brushes with their real texture coordinates); empty clears.
@@ -190,6 +192,7 @@ private:
 		QMatrix4x4 transform;
 	};
 	std::optional<Ghost> m_ghost;
+	bool m_lookDirty = true;
 	Qt::KeyboardModifiers m_pressModifiers;
 	QSet<int> m_keys;
 	QTimer m_moveTimer;

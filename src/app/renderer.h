@@ -75,6 +75,21 @@ public:
 		bool shadows = true;          ///< Real-time shadows in the lighting preview
 	};
 	void render(const Params& params);
+	/// mapbase-fidelity's clouds over the sky faces (0 amount = none).
+	struct SkyLook {
+		float clouds = 0;
+		float coverage = 0.38f;
+		float darkness = 0.5f;
+		float scale = 1;
+	};
+	void setSkyLook(const SkyLook& look) { m_skyLook = look; }
+	/// mapbase-fidelity's colour grading in the lighting preview.
+	struct Grade {
+		bool on = false;
+		float exposure = 1, contrast = 0.18f, saturation = 1, vibrance = 0.2f, temperature = 0, tint = 0;
+		float lift = 0, gamma = 1, gain = 1, vignette = 0.18f;
+	};
+	void setGrade(const Grade& grade) { m_grade = grade; }
 	/// Selected objects drawn with an extra transform (move/rotate preview); `brushes` false
 	/// leaves out selected brushes (they come from setPreviewSolids instead).
 	void drawPreview(const Params& params, const QMatrix4x4& model, bool brushes = true);
@@ -152,6 +167,8 @@ private:
 	GpuTexture& texture(const QString& material);
 	void uploadTexture(GpuTexture& tex, const MaterialInfo& info);
 	void drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass);
+	/// The map's skybox faces on units 5..10 and the cloud settings.
+	void bindSky(QOpenGLShaderProgram& program, const Params& params);
 	void setCommonUniforms(QOpenGLShaderProgram& program, const Params& params, const QMatrix4x4& model);
 	void ensureFlagTexture();
 	GpuModel* gpuModel(const QString& path);
@@ -171,6 +188,9 @@ private:
 	MaterialCache* m_materials = nullptr;
 	ModelCache* m_models = nullptr;
 	std::vector<ModelInstance> m_modelInstances;
+	QString m_skyName;          ///< worldspawn "skyname"
+	SkyLook m_skyLook;
+	Grade m_grade;
 	QHash<QString, GpuModel> m_gpuModels;
 	std::unique_ptr<QOpenGLShaderProgram> m_program;
 	std::unique_ptr<QOpenGLShaderProgram> m_lineProgram;

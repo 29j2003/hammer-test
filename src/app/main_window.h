@@ -25,6 +25,7 @@ namespace sme::app {
 
 class AssetBrowser;
 class CompileWindow;
+class MapLookPanel;
 class MaterialEditor;
 class LogPanel;
 class MaterialCache;
@@ -120,6 +121,7 @@ private:
 	QToolButton* m_gameButton = nullptr;
 	QMenu* m_gameMenu = nullptr;
 	QComboBox* m_gridCombo = nullptr;
+	MapLookPanel* m_mapLook = nullptr;
 	QLabel* m_selectionLabel = nullptr;
 	QLabel* m_sizeLabel = nullptr;
 	QLabel* m_gridLabel = nullptr;

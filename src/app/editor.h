@@ -13,6 +13,7 @@
 
 #include <sme/clipboard.h>
 #include <sme/editing.h>
+#include <sme/fidelity_look.h>
 #include <sme/visibility.h>
 #include <sme/game.h>
 #include <sme/history.h>
@@ -99,6 +100,14 @@ public:
 	/// Real-time shadows in the lighting preview.
 	[[nodiscard]] bool shadows() const { return m_shadows; }
 	void setShadows(bool on);
+	/// The mod has mapbase-fidelity (its cfg/fidelity.cfg or shaders): clouds, grading, relief.
+	[[nodiscard]] bool hasFidelity() const { return m_hasFidelity; }
+	/// Lighting preview shows mapbase-fidelity's look (clouds, colour grading, relief): on by
+	/// default for mods that have it, switchable for any mod (to try it without deploying).
+	[[nodiscard]] bool fidelityLook() const;
+	void setFidelityLook(bool on);
+	/// A look value as the game would use it: the map's, else cfg/fidelity.cfg's, else the add-on's default.
+	[[nodiscard]] double lookValue(std::string_view cvar) const;
 	[[nodiscard]] double grid() const { return m_grid; }
 	void setGrid(double grid);
 	/// Grid used for snapping: the grid size, or 0 while snapping is off (Shift+W).
@@ -205,6 +214,9 @@ private:
 	SelectMode m_selectMode = SelectMode::Object;
 	RenderMode m_renderMode = RenderMode::Lit;
 	bool m_shadows = true;
+	bool m_hasFidelity = false;
+	int m_fidelityLook = -1;                 ///< -1 automatic, 0 off, 1 on
+	std::map<std::string, std::string> m_lookDefaults;   ///< From the mod's cfg/fidelity.cfg
 	double m_grid = 16;
 	bool m_snapping = true;
 	double m_rotationSnap = 15;

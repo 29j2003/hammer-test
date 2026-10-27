@@ -43,6 +43,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_snapping = settings.value("editor/snapping", true).toBool();
 	m_shadows = settings.value("editor/shadows", true).toBool();
 	m_hiddenKinds = settings.value("view/hiddenKinds", 0u).toUInt() & ALL_OBJECT_KINDS;
+	m_fidelityLook = std::clamp(settings.value("view/fidelityLook", -1).toInt(), -1, 1);
 	// Hidden objects follow every change of the map (and of what was hidden by hand).
 	connect(this, &Editor::documentChanged, this, [this] { m_hiddenDirty = true; });
 	connect(this, &Editor::selectionChanged, this, [this] { m_hiddenDirty = true; });
@@ -182,6 +183,12 @@ bool Editor::openGame(const QString& key, QString* error) {
 	m_models->setFileSystem(nullptr, nullptr);
 	m_game = std::move(game);
 	m_models->setFileSystem(&m_game->files, &m_game->entities);
+	// mapbase-fidelity: its config gives the look values players get; it or its shaders tell
+	// that the mod has the add-on.
+	const auto cfg = m_game->files.readText("cfg/fidelity.cfg");
+	m_lookDefaults = cfg ? parseCfgValues(*cfg) : std::map<std::string, std::string>{};
+	m_hasFidelity = cfg.has_value() || m_game->files.exists("shaders/fxc/fidelity_parallax_ps30.vcs") ||
+	                std::filesystem::exists(m_game->entry.gameDir / "bin" / "game_shader_dx6.dll");
 	QSettings().setValue("editor/game", key);
 	emit gameChanged();
 	emit message(tr("Game: %1 (%2 entity classes, %3 search paths)")
@@ -465,6 +472,35 @@ void Editor::setShadows(bool on) {
 		QSettings().setValue("editor/shadows", on);
 		emit settingsChanged();
 	}
+}
+
+bool Editor::fidelityLook() const {
+	return m_fidelityLook < 0 ? m_hasFidelity : m_fidelityLook == 1;
+}
+
+void Editor::setFidelityLook(bool on) {
+	if (fidelityLook() == on && m_fidelityLook >= 0) {
+		return;
+	}
+	m_fidelityLook = on ? 1 : 0;
+	QSettings().setValue("view/fidelityLook", m_fidelityLook);
+	emit settingsChanged();
+}
+
+double Editor::lookValue(std::string_view cvar) const {
+	const std::string key = toLower(cvar);
+	const auto mapValues = mapLookValues(m_doc);
+	bool ok = false;
+	if (const auto it = mapValues.find(key); it != mapValues.end()) {
+		const double v = QString::fromStdString(it->second).toDouble(&ok);
+		if (ok) return v;
+	}
+	if (const auto it = m_lookDefaults.find(key); it != m_lookDefaults.end()) {
+		const double v = QString::fromStdString(it->second).toDouble(&ok);
+		if (ok) return v;
+	}
+	const auto* setting = findLookSetting(cvar);
+	return setting ? setting->fallback : 0.0;
 }
 
 void Editor::setRenderMode(RenderMode mode) {

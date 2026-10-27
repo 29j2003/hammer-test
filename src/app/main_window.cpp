@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "compile_window.h"
+#include "map_look_panel.h"
 #include "material_editor.h"
 #include "material_cache.h"
 #include "panels.h"
@@ -261,6 +262,11 @@ void MainWindow::createDocks() {
 	auto* outliner = addDock(tr("Outliner"), m_outliner, Qt::RightDockWidgetArea);
 	auto* problems = addDock(tr("Problems"), m_problems, Qt::RightDockWidgetArea);
 	tabifyDockWidget(outliner, problems);
+	// mapbase-fidelity's look per map (clouds, light shafts, grading, water), next to the Outliner.
+	m_mapLook = new MapLookPanel(m_editor);
+	auto* mapLook = addDock(tr("Map Look"), m_mapLook, Qt::RightDockWidgetArea);
+	tabifyDockWidget(outliner, mapLook);
+	outliner->raise();
 	outliner->raise();
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);

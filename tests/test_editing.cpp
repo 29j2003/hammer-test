@@ -4,6 +4,7 @@
 
 #include <sme/brush.h>
 #include <sme/clipboard.h>
+#include <sme/fidelity_look.h>
 #include <sme/visibility.h>
 #include <sme/editing.h>
 
@@ -320,4 +321,50 @@ TEST_CASE("object kinds for hiding: brushes, tool and sky faces, entities") {
 	const auto world = objectsOfKinds(doc, static_cast<std::uint32_t>(ObjectKind::World), nullptr);
 	CHECK(world.solids == std::vector<SolidRef>{wall});
 	CHECK(world.faces.empty());
+}
+
+TEST_CASE("mapbase-fidelity look values per map: logic_auto -> point_clientcommand") {
+	MapDocument doc;
+	History history;
+	CHECK(mapLookValues(doc).empty());
+	REQUIRE(findLookSetting("r_fidelity_sky_clouds"));
+	CHECK(findLookSetting("R_FIDELITY_SKY_CLOUDS"));
+	CHECK_FALSE(findLookSetting("sv_cheats"));
+
+	history.push(setMapLookValues(doc, {{"r_fidelity_sky_clouds", "0.4"}, {"r_fidelity_temperature", "0.3"}}, {64, 0, 32}));
+	REQUIRE(doc.entities.size() == 2);
+	const auto values = mapLookValues(doc);
+	CHECK(values.size() == 2);
+	CHECK(values.at("r_fidelity_sky_clouds") == "0.4");
+	const Entity* relay = nullptr;
+	for (const auto& entity : doc.entities) {
+		if (entity.classname() == "logic_auto") relay = &entity;
+	}
+	REQUIRE(relay);
+	CHECK(relay->get("targetname") == "fidelity_look");
+	CHECK(relay->origin().x == doctest::Approx(64));
+	REQUIRE(relay->connections.size() == 2);
+	CHECK(relay->connections[0].output == "OnMapSpawn");
+	CHECK(relay->connections[0].input == "Command");
+	CHECK(relay->connections[0].delay > 0);
+
+	// Changing keeps the entities and other outputs of the relay; an empty set removes them.
+	doc.entities[0].connections.push_back({"OnMapSpawn", "door", "Open", "", 0, -1});
+	history.push(setMapLookValues(doc, {{"r_fidelity_sky_clouds", "0.7"}}, {}));
+	CHECK(doc.entities.size() == 2);
+	CHECK(mapLookValues(doc).at("r_fidelity_sky_clouds") == "0.7");
+	CHECK(mapLookValues(doc).size() == 1);
+	history.undo(doc);
+	CHECK(mapLookValues(doc).at("r_fidelity_sky_clouds") == "0.4");
+	history.redo(doc);
+	history.push(setMapLookValues(doc, {}, {}));
+	CHECK(doc.entities.empty());
+	history.undo(doc);
+	CHECK(doc.entities.size() == 2);
+
+	// What players get without a map value: cfg/fidelity.cfg.
+	const auto cfg = parseCfgValues("// clouds\nr_fidelity_sky_clouds 0.85\n  r_fidelity_godrays_tint \"1.0 0.92 0.8\" // colour\nexec other\n\n");
+	CHECK(cfg.at("r_fidelity_sky_clouds") == "0.85");
+	CHECK(cfg.at("r_fidelity_godrays_tint") == "1.0 0.92 0.8");
+	CHECK(cfg.at("exec") == "other");
 }
