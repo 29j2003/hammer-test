@@ -365,7 +365,7 @@ TEST_CASE("file system sees files the editor writes") {
 	test::writeText(f.mod / "scripts/game_sounds_new.txt", "\"A\" { \"wave\" \"a.wav\" }");
 	CHECK_FALSE(game->files.exists("scripts/game_sounds_new.txt"));   // not seen yet
 	game->files.noteWrittenFile(f.mod / "scripts/game_sounds_new.txt");
-	CHECK(game->files.exists("scripts/game_sounds_new.txt"));
-	CHECK(game->files.readText("scripts/game_sounds_new.txt")->find("a.wav") != std::string::npos);
+	REQUIRE(game->files.exists("scripts/game_sounds_new.txt"));
+	CHECK(game->files.readText("scripts/game_sounds_new.txt").value_or("").find("a.wav") != std::string::npos);
 	game->files.noteWrittenFile(f.root / "elsewhere.txt");   // outside every folder: ignored
 }

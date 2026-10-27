@@ -369,11 +369,17 @@ void GameFileSystem::noteWrittenFile(const std::filesystem::path& file) {
 		if (m_mounts[i].kind != Mount::Kind::Directory || !m_mounts[i].present) {
 			continue;
 		}
-		const auto relative = file.lexically_normal().lexically_relative(m_mounts[i].path.lexically_normal());
-		const auto text = normalizePath(displayPath(relative));
-		if (relative.empty() || text.starts_with("..") || relative.is_absolute()) {
+		// Canonical and case-insensitive: Windows paths may differ in case or use short names.
+		const auto key = [](const std::filesystem::path& path) {
+			std::error_code ec;
+			const auto canonical = std::filesystem::weakly_canonical(path, ec);
+			return normalizePath(displayPath(ec ? path.lexically_normal() : canonical));
+		};
+		const std::string root = key(m_mounts[i].path), full = key(file);
+		if (full.size() <= root.size() + 1 || !full.starts_with(root + "/")) {
 			continue;
 		}
+		const std::string text = full.substr(root.size() + 1);
 		auto& data = *m_data[i];
 		data.buildIndex(m_mounts[i].path);
 		const std::unique_lock lock(data.indexMutex);
