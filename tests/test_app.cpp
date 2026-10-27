@@ -71,6 +71,8 @@
 #include "main_window.h"
 #include "mod_page.h"
 #include "map_look_panel.h"
+#include "maps_panel.h"
+#include "new_mod_dialog.h"
 #include "material_preview.h"
 #include "material_editor.h"
 #include "panels.h"
@@ -1888,6 +1890,8 @@ TEST_CASE("source control: a new repository, its changes, a commit and the histo
 	}
 
 	for (const auto& entry : environment) qunsetenv(entry.first);
+}
+
 TEST_CASE("ship panel: what the open map needs, share ZIP, Workshop item") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());
@@ -1963,6 +1967,109 @@ TEST_CASE("ship panel: what the open map needs, share ZIP, Workshop item") {
 	CHECK(command.contains("+workshop_build_item"));
 	CHECK_FALSE(command.contains("password", Qt::CaseInsensitive));
 	CHECK(panel.findChild<QLineEdit*>("shipWorkshopCommand")->text() == command);
+}
+
+TEST_CASE("maps panel: map list with compile state, new map, batch compile; a new mod from the open map") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	REQUIRE(editor.openGame("sourcemods/mymod"));
+	CompileRunner compiler;
+	MapsPanel panel(&editor, &compiler);
+	panel.resize(900, 600);
+	panel.show();
+
+	// The demo map is listed and was never compiled.
+	const QString demo = fromPath(f.mod / "mapsrc/demo.vmf");
+	REQUIRE(panel.maps().contains(demo));
+	const QString gameDir = fromPath(f.mod);
+	CHECK(bspState(demo, gameDir) == BspState::NotCompiled);
+	// A BSP newer than the map: up to date; the map saved again afterwards: outdated.
+	test::writeText(f.mod / "maps/demo.bsp", "VBSP fake map");
+	QFile bsp(fromPath(f.mod / "maps/demo.bsp"));
+	REQUIRE(bsp.open(QIODevice::ReadWrite));
+	bsp.setFileTime(QFileInfo(demo).lastModified().addSecs(60), QFileDevice::FileModificationTime);
+	bsp.close();
+	CHECK(bspState(demo, gameDir) == BspState::UpToDate);
+	QFile vmf(demo);
+	REQUIRE(vmf.open(QIODevice::ReadWrite));
+	vmf.setFileTime(QFileInfo(bsp).lastModified().addSecs(60), QFileDevice::FileModificationTime);
+	vmf.close();
+	CHECK(bspState(demo, gameDir) == BspState::Outdated);
+
+	// New map: an empty map file with a sky, listed at once; bad names are refused.
+	QString error;
+	CHECK(panel.createMap("bad name", &error).isEmpty());
+	CHECK_FALSE(error.isEmpty());
+	const QString second = panel.createMap("second", &error);
+	REQUIRE_FALSE(second.isEmpty());
+	CHECK(panel.maps().contains(second));
+	QFile secondFile(second);
+	REQUIRE(secondFile.open(QIODevice::ReadOnly));
+	const QByteArray secondText = secondFile.readAll();
+	CHECK(secondText.contains("worldspawn"));
+	CHECK(secondText.contains("skyname"));
+	const QString copy = panel.duplicateMap(second, &error);
+	CHECK(copy.endsWith("second_copy.vmf"));
+	const QString renamed = panel.renameMap(copy, "third", &error);
+	CHECK(renamed.endsWith("third.vmf"));
+	CHECK_FALSE(QFileInfo::exists(copy));
+
+	// Batch compile: the fixture's VBSP does not exist, so every map fails - one after another,
+	// without hanging, and each failure is remembered.
+	panel.setChecked(demo, true);
+	panel.setChecked(second, true);
+	CHECK(panel.checkedMaps().size() == 2);
+	QSignalSpy started(&panel, &MapsPanel::compileStarted);
+	QSignalSpy finished(&panel, &MapsPanel::batchFinished);
+	REQUIRE(panel.compileMaps(panel.checkedMaps(), false));
+	CHECK(started.count() == 1);
+	CHECK_FALSE(panel.compileMaps({demo}, false));   // one batch at a time
+	REQUIRE(finished.wait(10000));
+	CHECK(finished.front()[0].toInt() == 0);
+	CHECK(finished.front()[1].toInt() == 2);
+	CHECK_FALSE(panel.batchRunning());
+	CHECK(panel.lastResult(demo) == "failed");
+	CHECK(panel.lastResult(second) == "failed");
+	CHECK(panel.lastResult(renamed).isEmpty());
+	CHECK((panel.deleteMap(renamed, &error) || !error.isEmpty()));   // the trash may be missing on a test machine
+
+	// A new mod from the open map: created in sourcemods, found, opened, the map copied.
+	REQUIRE(editor.openMap(demo, &error));
+	ModTemplate mod{"Fresh Mod", "freshmod", ModBase::Mapbase, mapbaseMounts(f.steam / "steamapps/sourcemods")};
+	const QString key = createModAndSwitch(&editor, mod, {demo}, &error);
+	INFO(error.toStdString());
+	REQUIRE(key == "sourcemods/freshmod");
+	CHECK(editor.gameKey() == key);
+	REQUIRE(editor.gameEntry());
+	CHECK(editor.gameEntry()->usesMapbase);
+	CHECK(QFileInfo::exists(fromPath(f.steam / "steamapps/sourcemods/freshmod/mapsrc/demo.vmf")));
+	// The maps panel follows the game: it lists the new mod's map.
+	CHECK(panel.mapFolder().contains("freshmod"));
+	CHECK(panel.maps().size() == 1);
+	// Not twice.
+	CHECK(createModAndSwitch(&editor, mod, {}, &error).isEmpty());
+
+	// The dialog: the title fills in the folder name, a taken folder is refused.
+	NewModDialog dialog(&editor);
+	dialog.findChild<QLineEdit*>("newModTitle")->setText("Fresh Mod");
+	CHECK(dialog.findChild<QLineEdit*>("newModFolder")->text() == "fresh_mod");
+	CHECK(dialog.modTemplate().folder == "fresh_mod");
+	dialog.findChild<QLineEdit*>("newModFolder")->setText("freshmod");
+	emit dialog.findChild<QLineEdit*>("newModFolder")->textEdited("freshmod");
+	QPushButton* create = nullptr;
+	for (auto* b : dialog.findChildren<QPushButton*>()) {
+		if (b->text() == "Create mod") create = b;
+	}
+	REQUIRE(create);
+	CHECK_FALSE(create->isEnabled());
 }
 
 int main(int argc, char** argv) {
