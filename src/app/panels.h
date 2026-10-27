@@ -27,6 +27,8 @@ public:
 	explicit Outliner(Editor* editor, QWidget* parent = nullptr);
 	/// Icons for the entity classes (the entity picker's sprites and model previews).
 	void setIconProvider(std::function<QIcon(const QString&)> provider);
+	/// Asks the provider again (its pictures arrive later).
+	void refreshIcons();
 
 signals:
 	void frameRequested();

@@ -323,6 +323,7 @@ void EntityPicker::modelReady(const QString& path) {
 		item->setIcon(0, icon);
 	}
 	showArmed();
+	emit iconsChanged();
 }
 
 void EntityPicker::spriteReady(const QString& material) {
@@ -343,6 +344,7 @@ void EntityPicker::spriteReady(const QString& material) {
 		}
 	}
 	showArmed();
+	emit iconsChanged();
 }
 
 void EntityPicker::reload() {

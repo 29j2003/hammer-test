@@ -222,6 +222,7 @@ void MainWindow::createDocks() {
 	m_toolPanel->entityPicker()->setMaterialCache(m_materials);
 	m_toolPanel->entityPicker()->setModelThumbnails(m_assets->modelThumbnails());
 	m_outliner->setIconProvider([picker = m_toolPanel->entityPicker()](const QString& cls) { return picker->iconFor(cls); });
+	connect(m_toolPanel->entityPicker(), &EntityPicker::iconsChanged, m_outliner, &Outliner::refreshIcons);
 	m_sounds = new SoundBrowser(m_editor);
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
@@ -551,8 +552,10 @@ void MainWindow::createActions() {
 	top->addSeparator();
 
 	m_renderGroup = new QActionGroup(this);
+	// Render mode and shadows live in each view's corner menu; here they keep their keys (View menu).
 	const auto renderAction = [&](const QString& name, const QKeySequence& key, Editor::RenderMode mode, const QString& tip) {
-		auto* a = top->addAction(name);
+		auto* a = new QAction(name, this);
+		addAction(a);
 		a->setObjectName(name);
 		a->setShortcut(key);
 		a->setCheckable(true);
@@ -564,14 +567,21 @@ void MainWindow::createActions() {
 	renderAction(tr("Lit"), QKeySequence("F6"), Editor::RenderMode::Lit, tr("Lighting preview from the light entities"))->setChecked(true);
 	renderAction(tr("Unlit"), QKeySequence("F5"), Editor::RenderMode::Unlit, tr("Textures without lighting"));
 	renderAction(tr("Wire"), QKeySequence("F8"), Editor::RenderMode::Wireframe, tr("Wireframe"));
-	auto* shadows = top->addAction(tr("Shadows"));
+	auto* shadows = new QAction(tr("Shadows"), this);
+	addAction(shadows);
 	shadows->setObjectName("Shadows");
 	shadows->setCheckable(true);
 	shadows->setChecked(m_editor->shadows());
 	shadows->setShortcut(QKeySequence("F7"));
 	shadows->setToolTip(tr("Real-time shadows in the lighting preview: sun, nearest spot and point lights (F7)"));
 	connect(shadows, &QAction::toggled, m_editor, &Editor::setShadows);
-	top->addSeparator();
+	connect(m_editor, &Editor::settingsChanged, this, [this, shadows] {
+		// The views' corner menus change these too.
+		const auto actions = m_renderGroup->actions();
+		const int index = static_cast<int>(m_editor->renderMode());
+		if (index < actions.size()) actions[index]->setChecked(true);
+		if (shadows->isChecked() != m_editor->shadows()) shadows->setChecked(m_editor->shadows());
+	});
 	auto* layout = top->addAction(tr("1 / 4 views"));
 	layout->setObjectName("1 / 4 views");
 	layout->setShortcut(QKeySequence("Shift+Alt+Z"));
@@ -599,6 +609,9 @@ void MainWindow::createActions() {
 	view->addAction(action(tr("Front view"), QKeySequence("F3"), [this] { activeView()->setCameraKind(Camera::Kind::Front); }));
 	view->addAction(action(tr("Side view"), QKeySequence("F4"), [this] { activeView()->setCameraKind(Camera::Kind::Side); }));
 	view->addAction(action(tr("3D view"), QKeySequence("Ctrl+F1"), [this] { activeView()->setCameraKind(Camera::Kind::Perspective); }));
+	view->addSeparator();
+	view->addActions(m_renderGroup->actions());
+	view->addAction(shadows);
 	view->addSeparator();
 	for (auto* dock : m_docks) {
 		view->addAction(dock->toggleViewAction());

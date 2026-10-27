@@ -12,6 +12,9 @@
 
 #include <optional>
 
+class QMenu;
+class QToolButton;
+
 #include "camera.h"
 #include "editor.h"
 #include "renderer.h"
@@ -138,6 +141,8 @@ private:
 	void drawGizmo(std::vector<LineVertex>& lines) const;
 	void drawOverlay();
 	void paintOverlayImage();
+	void updateViewButton();
+	void fillViewMenu(QMenu* menu);
 	void moveCamera();
 
 	Editor* m_editor;
@@ -145,6 +150,7 @@ private:
 	SceneRenderer m_renderer;
 	Camera m_camera;
 	bool m_glReady = false;
+	QToolButton* m_viewButton = nullptr;   ///< "3D · Lighting preview ▾" in the corner
 	bool m_blockForEntity = false;   ///< The block drag belongs to the entity tool (brush entity)
 	bool m_needsRebuild = true;
 	bool m_selectionDirty = true;

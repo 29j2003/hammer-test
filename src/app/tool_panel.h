@@ -43,6 +43,10 @@ public:
 	/// Icon of a class: its editor sprite once loaded, else a square in the class color.
 	[[nodiscard]] QIcon iconFor(const QString& classname);
 
+signals:
+	/// A sprite or model preview arrived (other lists can update their icons).
+	void iconsChanged();
+
 private:
 	void reload();
 	void filter(const QString& text);

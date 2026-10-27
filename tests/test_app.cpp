@@ -313,6 +313,24 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(green);   // the class color square would be magenta
 	}
 	{
+		// The corner menu of a view switches the look (and shows it on the button).
+		auto* button = view->findChild<QToolButton*>("viewMenu");
+		REQUIRE(button);
+		CHECK(button->text().startsWith("3D"));
+		auto* menu = button->menu();
+		emit menu->aboutToShow();
+		QAction* wire = nullptr;
+		for (auto* action : menu->actions()) {
+			if (action->text().startsWith("Wireframe")) wire = action;
+		}
+		REQUIRE(wire);
+		wire->trigger();
+		CHECK(editor.renderMode() == Editor::RenderMode::Wireframe);
+		CHECK(button->text().contains("Wireframe"));
+		editor.setRenderMode(Editor::RenderMode::Lit);
+		CHECK(button->text().contains("Lighting preview"));
+	}
+	{
 		// Entity tool with a brush class armed: the dragged box becomes that entity (trigger texture).
 		const std::size_t before = editor.doc().entities.size();
 		editor.setCurrentEntityClass("trigger_once");

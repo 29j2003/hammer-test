@@ -10,7 +10,9 @@
 #include <QOpenGLFunctions>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QMenu>
 #include <QPainter>
+#include <QToolButton>
 #include <QRandomGenerator>
 #include <QWheelEvent>
 
@@ -137,6 +139,69 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		update();
 	});
 	m_fpsClock.start();
+
+	// View menu in the corner (like Hammer's "3D Shaded Textured" box): view kind, render mode, shadows.
+	m_viewButton = new QToolButton(this);
+	m_viewButton->setObjectName("viewMenu");
+	m_viewButton->setPopupMode(QToolButton::InstantPopup);
+	m_viewButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+	m_viewButton->setCursor(Qt::ArrowCursor);
+	m_viewButton->setFocusPolicy(Qt::NoFocus);
+	m_viewButton->setStyleSheet("QToolButton { background: rgba(28, 30, 36, 210); color: #d6dae2; border: 1px solid rgba(255, 255, 255, 35);"
+	                            " border-radius: 3px; padding: 2px 8px; }"
+	                            "QToolButton:hover { border-color: rgba(255, 160, 40, 180); }"
+	                            "QToolButton::menu-indicator { image: none; width: 0; }");
+	m_viewButton->move(6, 5);
+	auto* menu = new QMenu(m_viewButton);
+	m_viewButton->setMenu(menu);
+	connect(menu, &QMenu::aboutToShow, this, [this, menu] { fillViewMenu(menu); });
+	connect(editor, &Editor::settingsChanged, this, &Viewport::updateViewButton);
+	updateViewButton();
+}
+
+void Viewport::updateViewButton() {
+	QString text = QString::fromLatin1(viewName(m_camera.kind));
+	if (!m_camera.is2D()) {
+		switch (m_editor->renderMode()) {
+			case Editor::RenderMode::Lit: text += tr("  ·  Lighting preview") + (m_editor->shadows() ? tr(" + shadows") : QString()); break;
+			case Editor::RenderMode::Unlit: text += tr("  ·  Textured (unlit)"); break;
+			case Editor::RenderMode::Wireframe: text += tr("  ·  Wireframe"); break;
+		}
+	}
+	m_viewButton->setText(text + QStringLiteral("  ▾"));
+	m_viewButton->adjustSize();
+}
+
+void Viewport::fillViewMenu(QMenu* menu) {
+	menu->clear();
+	menu->addSection(tr("View"));
+	for (const auto& [kind, name, key] : {std::tuple{Camera::Kind::Perspective, tr("3D"), QStringLiteral("Ctrl+F1")},
+	                                      std::tuple{Camera::Kind::Top, tr("Top (X/Y)"), QStringLiteral("F2")},
+	                                      std::tuple{Camera::Kind::Front, tr("Front (Y/Z)"), QStringLiteral("F3")},
+	                                      std::tuple{Camera::Kind::Side, tr("Side (X/Z)"), QStringLiteral("F4")}}) {
+		auto* action = menu->addAction(QStringLiteral("%1\t%2").arg(name, key));
+		action->setCheckable(true);
+		action->setChecked(m_camera.kind == kind);
+		connect(action, &QAction::triggered, this, [this, kind] {
+			setCameraKind(kind);
+			updateViewButton();
+		});
+	}
+	menu->addSection(tr("Look (3D)"));
+	for (const auto& [mode, name, key] : {std::tuple{Editor::RenderMode::Lit, tr("Lighting preview"), QStringLiteral("F6")},
+	                                      std::tuple{Editor::RenderMode::Unlit, tr("Textured (unlit)"), QStringLiteral("F5")},
+	                                      std::tuple{Editor::RenderMode::Wireframe, tr("Wireframe"), QStringLiteral("F8")}}) {
+		auto* action = menu->addAction(QStringLiteral("%1\t%2").arg(name, key));
+		action->setCheckable(true);
+		action->setChecked(m_editor->renderMode() == mode);
+		connect(action, &QAction::triggered, m_editor, [this, mode] { m_editor->setRenderMode(mode); });
+	}
+	auto* shadows = menu->addAction(tr("Real-time shadows\tF7"));
+	shadows->setCheckable(true);
+	shadows->setChecked(m_editor->shadows());
+	shadows->setEnabled(m_editor->renderMode() == Editor::RenderMode::Lit);
+	shadows->setToolTip(tr("Sun, nearest spot and point lights cast shadows in the lighting preview"));
+	connect(shadows, &QAction::toggled, m_editor, &Editor::setShadows);
 }
 
 Viewport::~Viewport() {
@@ -154,6 +219,7 @@ void Viewport::setCameraKind(Camera::Kind kind) {
 	if (was2D != m_camera.is2D()) {
 		frameSelection();
 	}
+	updateViewButton();
 	update();
 }
 
@@ -509,7 +575,6 @@ void Viewport::drawOverlay() {
 	// draws the finished picture. (QPainter straight onto the GL widget garbles or loses text
 	// on some drivers.)
 	OverlayRecorder p;
-	p.drawText(QRectF(8, 6, 300, 20), viewName(m_camera.kind), QColor(200, 205, 215));
 	if (m_drag == Drag::Marquee) {
 		p.drawMarquee(m_marquee);
 	}

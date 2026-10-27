@@ -71,6 +71,16 @@ void Outliner::setIconProvider(std::function<QIcon(const QString&)> provider) {
 	rebuild();
 }
 
+void Outliner::refreshIcons() {
+	if (!m_icons) {
+		return;
+	}
+	for (int i = 1; i < m_tree->topLevelItemCount(); ++i) {   // 0 is the world
+		auto* group = m_tree->topLevelItem(i);
+		group->setIcon(0, m_icons(group->text(0)));
+	}
+}
+
 void Outliner::rebuild() {
 	const QString filter = m_filter->text();
 	m_tree->clear();
