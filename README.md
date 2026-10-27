@@ -125,6 +125,17 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
   shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
   `gameinfo.txt` with what was found, and the entity definitions (FGDs).
+- **Maps**: every map of the game or mod in one list, with when it was changed, whether its BSP is *up to date*,
+  *outdated* (the map changed since) or *not compiled*, and what the last compile said. **New map ...**, **Duplicate**,
+  **Rename ...** and **Delete** (to the trash) work on the files. Tick maps and press **Compile checked**, or **Compile
+  all outdated**: they are compiled one after another with your compile settings (no game in between); with **Run the
+  game afterwards** the game starts with the last one that compiled. The Compile panel shows each step; **Cancel**
+  stops the queue.
+- **New mod ...**: turns your maps into a mod of your own in Steam's `sourcemods` folder - give it a title, a folder
+  name and what it is built on (Half-Life 2 singleplayer, with Mapbase when Mapbase's shared content is installed, or
+  multiplayer), tick the maps to take along. The editor writes `gameinfo.txt`, the usual folders,
+  `cfg/autoexec.cfg` and `resource/<mod>_english.txt` (the title), copies the maps into `mapsrc` and switches to the
+  new mod. Restart Steam once to see it in the library; a Mapbase mod also needs Mapbase's `bin` files.
 - **Source control** (Git, e.g. your mod's code on GitHub): pick the repository once per game (the mod folder or the
   mod's source code). You see the branch, how many commits are waiting to be pushed or pulled, and the changed files
   with check boxes. Write a message and *Commit* the checked files. *Fetch*, *Pull* and *Push* talk to the remote,

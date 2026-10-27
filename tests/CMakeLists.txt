@@ -5,7 +5,7 @@ target_include_directories(sme_fixture PUBLIC .)
 target_link_libraries(sme_fixture PUBLIC smecore PRIVATE sourcepp::vpkpp sourcepp::vtfpp)
 
 add_executable(sme_tests main.cpp test_assets.cpp test_core.cpp test_editing.cpp
-	test_csg.cpp test_map.cpp test_shipping.cpp ../src/probe/report.cpp test_probe.cpp test_git.cpp test_workflow.cpp test_groups.cpp)
+	test_csg.cpp test_map.cpp test_shipping.cpp test_mod_template.cpp ../src/probe/report.cpp test_probe.cpp test_git.cpp test_workflow.cpp test_groups.cpp)
 target_include_directories(sme_tests PRIVATE ../src/probe)
 target_link_libraries(sme_tests PRIVATE sme_fixture smecore doctest::doctest)
 add_test(NAME sme_tests COMMAND sme_tests)

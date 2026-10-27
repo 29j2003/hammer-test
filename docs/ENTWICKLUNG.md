@@ -39,6 +39,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
 | `visgroups` | VisGroups: Liste aus dem Block `visgroups` vor der Welt (verschachtelt, `name`/`visgroupid`/`color`), Mitglieder über `visgroupid` im `editor`-Block von Welt-Brushes und Entities (mehrere möglich, bleiben in `extra`); Änderungen als Transaction (Gruppe anlegen – auch aus der Auswahl und unter einer Gruppe –, umbenennen, Farbe, löschen: Untergruppen rücken hoch, Mitglieder verlieren nur diese Id; Auswahl hinzufügen/entfernen). Die Gruppenliste ist ein Kopfblock: `Change` merkt sich dafür `headerBefore/After` (`Transaction::touchHeader`). Sichtbarkeit ist keine Kartenänderung: der Editor hält die versteckten Gruppen, `hiddenByVisGroups` liefert die Objekte (auch über Eltern-Gruppen), `writeVisGroupShown` schreibt beim Speichern `visgroupshown` in eine Kopie, `hiddenVisGroupsInFile` liest es beim Öffnen |
 | `instances` | `func_instance`: Einstellungen (`file`, `targetname`, `fixup_style`, `replaceNN` = „$var Wert“), Datei suchen (Ordner der Karte, Kartenordner des Spiels, ohne Endung → `.vmf`, `\` → `/`), `InstanceCache` (pro Pfad + Änderungszeit), `prepareInstance` (Variablen ersetzen – längste zuerst, Vorgaben aus `func_instance_parms` –, Namen mit Prefix/Postfix wie VBSP, `@`/`!` bleiben, Keys mit FGD-Typ `target_source/target_destination/target_name_or_class`, ohne FGD eine feste Liste; Ausgänge; drehen + verschieben mit Texture Lock), `buildInstancePreview`, `collapseInstance` (neue Ids, VisGroup-Ids der Instanz entfernt, ein Undo-Schritt) |
+| `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
@@ -145,6 +146,17 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
   der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Mod")` zeigt die Seite, jeder
   andere Dock-Name die Karte mit dem Dock. Screenshots: `--page mod|sounds|…`, `--pick-edge` (Kante gewählt).
+- Karten-Übersicht: `MapsPanel` (`maps_panel.cpp`, eigenständiges Widget mit `(Editor*, CompileRunner*)`, die
+  Project-Seite des Hauptfensters zeigt es). Liste aller `.vmf` im Kartenordner (`GameSettings::mapDir`, rekursiv,
+  ohne `*_cordon.vmf`); `bspState` vergleicht die BSP in `<mod>/maps` (sonst neben der VMF) mit der VMF. Letztes
+  Ergebnis in QSettings `maps/<spiel>/<pfad>` = `ok|ISO-Zeit` bzw. `failed|…`. Stapel: `compileMaps` nimmt die
+  gespeicherten Kompilier-Einstellungen (`loadCompileOptions`) ohne Spiel und Cubemaps, startet die nächste Karte per
+  `QTimer::singleShot(0)` nach `CompileRunner::finished` (der Runner meldet Fehler wie fehlendes VBSP sofort, noch in
+  `start`); am Ende optional nur der Spiel-Schritt mit der letzten guten Karte. Signale `openMapRequested`,
+  `compileStarted`, `batchFinished`. Dateiaktionen ohne Rückfrage (`createMap` …) für Tests, die Knöpfe fragen.
+- Neue Mod: `NewModDialog`/`runNewModDialog` (`new_mod_dialog.cpp`), `createModAndSwitch` legt über `createMod` an,
+  ruft `Editor::discover` mit dem bekannten Steam-Ordner neu auf und öffnet `sourcemods/<ordner>`
+  (`gameChanged` → Hauptfenster aktualisiert die Spieleliste).
 - Quellcode-Verwaltung: `SourceControlPanel` (`source_control_panel.cpp`, eigenständiges Widget für die
   Project-Seite) ruft das System-`git` per `QProcess` auf, nacheinander aus einer Warteschlange (`run` → `startNext`),
   nie blockierend; `GIT_TERMINAL_PROMPT=0`, damit nichts auf ein Passwort in einer unsichtbaren Konsole wartet.

@@ -23,6 +23,7 @@ add_library(smecore STATIC
 	src/shipping.cpp
 	src/visgroups.cpp
 	src/instances.cpp
+	src/mod_template.cpp
 	src/editing.cpp
 	src/entity_catalog.cpp
 	src/filesystem.cpp
