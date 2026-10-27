@@ -177,7 +177,8 @@ private:
 	GLuint m_emptyVao = 0;                   // for quads made from gl_VertexID
 	GLuint m_spriteVao = 0, m_spriteVbo = 0; // one instance per sprite: center, size, color, face
 	std::vector<SpriteBatch> m_spriteBatches;
-	GLsizei m_spriteBoxVertices = 0;         // entity box vertices at the end that sprites replace in 3D
+	GLsizei m_spriteBoxVertices = 0;
+	std::vector<int> m_volumeFaces;          // faces of helper volumes (parallax_obb)         // entity box vertices at the end that sprites replace in 3D
 	GLuint m_overlayTexture = 0;
 	QSize m_overlaySize;
 	std::unique_ptr<QOpenGLShaderProgram> m_edgeProgram;

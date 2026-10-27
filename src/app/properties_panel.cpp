@@ -457,6 +457,10 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		buildNpcHelper(layout, *first, definition);
 	}
 
+	if (entityIds.size() == 1 && iequals(classname, "env_cubemap")) {
+		buildCubemapBox(layout, *first);
+	}
+
 	if (!m_smartEdit->isChecked()) {
 		buildRawKeys(layout, entityIds, definition);
 		if (entityIds.size() == 1 && entityIds.front() != 0) {
@@ -624,6 +628,76 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		buildOutputs(layout, entityIds.front());
 		buildIncoming(layout, *first);
 	}
+}
+
+void PropertiesPanel::buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap) {
+	auto* box = new QGroupBox(tr("Room box (parallax-corrected reflections)"));
+	box->setObjectName("cubemapBox");
+	auto* v = new QVBoxLayout(box);
+	const auto* entry = m_editor->gameEntry();
+	const bool supported = (entry && entry->usesMapbase) || (m_editor->entities() && m_editor->entities()->find("parallax_obb"));
+	if (!supported) {
+		v->addWidget(descriptionLabel(tr("Reflections that line up with the room need Mapbase (parallax_obb). This game does not have it.")));
+		layout->addWidget(box);
+		return;
+	}
+	const int id = cubemap.id;
+	const Entity* obb = cubemapRoomBox(m_editor->doc(), cubemap);
+	if (!obb) {
+		v->addWidget(descriptionLabel(tr("Give the cubemap the size of its room: reflections on floors and walls then line up with the "
+		                                 "room instead of floating. The box is found from the walls around the cubemap.")));
+		auto* add = new QPushButton(tr("Add room box (fit to the walls)"));
+		connect(add, &QPushButton::clicked, this, [this, id] { m_editor->fitCubemapRoomBox(id); });
+		v->addWidget(add);
+		layout->addWidget(box);
+		return;
+	}
+	Bounds bounds;
+	for (const auto& solid : obb->solids) bounds.add(buildBrushGeometry(solid).bounds);
+	v->addWidget(descriptionLabel(tr("Drag the box's side squares in the view, or type the size. %1 is compiled into the materials "
+	                                 "and removed from the map by VBSP.").arg(qs(obb->get("targetname")))));
+	auto* form = new QFormLayout;
+	const Vec3 size = bounds.size();
+	const Vec3 center = bounds.center();
+	const char* names[3] = {QT_TR_NOOP("Width (X)"), QT_TR_NOOP("Depth (Y)"), QT_TR_NOOP("Height (Z)")};
+	for (int axis = 0; axis < 3; ++axis) {
+		auto* spin = new QDoubleSpinBox;
+		spin->setRange(1, 32768);
+		spin->setDecimals(0);
+		spin->setSingleStep(16);
+		spin->setValue(size[axis]);
+		spin->setKeyboardTracking(false);
+		connect(spin, &QDoubleSpinBox::valueChanged, this, [this, id, bounds, axis, center](double value) {
+			Bounds resized = bounds;
+			if (axis == 2) {
+				resized.max.z = bounds.min.z + value;   // height grows upward from the floor
+			} else {
+				resized.min[axis] = center[axis] - value / 2;
+				resized.max[axis] = center[axis] + value / 2;
+			}
+			m_editor->setCubemapRoomBox(id, resized);
+		});
+		form->addRow(tr(names[axis]), spin);
+	}
+	v->addLayout(form);
+	auto* row = new QHBoxLayout;
+	auto* fit = new QPushButton(tr("Fit to the walls"));
+	connect(fit, &QPushButton::clicked, this, [this, id] { m_editor->fitCubemapRoomBox(id); });
+	auto* select = new QPushButton(tr("Select box"));
+	select->setToolTip(tr("Select the parallax_obb itself (move, rotate, keys)"));
+	const int obbId = obb->id;
+	connect(select, &QPushButton::clicked, this, [this, obbId] {
+		Selection selection;
+		selection.entities.push_back(obbId);
+		m_editor->setSelection(std::move(selection));
+	});
+	auto* remove = new QPushButton(tr("Remove"));
+	connect(remove, &QPushButton::clicked, this, [this, id] { m_editor->removeCubemapRoomBox(id); });
+	row->addWidget(fit);
+	row->addWidget(select);
+	row->addWidget(remove);
+	v->addLayout(row);
+	layout->addWidget(box);
 }
 
 void PropertiesPanel::buildAddKeyRow(QVBoxLayout* layout, const std::vector<int>& entityIds) {

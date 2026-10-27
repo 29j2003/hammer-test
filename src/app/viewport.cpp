@@ -20,6 +20,7 @@
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/map_tools.h>
 #include <sme/shapes.h>
 #include <sme/text.h>
 
@@ -402,6 +403,7 @@ void Viewport::paintGL() {
 	m_renderer.drawLines(lines, viewProj, false, 2.f);
 	lines.clear();
 	drawToolLines(lines);
+	drawRoomBox(lines);
 	drawGizmo(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
 
@@ -481,6 +483,53 @@ void Viewport::drawGrid(std::vector<LineVertex>& lines) const {
 		// Slightly below 0 so a floor at z = 0 hides the grid instead of flickering with it.
 		line(lines, {x, cy - extent, -0.5}, {x, cy + extent, -0.5}, cxColor);
 		line(lines, {cx - extent, y, -0.5}, {cx + extent, y, -0.5}, cyColor);
+	}
+}
+
+std::optional<Bounds> Viewport::selectedRoomBox(int* cubemapId) const {
+	const auto& selection = m_editor->selection();
+	const auto tool = m_editor->tool();
+	if (selection.entities.size() != 1 || !selection.solids.empty() ||
+	    (tool != Editor::Tool::Select && tool != Editor::Tool::Move && tool != Editor::Tool::Rotate && tool != Editor::Tool::Scale)) {
+		return std::nullopt;
+	}
+	const Entity* cubemap = m_editor->doc().findEntity(selection.entities.front());
+	if (!cubemap || !iequals(cubemap->classname(), "env_cubemap")) {
+		return std::nullopt;
+	}
+	const Entity* obb = cubemapRoomBox(m_editor->doc(), *cubemap);
+	if (!obb || obb->solids.empty()) {
+		return std::nullopt;
+	}
+	Bounds box;
+	for (const auto& solid : obb->solids) box.add(buildBrushGeometry(solid).bounds);
+	if (cubemapId) *cubemapId = cubemap->id;
+	return box;
+}
+
+void Viewport::drawRoomBox(std::vector<LineVertex>& lines) const {
+	// Cubemap room box: cyan outline with a square in the middle of every side to drag.
+	auto box = selectedRoomBox();
+	if (!box) {
+		return;
+	}
+	const bool dragging = m_drag == Drag::Gizmo && m_dragHandle >= Handle::RoomMinX && m_dragHandle <= Handle::RoomMaxZ;
+	if (dragging) {
+		box = m_dragNewBounds;
+	}
+	boxLines(lines, *box, {0.3f, 0.85f, 1.0f, 0.9f});
+	const double hs = gizmoSize() * 0.035;
+	for (int axis = 0; axis < 3; ++axis) {
+		if (m_camera.is2D() && axis == viewAxis()) continue;
+		for (int side = 0; side < 2; ++side) {
+			const Handle h = static_cast<Handle>(static_cast<int>(Handle::RoomMinX) + axis * 2 + side);
+			Vec3 p = box->center();
+			p[axis] = side == 0 ? box->min[axis] : box->max[axis];
+			Bounds square;
+			square.add(p - Vec3{hs, hs, hs});
+			square.add(p + Vec3{hs, hs, hs});
+			boxLines(lines, square, (m_hover == h || m_dragHandle == h) ? HOVER_COLOR : QVector4D(0.3f, 0.85f, 1.0f, 1.0f));
+		}
 	}
 }
 
@@ -730,6 +779,19 @@ Viewport::Handle Viewport::hitHandle(const QPointF& pos) const {
 		return Handle::None;
 	}
 	constexpr double TOLERANCE = 8;
+	if (const auto room = selectedRoomBox()) {
+		for (int axis = 0; axis < 3; ++axis) {
+			if (m_camera.is2D() && axis == viewAxis()) continue;
+			for (int side = 0; side < 2; ++side) {
+				Vec3 p = room->center();
+				p[axis] = side == 0 ? room->min[axis] : room->max[axis];
+				QPointF q;
+				if (m_camera.project(p, width(), height(), q) && QLineF(q, pos).length() < 9) {
+					return static_cast<Handle>(static_cast<int>(Handle::RoomMinX) + axis * 2 + side);
+				}
+			}
+		}
+	}
 	if (tool == Editor::Tool::Move) {
 		for (const Vec3& corner : selectionCorners()) {
 			QPointF q;
@@ -1325,6 +1387,11 @@ void Viewport::beginGizmoDrag(Handle handle, const QPointF& pos) {
 		}
 	} else if (handle == Handle::Move2D) {
 		m_dragStartPoint = viewPlanePoint(pos);
+	} else if (handle >= Handle::RoomMinX && handle <= Handle::RoomMaxZ) {
+		const int axis = (static_cast<int>(handle) - static_cast<int>(Handle::RoomMinX)) / 2;
+		m_dragBounds = m_dragNewBounds = selectedRoomBox().value_or(m_dragBounds);
+		m_dragCenter = m_dragBounds.center();
+		m_dragStartParam = closestOnAxis(m_dragCenter, axisVector(axis), ray);
 	} else if (handle == Handle::Corner) {
 		// The corner under the cursor, and every corner it could snap to.
 		double best = 1e9;
@@ -1392,6 +1459,19 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 	} else if (handle == Handle::Move2D) {
 		m_dragDelta = snap(viewPlanePoint(pos) - m_dragStartPoint, grid);
 		m_dragDelta[viewAxis()] = 0;
+	} else if (handle >= Handle::RoomMinX && handle <= Handle::RoomMaxZ) {
+		const int index = static_cast<int>(handle) - static_cast<int>(Handle::RoomMinX);
+		const int axis = index / 2;
+		const double t = m_camera.is2D() ? viewPlanePoint(pos)[axis] - viewPlanePoint(m_pressPos)[axis]
+		                                 : closestOnAxis(m_dragCenter, axisVector(axis), ray) - m_dragStartParam;
+		m_dragNewBounds = m_dragBounds;
+		if (index % 2 == 1) {
+			m_dragNewBounds.max[axis] = std::max(m_dragBounds.min[axis] + minimumSize, snap(m_dragBounds.max[axis] + t, grid));
+		} else {
+			m_dragNewBounds.min[axis] = std::min(m_dragBounds.max[axis] - minimumSize, snap(m_dragBounds.min[axis] + t, grid));
+		}
+		update();
+		return;
 	} else if (handle == Handle::Corner) {
 		// Nearest corner of another object on screen wins; otherwise the corner follows the
 		// cursor on the grid (2D: in the view plane, 3D: on the floor plane through it, or a wall
@@ -1523,6 +1603,11 @@ void Viewport::finishGizmoDrag(bool clone) {
 			} else {
 				m_editor->commit(edit::translate(doc, selection, m_dragDelta, m_editor->textureLock()));
 			}
+		}
+	} else if (handle >= Handle::RoomMinX && handle <= Handle::RoomMaxZ) {
+		int cubemapId = 0;
+		if (selectedRoomBox(&cubemapId) && !(m_dragNewBounds.min == m_dragBounds.min && m_dragNewBounds.max == m_dragBounds.max)) {
+			m_editor->setCubemapRoomBox(cubemapId, m_dragNewBounds);
 		}
 	} else if (handle >= Handle::RingX && handle <= Handle::RingZ) {
 		if (std::abs(m_dragAngle) > 1e-6) {

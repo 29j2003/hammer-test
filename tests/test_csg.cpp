@@ -364,3 +364,51 @@ TEST_CASE("editor sprites of entities") {
 	CHECK(edit::entitySprite(start, &catalog).empty());   // shown with its model instead
 	std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("cubemap room boxes (parallax correction)") {
+	MapDocument doc;
+	ShapeOptions block;
+	// A room 512 x 384 x 256 inside walls 16 thick, a trigger in it that must not count.
+	for (auto solid : makeShape(doc, box({-16, -16, -16}, {528, 400, 272}), block, "BRICK/WALL")) {
+		doc.world.solids.push_back(std::move(solid));
+	}
+	Selection all;
+	all.solids.push_back({0, doc.world.solids.front().id});
+	(void)edit::hollow(doc, all, 16);
+	auto [triggerChange, triggerId] = edit::createBrushEntity(doc, box({100, 100, 0}, {140, 140, 64}), block, "trigger_once", nullptr, "TOOLS/TOOLSTRIGGER");
+	REQUIRE(triggerId != 0);
+	auto [placed, cubemapId] = edit::placeEntity(doc, "env_cubemap", {128, 96, 64}, nullptr);
+	const Bounds room = roomAround(doc, {128, 96, 64});
+	CHECK(room.min.x == doctest::Approx(0));
+	CHECK(room.max.x == doctest::Approx(512));
+	CHECK(room.min.y == doctest::Approx(0));
+	CHECK(room.max.y == doctest::Approx(384));
+	CHECK(room.min.z == doctest::Approx(0));
+	CHECK(room.max.z == doctest::Approx(256));
+
+	auto [change, boxId] = edit::setCubemapRoomBox(doc, cubemapId, room, nullptr);
+	REQUIRE(boxId != 0);
+	const Entity* cubemap = doc.findEntity(cubemapId);
+	const Entity* obb = cubemapRoomBox(doc, *cubemap);
+	REQUIRE(obb);
+	CHECK(obb->id == boxId);
+	CHECK(obb->classname() == "parallax_obb");
+	CHECK(cubemap->get("parallaxobb") == obb->get("targetname"));
+	REQUIRE(obb->solids.size() == 1);
+	CHECK(obb->solids.front().sides.size() == 6);   // one box brush, as Mapbase reads it
+	CHECK(solidVolume(obb->solids.front()) == doctest::Approx(512.0 * 384 * 256));
+
+	// Resizing keeps the same entity and name.
+	const std::string name = obb->get("targetname");
+	auto [resize, sameId] = edit::setCubemapRoomBox(doc, cubemapId, box({0, 0, 0}, {256, 384, 128}), nullptr);
+	CHECK(sameId == boxId);
+	CHECK(cubemapRoomBox(doc, *doc.findEntity(cubemapId))->get("targetname") == name);
+	CHECK(solidVolume(doc.findEntity(boxId)->solids.front()) == doctest::Approx(256.0 * 384 * 128));
+	// Its own box does not count as a wall when fitting again.
+	CHECK(roomAround(doc, {128, 96, 64}).max.z == doctest::Approx(256));
+
+	const auto removed = edit::removeCubemapRoomBox(doc, cubemapId);
+	CHECK_FALSE(removed.empty());
+	CHECK_FALSE(doc.findEntity(boxId));
+	CHECK(doc.findEntity(cubemapId)->get("parallaxobb").empty());
+}

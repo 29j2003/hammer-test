@@ -40,7 +40,22 @@ void writeCordons(MapDocument& doc, const CordonSet& cordons);
 /// "target" forward and the entities that target it backward.
 [[nodiscard]] std::vector<int> trackChain(const MapDocument& doc, int entityId);
 
+/// The parallax_obb an env_cubemap uses for parallax correction (Mapbase: its "parallaxobb" key
+/// names it), or nullptr.
+[[nodiscard]] const Entity* cubemapRoomBox(const MapDocument& doc, const Entity& cubemap);
+
+/// The room around `point`: the distance to the next wall in +X, -X, +Y, -Y, +Z and -Z (world
+/// brushes and solid brush entities; triggers and clips do not count), at most `maxDistance` each way.
+[[nodiscard]] Bounds roomAround(const MapDocument& doc, const Vec3& point, double maxDistance = 2048);
+
 namespace edit {
+
+/// Gives an env_cubemap a room box for parallax-corrected reflections (Mapbase): creates the
+/// parallax_obb (one box brush, named after the cubemap) or resizes the one it has, and sets
+/// the cubemap's "parallaxobb". One undo step; returns the box entity's id.
+[[nodiscard]] std::pair<Change, int> setCubemapRoomBox(MapDocument& doc, int cubemapId, const Bounds& box, const EntityClass* obbClass);
+/// Removes the cubemap's room box and its "parallaxobb" key.
+[[nodiscard]] Change removeCubemapRoomBox(MapDocument& doc, int cubemapId);
 
 /// Moves the selected objects straight down until they rest on what is below them
 /// (brushes, entity boxes; unselected only). Objects with nothing below stay.

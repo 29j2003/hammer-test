@@ -12,6 +12,7 @@
 #include <QClipboard>
 #include <QTableWidget>
 #include <QLabel>
+#include <QGroupBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -31,6 +32,7 @@
 #include <QToolButton>
 
 #include <sme/brush.h>
+#include <sme/map_tools.h>
 
 #include <functional>
 
@@ -433,6 +435,61 @@ TEST_CASE("editing with the mouse in the real window") {
 		}
 		CHECK_FALSE(editor.doc().findEntity(sunId));
 		editor.clearSelection();
+	}
+	{
+		// Cubemap room box: fitted to the walls around the cubemap, resized by dragging its side square.
+		const std::size_t solidsBefore = editor.doc().world.solids.size();
+		const std::size_t entitiesBefore = editor.doc().entities.size();
+		editor.setShapeOptions(ShapeOptions{});
+		editor.createShape(box({-512, 300, 0}, {-256, 556, 160}));
+		editor.hollowSelection(16);
+		const auto* cubemapClass = editor.entities()->find("env_cubemap");
+		REQUIRE(cubemapClass);
+		auto [placed, cubemapId] = edit::placeEntity(editor.doc(), "env_cubemap", {-384, 428, 64}, cubemapClass);
+		editor.commit(std::move(placed));
+		Selection cubemapSel;
+		cubemapSel.entities.push_back(cubemapId);
+		editor.setSelection(cubemapSel);
+		editor.setTool(Editor::Tool::Select);
+		window.raiseDock("Object Properties");
+		settle();
+		auto* group = window.properties()->findChild<QGroupBox*>("cubemapBox");
+		REQUIRE(group);
+		QPushButton* add = nullptr;
+		for (auto* button : group->findChildren<QPushButton*>()) {
+			if (button->text().startsWith("Add room box")) add = button;
+		}
+		REQUIRE(add);
+		add->click();
+		settle();
+		const Entity* obb = cubemapRoomBox(editor.doc(), *editor.doc().findEntity(cubemapId));
+		REQUIRE(obb);
+		Bounds room;
+		for (const auto& solid : obb->solids) room.add(buildBrushGeometry(solid).bounds);
+		CHECK(room.min.x == doctest::Approx(-496));
+		CHECK(room.max.y == doctest::Approx(540));
+		CHECK(room.max.z == doctest::Approx(144));
+		// Drag the top square up by 32 units.
+		view->update();
+		settle();
+		const Vec3 top{-384, 428, 144};
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, top));
+		QTest::mouseMove(view, screen(view, top + Vec3{0, 0, 16}));
+		QTest::mouseMove(view, screen(view, top + Vec3{0, 0, 32}));
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, top + Vec3{0, 0, 32}));
+		settle();
+		obb = cubemapRoomBox(editor.doc(), *editor.doc().findEntity(cubemapId));
+		REQUIRE(obb);
+		room = {};
+		for (const auto& solid : obb->solids) room.add(buildBrushGeometry(solid).bounds);
+		CHECK(room.max.z == doctest::Approx(176));
+		CHECK(room.min.z == doctest::Approx(16));
+		CHECK(editor.selection().entities == std::vector<int>{cubemapId});   // the cubemap stays selected
+		while (editor.doc().entities.size() > entitiesBefore || editor.doc().world.solids.size() > solidsBefore) {
+			editor.undo();
+		}
+		editor.clearSelection();
+		editor.setTool(Editor::Tool::Entity);
 	}
 	{
 		// The corner menu of a view switches the look (and shows it on the button).

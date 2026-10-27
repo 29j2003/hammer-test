@@ -3,9 +3,14 @@
 #include <sme/map_tools.h>
 
 #include <sme/brush.h>
+#include <sme/entity_catalog.h>
+#include <sme/shapes.h>
 #include <sme/text.h>
 
 #include <algorithm>
+#include <iterator>
+#include <limits>
+#include <optional>
 #include <set>
 
 namespace sme {
@@ -158,7 +163,156 @@ std::vector<int> trackChain(const MapDocument& doc, int entityId) {
 	return chain;
 }
 
+const Entity* cubemapRoomBox(const MapDocument& doc, const Entity& cubemap) {
+	const auto name = cubemap.get("parallaxobb");
+	if (name.empty()) {
+		return nullptr;
+	}
+	for (const auto& entity : doc.entities) {
+		if (iequals(entity.classname(), "parallax_obb") && iequals(entity.get("targetname"), name)) {
+			return &entity;
+		}
+	}
+	return nullptr;
+}
+
+namespace {
+
+/// Brushes that do not stop the room search: volumes and helpers, not walls.
+bool passable(const Entity& owner, const Solid& solid) {
+	const auto cls = toLower(owner.classname());
+	if (cls.starts_with("trigger_") || cls == "parallax_obb" || cls.starts_with("func_areaportal") || cls == "func_occluder" ||
+	    cls == "func_viscluster" || cls == "func_ladder" || cls == "func_clip_vphysics" || cls == "func_buyzone") {
+		return true;
+	}
+	if (solid.sides.empty()) {
+		return true;
+	}
+	for (const auto& side : solid.sides) {
+		const auto material = toLower(side.material);
+		const bool helper = material == "tools/toolstrigger" || material == "tools/toolsclip" || material == "tools/toolsplayerclip" ||
+		                    material == "tools/toolsnpcclip" || material == "tools/toolsareaportal" || material == "tools/toolshint" ||
+		                    material == "tools/toolsskip" || material == "tools/toolsoccluder" || material == "tools/toolsinvisible" ||
+		                    material == "tools/toolsinvisibleladder";
+		if (!helper) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/// Distance along the ray to where it enters the convex brush (nullopt: misses, or starts inside).
+std::optional<double> rayEnters(const Solid& solid, const Vec3& origin, const Vec3& direction) {
+	double enter = 0, exit = std::numeric_limits<double>::max();
+	bool inside = true;
+	for (const auto& side : solid.sides) {
+		const Plane plane = side.plane();
+		const double startDistance = plane.distanceTo(origin);
+		const double along = dot(plane.normal, direction);
+		if (startDistance > 1e-6) inside = false;
+		if (std::abs(along) < 1e-12) {
+			if (startDistance > 0) return std::nullopt;   // parallel and outside
+			continue;
+		}
+		const double t = -startDistance / along;
+		if (along < 0) {
+			enter = std::max(enter, t);
+		} else {
+			exit = std::min(exit, t);
+		}
+		if (enter > exit) return std::nullopt;
+	}
+	if (inside) return std::nullopt;
+	return enter;
+}
+
+} // namespace
+
+Bounds roomAround(const MapDocument& doc, const Vec3& point, double maxDistance) {
+	double reach[6];
+	std::fill(std::begin(reach), std::end(reach), maxDistance);
+	const auto test = [&](const Entity& owner, const Solid& solid) {
+		if (passable(owner, solid)) return;
+		for (int d = 0; d < 6; ++d) {
+			Vec3 direction{};
+			direction[d / 2] = d % 2 == 0 ? 1.0 : -1.0;
+			if (const auto t = rayEnters(solid, point, direction); t && *t < reach[d]) {
+				reach[d] = *t;
+			}
+		}
+	};
+	for (const auto& solid : doc.world.solids) test(doc.world, solid);
+	for (const auto& entity : doc.entities) {
+		for (const auto& solid : entity.solids) test(entity, solid);
+	}
+	Bounds box;
+	box.add({point.x - reach[1], point.y - reach[3], point.z - reach[5]});
+	box.add({point.x + reach[0], point.y + reach[2], point.z + reach[4]});
+	return box;
+}
+
 namespace edit {
+
+std::pair<Change, int> setCubemapRoomBox(MapDocument& doc, int cubemapId, const Bounds& box, const EntityClass* obbClass) {
+	Entity* cubemap = doc.findEntity(cubemapId);
+	if (!cubemap || cubemapId == 0 || box.empty() || box.size().x < 1 || box.size().y < 1 || box.size().z < 1) {
+		return {Change{}, 0};
+	}
+	Transaction t(doc, "Cubemap room box");
+	const Entity* existing = cubemapRoomBox(doc, *cubemap);
+	int obbId = existing ? existing->id : 0;
+	ShapeOptions block;   // a plain box: Mapbase reads the box from one brush
+	auto solids = makeShape(doc, box, block, "TOOLS/TOOLSTRIGGER");
+	if (solids.size() != 1) {
+		return {Change{}, 0};
+	}
+	if (obbId != 0) {
+		t.touchEntity(obbId);
+		doc.findEntity(obbId)->solids = std::move(solids);
+	} else {
+		Entity obb;
+		obb.id = doc.newEntityId();
+		t.touchEntity(obb.id);
+		obb.set("classname", "parallax_obb");
+		if (obbClass) {
+			for (const auto& property : obbClass->properties) {
+				if (property.kind == EntityProperty::Kind::Plain && !property.defaultValue.empty() && !iequals(property.name, "origin")) {
+					obb.set(property.name, property.defaultValue);
+				}
+			}
+		}
+		// Named after the cubemap, unique in the map.
+		std::string base = cubemap->get("targetname");
+		base = (base.empty() ? "cubemap_" + std::to_string(cubemapId) : base) + "_box";
+		std::string name = base;
+		for (int n = 2; std::any_of(doc.entities.begin(), doc.entities.end(), [&](const Entity& e) { return iequals(e.get("targetname"), name); }); ++n) {
+			name = base + std::to_string(n);
+		}
+		obb.set("targetname", name);
+		obb.solids = std::move(solids);
+		obbId = obb.id;
+		t.touchEntity(cubemapId);
+		doc.findEntity(cubemapId)->set("parallaxobb", name);
+		doc.entities.push_back(std::move(obb));
+	}
+	return {t.finish(), obbId};
+}
+
+Change removeCubemapRoomBox(MapDocument& doc, int cubemapId) {
+	Entity* cubemap = doc.findEntity(cubemapId);
+	if (!cubemap) {
+		return {};
+	}
+	Transaction t(doc, "Remove cubemap room box");
+	if (const Entity* box = cubemapRoomBox(doc, *cubemap)) {
+		const int id = box->id;
+		t.touchEntity(id);
+		std::erase_if(doc.entities, [id](const Entity& e) { return e.id == id; });
+	}
+	t.touchEntity(cubemapId);
+	doc.findEntity(cubemapId)->erase("parallaxobb");
+	return t.finish();
+}
 
 Change dropToFloor(MapDocument& doc, const Selection& selection, const EntityCatalog* catalog) {
 	Transaction t(doc, "Drop to floor");

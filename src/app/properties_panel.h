@@ -47,6 +47,8 @@ private:
 	void buildIncoming(QVBoxLayout* layout, const Entity& entity);
 	void buildNpcHelper(QVBoxLayout* layout, const Entity& entity, const EntityClass* definition);
 	void buildFaces(QVBoxLayout* layout);
+	/// env_cubemap: its room box for parallax-corrected reflections (Mapbase).
+	void buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap);
 	void buildBrushes(QVBoxLayout* layout);
 	QWidget* makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed);
 	void setKey(const std::vector<int>& ids, const std::string& key, const QString& value);

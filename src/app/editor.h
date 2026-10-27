@@ -149,6 +149,11 @@ public:
 	/// Polygon tool: a brush from a convex base (points) extruded by `height`.
 	void createPolygonBrush(const std::vector<Vec3>& base, const Vec3& extrude);
 	void dropSelectionToFloor();
+	/// Cubemap room boxes (Mapbase parallax correction): set/resize, fit to the room around
+	/// the cubemap, remove.
+	void setCubemapRoomBox(int cubemapId, const Bounds& box);
+	void fitCubemapRoomBox(int cubemapId);
+	void removeCubemapRoomBox(int cubemapId);
 	/// Selects the whole path (path_track, path_corner ...) of the selected entity.
 	void selectTrackChain();
 

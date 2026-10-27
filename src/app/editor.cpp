@@ -491,6 +491,32 @@ void Editor::setRandomYaw(bool on) {
 	emit settingsChanged();
 }
 
+void Editor::setCubemapRoomBox(int cubemapId, const Bounds& box) {
+	const auto* obbClass = entities() ? entities()->find("parallax_obb") : nullptr;
+	auto [change, id] = edit::setCubemapRoomBox(m_doc, cubemapId, box, obbClass);
+	if (id == 0) {
+		emit message(tr("The room box needs a size in every direction"));
+		return;
+	}
+	commit(std::move(change));
+}
+
+void Editor::fitCubemapRoomBox(int cubemapId) {
+	const Entity* cubemap = m_doc.findEntity(cubemapId);
+	if (!cubemap) {
+		return;
+	}
+	const Bounds room = roomAround(m_doc, cubemap->origin());
+	if (room.size().x >= 2048 * 2 - 1 && room.size().y >= 2048 * 2 - 1) {
+		emit message(tr("No walls found around the cubemap - the box got the largest size; drag its sides to fit"));
+	}
+	setCubemapRoomBox(cubemapId, room);
+}
+
+void Editor::removeCubemapRoomBox(int cubemapId) {
+	commit(edit::removeCubemapRoomBox(m_doc, cubemapId));
+}
+
 void Editor::createBrushEntity(const Bounds& box) {
 	const std::string classname = m_currentEntityClass.toStdString();
 	const auto* definition = entities() ? entities()->find(classname) : nullptr;

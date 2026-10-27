@@ -81,7 +81,7 @@ protected:
 	void dropEvent(QDropEvent* event) override;
 
 private:
-	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner };
+	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner, RoomMinX, RoomMaxX, RoomMinY, RoomMaxY, RoomMinZ, RoomMaxZ };
 	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex };
 
 	[[nodiscard]] Ray rayAt(const QPointF& pos) const;
@@ -141,6 +141,9 @@ private:
 	void drawGizmo(std::vector<LineVertex>& lines) const;
 	/// The eight corners of the selection box (move tool squares).
 	[[nodiscard]] std::vector<Vec3> selectionCorners() const;
+	/// The room box of the one selected env_cubemap (its id in `cubemapId`), or nullopt.
+	[[nodiscard]] std::optional<Bounds> selectedRoomBox(int* cubemapId = nullptr) const;
+	void drawRoomBox(std::vector<LineVertex>& lines) const;
 	void drawOverlay();
 	void paintOverlayImage();
 	void updateViewButton();

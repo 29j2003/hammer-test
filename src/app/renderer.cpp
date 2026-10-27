@@ -24,6 +24,7 @@ constexpr int MAX_LIGHTS = 64;
 constexpr std::uint8_t FLAG_SELECTED = 1;
 constexpr std::uint8_t FLAG_HIDDEN = 2;
 constexpr std::uint8_t FLAG_HOVER = 4;
+constexpr std::uint8_t FLAG_VOLUME = 8;   // helper volume (parallax_obb): faces only shown while selected
 
 // Vertex: position(3) normal(3) uvw(3: u, v in texels + blend alpha, or rgb for colored geometry) face(1)
 constexpr int FLOATS_PER_VERTEX = 10;
@@ -58,7 +59,7 @@ void main() {
 	v_uvw = a_uvw;
 	gl_Position = u_viewProj * world;
 	bool selected = (f & 1u) != 0u;
-	if ((u_hideSelected == 1 && selected) || (u_onlySelected == 1 && !selected) || (f & 2u) != 0u) {
+	if ((u_hideSelected == 1 && selected) || (u_onlySelected == 1 && !selected) || (f & 2u) != 0u || ((f & 8u) != 0u && !selected)) {
 		gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 	}
 }
@@ -793,6 +794,15 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		m_sunDirection = QVector3D(-0.4f, -0.3f, -0.85f).normalized();
 	}
 
+	// Room boxes of cubemaps (parallax_obb) would cover whole rooms: only their outline unless selected.
+	m_volumeFaces.clear();
+	for (const auto& entity : doc.entities) {
+		if (iequals(entity.classname(), "parallax_obb")) {
+			if (const auto it = m_entityFaces.find(entity.id); it != m_entityFaces.end()) {
+				m_volumeFaces.insert(m_volumeFaces.end(), it->second.begin(), it->second.end());
+			}
+		}
+	}
 	// Entities with an editor sprite go last: the 3D views draw their sprites instead of these boxes.
 	std::stable_partition(boxes.begin(), boxes.end(), [](const BoxEntity& b) { return b.sprite.isEmpty(); });
 	std::vector<float> spriteData;
@@ -902,6 +912,9 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 
 void SceneRenderer::setSelection(const MapDocument& doc, const Selection& selection, const Selection& hidden, int hoverSideId) {
 	std::fill(m_flags.begin(), m_flags.end(), 0);
+	for (const int face : m_volumeFaces) {
+		if (face >= 0 && static_cast<std::size_t>(face) < m_flags.size()) m_flags[static_cast<std::size_t>(face)] = FLAG_VOLUME;
+	}
 	m_selectedRanges.clear();
 	m_hidden = hidden;
 	const auto mark = [&](const std::vector<int>& faces, std::uint8_t flag) {
