@@ -14,6 +14,7 @@ add_library(smeapp STATIC
 	main_window.cpp
 	material_cache.cpp
 	map_look_panel.cpp
+	menu_editor.cpp
 	mod_page.cpp
 	icons.cpp
 	material_editor.cpp

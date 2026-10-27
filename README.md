@@ -114,6 +114,13 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Mod*
   shows the chosen game or mod: its folder, the maps in its map folder (double-click opens one), the search paths of
   `gameinfo.txt` with what was found, and the entity definitions (FGDs).
+- **Menu** (your mod's main menu): the name, menu title and second line, logo switch, window icon and developer details
+  from `gameinfo.txt`; the chapters of *New Game* as cards (map, title, background map; add, remove, reorder); and the
+  menu entries (text or `#token`, command such as *OpenNewGameDialog* or `engine map mymap`, *Only in game*, *Not in
+  multiplayer*; add, remove, reorder). A preview on the right shows the menu over the background map's screenshot
+  (*As shown during a game* adds Resume and Save). *Save to the mod* writes `gameinfo.txt` (only these keys change),
+  `cfg/chapterN.cfg`, `resource/<mod>_english.txt` (chapter titles, UTF-16), `scripts/ChapterBackgrounds.txt` and
+  `resource/GameMenu.res`; each file it replaces is kept once as `.bak`.
 - **Source control** (Git, e.g. your mod's code on GitHub): pick the repository once per game (the mod folder or the
   mod's source code). You see the branch, how many commits are waiting to be pushed or pulled, and the changed files
   with check boxes. Write a message and *Commit* the checked files. *Fetch*, *Pull* and *Push* talk to the remote,

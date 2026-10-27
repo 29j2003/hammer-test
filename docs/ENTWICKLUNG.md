@@ -37,6 +37,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
+| `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 
 ### Oberfläche (`src/app`)
@@ -139,6 +140,16 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
   der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Mod")` zeigt die Seite, jeder
   andere Dock-Name die Karte mit dem Dock. Screenshots: `--page mod|sounds|…`, `--pick-edge` (Kante gewählt).
+- Hauptmenü der Mod: Kern `mod_menu` (ohne Qt) liest/schreibt `gameinfo.txt` (nur die Anzeige-Keys aus
+  `gameInfoDisplayKeys()`, zeilenweise im GameInfo-Block ersetzt/eingefügt/entfernt – Kommentare, Abstände, CRLF und
+  alles andere bleiben), `cfg/chapterN.cfg` (`chapterMap`/`setChapterMap`), die Lokalisierung
+  `resource/<mod>_<sprache>.txt` (UTF-16 LE mit BOM: `decodeTextFile`/`encodeUtf16Le`, eigener Leser mit `\"`-Escapes,
+  Token `<MODORDNER>_Chapter<N>_Title`), `scripts/ChapterBackgrounds.txt` und `resource/GameMenu.res` (`GameMenuItem`,
+  unbekannte Keys bleiben in `extra`). `loadModMenu` nimmt fehlende Dateien vom Grundspiel (über das Dateisystem),
+  `saveModMenu` nummeriert Kapitel neu, entfernt überzählige `chapterN.cfg`, legt vor dem ersten Überschreiben je Datei
+  einmal `<datei>.bak` an und lässt unveränderte Dateien unberührt. UI: `MenuEditor` (`menu_editor.cpp`, eigenständiges
+  Widget für die Project-Seite) mit `MenuPreview` (QPainter-Attrappe im Stil von Source 2013, Hintergrund aus
+  `materials/console/<bg>_widescreen.vtf`).
 - Quellcode-Verwaltung: `SourceControlPanel` (`source_control_panel.cpp`, eigenständiges Widget für die
   Project-Seite) ruft das System-`git` per `QProcess` auf, nacheinander aus einer Warteschlange (`run` → `startNext`),
   nie blockierend; `GIT_TERMINAL_PROMPT=0`, damit nichts auf ein Passwort in einer unsichtbaren Konsole wartet.
@@ -294,6 +305,9 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Modelle: VTX-Layout (25/33 Byte) wird ausprobiert; mit echten HL2-/Mapbase-Modellen prüfen (`sme-probe model GAME PATH`).
   Overlays/Decals werden noch nicht gezeichnet.
 - Material-Vorschau ist eine Annäherung an die Shader der Engine (kein HDR, Cubemap = einfacher Himmel).
+- Menü-Editor: nicht im Spiel getestet. Offen: ob die Kapiteltitel-Tokens bei jeder Mod-Basis gefunden werden (der
+  Ordnername wird groß geschrieben; die Engine vergleicht ohne Groß-/Kleinschreibung), das Logo-Bild bei `gamelogo 1`
+  (`resource/GameLogo.res`) wird nicht bearbeitet, die Vorschau nutzt nicht das Schema der Mod (Schriften, Farben).
 - Ship (`ship_panel`, Kern `shipping`): `bspzip -addorupdatelist <bsp> <liste> <bsp> -game <mod>` und der Start von steamcmd
   (`+login <name> +workshop_build_item <vdf> +quit`, eigenes Konsolenfenster unter Windows) sind nur mit fehlendem Werkzeug
   getestet, nicht mit echtem bspzip/steamcmd. Die Abhängigkeiten kommen aus der offenen VMF, nicht aus der BSP; Materialien
