@@ -13,6 +13,7 @@
 #include <sme/material.h>
 #include <sme/steam.h>
 #include <sme/text.h>
+#include <sme/version.h>
 #include <sme/texture.h>
 
 #include <algorithm>
@@ -305,4 +306,18 @@ TEST_CASE("Hammer GameConfig.txt with Windows paths") {
 	CHECK(game.vbsp.filename() == "vbsp.exe");
 	CHECK(game.defaultTextureScale == doctest::Approx(0.25));
 	CHECK(config->flavor == "Hammer");
+}
+
+TEST_CASE("versions and checksums for updates") {
+	CHECK(compareVersions("0.2.0", "0.1.9") > 0);
+	CHECK(compareVersions("v0.10.0", "0.9.3") > 0);
+	CHECK(compareVersions("0.2", "0.2.0") == 0);
+	CHECK(compareVersions("V1.0.0", "1.0.1") < 0);
+	CHECK(compareVersions("1.2.0-beta", "1.2.0") == 0);
+	const std::string sums = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ABCDEF  SourceMapEditor-0.2.0-windows.zip\n"
+	                         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff *other.zip\n";
+	CHECK(checksumFor(sums, "SourceMapEditor-0.2.0-windows.zip") == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+	CHECK(checksumFor(sums, "other.zip").has_value());
+	CHECK_FALSE(checksumFor(sums, "missing.zip"));
+	CHECK_FALSE(checksumFor("not a checksum file", "x"));
 }

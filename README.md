@@ -56,15 +56,24 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
 
 ## Getting started (Windows)
 
-1. Download the newest `SourceMapEditor-windows` zip from the
-   [Actions page](https://github.com/29j2003/hammer-test/actions) (choose the latest green run, then *Artifacts*).
-2. Unzip it anywhere and start `SourceMapEditor.exe`.
+1. Download `SourceMapEditor-<version>-windows.zip` from the newest
+   [release](https://github.com/29j2003/hammer-test/releases/latest).
+2. Unzip it into a folder you can write to (e.g. `Documents\SourceMapEditor`, not `Program Files`) and start
+   `SourceMapEditor.exe`.
 3. Choose your game or mod in the **Game** list at the top. Check the **⚙** game settings once: FGDs, VBSP/VVIS/VRAD
    and the game executable are filled in from Hammer++/Hammer when available.
 
 **Mapbase:** the editor adds Mapbase's FGD from `sourcemods/mapbase_shared` by itself; the log warns if it cannot find
 one. Use the Mapbase compile tools.
 **Black Mesa:** its FGDs (`bms.fgd`) and tools are in `Black Mesa/bin`.
+
+### Updates
+
+At start the editor asks GitHub whether a newer version is out and offers **Update now / Later / Skip this version**.
+*Update now* downloads the package, checks its SHA-256 checksum and restarts the editor in the new version. The version
+is shown at the bottom right; when an update is out it turns into an **Update to …** button. *Help > Check for updates*
+checks by hand, *Help > Check for updates at start* turns the automatic check off. Nothing else is ever sent: no data
+about you or your maps.
 
 ### Help us test: the setup report
 

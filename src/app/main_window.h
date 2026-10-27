@@ -15,6 +15,7 @@ class QActionGroup;
 class QComboBox;
 class QMenu;
 class QToolButton;
+class QProgressDialog;
 class QLabel;
 class QSplitter;
 class QDockWidget;
@@ -31,6 +32,8 @@ class ProblemsPanel;
 class PropertiesPanel;
 class SoundBrowser;
 class ToolPanel;
+class Updater;
+struct ReleaseInfo;
 class Viewport;
 
 class MainWindow : public QMainWindow {
@@ -52,6 +55,9 @@ public:
 	[[nodiscard]] CompileWindow* compileWindow() const { return m_compileWindow; }
 	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
 	void raiseDock(const QString& name);
+	/// Update check against the GitHub releases. `manual` also reports "up to date" and errors.
+	void checkForUpdates(bool manual);
+	[[nodiscard]] Updater* updater() const { return m_updater; }
 
 protected:
 	void closeEvent(QCloseEvent* event) override;
@@ -66,6 +72,8 @@ private:
 	void compile();
 	void showContextMenu(const QPoint& globalPos);
 	void roundEdgeDialog();
+	void offerUpdate(const ReleaseInfo& release, bool manual);
+	void runUpdate(const ReleaseInfo& release);
 	[[nodiscard]] Viewport* activeView() const;
 
 	Editor* m_editor;
@@ -98,7 +106,11 @@ private:
 	QActionGroup* m_renderGroup = nullptr;
 	QAction* m_textureLock = nullptr;
 	CompileRunner m_compiler;
-	QList<QAction*> m_contextActions;   ///< Right-click menu of the views (nullptr = separator)
+	QList<QAction*> m_contextActions;
+	Updater* m_updater = nullptr;
+	QToolButton* m_versionButton = nullptr;     ///< Bottom right: version, turns into "Update to x" when one is out
+	bool m_manualCheck = false;
+	bool m_quitForUpdate = false;               ///< Closing to install an update (already asked about saving)   ///< Right-click menu of the views (nullptr = separator)
 };
 
 } // namespace sme::app

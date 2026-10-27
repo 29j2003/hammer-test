@@ -1,6 +1,6 @@
 # The Qt editor application. Qt 6.4+ (CI builds with 6.8).
 # Everything except main.cpp is a library so the UI tests can drive the real windows.
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent Network)
 # Sound preview in the Sounds tab (optional: without it the editor builds, but cannot play sounds).
 find_package(Qt6 QUIET COMPONENTS Multimedia)
 set(CMAKE_AUTOMOC ON)
@@ -24,11 +24,12 @@ add_library(smeapp STATIC
 	sound_player.cpp
 	style.cpp
 	tool_panel.cpp
+	updater.cpp
 	viewport.cpp
 	viewport_tools.cpp)
 target_include_directories(smeapp PUBLIC .)
 target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)
-target_link_libraries(smeapp PUBLIC smecore Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent)
+target_link_libraries(smeapp PUBLIC smecore Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network)
 if(TARGET Qt6::Multimedia)
 	target_link_libraries(smeapp PUBLIC Qt6::Multimedia)
 	target_compile_definitions(smeapp PUBLIC SME_HAVE_MULTIMEDIA)

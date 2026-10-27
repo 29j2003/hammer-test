@@ -11,6 +11,7 @@
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
 //   --check              run the problem checks after loading
 //   --screenshot FILE    save a picture of the window after loading and quit
+//   --no-update-check    do not ask GitHub for a newer version at start
 //   FILE.vmf             map to open
 
 #include <QApplication>
@@ -59,6 +60,7 @@ int main(int argc, char** argv) {
 	parser.addOption({"check", "Run the problem checks."});
 	parser.addOption({"screenshot", "Save a screenshot and quit.", "file"});
 	parser.addOption({"wait", "Milliseconds before the screenshot.", "ms", "2500"});
+	parser.addOption({"no-update-check", "Do not check for a newer version at start."});
 	parser.addPositionalArgument("map", "Map (.vmf) to open.");
 	parser.process(app);
 
@@ -122,6 +124,11 @@ int main(int argc, char** argv) {
 			window.raiseDock(parser.value("dock"));
 		}
 	});
+	// Newer version on GitHub? Asked once at start (Help > Check for updates at start turns it off).
+	const bool automated = parser.isSet("screenshot") || parser.isSet("no-update-check") || qEnvironmentVariableIsSet("SME_NO_UPDATE_CHECK");
+	if (!automated && QSettings().value("update/checkOnStart", true).toBool()) {
+		QTimer::singleShot(1500, &window, [&window] { window.checkForUpdates(false); });
+	}
 	if (parser.isSet("check")) {
 		QObject::connect(window.assets(), &AssetBrowser::materialsIndexed, &window, [&] { window.problems()->runChecks(); });
 	}

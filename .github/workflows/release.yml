@@ -1,0 +1,68 @@
+# Release: pushing a tag "v1.2.3" builds the Windows package and publishes it as a GitHub
+# release with a SHA-256 checksum. The editor's update check reads the newest release.
+# The tag must match the VERSION file (checked below).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: write   # only this job may create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tag matches VERSION
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION).Trim()
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match VERSION $version" }
+      - name: Qt 6.8
+        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          modules: qtmultimedia
+          aqtversion: "==3.3.0"
+          cache: true
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure -LE ui
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION).Trim()
+          $out = "dist/SourceMapEditor-$version-windows"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build/src/app/Release/SourceMapEditor.exe $out
+          Copy-Item build/src/probe/Release/sme-probe.exe $out
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.txt $out
+          Copy-Item build/_deps/sourcepp-src/LICENSE "$out/LICENSE_sourcepp.txt"
+          Copy-Item build/_deps/sourcepp-src/THIRDPARTY_LEGAL_NOTICES.txt "$out/THIRD_PARTY_NOTICES_sourcepp.txt"
+          windeployqt --release --no-translations --no-system-d3d-compiler "$out/SourceMapEditor.exe"
+          Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
+          (Get-FileHash "$out.zip" -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path "$out.zip" -Leaf) | Out-File -Encoding ascii "$out.zip.sha256"
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content VERSION).Trim()
+          # Release text: the message of the (annotated) tag.
+          git fetch --force origin "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          $notes = git tag -l --format='%(contents)' "${{ github.ref_name }}"
+          if (-not $notes) { $notes = "Source Map Editor $version" }
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
+          gh release create "${{ github.ref_name }}" "dist/SourceMapEditor-$version-windows.zip" "dist/SourceMapEditor-$version-windows.zip.sha256" `
+            --repo "${{ github.repository }}" --title "Source Map Editor $version" --notes-file notes.md

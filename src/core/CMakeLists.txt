@@ -22,7 +22,8 @@ add_library(smecore STATIC
 	src/steam.cpp
 	src/studio_model.cpp
 	src/text.cpp
-	src/texture.cpp)
+	src/texture.cpp
+	src/version.cpp)
 target_include_directories(smecore PUBLIC include)
 target_link_libraries(smecore
 	PUBLIC sourcepp::kvpp

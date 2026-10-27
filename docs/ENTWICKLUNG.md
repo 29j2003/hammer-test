@@ -120,6 +120,15 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 
 ## Bauen, CI, Abgabe
 
+- **Updates**: `Updater` fragt beim Start `api.github.com/repos/29j2003/hammer-test/releases/latest` (abschaltbar,
+  `--no-update-check`, `SME_NO_UPDATE_CHECK`; Tests und Screenshots fragen nie). Neuer als `VERSION` (`compareVersions`)
+  → Frage „Update now / Later / Skip“, Versionsknopf unten rechts wird zum Update-Knopf. Download der
+  `*-windows.zip`, SHA-256 aus der `.sha256` (`checksumFor`) muss passen; dann schreibt der Editor ein PowerShell-Skript,
+  das auf das Ende des Editors wartet, die ZIP über den Programmordner entpackt und die neue Version startet. Nur unter
+  Windows und wenn der Ordner beschreibbar ist, sonst öffnet sich die Release-Seite.
+- **Release**: `VERSION` erhöhen und committen, `git tag -a vX.Y.Z -m "<Release-Text>"`, Tag pushen. Der Workflow
+  `release.yml` prüft Tag = `VERSION`, baut, testet, packt und erstellt das Release (nur dieser Job darf schreiben).
+
 - Linux: siehe `.claude/CLAUDE.md`. Windows: Visual Studio 2022 oder neuer + Qt 6.8 (`-DCMAKE_PREFIX_PATH=<Qt>/msvc2022_64`).
 - CI (`.github/workflows/ci.yml`): `checks` (Privatsphäre), `linux` (Build, Tests, UI-Tests unter Xvfb, Screenshots als
   Artefakt), `windows` (MSVC-Build, Tests, ZIP mit `SourceMapEditor.exe`, `sme-probe.exe`, Qt-DLLs, Prüfsumme).

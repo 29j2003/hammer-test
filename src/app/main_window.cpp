@@ -11,6 +11,7 @@
 #include "shortcut_dialog.h"
 #include "sound_browser.h"
 #include "tool_panel.h"
+#include "updater.h"
 #include "viewport.h"
 
 #include <QAction>
@@ -33,6 +34,10 @@
 #include <QWidgetAction>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QCheckBox>
+#include <QDesktopServices>
+#include <QProgressDialog>
+#include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
@@ -111,6 +116,45 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	m_statsLabel = new QLabel;
 	statusBar()->addPermanentWidget(m_cursorLabel);
 	statusBar()->addPermanentWidget(m_statsLabel);
+	// Version at the bottom right; it becomes the update button when a newer version is out.
+	m_updater = new Updater(this);
+	m_versionButton = new QToolButton;
+	m_versionButton->setAutoRaise(true);
+	m_versionButton->setText(QStringLiteral("v%1").arg(QApplication::applicationVersion()));
+	m_versionButton->setToolTip(tr("Version of the editor - click to check for updates"));
+	statusBar()->addPermanentWidget(m_versionButton);
+	connect(m_versionButton, &QToolButton::clicked, this, [this] {
+		if (const auto& release = m_updater->available()) {
+			offerUpdate(*release, true);
+		} else {
+			checkForUpdates(true);
+		}
+	});
+	connect(m_updater, &Updater::updateAvailable, this, [this](const ReleaseInfo& release) {
+		m_versionButton->setText(tr("⬆ Update to v%1").arg(release.version));
+		m_versionButton->setToolTip(tr("Version %1 is out (you have %2) - click to update").arg(release.version, QApplication::applicationVersion()));
+		m_versionButton->setStyleSheet("QToolButton { color: #1b1d22; background: #f0a030; border-radius: 3px; padding: 1px 6px; font-weight: bold; }");
+		const bool manual = m_manualCheck;
+		m_manualCheck = false;
+		// At start only once per version unless the mapper asked.
+		if (manual || QSettings().value("update/skipVersion").toString() != release.version) {
+			offerUpdate(release, manual);
+		}
+	});
+	connect(m_updater, &Updater::upToDate, this, [this] {
+		if (m_manualCheck) {
+			QMessageBox::information(this, tr("Updates"), tr("You have the newest version (%1).").arg(QApplication::applicationVersion()));
+		}
+		m_manualCheck = false;
+	});
+	connect(m_updater, &Updater::checkFailed, this, [this](const QString& error) {
+		if (m_manualCheck) {
+			QMessageBox::warning(this, tr("Updates"), tr("Could not check for updates:\n%1").arg(error));
+		} else {
+			m_log->append(tr("Update check failed: %1").arg(error), QColor(160, 160, 170));
+		}
+		m_manualCheck = false;
+	});
 	for (auto* view : m_views) {
 		connect(view, &Viewport::cursorWorldPosition, m_cursorLabel, &QLabel::setText);
 		connect(view, &Viewport::contextMenuRequested, this, &MainWindow::showContextMenu);
@@ -613,6 +657,19 @@ void MainWindow::createActions() {
 		ShortcutDialog dialog(this, this);
 		dialog.exec();
 	}));
+	help->addSeparator();
+	help->addAction(action(tr("Check for updates"), QKeySequence(), [this] { checkForUpdates(true); }));
+	auto* autoCheck = action(tr("Check for updates at start"), QKeySequence(), [](bool) {});
+	autoCheck->setCheckable(true);
+	autoCheck->setChecked(QSettings().value("update/checkOnStart", true).toBool());
+	connect(autoCheck, &QAction::toggled, this, [](bool on) { QSettings().setValue("update/checkOnStart", on); });
+	help->addAction(autoCheck);
+	help->addAction(action(tr("About"), QKeySequence(), [this] {
+		QMessageBox::about(this, tr("About"),
+		                   tr("<b>Source Map Editor</b> %1<br>A Source 2 Hammer style editor for Source 1 maps.<br>"
+		                      "<a href=\"https://github.com/29j2003/hammer-test\">github.com/29j2003/hammer-test</a>")
+		                       .arg(QApplication::applicationVersion()));
+	}));
 	// Defaults remembered, then the mapper's own keys applied.
 	for (auto* a : findChildren<QAction*>()) {
 		if (!a->objectName().isEmpty()) {
@@ -877,8 +934,83 @@ void MainWindow::roundEdgeDialog() {
 	}
 }
 
-void MainWindow::closeEvent(QCloseEvent* event) {
+void MainWindow::checkForUpdates(bool manual) {
+	m_manualCheck = manual;
+	m_updater->check();
+}
+
+void MainWindow::offerUpdate(const ReleaseInfo& release, bool manual) {
+	QMessageBox box(this);
+	box.setIcon(QMessageBox::Information);
+	box.setWindowTitle(tr("Update available"));
+	box.setText(tr("<b>Version %1 is available</b> (you have %2).<br>Update now?").arg(release.version, QApplication::applicationVersion()));
+	QString reason;
+	const bool installable = Updater::canInstall(&reason);
+	box.setInformativeText(installable ? tr("The editor downloads it, checks it and restarts. Your map is saved first if you want.")
+	                                   : reason + tr(".<br>The download page opens instead."));
+	if (!release.notes.isEmpty()) {
+		box.setDetailedText(release.notes);
+	}
+	auto* yes = box.addButton(installable ? tr("Update now") : tr("Open download page"), QMessageBox::AcceptRole);
+	box.addButton(tr("Later"), QMessageBox::RejectRole);
+	QPushButton* skip = manual ? nullptr : box.addButton(tr("Skip this version"), QMessageBox::DestructiveRole);
+	auto* autoCheck = new QCheckBox(tr("Check for updates when the editor starts"));
+	autoCheck->setChecked(QSettings().value("update/checkOnStart", true).toBool());
+	box.setCheckBox(autoCheck);
+	box.exec();
+	QSettings().setValue("update/checkOnStart", autoCheck->isChecked());
+	if (box.clickedButton() == skip && skip) {
+		QSettings().setValue("update/skipVersion", release.version);
+		return;
+	}
+	if (box.clickedButton() != yes) {
+		return;
+	}
+	if (!installable) {
+		QDesktopServices::openUrl(release.page);
+		return;
+	}
+	runUpdate(release);
+}
+
+void MainWindow::runUpdate(const ReleaseInfo& release) {
 	if (!maybeSave()) {
+		return;
+	}
+	auto* progress = new QProgressDialog(tr("Downloading version %1 ...").arg(release.version), tr("Cancel"), 0, 100, this);
+	progress->setWindowTitle(tr("Update"));
+	progress->setWindowModality(Qt::WindowModal);
+	progress->setMinimumDuration(0);
+	progress->setAutoClose(false);
+	progress->setAutoReset(false);
+	progress->setValue(0);
+	auto* connections = new QObject(progress);   // all hooks die with the dialog
+	connect(progress, &QProgressDialog::canceled, m_updater, &Updater::cancelDownload);
+	connect(m_updater, &Updater::downloadProgress, connections, [progress](qint64 received, qint64 total) {
+		if (total > 0) progress->setValue(int(received * 100 / total));
+	});
+	connect(m_updater, &Updater::downloadFailed, connections, [this, progress](const QString& error) {
+		progress->deleteLater();
+		if (error != tr("Cancelled")) {
+			QMessageBox::warning(this, tr("Update"), tr("The update was not installed:\n%1").arg(error));
+		}
+	});
+	connect(m_updater, &Updater::downloaded, connections, [this, progress](const QString& zip) {
+		progress->deleteLater();
+		QString error;
+		if (!Updater::install(zip, &error)) {
+			QMessageBox::warning(this, tr("Update"), tr("The update was not installed:\n%1").arg(error));
+			return;
+		}
+		// The helper waits for the editor to close, replaces the files and starts the new version.
+		m_quitForUpdate = true;
+		close();
+	});
+	m_updater->download(release);
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+	if (!m_quitForUpdate && !maybeSave()) {
 		event->ignore();
 		return;
 	}

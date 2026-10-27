@@ -23,6 +23,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 
 #include <sme/brush.h>
 
@@ -36,6 +37,7 @@
 #include "panels.h"
 #include "sound_browser.h"
 #include "tool_panel.h"
+#include "updater.h"
 #include "viewport.h"
 
 using namespace sme;
@@ -587,6 +589,34 @@ TEST_CASE("editing with the mouse in the real window") {
 	CHECK(editor.doc().world.solids.size() == 2);
 	CHECK(editor.doc().entities.size() == 1);
 	CHECK_FALSE(editor.modified());
+}
+
+TEST_CASE("update check: release information and the version button") {
+	const QByteArray json = R"({"tag_name": "v9.1.0", "html_url": "https://github.com/29j2003/hammer-test/releases/tag/v9.1.0",
+		"body": "New: things", "draft": false, "prerelease": false, "assets": [
+		{"name": "SourceMapEditor-9.1.0-windows.zip", "browser_download_url": "https://example.invalid/a.zip"},
+		{"name": "SourceMapEditor-9.1.0-windows.zip.sha256", "browser_download_url": "https://example.invalid/a.zip.sha256"}]})";
+	const auto release = parseRelease(json);
+	REQUIRE(release);
+	CHECK(release->version == "9.1.0");
+	CHECK(release->zipName == "SourceMapEditor-9.1.0-windows.zip");
+	CHECK(release->checksumUrl.toString().endsWith(".sha256"));
+	CHECK(release->notes == "New: things");
+	CHECK_FALSE(parseRelease(R"({"tag_name": "v9.2.0", "prerelease": true})"));
+	CHECK_FALSE(parseRelease("not json"));
+
+	QTemporaryDir home;
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().setValue("update/skipVersion", "9.1.0");   // no question at start for this version
+	Editor editor;
+	MainWindow window(&editor);
+	emit window.updater()->updateAvailable(*release);
+	bool found = false;
+	for (auto* b : window.findChildren<QToolButton*>()) {
+		found = found || b->text().contains("Update to v9.1.0");
+	}
+	CHECK(found);
 }
 
 int main(int argc, char** argv) {
