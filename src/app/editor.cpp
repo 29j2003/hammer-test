@@ -16,6 +16,7 @@
 #include <sme/brush.h>
 #include <sme/autosave.h>
 #include <sme/csg.h>
+#include <sme/visgroups.h>
 #include <sme/sky_presets.h>
 #include <sme/text.h>
 
@@ -221,6 +222,7 @@ void Editor::newMap() {
 	m_history.clear();
 	m_selection.clear();
 	m_hidden.clear();
+	m_hiddenVisGroups.clear();
 	m_filePath.clear();
 	m_recovered = false;
 	emit documentReplaced();
@@ -250,6 +252,8 @@ bool Editor::openMap(const QString& path, QString* error) {
 	m_footerModified = false;
 	m_selection.clear();
 	m_hidden.clear();
+	m_hiddenVisGroups = hiddenVisGroupsInFile(m_doc);   // groups that were hidden when it was saved
+	m_hiddenDirty = true;
 	m_filePath = path;
 	m_recovered = false;
 	emit documentReplaced();
@@ -271,7 +275,15 @@ bool Editor::saveMap(const QString& path, QString* error) {
 	if (version > 0) {
 		m_doc.world.set("mapversion", std::to_string(version));
 	}
-	const std::string text = m_doc.serialize();
+	std::string text;
+	if (visGroups(m_doc).empty()) {
+		text = m_doc.serialize();
+	} else {
+		// Which groups are hidden goes into the file (visgroupshown), not into the undo history.
+		MapDocument saved = m_doc;
+		writeVisGroupShown(saved, m_hiddenVisGroups);
+		text = saved.serialize();
+	}
 	// The previous version stays as <name>.vmx (one step back, besides undo and the autosaves).
 	if (QSettings().value("editor/vmxBackup", true).toBool() && QFileInfo::exists(path)) {
 		const QString backup = fromPath(backupPath(toPath(path)));
@@ -386,6 +398,11 @@ const Selection& Editor::hidden() const {
 		return m_hiddenAll;
 	}
 	m_hiddenAll = m_hidden;
+	if (!m_hiddenVisGroups.empty()) {
+		const auto grouped = hiddenByVisGroups(m_doc, m_hiddenVisGroups);
+		m_hiddenAll.solids.insert(m_hiddenAll.solids.end(), grouped.solids.begin(), grouped.solids.end());
+		m_hiddenAll.entities.insert(m_hiddenAll.entities.end(), grouped.entities.begin(), grouped.entities.end());
+	}
 	if (m_hiddenKinds != 0) {
 		auto filtered = objectsOfKinds(m_doc, m_hiddenKinds, entities());
 		m_hiddenAll.solids.insert(m_hiddenAll.solids.end(), filtered.solids.begin(), filtered.solids.end());
@@ -413,6 +430,98 @@ void Editor::setKindVisible(ObjectKind kind, bool visible) {
 	m_hiddenDirty = true;
 	emit selectionChanged();
 	emit viewFilterChanged();
+}
+
+void Editor::setVisGroupVisible(int id, bool visible) {
+	if (visible == visGroupVisible(id)) {
+		return;
+	}
+	if (visible) {
+		m_hiddenVisGroups.erase(id);
+	} else {
+		m_hiddenVisGroups.insert(id);
+		// What disappears is no longer selected.
+		const auto gone = hiddenByVisGroups(m_doc, {id});
+		std::erase_if(m_selection.solids, [&](const SolidRef& ref) { return gone.contains(ref); });
+		std::erase_if(m_selection.entities, [&](int e) { return gone.containsEntity(e); });
+	}
+	m_hiddenDirty = true;
+	emit selectionChanged();
+	emit viewFilterChanged();
+}
+
+std::vector<std::filesystem::path> Editor::instanceFolders() const {
+	std::vector<std::filesystem::path> sources;
+	if (const auto* entry = gameEntry()) {
+		const auto mapDir = gameSettings().mapDir;
+		if (!mapDir.isEmpty()) sources.push_back(toPath(mapDir));
+		sources.push_back(entry->gameDir / "mapsrc");
+		sources.push_back(entry->gameDir / "maps");
+		// Newer branches keep map sources next to the game folder (sdk_content/maps).
+		sources.push_back(entry->gameDir.parent_path() / "sdk_content" / "maps");
+	}
+	return instanceSearchFolders(m_filePath.isEmpty() ? std::filesystem::path{} : toPath(m_filePath), sources);
+}
+
+std::optional<std::filesystem::path> Editor::instanceFile(const Entity& funcInstance) const {
+	return resolveInstanceFile(funcInstance.get("file"), instanceFolders());
+}
+
+const InstancePreview* Editor::instancePreview(const Entity& funcInstance) const {
+	const auto file = instanceFile(funcInstance);
+	if (!file) {
+		return nullptr;
+	}
+	const auto doc = m_instanceFiles.load(*file);
+	if (!doc) {
+		return nullptr;
+	}
+	// The preview depends on the file (and its time, through the loaded document) and on every
+	// key of the func_instance (origin, angles, fixups).
+	std::error_code ec;
+	const auto time = std::filesystem::last_write_time(*file, ec).time_since_epoch().count();
+	std::string key = file->string() + '|' + std::to_string(time);
+	for (const auto& [k, v] : funcInstance.keyValues) {
+		key += '|' + k + '=' + v;
+	}
+	if (const auto it = m_instancePreviews.find(key); it != m_instancePreviews.end()) {
+		return &it->second;
+	}
+	if (m_instancePreviews.size() > 256) {
+		m_instancePreviews.clear();   // edits of many instances: start over instead of growing
+	}
+	auto preview = buildInstancePreview(prepareInstance(*doc, instanceSettings(funcInstance), entities()), entities());
+	return &m_instancePreviews.emplace(std::move(key), std::move(preview)).first->second;
+}
+
+bool Editor::collapseInstance(int funcInstanceId) {
+	const Entity* entity = m_doc.findEntity(funcInstanceId);
+	if (!entity || !isInstanceEntity(*entity)) {
+		return false;
+	}
+	const auto file = instanceFile(*entity);
+	std::string error;
+	const auto doc = file ? m_instanceFiles.load(*file, &error) : nullptr;
+	if (!doc) {
+		emit message(file ? tr("Could not read the instance: %1").arg(QString::fromStdString(error))
+		                  : tr("Instance file not found: %1").arg(QString::fromStdString(entity->get("file"))));
+		return false;
+	}
+	Selection added;
+	auto change = sme::collapseInstance(m_doc, funcInstanceId, *doc, entities(), &added);
+	if (change.empty()) {
+		return false;
+	}
+	commit(std::move(change));
+	setSelection(std::move(added));
+	emit message(tr("Instance collapsed: its content is now part of the map"));
+	return true;
+}
+
+void Editor::reloadInstances() {
+	m_instanceFiles.clear();
+	m_instancePreviews.clear();
+	emit documentChanged();   // the views build their geometry again
 }
 
 void Editor::hideSelection() {

@@ -9,7 +9,9 @@
 #include <QString>
 #include <QStringList>
 
+#include <map>
 #include <memory>
+#include <set>
 
 #include <sme/clipboard.h>
 #include <sme/editing.h>
@@ -17,6 +19,7 @@
 #include <sme/visibility.h>
 #include <sme/game.h>
 #include <sme/history.h>
+#include <sme/instances.h>
 #include <sme/map.h>
 #include <sme/map_tools.h>
 
@@ -96,6 +99,26 @@ public:
 	void hideSelection();
 	void hideUnselected();
 	void unhideAll();
+
+	// --- VisGroups (sme/visgroups.h) --------------------------------------------------
+	/// Groups whose members are hidden (taken from the file when it is opened, written back on save).
+	[[nodiscard]] const std::set<int>& hiddenVisGroups() const { return m_hiddenVisGroups; }
+	[[nodiscard]] bool visGroupVisible(int id) const { return !m_hiddenVisGroups.contains(id); }
+	/// Shows or hides the members of a group (and of its sub-groups). Not an undo step.
+	void setVisGroupVisible(int id, bool visible);
+
+	// --- Instances (func_instance, sme/instances.h) -------------------------------------
+	/// Folders an instance's "file" is looked up in: the map's folder, the game's map sources.
+	[[nodiscard]] std::vector<std::filesystem::path> instanceFolders() const;
+	/// The instance file of a func_instance, if it is found.
+	[[nodiscard]] std::optional<std::filesystem::path> instanceFile(const Entity& funcInstance) const;
+	/// What the views draw for a func_instance (cached until the file or its keys change);
+	/// nullptr if the file is missing or broken.
+	[[nodiscard]] const InstancePreview* instancePreview(const Entity& funcInstance) const;
+	/// Puts the instance's content into the map in place of the func_instance (one undo step).
+	bool collapseInstance(int funcInstanceId);
+	/// Forgets loaded instance files (they are read again on the next draw).
+	void reloadInstances();
 
 	// --- Tools and settings --------------------------------------------------
 	[[nodiscard]] Tool tool() const { return m_tool; }
@@ -243,6 +266,9 @@ private:
 	bool m_recovered = false;   ///< Opened from an autosave and not saved since
 	Selection m_selection;
 	Selection m_hidden;
+	std::set<int> m_hiddenVisGroups;
+	mutable InstanceCache m_instanceFiles;
+	mutable std::map<std::string, InstancePreview> m_instancePreviews;   ///< by file, its time and the entity's keys
 	std::vector<Vec3> m_vertexCorners;
 	std::uint32_t m_hiddenKinds = 0;
 	mutable Selection m_hiddenAll;        ///< m_hidden plus the filtered kinds, made when needed

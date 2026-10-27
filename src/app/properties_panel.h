@@ -75,6 +75,8 @@ private:
 	void buildFaces(QVBoxLayout* layout);
 	/// env_cubemap: its room box for parallax-corrected reflections (Mapbase).
 	void buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap);
+	/// func_instance: its file, the $variables it fills in, collapse (properties_instance.cpp).
+	void buildInstanceBox(QVBoxLayout* layout, const Entity& funcInstance);
 	void buildBrushes(QVBoxLayout* layout);
 	QWidget* makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed);
 	void setKey(const std::vector<int>& ids, const std::string& key, const QString& value);

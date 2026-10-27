@@ -87,6 +87,8 @@
 #include "sound_browser.h"
 #include "soundscape_editor.h"
 #include "source_control_panel.h"
+#include <sme/visgroups.h>
+#include "visgroups_panel.h"
 #include "tool_panel.h"
 #include "updater.h"
 #include "viewport.h"
@@ -2122,6 +2124,143 @@ TEST_CASE("safety and search: autosave, crash recovery, .vmx backup, undo histor
 		CHECK(dialog.matchCount() == tiles);
 	}
 	qunsetenv("XDG_DATA_HOME");
+}
+
+TEST_CASE("visgroups panel and func_instance: group, hide, show; instance preview and collapse") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+
+	// Two blocks; the first goes into a group.
+	auto [c1, a] = edit::createBlock(editor.doc(), box({0, 0, 0}, {64, 64, 64}), "DEV/DEV_MEASUREGENERIC01");
+	editor.commit(std::move(c1));
+	auto [c2, b] = edit::createBlock(editor.doc(), box({128, 0, 0}, {192, 64, 64}), "DEV/DEV_MEASUREGENERIC01");
+	editor.commit(std::move(c2));
+	VisGroupsPanel groups(&editor);
+	groups.show();
+	Selection onlyA;
+	onlyA.solids.push_back(a);
+	editor.setSelection(onlyA);
+	groups.findChild<QLineEdit*>("visGroupName")->setText("Room");
+	groups.findChild<QPushButton*>("visNew")->click();
+	settle();
+	const auto list = visGroups(editor.doc());
+	REQUIRE(list.size() == 1);
+	CHECK(list[0].name == "Room");
+	const int id = list[0].id;
+	CHECK(groups.currentGroup() == id);
+	auto* tree = groups.findChild<QTreeWidget*>("visGroupTree");
+	REQUIRE(tree);
+	REQUIRE(tree->topLevelItemCount() == 1);
+	CHECK(tree->topLevelItem(0)->text(1) == "1");
+	// Untick: the member is hidden (and no longer selected); tick again: back.
+	tree->topLevelItem(0)->setCheckState(0, Qt::Unchecked);
+	settle();
+	CHECK(editor.hidden().contains(a));
+	CHECK_FALSE(editor.hidden().contains(b));
+	CHECK(editor.selection().solids.empty());
+	tree->topLevelItem(0)->setCheckState(0, Qt::Checked);
+	settle();
+	CHECK_FALSE(editor.hidden().contains(a));
+	// Add the second block, select the members, undo the addition.
+	Selection onlyB;
+	onlyB.solids.push_back(b);
+	editor.setSelection(onlyB);
+	groups.findChild<QPushButton*>("visAdd")->click();
+	settle();
+	CHECK(visGroupMembers(editor.doc(), id).solids.size() == 2);
+	groups.findChild<QPushButton*>("visSelect")->click();
+	CHECK(editor.selection().solids.size() == 2);
+	editor.undo();
+	CHECK(visGroupMembers(editor.doc(), id).solids.size() == 1);
+	// Hidden groups are saved as visgroupshown 0 and come back hidden.
+	editor.setVisGroupVisible(id, false);
+	const QString mapPath = home.filePath("level.vmf");
+	QString error;
+	REQUIRE(editor.saveMap(mapPath, &error));
+	REQUIRE(editor.openMap(mapPath, &error));
+	CHECK_FALSE(editor.visGroupVisible(id));
+	CHECK_FALSE(editor.hidden().solids.empty());
+	editor.setVisGroupVisible(id, true);
+
+	// An instance next to the map: a block and a named light.
+	MapDocument instance;
+	auto [ci, block] = edit::createBlock(instance, box({0, 0, 0}, {64, 64, 32}), "DEV/DEV_MEASUREGENERIC01");
+	(void)ci;
+	(void)block;
+	Entity lamp;
+	lamp.id = instance.newEntityId();
+	lamp.set("classname", "light");
+	lamp.set("targetname", "lamp");
+	lamp.setOrigin({32, 32, 48});
+	instance.entities.push_back(lamp);
+	QDir(home.path()).mkpath("instances");
+	{
+		QFile out(home.filePath("instances/box.vmf"));
+		REQUIRE(out.open(QIODevice::WriteOnly));
+		const auto text = instance.serialize();
+		out.write(text.data(), static_cast<qint64>(text.size()));
+	}
+	Transaction t(editor.doc(), "Place instance");
+	Entity func;
+	func.id = editor.doc().newEntityId();
+	func.set("classname", "func_instance");
+	func.set("targetname", "box1");
+	func.set("file", "instances/box");
+	func.setOrigin({512, 0, 0});
+	t.touchEntity(func.id);
+	editor.doc().entities.push_back(func);
+	editor.commit(t.finish());
+	REQUIRE(editor.instancePreview(*editor.doc().findEntity(func.id)));
+	// The view draws its content (read-only) where the func_instance stands.
+	Bounds shown;
+	for (int i = 0; i < 100 && shown.empty(); ++i) {
+		window.view3D()->update();
+		settle();
+		shown = window.view3D()->instanceBounds(func.id);
+	}
+	REQUIRE_FALSE(shown.empty());
+	CHECK(shown.min.x == doctest::Approx(512));
+	CHECK(shown.max.x == doctest::Approx(576));
+
+	// The properties show the instance; Collapse puts its content into the map.
+	Selection onlyFunc;
+	onlyFunc.entities.push_back(func.id);
+	editor.setSelection(onlyFunc);
+	window.raiseDock("Object Properties");
+	settle();
+	auto* instanceBox = window.properties()->findChild<QGroupBox*>("instanceBox");
+	REQUIRE(instanceBox);
+	CHECK(instanceBox->findChild<QLineEdit*>("instanceFile")->text() == "instances/box");
+	auto* collapse = instanceBox->findChild<QPushButton*>("instanceCollapse");
+	REQUIRE(collapse);
+	REQUIRE(collapse->isEnabled());
+	const auto solidsBefore = editor.doc().world.solids.size();
+	collapse->click();
+	settle();
+	CHECK(editor.doc().world.solids.size() == solidsBefore + 1);
+	CHECK_FALSE(editor.doc().findEntity(func.id));
+	bool named = false;
+	for (const auto& entity : editor.doc().entities) named = named || entity.get("targetname") == "box1-lamp";
+	CHECK(named);
+	editor.undo();
+	CHECK(editor.doc().findEntity(func.id));
+	CHECK(editor.doc().world.solids.size() == solidsBefore);
 }
 
 int main(int argc, char** argv) {

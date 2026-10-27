@@ -37,6 +37,8 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
+| `visgroups` | VisGroups: Liste aus dem Block `visgroups` vor der Welt (verschachtelt, `name`/`visgroupid`/`color`), Mitglieder über `visgroupid` im `editor`-Block von Welt-Brushes und Entities (mehrere möglich, bleiben in `extra`); Änderungen als Transaction (Gruppe anlegen – auch aus der Auswahl und unter einer Gruppe –, umbenennen, Farbe, löschen: Untergruppen rücken hoch, Mitglieder verlieren nur diese Id; Auswahl hinzufügen/entfernen). Die Gruppenliste ist ein Kopfblock: `Change` merkt sich dafür `headerBefore/After` (`Transaction::touchHeader`). Sichtbarkeit ist keine Kartenänderung: der Editor hält die versteckten Gruppen, `hiddenByVisGroups` liefert die Objekte (auch über Eltern-Gruppen), `writeVisGroupShown` schreibt beim Speichern `visgroupshown` in eine Kopie, `hiddenVisGroupsInFile` liest es beim Öffnen |
+| `instances` | `func_instance`: Einstellungen (`file`, `targetname`, `fixup_style`, `replaceNN` = „$var Wert“), Datei suchen (Ordner der Karte, Kartenordner des Spiels, ohne Endung → `.vmf`, `\` → `/`), `InstanceCache` (pro Pfad + Änderungszeit), `prepareInstance` (Variablen ersetzen – längste zuerst, Vorgaben aus `func_instance_parms` –, Namen mit Prefix/Postfix wie VBSP, `@`/`!` bleiben, Keys mit FGD-Typ `target_source/target_destination/target_name_or_class`, ohne FGD eine feste Liste; Ausgänge; drehen + verschieben mit Texture Lock), `buildInstancePreview`, `collapseInstance` (neue Ids, VisGroup-Ids der Instanz entfernt, ein Undo-Schritt) |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
@@ -186,6 +188,19 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Texturieren: Malen (Strg + rechte Maus) schreibt jede Fläche einzeln über `Editor::commitMerged` – gleiche Namen
   werden in `History::push(…, merge)` zu **einem** Undo-Schritt pro Strich zusammengefasst. „Ganze Wand“ =
   `edit::coplanarConnectedFaces` (gleiche Ebene, Flächen-Bounds berühren sich, über alle Brushes).
+- VisGroups: `VisGroupsPanel` (`visgroups_panel.cpp`, Baum „visGroupTree“, Haken = sichtbar, Name per F2/„Rename“,
+  Doppelklick wählt Mitglieder; Knöpfe „visNew“ mit Namensfeld „visGroupName“, „visAdd“, „visRemove“, „visSelect“,
+  „visColor“, „visDelete“). Das Panel ist eigenständig; es kommt als Tab neben den Outliner (MainWindow bindet es ein).
+  `Editor::setVisGroupVisible` hält die versteckten Gruppen (`m_hiddenVisGroups`), `Editor::hidden()` nimmt ihre
+  Mitglieder dazu; `openMap` liest sie aus der Datei, `saveMap` schreibt `visgroupshown` in eine Kopie (kein Undo).
+- Instanzen: `Editor::instancePreview` (Cache je Datei + Änderungszeit + Keys der func_instance, max. 256 Einträge)
+  liefert dem Renderer über `SceneRenderer::setInstanceProvider` Brushes und Punkt-Boxen; der Renderer legt die Brushes
+  in `m_instanceSolids` (deque, feste Adressen) ab, `PickItem::detached` zeigt darauf – Klicken wählt die func_instance,
+  im Flächenmodus werden sie übersprungen, ihre Seiten kommen nicht in `m_sideFaces` (Ids der Instanz-Datei). Kanten
+  türkis. Eigenschaften: Kasten „instanceBox“ (`properties_instance.cpp`: Datei „instanceFile“ + Durchsuchen,
+  Variablen-Tabelle „instanceReplacements“, Parameter der Instanz, „instanceReload“ = `Editor::reloadInstances`,
+  „instanceCollapse“ = `Editor::collapseInstance`). Verschachtelte Instanzen werden nicht gezeichnet (nur die eigene
+  Ebene), beim Auflösen bleiben sie als func_instance stehen.
 - Kanten (wie Source 2): Ecken des Vertex-Werkzeugs liegen in der Ansicht (`m_vertexSelection`) und gespiegelt im
   Editor (`Editor::vertexCorners`, Signal `vertexCornersChanged`, alle Ansichten folgen). `edit::edgesAtCorners` findet
   die Kanten zwischen gewählten Ecken (als Flächenpaar), `edit::shapeEdges` macht Keil/Fase (`cutEdge` im Kern `csg`)

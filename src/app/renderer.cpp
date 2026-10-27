@@ -752,6 +752,8 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_solidFaces.clear();
 	m_entityFaces.clear();
 	m_pickItems.clear();
+	m_instanceSolids.clear();
+	m_instanceBounds.clear();
 	m_faceToSide.clear();
 	m_sceneBounds = {};
 	m_triangleCount = 0;
@@ -762,12 +764,15 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	std::vector<int> faceVertexOffset;   // per face: vertex offset within its material list
 	std::vector<QString> faceMaterial;
 
-	const auto addSolid = [&](const Solid& solid, int entityId, const QVector3D& edgeColor) {
+	// `detached`: a brush that is not in the document (instance content); it has no side ids of
+	// the map and picking it selects its entity.
+	const auto addSolid = [&](const Solid& solid, int entityId, const QVector3D& edgeColor, const Solid* detached = nullptr) {
 		const SolidRef ref{entityId, solid.id};
 		const auto geometry = buildBrushGeometry(solid);
 		PickItem pick;
 		pick.solid = ref;
 		pick.entityId = entityId;
+		pick.detached = detached;
 		pick.bounds = geometry.bounds;
 		m_sceneBounds.add(geometry.bounds);
 		for (const auto& face : geometry.faces) {
@@ -775,7 +780,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			const QString material = normalizedMaterialName(QString::fromStdString(side.material));
 			auto& vertices = byMaterial[material];
 			const int id = faceIndex++;
-			m_sideFaces[side.id].push_back(id);
+			if (!detached) m_sideFaces[side.id].push_back(id);
 			m_solidFaces[solidKey(ref)].push_back(id);
 			if (entityId != 0) {
 				m_entityFaces[entityId].push_back(id);
@@ -875,6 +880,22 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	std::vector<BoxEntity> boxes;
 	for (const auto& entity : doc.entities) {
 		const auto classname = entity.classname();
+		// func_instance: the instance's content, read-only, with tinted edges; the entity itself
+		// still gets its box below.
+		if (m_instanceProvider && isInstanceEntity(entity)) {
+			if (const auto* preview = m_instanceProvider(entity)) {
+				const QVector3D tint(0.35f, 0.8f, 0.9f);
+				for (const auto& solid : preview->solids) {
+					m_instanceSolids.push_back(solid);
+					addSolid(m_instanceSolids.back(), entity.id, tint, &m_instanceSolids.back());
+				}
+				for (const auto& [pointBox, pointClass] : preview->pointBoxes) {
+					boxes.push_back({entity.id, pointBox, tint, {}});
+				}
+				m_instanceBounds[entity.id] = preview->bounds;
+				m_sceneBounds.add(preview->bounds);
+			}
+		}
 		QVector3D color(0.86f, 0.12f, 0.86f);
 		if (catalog) {
 			if (const auto* definition = catalog->find(classname)) {
@@ -1866,6 +1887,11 @@ void SceneRenderer::endFrame() {
 	glLineWidth(1.f);
 }
 
+Bounds SceneRenderer::instanceBounds(int entityId) const {
+	const auto it = m_instanceBounds.find(entityId);
+	return it == m_instanceBounds.end() ? Bounds{} : it->second;
+}
+
 std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) const {
 	if (!m_doc) {
 		return std::nullopt;
@@ -1903,7 +1929,10 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 			best = r;
 			continue;
 		}
-		const auto* solid = m_doc->findSolid(item.solid);
+		if (item.detached && facesOnly) {
+			continue;   // instance content has no faces of the map
+		}
+		const auto* solid = item.detached ? item.detached : m_doc->findSolid(item.solid);
 		if (!solid) {
 			continue;
 		}

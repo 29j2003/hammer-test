@@ -34,8 +34,10 @@ struct Change {
 	std::vector<SolidState> solids;
 	std::vector<EntityState> entities;
 	std::optional<WorldState> worldBefore, worldAfter;   ///< World key/values (not its solids)
+	/// Blocks before the world (visgroups, viewsettings, ...), when the change touched them.
+	std::optional<std::vector<KvNode>> headerBefore, headerAfter;
 
-	[[nodiscard]] bool empty() const { return solids.empty() && entities.empty() && !worldBefore; }
+	[[nodiscard]] bool empty() const { return solids.empty() && entities.empty() && !worldBefore && !headerBefore; }
 };
 
 class Transaction {
@@ -48,6 +50,8 @@ public:
 	void touchEntity(int entityId);
 	/// Call before changing world key/values.
 	void touchWorld();
+	/// Call before changing the blocks before the world (e.g. the visgroup list).
+	void touchHeader();
 
 	/// Captures the new state of everything touched.
 	[[nodiscard]] Change finish();
