@@ -1,3 +1,8 @@
+# Test sources contain UTF-8 text (umlauts in expected strings): MSVC must read them as UTF-8.
+if(MSVC)
+	add_compile_options(/utf-8)
+endif()
+
 # Unit tests (doctest). The fixture library also feeds sme-make-fixture,
 # which writes the fake Steam installation to a folder for manual tests and screenshots.
 add_library(sme_fixture STATIC demo.cpp fixture.cpp)
