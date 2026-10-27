@@ -102,6 +102,7 @@ private:
 	QLabel* m_hint;
 	QWidget* m_hintPage;
 	QTableWidget* m_keys;
+	QWidget* m_edgeBox = nullptr;   ///< Vertex tool: wedge / bevel / round the picked edges
 	EntityPicker* m_entities;
 	QWidget* m_block = nullptr;
 };

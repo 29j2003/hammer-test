@@ -167,6 +167,13 @@ public:
 	void carveWithSelection();
 	void mergeSelection();
 	void roundSelectedEdge(double radius, int segments);
+	/// Corners picked with the vertex tool (the views keep them in step; the edge actions use them).
+	[[nodiscard]] const std::vector<Vec3>& vertexCorners() const { return m_vertexCorners; }
+	void setVertexCorners(const std::vector<Vec3>& corners);
+	/// Edges the edge actions work on: between two picked corners, or between two selected faces.
+	[[nodiscard]] std::vector<edit::EdgeFaces> selectedEdges() const;
+	/// Wedge, bevel or round the selected edges (one undo step); false if none could be done.
+	bool shapeSelectedEdges(edit::EdgeShape shape, double size, int segments);
 	void clipSelection(const Plane& plane, edit::ClipKeep keep);
 	/// Vertex tool: moves corners of the selected brushes.
 	void moveSelectedVertices(const std::vector<Vec3>& corners, const Vec3& delta);
@@ -206,6 +213,7 @@ signals:
 	void toolChanged();
 	void settingsChanged();
 	void viewFilterChanged();    ///< A kind of object was shown or hidden
+	void vertexCornersChanged();
 	void recentMaterialsChanged();
 	void message(const QString& text);
 
@@ -219,6 +227,7 @@ private:
 	QString m_filePath;
 	Selection m_selection;
 	Selection m_hidden;
+	std::vector<Vec3> m_vertexCorners;
 	std::uint32_t m_hiddenKinds = 0;
 	mutable Selection m_hiddenAll;        ///< m_hidden plus the filtered kinds, made when needed
 	mutable bool m_hiddenDirty = true;

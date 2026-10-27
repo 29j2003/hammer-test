@@ -1100,6 +1100,18 @@ void MainWindow::showContextMenu(const QPoint& globalPos) {
 		menu.addSeparator();
 		menu.addAction(tr("Frame selection (F)"), this, [this] { activeView()->frameSelection(); });
 	}
+	// Edges picked with the vertex tool: the same as the Edge box of the tool panel.
+	if (m_editor->tool() == Editor::Tool::Vertex) {
+		if (const auto edges = m_editor->selectedEdges().size(); edges > 0) {
+			const double size = QSettings().value("brushes/edgeSize", 16.0).toDouble();
+			const int segments = std::max(2, QSettings().value("brushes/roundSegments", 4).toInt());
+			menu.addSection(tr("%n edge(s)", nullptr, int(edges)));
+			menu.addAction(tr("Make wedge"), this, [this] { m_editor->shapeSelectedEdges(edit::EdgeShape::Wedge, 0, 0); });
+			menu.addAction(tr("Bevel (%1 units)").arg(size), this, [this, size] { m_editor->shapeSelectedEdges(edit::EdgeShape::Bevel, size, 0); });
+			menu.addAction(tr("Round (%1 units, %2 segments)").arg(size).arg(segments), this,
+			               [this, size, segments] { m_editor->shapeSelectedEdges(edit::EdgeShape::Round, size, segments); });
+		}
+	}
 	menu.exec(globalPos);
 }
 

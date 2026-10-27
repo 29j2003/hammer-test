@@ -991,6 +991,63 @@ std::optional<Change> roundEdge(MapDocument& doc, const FaceRef& a, const FaceRe
 	return t.finish();
 }
 
+std::vector<EdgeFaces> edgesAtCorners(const MapDocument& doc, const Selection& selection, const std::vector<Vec3>& corners) {
+	const auto picked = [&](const Vec3& v) {
+		return std::any_of(corners.begin(), corners.end(), [&](const Vec3& c) { return length(c - v) < 0.01; });
+	};
+	const auto has = [](const std::vector<Vec3>& vertices, const Vec3& v) {
+		return std::any_of(vertices.begin(), vertices.end(), [&](const Vec3& w) { return length(w - v) < 0.01; });
+	};
+	std::vector<EdgeFaces> edges;
+	for (const auto& ref : selectedSolids(doc, selection)) {
+		const auto* solid = doc.findSolid(ref);
+		if (!solid) continue;
+		const auto geometry = buildBrushGeometry(*solid);
+		for (std::size_t f = 0; f < geometry.faces.size(); ++f) {
+			const auto& face = geometry.faces[f];
+			for (std::size_t i = 0; i < face.vertices.size(); ++i) {
+				const Vec3 a = face.vertices[i], b = face.vertices[(i + 1) % face.vertices.size()];
+				if (!picked(a) || !picked(b)) continue;
+				// The other face along this edge comes later in the list (each edge once).
+				for (std::size_t g = f + 1; g < geometry.faces.size(); ++g) {
+					const auto& other = geometry.faces[g];
+					if (has(other.vertices, a) && has(other.vertices, b)) {
+						edges.push_back({FaceRef{ref, solid->sides[static_cast<std::size_t>(face.sideIndex)].id},
+						                 FaceRef{ref, solid->sides[static_cast<std::size_t>(other.sideIndex)].id}});
+						break;
+					}
+				}
+			}
+		}
+	}
+	return edges;
+}
+
+std::optional<Change> shapeEdges(MapDocument& doc, const std::vector<EdgeFaces>& edges, EdgeShape shape, double size, int segments) {
+	Transaction t(doc, shape == EdgeShape::Wedge ? "Wedge edge" : shape == EdgeShape::Bevel ? "Bevel edge" : "Round edge");
+	int done = 0;
+	// One after another: sides keep their ids, so later edges of the same brush are still found.
+	for (const auto& [a, b] : edges) {
+		if (!(a.solid == b.solid)) continue;
+		const auto* solid = doc.findSolid(a.solid);
+		if (!solid) continue;
+		std::optional<Solid> result;
+		switch (shape) {
+			case EdgeShape::Wedge: result = cutEdge(doc, *solid, a.sideId, b.sideId, std::nullopt); break;
+			case EdgeShape::Bevel: result = cutEdge(doc, *solid, a.sideId, b.sideId, size); break;
+			case EdgeShape::Round: result = sme::roundEdge(doc, *solid, a.sideId, b.sideId, size, std::max(2, segments)); break;
+		}
+		if (!result) continue;
+		t.touchSolid(a.solid);
+		*doc.findSolid(a.solid) = std::move(*result);
+		++done;
+	}
+	if (done == 0) {
+		return std::nullopt;
+	}
+	return t.finish();
+}
+
 std::pair<Change, Selection> clip(MapDocument& doc, const Selection& selection, const Plane& plane, ClipKeep keep) {
 	Transaction t(doc, "Clip");
 	Selection result;

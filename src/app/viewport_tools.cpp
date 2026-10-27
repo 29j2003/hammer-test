@@ -135,6 +135,7 @@ void Viewport::resetToolState() {
 	const bool hadPreview = !m_clipPoints.empty() || m_drag == Drag::Vertex;
 	m_clipPoints.clear();
 	m_vertexSelection.clear();
+	m_editor->setVertexCorners(m_vertexSelection);
 	m_polygon.clear();
 	if (m_drag == Drag::ClipLine || m_drag == Drag::Vertex) {
 		m_drag = Drag::None;
@@ -295,11 +296,13 @@ bool Viewport::toolMousePress(QMouseEvent* event) {
 			} else {
 				for (const auto& c : handle.corners) if (!selected(c)) m_vertexSelection.push_back(c);
 			}
+			m_editor->setVertexCorners(m_vertexSelection);
 			update();
 			return true;
 		}
 		if (!all) {
 			m_vertexSelection = handle.corners;
+			m_editor->setVertexCorners(m_vertexSelection);
 		}
 		m_drag = Drag::Vertex;
 		m_vertexGrab = handle.position;
@@ -358,6 +361,7 @@ bool Viewport::toolKey(QKeyEvent* event) {
 	}
 	if (tool == Editor::Tool::Vertex && event->key() == Qt::Key_Escape && !m_vertexSelection.empty()) {
 		m_vertexSelection.clear();
+		m_editor->setVertexCorners(m_vertexSelection);
 		update();
 		return true;
 	}
@@ -404,6 +408,11 @@ void Viewport::drawToolLines(std::vector<LineVertex>& lines) const {
 			                   {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z}};
 			const int e[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
 			for (const auto& edge : e) addLine(lines, k[edge[0]], k[edge[1]], color);
+			// A picked edge shows along its whole length (like Source 2's edge selection).
+			if (handle.edge && selected && handle.corners.size() == 2) {
+				const Vec3 shift = m_drag == Drag::Vertex ? m_vertexDelta : Vec3{};
+				addLine(lines, handle.corners[0] + shift, handle.corners[1] + shift, VERTEX_SELECTED);
+			}
 		}
 	} else if (tool == Editor::Tool::Polygon) {
 		for (std::size_t i = 0; i < m_polygon.size(); ++i) {

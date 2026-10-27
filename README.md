@@ -48,6 +48,9 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
 - **Keys at hand**: the Tool panel lists the keys of the current tool and what they do (with your own shortcuts).
 - **Clip, vertex and polygon tools**: cut brushes with a line (2D view) or three points (3D view); drag corners and edge
   middles (brushes always stay convex); draw a brush from the corners of its base.
+- **Edges** (like Source 2): with the vertex tool click the middle of an edge to pick it (Ctrl+click for more), then
+  **Wedge** (a block becomes a ramp), **Bevel** (one slanted face, *Size* in from the edge) or **Round** (radius *Size*,
+  2–32 segments) in the Tool panel's *Edge* box or the right-click menu. All picked edges change in one undo step.
 - **Entity tool**: the Tool panel on the left lists every point and brush entity with its icon (search with words like
   "global light", A–Z or in groups). The class you pick is *armed*: the next click places it on the surface under the
   cursor (a preview of it follows the mouse); a brush entity (trigger, door, …) is built from the next box you drag.

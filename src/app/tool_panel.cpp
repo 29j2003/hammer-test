@@ -17,6 +17,8 @@
 #include <QToolButton>
 #include <QSpinBox>
 #include <QFormLayout>
+#include <QGroupBox>
+#include <QPushButton>
 #include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -649,6 +651,62 @@ QWidget* makeShapePage(Editor* editor) {
 	return page;
 }
 
+/// Vertex tool: what to make of the picked edges (Source 2's Bevel; Hammer++ has none of it).
+QWidget* makeEdgeBox(Editor* editor) {
+	auto* box = new QGroupBox(QObject::tr("Edge"));
+	box->setObjectName("edgeTools");
+	auto* v = new QVBoxLayout(box);
+	auto* count = new QLabel;
+	count->setObjectName("edgeCount");
+	count->setWordWrap(true);
+	v->addWidget(count);
+	auto* form = new QFormLayout;
+	auto* size = new QDoubleSpinBox;
+	size->setObjectName("edgeSize");
+	size->setRange(1, 4096);
+	size->setDecimals(1);
+	size->setSuffix(QObject::tr(" units"));
+	size->setValue(QSettings().value("brushes/edgeSize", 16.0).toDouble());
+	size->setToolTip(QObject::tr("Bevel: how far the cut reaches into both faces. Round: the radius."));
+	auto* segments = new QSpinBox;
+	segments->setObjectName("edgeSegments");
+	segments->setRange(2, 32);
+	segments->setValue(std::max(2, QSettings().value("brushes/roundSegments", 4).toInt()));
+	form->addRow(QObject::tr("Size"), size);
+	form->addRow(QObject::tr("Round segments"), segments);
+	v->addLayout(form);
+	auto* buttons = new QHBoxLayout;
+	const auto button = [&](const QString& text, const QString& name, const QString& tip, edit::EdgeShape shape) {
+		auto* b = new QPushButton(text);
+		b->setObjectName(name);
+		b->setToolTip(tip);
+		QObject::connect(b, &QPushButton::clicked, box, [editor, size, segments, shape] {
+			QSettings().setValue("brushes/edgeSize", size->value());
+			QSettings().setValue("brushes/roundSegments", segments->value());
+			editor->shapeSelectedEdges(shape, size->value(), segments->value());
+		});
+		buttons->addWidget(b);
+		return b;
+	};
+	button(QObject::tr("Wedge"), "edgeWedge", QObject::tr("Cut from the far side of one face to the far side of the other: a block becomes a ramp"),
+	       edit::EdgeShape::Wedge);
+	button(QObject::tr("Bevel"), "edgeBevel", QObject::tr("One slanted face, Size in from the edge"), edit::EdgeShape::Bevel);
+	button(QObject::tr("Round"), "edgeRound", QObject::tr("Rounded with radius Size"), edit::EdgeShape::Round);
+	v->addLayout(buttons);
+	const auto update = [editor, box, count] {
+		const auto n = editor->selectedEdges().size();
+		count->setText(n == 0 ? QObject::tr("Click the middle of an edge (grey square) to pick it; Ctrl+click picks more.")
+		                      : QObject::tr("%n edge(s) picked", nullptr, int(n)));
+		for (auto* b : box->findChildren<QPushButton*>()) b->setEnabled(n > 0);
+	};
+	QObject::connect(editor, &Editor::vertexCornersChanged, box, update);
+	QObject::connect(editor, &Editor::selectionChanged, box, update);
+	QObject::connect(editor, &Editor::documentChanged, box, update);
+	QObject::connect(editor, &Editor::toolChanged, box, update);
+	update();
+	return box;
+}
+
 } // namespace
 
 // --- Tool panel ----------------------------------------------------------------------------
@@ -669,6 +727,8 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	hintLayout->setContentsMargins(0, 0, 0, 0);
 	hintLayout->setSpacing(4);
 	hintLayout->addWidget(m_hint);
+	m_edgeBox = makeEdgeBox(editor);
+	hintLayout->addWidget(m_edgeBox);
 	m_keys = new QTableWidget(0, 2);
 	m_keys->setObjectName("toolKeys");
 	m_keys->setHorizontalHeaderLabels({tr("Key"), tr("Operation")});
@@ -732,6 +792,7 @@ void ToolPanel::showKeys(const std::vector<std::pair<QString, QString>>& rows) {
 }
 
 void ToolPanel::refresh() {
+	m_edgeBox->setVisible(m_editor->tool() == Editor::Tool::Vertex && m_editor->selectMode() != Editor::SelectMode::Face);
 	if (m_editor->selectMode() == Editor::SelectMode::Face) {
 		m_hint->setText(tr("<b>Faces</b><br>Click a face to select it, Ctrl+click adds, double-click selects the whole wall.<br>"
 		                   "Drag a material onto a face, Shift+T applies the current material, Ctrl+right mouse paints.<br>"
@@ -815,7 +876,10 @@ void ToolPanel::refresh() {
 			m_hint->setText(tr("<b>Vertex</b><br>Select a brush, then drag its corners (white) or edge middles (grey). Ctrl+click selects "
 			                   "several, then drag one of them.<br>In 3D the corner moves across the view; use a 2D view for exact moves. "
 			                   "Brushes always stay convex - corners that fold in are merged."));
-			showKeys({{tr("Ctrl+Click"), tr("Select several corners")}, {tr("Drag"), tr("Move the selected corners")}});
+			showKeys({{tr("Click an edge middle"), tr("Pick the edge (Wedge, Bevel, Round above)")},
+			          {tr("Ctrl+Click"), tr("Select several corners or edges")},
+			          {tr("Drag"), tr("Move the selected corners")},
+			          {tr("Esc"), tr("Pick nothing")}});
 			break;
 		case Editor::Tool::Polygon:
 			m_hint->setText(tr("<b>Polygon</b><br>Click the corners of the base (on the floor in 3D, or in a 2D view). Enter or double-click "

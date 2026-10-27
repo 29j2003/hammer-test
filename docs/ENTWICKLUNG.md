@@ -31,7 +31,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
 | `editing`, `history` | Operationen als Undo-Schritte (`Transaction` merkt sich nur berührte Objekte) |
 | `checks` | Prüfungen mit Autofix, Leak aus `.lin` |
-| `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Vertex verschieben (bleibt konvex) |
+| `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Keil/Fase an einer Kante (`cutEdge`), Vertex verschieben (bleibt konvex) |
 | `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
 | `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
@@ -154,6 +154,11 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Texturieren: Malen (Strg + rechte Maus) schreibt jede Fläche einzeln über `Editor::commitMerged` – gleiche Namen
   werden in `History::push(…, merge)` zu **einem** Undo-Schritt pro Strich zusammengefasst. „Ganze Wand“ =
   `edit::coplanarConnectedFaces` (gleiche Ebene, Flächen-Bounds berühren sich, über alle Brushes).
+- Kanten (wie Source 2): Ecken des Vertex-Werkzeugs liegen in der Ansicht (`m_vertexSelection`) und gespiegelt im
+  Editor (`Editor::vertexCorners`, Signal `vertexCornersChanged`, alle Ansichten folgen). `edit::edgesAtCorners` findet
+  die Kanten zwischen gewählten Ecken (als Flächenpaar), `edit::shapeEdges` macht Keil/Fase (`cutEdge` im Kern `csg`)
+  oder Rundung (`roundEdge`) nacheinander in einem Undo-Schritt (Seiten behalten ihre Ids). UI: Kasten „edgeTools“ im
+  Werkzeug-Panel + Abschnitt im Rechtsklick-Menü; Werte in `brushes/edgeSize` und `brushes/roundSegments`.
 - Werkzeuge Clip/Vertex/Polygon in `viewport_tools.cpp`; ihre Vorschau läuft über `setPreviewSolids` mit einem leeren
   Hilfsdokument (nur für Ids), die Auswahl wird währenddessen ausgeblendet. Rechtsklick ohne Bewegung →
   `contextMenuRequested` → Menü im `MainWindow` (Aktionen aus `m_contextActions`).

@@ -821,6 +821,43 @@ void Editor::roundSelectedEdge(double radius, int segments) {
 	commit(std::move(*change));
 }
 
+void Editor::setVertexCorners(const std::vector<Vec3>& corners) {
+	const bool same = corners.size() == m_vertexCorners.size() &&
+	                  std::equal(corners.begin(), corners.end(), m_vertexCorners.begin(), [](const Vec3& a, const Vec3& b) { return length(a - b) < 0.01; });
+	if (same) {
+		return;
+	}
+	m_vertexCorners = corners;
+	emit vertexCornersChanged();
+}
+
+std::vector<edit::EdgeFaces> Editor::selectedEdges() const {
+	if (m_selection.faces.size() == 2 && m_selection.faces[0].solid == m_selection.faces[1].solid) {
+		return {{m_selection.faces[0], m_selection.faces[1]}};
+	}
+	if (m_tool != Tool::Vertex || m_vertexCorners.size() < 2) {
+		return {};
+	}
+	return edit::edgesAtCorners(m_doc, m_selection, m_vertexCorners);
+}
+
+bool Editor::shapeSelectedEdges(edit::EdgeShape shape, double size, int segments) {
+	const auto edges = selectedEdges();
+	if (edges.empty()) {
+		emit message(tr("Pick an edge first: vertex tool, click the middle of an edge (Ctrl+click for more), or select the two faces next to it"));
+		return false;
+	}
+	auto change = edit::shapeEdges(m_doc, edges, shape, size, segments);
+	if (!change) {
+		emit message(shape == edit::EdgeShape::Wedge ? tr("This edge cannot become a wedge")
+		                                             : tr("The size is too big for the faces next to this edge"));
+		return false;
+	}
+	commit(std::move(*change));
+	setVertexCorners({});   // the corners moved
+	return true;
+}
+
 void Editor::clipSelection(const Plane& plane, edit::ClipKeep keep) {
 	auto [change, parts] = edit::clip(m_doc, m_selection, plane, keep);
 	if (change.empty()) {

@@ -60,6 +60,11 @@ struct MergeResult {
 /// (side ids) with the given radius. nullopt if the sides do not share an edge.
 [[nodiscard]] std::optional<Solid> roundEdge(MapDocument& doc, const Solid& solid, int sideA, int sideB, double radius, int segments);
 
+/// Cuts the edge between sides `sideA` and `sideB` away with one flat face: from the far side of
+/// one face to the far side of the other (no size: a box becomes a wedge) or `size` units in from
+/// the edge on both faces (a bevel). nullopt if the sides do not share an edge.
+[[nodiscard]] std::optional<Solid> cutEdge(MapDocument& doc, const Solid& solid, int sideA, int sideB, std::optional<double> size);
+
 /// Vertex tool: moves the brush corners at `corners` by `delta`. The brush stays convex (the
 /// result is the hull of the new corners); sides keep id and texture where they stay recognisable.
 /// `cornersLost` tells whether corners vanished because the shape folded in.

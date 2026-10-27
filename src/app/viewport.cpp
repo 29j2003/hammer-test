@@ -129,9 +129,17 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		// The clip preview and the selected corners belong to the old selection.
 		if (m_drag != Drag::Vertex) {
 			m_vertexSelection.clear();
+			m_editor->setVertexCorners(m_vertexSelection);
 		}
 		if (!m_clipPoints.empty() && m_drag != Drag::ClipLine) {
 			updateClipPreview();
+		}
+	});
+	connect(editor, &Editor::vertexCornersChanged, this, [this] {
+		// Picked in another view, or used up by an edge action.
+		if (m_drag != Drag::Vertex) {
+			m_vertexSelection = m_editor->vertexCorners();
+			update();
 		}
 	});
 	connect(editor, &Editor::gameChanged, this, [this] {
@@ -1228,6 +1236,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 				m_vertexSelection.clear();
 				for (const auto& c : corners) m_vertexSelection.push_back(c + delta);
 			}
+			m_editor->setVertexCorners(m_vertexSelection);
 			update();
 			break;
 		}

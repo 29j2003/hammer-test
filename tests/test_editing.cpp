@@ -4,6 +4,7 @@
 
 #include <sme/brush.h>
 #include <sme/clipboard.h>
+#include <sme/csg.h>
 #include <sme/fidelity_look.h>
 #include <sme/sky_presets.h>
 #include <sme/visibility.h>
@@ -480,4 +481,54 @@ TEST_CASE("choosing a sky takes over its light: light_environment, env_sun, shad
 	CHECK(find("light_environment")->get("_light") == "197 205 214 750");
 	CHECK(find("light_environment")->get("angles") == "0 145 0");
 	CHECK(find("shadow_control")->get("angles") == "35 145 0");
+}
+
+TEST_CASE("edges from the vertex tool: wedge, bevel, round") {
+	const auto make = [](MapDocument& doc) {
+		auto [create, ref] = edit::createBlock(doc, box({0, 0, 0}, {64, 64, 64}), "X");
+		Selection selection;
+		selection.solids.push_back(ref);
+		return std::pair{selection, ref};
+	};
+	// The top front edge (y = 0, z = 64).
+	const std::vector<Vec3> edge{{0, 0, 64}, {64, 0, 64}};
+	{
+		MapDocument doc;
+		auto [selection, ref] = make(doc);
+		CHECK(edit::edgesAtCorners(doc, selection, {{0, 0, 64}}).empty());   // one corner is no edge
+		const auto edges = edit::edgesAtCorners(doc, selection, edge);
+		REQUIRE(edges.size() == 1);
+		History history;
+		auto change = edit::shapeEdges(doc, edges, edit::EdgeShape::Wedge, 0, 0);
+		REQUIRE(change);
+		history.push(std::move(*change));
+		const auto* solid = doc.findSolid(ref);
+		CHECK(solid->sides.size() == 5);   // a ramp
+		CHECK(solidVolume(*solid) == doctest::Approx(64.0 * 64 * 64 / 2));
+		history.undo(doc);
+		CHECK(doc.findSolid(ref)->sides.size() == 6);
+	}
+	{
+		MapDocument doc;
+		auto [selection, ref] = make(doc);
+		auto change = edit::shapeEdges(doc, edit::edgesAtCorners(doc, selection, edge), edit::EdgeShape::Bevel, 16, 0);
+		REQUIRE(change);
+		const auto* solid = doc.findSolid(ref);
+		CHECK(solid->sides.size() == 7);
+		CHECK(solidVolume(*solid) == doctest::Approx(64.0 * 64 * 64 - 16 * 16 / 2.0 * 64));
+	}
+	{
+		// Four corners of the top: its four edges, all rounded in one step.
+		MapDocument doc;
+		auto [selection, ref] = make(doc);
+		const auto edges = edit::edgesAtCorners(doc, selection, {{0, 0, 64}, {64, 0, 64}, {64, 64, 64}, {0, 64, 64}});
+		CHECK(edges.size() == 4);
+		auto change = edit::shapeEdges(doc, edges, edit::EdgeShape::Round, 16, 4);
+		REQUIRE(change);
+		CHECK(doc.findSolid(ref)->sides.size() == 6 + 4 * 4);
+		// Too big to fit: nothing.
+		MapDocument other;
+		auto [s2, r2] = make(other);
+		CHECK_FALSE(edit::shapeEdges(other, edit::edgesAtCorners(other, s2, edge), edit::EdgeShape::Bevel, 100, 0));
+	}
 }

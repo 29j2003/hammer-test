@@ -419,6 +419,65 @@ std::optional<Solid> roundEdge(MapDocument& doc, const Solid& solid, int sideA, 
 	return out;
 }
 
+std::optional<Solid> cutEdge(MapDocument& doc, const Solid& solid, int sideA, int sideB, std::optional<double> size) {
+	if (sideA == sideB || (size && *size <= 0)) {
+		return std::nullopt;
+	}
+	const auto geometry = buildBrushGeometry(solid);
+	const FaceGeometry* faceA = nullptr;
+	const FaceGeometry* faceB = nullptr;
+	for (const auto& face : geometry.faces) {
+		const int id = solid.sides[static_cast<std::size_t>(face.sideIndex)].id;
+		if (id == sideA) faceA = &face;
+		if (id == sideB) faceB = &face;
+	}
+	if (!faceA || !faceB) {
+		return std::nullopt;
+	}
+	std::vector<Vec3> shared;
+	for (const auto& p : faceA->vertices) {
+		for (const auto& q : faceB->vertices) {
+			if (length(p - q) < EPS) shared.push_back(p);
+		}
+	}
+	if (shared.size() != 2) {
+		return std::nullopt;
+	}
+	const Vec3 p = shared[0];
+	const Vec3 d = normalize(shared[1] - shared[0]);
+	// Where the cut meets each face: its far side (wedge) or `size` in from the edge (bevel).
+	const auto cutPoint = [&](const FaceGeometry& face) {
+		const auto away = [&](const Vec3& v) { return (v - p) - d * dot(v - p, d); };
+		Vec3 far = p;
+		for (const auto& v : face.vertices) {
+			if (length(away(v)) > length(away(far))) far = v;
+		}
+		if (!size) return std::optional<Vec3>(far);
+		if (*size > length(away(far)) + EPS) return std::optional<Vec3>();   // wider than the face
+		return std::optional<Vec3>(p + normalize(away(far)) * *size);
+	};
+	const auto atA = cutPoint(*faceA), atB = cutPoint(*faceB);
+	if (!atA || !atB) {
+		return std::nullopt;
+	}
+	const Vec3 at = *atA, bt = *atB;
+	Vec3 normal = cross(d, bt - at);
+	if (length(normal) < 1e-6) {
+		return std::nullopt;
+	}
+	normal = normalize(normal);
+	if (dot(normal, p - at) < 0) normal = normal * -1.0;   // the edge is what goes
+	const Side& from = solid.sides[static_cast<std::size_t>(faceA->sideIndex)];
+	Solid out = solid;
+	out.sides.push_back(makeSide(doc, Plane{normal, dot(normal, at)}, from.material, &from));
+	removeUnusedSides(out);
+	tidyPlanePoints(out);
+	if (!usable(out) || out.sides.size() < 4) {
+		return std::nullopt;
+	}
+	return out;
+}
+
 std::vector<Vec3> solidCorners(const Solid& solid) {
 	std::vector<Vec3> corners;
 	for (const auto& face : buildBrushGeometry(solid).faces) {

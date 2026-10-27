@@ -147,6 +147,15 @@ struct MergeOutcome {
 [[nodiscard]] std::optional<MergeOutcome> merge(MapDocument& doc, const Selection& selection);
 /// Rounds (segments > 1) or bevels the edge between two faces of one brush.
 [[nodiscard]] std::optional<Change> roundEdge(MapDocument& doc, const FaceRef& a, const FaceRef& b, double radius, int segments);
+/// Vertex tool: the edges of the selected brushes whose two corners are both in `corners`, each
+/// as the two faces that meet there.
+using EdgeFaces = std::pair<FaceRef, FaceRef>;
+[[nodiscard]] std::vector<EdgeFaces> edgesAtCorners(const MapDocument& doc, const Selection& selection, const std::vector<Vec3>& corners);
+/// Wedge: cut from the far side of one face to the far side of the other. Bevel: one slanted face
+/// `size` units in from the edge. Round: `segments` faces with radius `size`.
+enum class EdgeShape { Wedge, Bevel, Round };
+/// Shapes every given edge (one undo step); nullopt if none could be done.
+[[nodiscard]] std::optional<Change> shapeEdges(MapDocument& doc, const std::vector<EdgeFaces>& edges, EdgeShape shape, double size, int segments);
 /// Clip the selected brushes with a plane: keep the part behind it, in front of it or both.
 enum class ClipKeep { Back, Front, Both };
 [[nodiscard]] std::pair<Change, Selection> clip(MapDocument& doc, const Selection& selection, const Plane& plane, ClipKeep keep);

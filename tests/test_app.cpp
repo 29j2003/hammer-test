@@ -15,6 +15,7 @@
 #include <QTableWidget>
 #include <QTabBar>
 #include <QLabel>
+#include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QComboBox>
 #include <QStyle>
@@ -1523,6 +1524,39 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(isConvexValid(*editor.doc().findSolid(small)));
 		editor.undo();
 		CHECK(boundsOf(editor, small).max.x == doctest::Approx(-192));
+
+		// Edges: clicking an edge middle picks it (in a 2D view the edges behind it too); the
+		// tool panel's Edge box makes a wedge, bevel or rounding of it.
+		const auto b = boundsOf(editor, small);
+		QTest::mouseClick(top, Qt::LeftButton, {}, screen(top, {b.max.x, (b.min.y + b.max.y) / 2, 0}));
+		settle();
+		CHECK(editor.vertexCorners().size() == 4);
+		CHECK(editor.selectedEdges().size() == 4);   // the four edges of the side x = max
+		auto* edgeBox = window.findChild<QGroupBox*>("edgeTools");
+		REQUIRE(edgeBox);
+		CHECK(edgeBox->isVisibleTo(&window));
+		// Just the top edge of that side.
+		editor.setVertexCorners({{b.max.x, b.min.y, b.max.z}, {b.max.x, b.max.y, b.max.z}});
+		CHECK(editor.selectedEdges().size() == 1);
+		auto* wedge = edgeBox->findChild<QPushButton*>("edgeWedge");
+		REQUIRE(wedge);
+		CHECK(wedge->isEnabled());
+		const std::size_t sidesBefore = editor.doc().findSolid(small)->sides.size();
+		wedge->click();
+		settle();
+		CHECK(editor.doc().findSolid(small)->sides.size() == sidesBefore - 1);   // box -> ramp
+		CHECK(editor.vertexCorners().empty());
+		CHECK_FALSE(wedge->isEnabled());
+		editor.undo();
+		CHECK(editor.doc().findSolid(small)->sides.size() == sidesBefore);
+		editor.setVertexCorners({{b.max.x, b.min.y, b.max.z}, {b.max.x, b.max.y, b.max.z}});
+		edgeBox->findChild<QDoubleSpinBox*>("edgeSize")->setValue(4);
+		edgeBox->findChild<QPushButton*>("edgeRound")->click();
+		settle();
+		CHECK(editor.doc().findSolid(small)->sides.size() > sidesBefore + 1);
+		CHECK(isConvexValid(*editor.doc().findSolid(small)));
+		editor.undo();
+		CHECK(editor.doc().findSolid(small)->sides.size() == sidesBefore);
 
 		editor.setTool(Editor::Tool::Polygon);
 		for (const Vec3 p : {Vec3{-448, -448, 0}, Vec3{-384, -448, 0}, Vec3{-416, -384, 0}}) {
