@@ -1,0 +1,22 @@
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cpp,h}]
+indent_style = tab
+tab_width = 4
+
+[{CMakeLists.txt,*.cmake}]
+indent_style = tab
+tab_width = 4
+
+[*.{py,md}]
+indent_style = space
+indent_size = 4
+
+[*.yml]
+indent_style = space
+indent_size = 2

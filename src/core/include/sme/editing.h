@@ -1,0 +1,106 @@
+// editing.h - Editor operations on a map document (move, rotate, resize, copy, delete,
+// create blocks, place entities, apply materials, tie brushes to entities).
+//
+// Each operation records an undoable Change; the caller pushes it to the History.
+// They live in the core (not the UI) so they can be tested without a window.
+
+#pragma once
+
+#include <optional>
+#include <string>
+#include <vector>
+
+#include <sme/entity_catalog.h>
+#include <sme/history.h>
+#include <sme/map.h>
+
+namespace sme {
+
+/// A face, addressed by the side's id (stable across edits).
+struct FaceRef {
+	SolidRef solid;
+	int sideId = 0;
+	constexpr bool operator==(const FaceRef&) const = default;
+};
+
+struct Selection {
+	std::vector<SolidRef> solids;   ///< World brushes
+	std::vector<int> entities;      ///< Point and brush entities (a brush entity moves as a whole)
+	std::vector<FaceRef> faces;     ///< Face mode
+
+	[[nodiscard]] bool empty() const { return solids.empty() && entities.empty() && faces.empty(); }
+	[[nodiscard]] bool hasObjects() const { return !solids.empty() || !entities.empty(); }
+	void clear() { solids.clear(); entities.clear(); faces.clear(); }
+	[[nodiscard]] bool contains(const SolidRef& ref) const;
+	[[nodiscard]] bool containsEntity(int entityId) const;
+	[[nodiscard]] bool contains(const FaceRef& ref) const;
+	void toggle(const SolidRef& ref);
+	void toggleEntity(int entityId);
+	void toggle(const FaceRef& ref);
+	/// Drops references to objects that no longer exist (after undo, delete, ...).
+	void prune(const MapDocument& doc);
+};
+
+namespace edit {
+
+/// Box of a point entity: FGD size() helper, else 16 units around the origin.
+[[nodiscard]] Bounds entityBounds(const Entity& entity, const EntityCatalog* catalog);
+/// Box around everything selected (objects, or the faces' brushes in face mode).
+[[nodiscard]] Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog);
+
+/// Source angles "pitch yaw roll" <-> rotation matrix (Source convention: yaw around Z, pitch around Y, roll around X).
+[[nodiscard]] Mat3 anglesToMatrix(const Vec3& pitchYawRoll);
+[[nodiscard]] Vec3 matrixToAngles(const Mat3& m);
+
+[[nodiscard]] Change translate(MapDocument& doc, const Selection& selection, const Vec3& delta, bool textureLock);
+[[nodiscard]] Change rotate(MapDocument& doc, const Selection& selection, const Mat3& rotation, const Vec3& center, bool textureLock);
+/// Resizes the selection from box `from` to box `to`; brushes that would become invalid are left alone.
+[[nodiscard]] Change scale(MapDocument& doc, const Selection& selection, const Bounds& from, const Bounds& to);
+[[nodiscard]] Change remove(MapDocument& doc, const Selection& selection);
+
+/// Copies the selection, moved by `offset`; returns the change and the selection of the copies.
+[[nodiscard]] std::pair<Change, Selection> duplicate(MapDocument& doc, const Selection& selection, const Vec3& offset);
+
+[[nodiscard]] std::pair<Change, SolidRef> createBlock(MapDocument& doc, const Bounds& box, const std::string& material);
+
+/// Places a point entity; keys with FGD defaults are filled in like Hammer does.
+[[nodiscard]] std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classname, const Vec3& origin, const EntityClass* definition);
+
+/// Material on the selected faces (face mode) or on every face of the selected brushes/brush entities.
+[[nodiscard]] Change applyMaterial(MapDocument& doc, const Selection& selection, const std::string& material);
+
+/// Runs `modify` on every selected face (texture scale, shift, alignment, ...).
+template<typename F>
+[[nodiscard]] Change modifyFaces(MapDocument& doc, const std::vector<FaceRef>& faces, const std::string& name, F&& modify) {
+	Transaction t(doc, name);
+	for (const auto& face : faces) {
+		t.touchSolid(face.solid);
+		if (auto* solid = doc.findSolid(face.solid)) {
+			for (auto& side : solid->sides) {
+				if (side.id == face.sideId) {
+					modify(side);
+				}
+			}
+		}
+	}
+	return t.finish();
+}
+
+/// All faces (world and brush entities) that use the material (case-insensitive).
+[[nodiscard]] std::vector<FaceRef> facesWithMaterial(const MapDocument& doc, const std::string& material);
+/// The face plus every face in the same plane that touches it, directly or through others
+/// ("the whole wall"), across all brushes.
+[[nodiscard]] std::vector<FaceRef> coplanarConnectedFaces(const MapDocument& doc, const FaceRef& seed);
+
+/// Moves selected world brushes into a new brush entity (Hammer: "Tie to Entity").
+[[nodiscard]] std::pair<Change, int> tieToEntity(MapDocument& doc, const Selection& selection, const std::string& classname, const EntityClass* definition);
+/// Moves the brushes of selected brush entities back into the world and deletes those entities.
+[[nodiscard]] Change moveToWorld(MapDocument& doc, const Selection& selection);
+
+/// Sets (or with an empty optional removes) a key on several entities (0 = world).
+[[nodiscard]] Change setKeyValue(MapDocument& doc, const std::vector<int>& entityIds, const std::string& key, const std::optional<std::string>& value);
+/// Replaces the outputs of one entity.
+[[nodiscard]] Change setConnections(MapDocument& doc, int entityId, const std::vector<Connection>& connections);
+
+} // namespace edit
+} // namespace sme

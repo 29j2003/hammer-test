@@ -1,0 +1,72 @@
+// checks.h - Finds problems in a map before compiling and fixes the simple ones.
+//
+// Every problem says what is wrong, which objects cause it (for "select") and how to fix
+// it. Problems with an obvious fix (a typo in a material or class name, a broken brush,
+// an output to nothing) carry an autofix.
+
+#pragma once
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <sme/editing.h>
+#include <sme/entity_catalog.h>
+#include <sme/history.h>
+#include <sme/map.h>
+
+namespace sme {
+
+class GameFileSystem;
+
+struct Problem {
+	enum class Severity { Error, Warning, Info };
+	enum class Kind {
+		InvalidBrush,
+		MissingMaterial,
+		UnknownClass,
+		BrushEntityWithoutBrushes,
+		PointClassWithBrushes,
+		OutputTargetMissing,
+		UnknownOutput,
+		UnknownInput,
+		NoPlayerStart,
+		NoLights,
+		BadTextureScale,
+		MissingModel,
+		Leak,
+	};
+
+	Severity severity = Severity::Warning;
+	Kind kind = Kind::InvalidBrush;
+	std::string message;        ///< What is wrong
+	std::string howToFix;       ///< What the mapper can do
+	Selection objects;          ///< Objects to select/show
+	std::string fixLabel;       ///< Button text if an autofix exists, else empty
+
+	// Data for the autofix.
+	std::string from, to;
+	int entityId = 0;
+	Connection connection;
+	std::vector<Vec3> line;     ///< Leak line
+};
+
+struct CheckContext {
+	const EntityCatalog* entities = nullptr;
+	const GameFileSystem* files = nullptr;
+	/// All material names of the game ("concrete/wall01"), for "did you mean" suggestions. Optional.
+	const std::vector<std::string>* materialNames = nullptr;
+};
+
+[[nodiscard]] std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& context);
+
+/// Applies the problem's autofix (empty change if it has none).
+[[nodiscard]] Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* entities);
+
+/// Reads a VBSP pointfile (.lin): one "x y z" point per line.
+[[nodiscard]] std::vector<Vec3> readPointfile(std::string_view text);
+
+/// Turns a leak line into a problem that names the entity where the leak starts.
+[[nodiscard]] Problem leakProblem(const MapDocument& doc, const std::vector<Vec3>& line, const EntityCatalog* entities);
+
+} // namespace sme

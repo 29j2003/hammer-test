@@ -1,0 +1,7 @@
+add_executable(sme-probe main.cpp report.cpp)
+target_link_libraries(sme-probe PRIVATE smecore)
+if(MSVC)
+	target_compile_options(sme-probe PRIVATE /W4 /permissive- /utf-8)
+else()
+	target_compile_options(sme-probe PRIVATE -Wall -Wextra -Wpedantic)
+endif()

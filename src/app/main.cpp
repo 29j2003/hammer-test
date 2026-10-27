@@ -1,0 +1,135 @@
+// main.cpp - Source Map Editor entry point.
+//
+// Options (mainly for automation and screenshots):
+//   --steam DIR          use this Steam folder instead of the detected one
+//   --game KEY           game/mod to open (e.g. 220/hl2, sourcemods/mymod)
+//   --quad               start with four views
+//   --select-class NAME  select the first entity of this class
+//   --select-face        select the first face of the first brush (face mode)
+//   --camera "x y z yaw pitch"
+//   --render lit|unlit|wire
+//   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
+//   --check              run the problem checks after loading
+//   --screenshot FILE    save a picture of the window after loading and quit
+//   FILE.vmf             map to open
+
+#include <QApplication>
+#include <QCommandLineParser>
+#include <QSettings>
+#include <QSurfaceFormat>
+#include <QTimer>
+
+#include "asset_browser.h"
+#include "editor.h"
+#include "main_window.h"
+#include "panels.h"
+#include "style.h"
+#include "viewport.h"
+
+using namespace sme::app;
+
+int main(int argc, char** argv) {
+	QSurfaceFormat format;
+	format.setVersion(3, 3);
+	format.setProfile(QSurfaceFormat::CoreProfile);
+	format.setDepthBufferSize(24);
+	format.setStencilBufferSize(8);
+	format.setSamples(4);
+	QSurfaceFormat::setDefaultFormat(format);
+	QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
+	QApplication app(argc, argv);
+	QApplication::setOrganizationName("hammer-test");
+	QApplication::setApplicationName("Source Map Editor");
+	QApplication::setApplicationVersion(SME_VERSION);
+	applyDarkStyle(app);
+
+	QCommandLineParser parser;
+	parser.setApplicationDescription("Modern 3D-first map editor for Source 1 games");
+	parser.addHelpOption();
+	parser.addVersionOption();
+	parser.addOption({"steam", "Steam folder.", "dir"});
+	parser.addOption({"game", "Game or mod key.", "key"});
+	parser.addOption({"quad", "Four views."});
+	parser.addOption({"select-class", "Select the first entity of a class.", "class"});
+	parser.addOption({"select-face", "Select the first face (face mode)."});
+	parser.addOption({"camera", "Camera \"x y z yaw pitch\".", "camera"});
+	parser.addOption({"render", "lit, unlit or wire.", "mode"});
+	parser.addOption({"dock", "Raise a dock.", "name"});
+	parser.addOption({"check", "Run the problem checks."});
+	parser.addOption({"screenshot", "Save a screenshot and quit.", "file"});
+	parser.addOption({"wait", "Milliseconds before the screenshot.", "ms", "2500"});
+	parser.addPositionalArgument("map", "Map (.vmf) to open.");
+	parser.process(app);
+
+	Editor editor;
+	editor.discover(parser.value("steam"));
+	MainWindow window(&editor);
+
+	QString game = parser.value("game");
+	if (game.isEmpty()) {
+		game = QSettings().value("editor/game").toString();
+	}
+	if (game.isEmpty() && !editor.discovery().games.empty()) {
+		game = QString::fromStdString(editor.discovery().games.front().key());
+	}
+	if (!game.isEmpty()) {
+		window.selectGame(game);
+	}
+	if (parser.isSet("quad")) {
+		window.setQuadLayout(true);
+	}
+	window.show();
+
+	if (!parser.positionalArguments().isEmpty()) {
+		window.openMap(parser.positionalArguments().first());
+	}
+	if (parser.isSet("render")) {
+		const QString mode = parser.value("render");
+		editor.setRenderMode(mode == "unlit" ? Editor::RenderMode::Unlit : (mode == "wire" ? Editor::RenderMode::Wireframe : Editor::RenderMode::Lit));
+	}
+
+	// Things that need the views to exist first.
+	QTimer::singleShot(200, &window, [&] {
+		if (parser.isSet("camera")) {
+			const auto parts = parser.value("camera").split(' ', Qt::SkipEmptyParts);
+			if (parts.size() == 5) {
+				auto& camera = window.view3D()->camera();
+				camera.position = QVector3D(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat());
+				camera.yaw = parts[3].toFloat();
+				camera.pitch = parts[4].toFloat();
+				window.view3D()->update();
+			}
+		}
+		if (parser.isSet("select-class")) {
+			for (const auto& entity : editor.doc().entities) {
+				if (QString::fromStdString(entity.classname()) == parser.value("select-class")) {
+					sme::Selection selection;
+					selection.entities.push_back(entity.id);
+					editor.setSelection(selection);
+					break;
+				}
+			}
+		}
+		if (parser.isSet("select-face") && !editor.doc().world.solids.empty()) {
+			editor.setSelectMode(Editor::SelectMode::Face);
+			const auto& solid = editor.doc().world.solids.front();
+			sme::Selection selection;
+			selection.faces.push_back({{0, solid.id}, solid.sides.front().id});
+			editor.setSelection(selection);
+		}
+		if (parser.isSet("dock")) {
+			window.raiseDock(parser.value("dock"));
+		}
+	});
+	if (parser.isSet("check")) {
+		QObject::connect(window.assets(), &AssetBrowser::materialsIndexed, &window, [&] { window.problems()->runChecks(); });
+	}
+	if (parser.isSet("screenshot")) {
+		QTimer::singleShot(parser.value("wait").toInt(), &window, [&] {
+			window.grab().save(parser.value("screenshot"));
+			app.quit();
+		});
+	}
+	return app.exec();
+}

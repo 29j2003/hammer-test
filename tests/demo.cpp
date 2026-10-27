@@ -1,0 +1,480 @@
+// demo.cpp - Demo content for screenshots and manual testing: procedural textures, a model
+// with animations, sound scripts, extra entity classes and a demo map (room with lights,
+// window, pillars, terrain, an NPC, triggers and a few deliberate mistakes).
+
+#include "fixture.h"
+
+#include <sme/brush.h>
+#include <sme/editing.h>
+#include <sme/map.h>
+#include <sme/text.h>
+
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <functional>
+
+#include <vtfpp/VTF.h>
+
+namespace sme::test {
+
+namespace {
+
+double hash(int x, int y, int seed) {
+	unsigned h = static_cast<unsigned>(x) * 374761393u + static_cast<unsigned>(y) * 668265263u + static_cast<unsigned>(seed) * 2147483647u;
+	h = (h ^ (h >> 13)) * 1274126177u;
+	return ((h ^ (h >> 16)) & 0xffff) / 65535.0;
+}
+
+/// Tileable value noise in 0..1.
+double noise(double x, double y, int period, int seed) {
+	const int x0 = static_cast<int>(std::floor(x)), y0 = static_cast<int>(std::floor(y));
+	const double fx = x - x0, fy = y - y0;
+	const auto at = [&](int ix, int iy) { return hash(((ix % period) + period) % period, ((iy % period) + period) % period, seed); };
+	const double sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+	const double a = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * sx;
+	const double b = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx;
+	return a + (b - a) * sy;
+}
+
+double fbm(double u, double v, int seed) {
+	double sum = 0, amp = 0.5;
+	int period = 4;
+	for (int o = 0; o < 5; ++o) {
+		sum += noise(u * period, v * period, period, seed + o) * amp;
+		amp *= 0.5;
+		period *= 2;
+	}
+	return sum;
+}
+
+struct Rgba {
+	double r, g, b, a = 1;
+};
+
+std::vector<std::byte> makeTexture(unsigned size, const std::function<Rgba(double u, double v)>& shader, bool alpha = false) {
+	std::vector<std::byte> pixels(static_cast<std::size_t>(size) * size * 4);
+	for (unsigned y = 0; y < size; ++y) {
+		for (unsigned x = 0; x < size; ++x) {
+			const auto c = shader((x + 0.5) / size, (y + 0.5) / size);
+			auto* p = &pixels[(static_cast<std::size_t>(y) * size + x) * 4];
+			p[0] = std::byte(static_cast<unsigned char>(std::clamp(c.r, 0.0, 1.0) * 255));
+			p[1] = std::byte(static_cast<unsigned char>(std::clamp(c.g, 0.0, 1.0) * 255));
+			p[2] = std::byte(static_cast<unsigned char>(std::clamp(c.b, 0.0, 1.0) * 255));
+			p[3] = std::byte(static_cast<unsigned char>(std::clamp(c.a, 0.0, 1.0) * 255));
+		}
+	}
+	vtfpp::VTF::CreationOptions options;
+	options.outputFormat = alpha ? vtfpp::ImageFormat::DXT5 : vtfpp::ImageFormat::DXT1;
+	options.computeReflectivity = false;
+	return vtfpp::VTF::create(pixels, vtfpp::ImageFormat::RGBA8888, static_cast<std::uint16_t>(size), static_cast<std::uint16_t>(size), options).bake();
+}
+
+void writeBytes(const std::filesystem::path& path, const std::vector<std::byte>& bytes) {
+	std::filesystem::create_directories(path.parent_path());
+	std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+
+constexpr std::string_view DEMO_FGD = R"FGD(
+@SolidClass = worldspawn : "This is the world entity. Each map can only contain one, and it's automatically created for you."
+[
+	message(string) : "Map Description / Title"
+	skyname(string) : "SkyBox Texture Name" : "sky_day01_01" : "Texture used for the 2D skybox."
+	maxpropscreenwidth(float) : "Start Fade Pixels" : "-1" : "Number of pixels wide at which all props in the level start to fade (<0 = use fademaxdist)."
+	detailvbsp(string) : "Detail.vbsp file" : "detail.vbsp" : "Detail.vbsp file to use for emitting detail props."
+	detailmaterial(string) : "Detail material file" : "detail/detailsprites" : "Material for detail sprites to use for drawing detail props."
+]
+
+@BaseClass base(Targetname, Angles) = BaseNPC
+[
+	spawnflags(flags) =
+	[
+		1 : "Wait Till Seen" : 0
+		2 : "Gag (No IDLE sounds until angry)" : 0
+		4 : "Fall to ground (unchecked means *teleport* to ground)" : 1
+		16 : "Efficient - Don't acquire enemies or avoid obstacles" : 0
+		128 : "Wait For Script" : 0
+		8192 : "Don't drop weapons" : 0
+	]
+	squadname(string) : "Squad Name" : : "NPCs in the same squad share information about enemies and take turns attacking."
+	sleepstate(choices) : "Sleep State" : 0 : "Holds the NPC in stasis until the condition is met." =
+	[
+		0 : "None"
+		1 : "Waiting for threat"
+		2 : "Waiting for PVS"
+	]
+	input SetHealth(integer) : "Set this NPC's health."
+	output OnDeath(void) : "Fired when this NPC is killed."
+]
+
+@NPCClass base(BaseNPC) studio("models/humans/group01/male_07.mdl") = npc_citizen : "A citizen of City 17."
+[
+	citizentype(choices) : "Type" : 0 : "Which clothes and head the citizen gets." =
+	[
+		0 : "Default"
+		1 : "Downtrodden"
+		2 : "Refugee"
+		3 : "Rebel"
+	]
+	expressiontype(choices) : "Expression Type" : 0 =
+	[
+		0 : "Random"
+		1 : "Scared"
+		2 : "Normal"
+		3 : "Angry"
+	]
+	input StartPatrolling(void) : "Patrol whenever I'm idle or alert."
+	input StopPatrolling(void) : "Stop patrolling."
+]
+
+@PointClass base(Targetname, Angles) iconsprite("editor/scripted_sequence.vmt") color(255 0 255) = scripted_sequence : "Grabs an NPC and makes it play a set of animations, either in place or after moving to this entity."
+[
+	m_iszEntity(target_destination) : "Target NPC" : : "The name or class name of the NPC to use for this script."
+	m_iszIdle(string) : "Pre Action Idle Animation" : "" : "Sequence or activity the NPC loops while it waits for the script to be triggered."
+	m_iszEntry(string) : "Entry Animation" : "" : "Sequence played once before the action animation."
+	m_iszPlay(string) : "Action Animation" : "" : "The main sequence of the script."
+	m_iszPostIdle(string) : "Post Action Idle Animation" : "" : "Sequence looped after the action animation."
+	m_fMoveTo(choices) : "Move to Position" : 1 =
+	[
+		0 : "No"
+		1 : "Walk"
+		2 : "Run"
+		4 : "Instantaneous"
+	]
+	onplayerdeath(choices) : "On player death" : 0 =
+	[
+		0 : "Do Nothing"
+		1 : "Cancel Script and return to AI"
+	]
+	spawnflags(flags) =
+	[
+		4 : "Repeatable" : 0
+		16 : "Start on Spawn" : 0
+		32 : "No Interruptions" : 0
+		64 : "Override AI" : 0
+		128 : "Don't Teleport NPC On End" : 0
+		256 : "Loop in Post Idle" : 0
+	]
+	input BeginSequence(void) : "Summons the NPC to act out the scripted sequence."
+	input CancelSequence(void) : "Stops the scripted sequence."
+	output OnBeginSequence(void) : "Fires when the NPC begins the action animation."
+	output OnEndSequence(void) : "Fires when the action animation completes."
+]
+
+@PointClass base(Targetname, Angles) studio() = prop_dynamic : "A prop that can play animations and be moved by parenting."
+[
+	model(studio) : "World Model" : : "The model this prop shows."
+	DefaultAnim(string) : "Default Animation" : "" : "The idle animation this prop returns to whenever it finishes another animation."
+	solid(choices) : "Collisions" : 6 =
+	[
+		0 : "Not Solid"
+		2 : "Use Bounding Box"
+		6 : "Use VPhysics"
+	]
+	skin(integer) : "Skin" : 0 : "Some models have several versions of their textures, called skins."
+	input SetAnimation(string) : "Force the prop to play an animation."
+]
+
+@PointClass base(Targetname) iconsprite("editor/ambient_generic.vmt") color(80 200 255) = ambient_generic : "Plays and controls a single sound."
+[
+	message(sound) : "Sound Name" : "" : "Name of the sound script entry (or .wav file) to play."
+	health(integer) : "Volume" : 10 : "Volume from 0 to 10."
+	input PlaySound(void) : "Starts the sound."
+	input StopSound(void) : "Stops the sound."
+]
+
+@PointClass base(Targetname) iconsprite("editor/logic_relay.vmt") color(0 200 120) = logic_relay : "Forwards a message: fires OnTrigger when it is triggered."
+[
+	input Trigger(void) : "Fire the OnTrigger output."
+	output OnTrigger(void) : "Fired when the relay is triggered."
+]
+
+@PointClass base(Targetname, Angles) iconsprite("editor/light_spot.vmt") color(255 255 0) = light_spot : "An invisible, directional spotlight."
+[
+	_light(color255) : "Brightness" : "255 255 255 200" : "Color and brightness of the light."
+	_inner_cone(integer) : "Inner (bright) angle" : 30 : "Angle of the fully lit cone."
+	_cone(integer) : "Outer (fading) angle" : 45 : "Angle where the light has faded out."
+	_exponent(integer) : "Focus" : 1 : "Changes the distance between the umbra and penumbra cone."
+	pitch(angle_negative_pitch) : "Pitch" : "-90" : "Pitch of the light: -90 points straight down."
+]
+
+@SolidClass base(Targetname) = func_door : "A brush that moves between two positions, like a door."
+[
+	speed(integer) : "Speed" : 100 : "How fast the door moves."
+	input Open(void) : "Open the door."
+	input Close(void) : "Close the door."
+	output OnFullyOpen(void) : "Fired when the door is fully open."
+]
+)FGD";
+
+std::string vmt(std::string_view shader, std::string_view body) {
+	return "\"" + std::string(shader) + "\"\n{\n" + std::string(body) + "}\n";
+}
+
+Bounds box(Vec3 a, Vec3 b) {
+	Bounds out;
+	out.add(a);
+	out.add(b);
+	return out;
+}
+
+} // namespace
+
+void createDemo(Fixture& f) {
+	const auto mat = f.mod / "materials";
+	// Textures (DXT like the real game).
+	writeBytes(mat / "demo/brickwall001.vtf", makeTexture(256, [](double u, double v) {
+		const double row = std::floor(v * 8);
+		const double bu = u * 4 + (std::fmod(row, 2) * 0.5);
+		const bool mortar = std::fmod(v * 8, 1.0) < 0.08 || std::fmod(bu, 1.0) < 0.04;
+		const double n = fbm(u, v, 3) * 0.35 + hash(int(bu), int(row), 9) * 0.25;
+		if (mortar) return Rgba{0.62 + n * 0.1, 0.6 + n * 0.1, 0.55 + n * 0.1};
+		return Rgba{0.48 + n * 0.4, 0.22 + n * 0.2, 0.15 + n * 0.12};
+	}));
+	writeBytes(mat / "demo/concretewall001.vtf", makeTexture(256, [](double u, double v) {
+		const double n = fbm(u, v, 11);
+		const double stain = std::max(0.0, fbm(u * 0.5, v, 21) - 0.55) * 0.6;
+		return Rgba{0.55 + n * 0.25 - stain, 0.55 + n * 0.25 - stain, 0.52 + n * 0.22 - stain};
+	}));
+	writeBytes(mat / "demo/floortile001.vtf", makeTexture(256, [](double u, double v) {
+		const bool grout = std::fmod(u * 4, 1.0) < 0.03 || std::fmod(v * 4, 1.0) < 0.03;
+		const double n = fbm(u, v, 31) * 0.2;
+		const double tint = hash(int(u * 4), int(v * 4), 5) * 0.08;
+		if (grout) return Rgba{0.2, 0.2, 0.2};
+		return Rgba{0.45 + n + tint, 0.43 + n + tint, 0.4 + n + tint};
+	}));
+	writeBytes(mat / "demo/metal001.vtf", makeTexture(128, [](double u, double v) {
+		const double streak = noise(u * 2, v * 64, 64, 41) * 0.15;
+		const bool rivet = std::hypot(std::fmod(u * 4, 1.0) - 0.5, std::fmod(v * 4, 1.0) - 0.5) < 0.06;
+		const double base = 0.42 + streak + fbm(u, v, 43) * 0.1 + (rivet ? 0.2 : 0);
+		return Rgba{base * 0.92, base * 0.96, base * 1.05};
+	}));
+	writeBytes(mat / "demo/wood001.vtf", makeTexture(256, [](double u, double v) {
+		const double plank = std::floor(u * 5);
+		const double grain = std::sin((v * 40 + noise(u * 20, v * 4, 20, 51) * 6) + plank * 3) * 0.5 + 0.5;
+		const bool gap = std::fmod(u * 5, 1.0) < 0.03;
+		const double t = 0.3 + grain * 0.18 + hash(int(plank), 1, 52) * 0.1;
+		return gap ? Rgba{0.12, 0.08, 0.05} : Rgba{t * 1.5, t * 1.0, t * 0.6};
+	}));
+	writeBytes(mat / "demo/grass001.vtf", makeTexture(256, [](double u, double v) {
+		const double n = fbm(u, v, 61);
+		return Rgba{0.22 + n * 0.2, 0.38 + n * 0.3, 0.12 + n * 0.1};
+	}));
+	writeBytes(mat / "demo/dirt001.vtf", makeTexture(256, [](double u, double v) {
+		const double n = fbm(u, v, 71);
+		return Rgba{0.42 + n * 0.25, 0.32 + n * 0.2, 0.22 + n * 0.15};
+	}));
+	writeBytes(mat / "demo/glass001.vtf", makeTexture(128, [](double u, double v) {
+		const double streak = std::max(0.0, std::sin((u + v) * 12) - 0.8) * 1.5;
+		return Rgba{0.65 + streak, 0.8 + streak, 0.9 + streak, 0.32 + streak * 0.3};
+	}, true));
+	writeBytes(mat / "models/humans/male_sheet.vtf", makeTexture(128, [](double u, double v) {
+		return Rgba{0.5 + fbm(u, v, 81) * 0.3, 0.35, 0.3};
+	}));
+	writeText(mat / "demo/brickwall001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/brickwall001\"\n\t\"$surfaceprop\" \"brick\"\n"));
+	writeText(mat / "demo/concretewall001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/concretewall001\"\n\t\"$surfaceprop\" \"concrete\"\n"));
+	writeText(mat / "demo/floortile001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/floortile001\"\n\t\"$surfaceprop\" \"tile\"\n"));
+	writeText(mat / "demo/metal001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/metal001\"\n\t\"$surfaceprop\" \"metal\"\n"));
+	writeText(mat / "demo/wood001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/wood001\"\n\t\"$surfaceprop\" \"wood\"\n"));
+	writeText(mat / "demo/grass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/grass001\"\n"));
+	writeText(mat / "demo/blend_grass_dirt.vmt",
+	          vmt("WorldVertexTransition", "\t\"$basetexture\" \"demo/grass001\"\n\t\"$basetexture2\" \"demo/dirt001\"\n\t\"$surfaceprop\" \"dirt\"\n"));
+	writeText(mat / "demo/glass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glass\"\n"));
+	writeText(mat / "models/humans/male_sheet.vmt", vmt("VertexLitGeneric", "\t\"$basetexture\" \"models/humans/male_sheet\"\n"));
+
+	// Model with animations (sequences shared through an include model, like HL2's citizens).
+	writeBytes(f.mod / "models/humans/group01/male_07.mdl",
+	           makeModelFile({"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"}, "models/humans/male_shared.mdl"));
+	writeBytes(f.mod / "models/humans/male_shared.mdl",
+	           makeModelFile({"walk_all", "run_all", "sitchair1", "sit_ground", "lean_wall", "leanwall_idle", "Idle_Relaxed_SMG1_1", "crouch_idle"}, ""));
+
+	// Sounds.
+	writeText(f.mod / "scripts/game_sounds_manifest.txt", "game_sounds_manifest\n{\n\t\"precache_file\" \"scripts/game_sounds_demo.txt\"\n}\n");
+	writeText(f.mod / "scripts/game_sounds_demo.txt",
+	          "\"Demo.Wind\" { \"channel\" \"CHAN_STATIC\" \"wave\" \"ambient/wind1.wav\" }\n"
+	          "\"Demo.Alarm\" { \"wave\" \"ambient/alarm1.wav\" }\n\"NPC_Citizen.Hello\" { \"wave\" \"vo/hello.wav\" }\n");
+	writeText(f.mod / "sound/ambient/wind1.wav", "RIFF");
+
+	// Entity classes for the demo (appended to the mod's FGD).
+	auto fgd = readFileText(f.mod / "mymod.fgd").value_or("");
+	writeText(f.mod / "mymod.fgd", fgd + std::string(DEMO_FGD));
+
+	// --- Demo map ---------------------------------------------------------------------
+	MapDocument doc;
+	doc.world.set("skyname", "sky_day01_01");
+	const auto solid = [&](Vec3 a, Vec3 b, const char* material) -> SolidRef {
+		auto [change, ref] = edit::createBlock(doc, box(a, b), material);
+		return ref;
+	};
+	const char* BRICK = "DEMO/BRICKWALL001";
+	const char* CONCRETE = "DEMO/CONCRETEWALL001";
+	// Floor, walls (door gap in the south wall, window in the east wall), half roof + skybox.
+	solid({-528, -528, -16}, {528, 528, 0}, "DEMO/FLOORTILE001");
+	solid({-528, 512, 0}, {528, 528, 320}, BRICK);
+	solid({-528, -528, 0}, {-512, 512, 320}, BRICK);
+	solid({-528, -528, 0}, {-64, -512, 320}, BRICK);
+	solid({64, -528, 0}, {528, -512, 320}, BRICK);
+	solid({-64, -528, 128}, {64, -512, 320}, BRICK);
+	solid({512, -512, 0}, {528, -128, 320}, CONCRETE);
+	solid({512, 128, 0}, {528, 512, 320}, CONCRETE);
+	solid({512, -128, 0}, {528, 128, 96}, CONCRETE);
+	solid({512, -128, 224}, {528, 128, 320}, CONCRETE);
+	solid({-528, -528, 320}, {528, 0, 336}, CONCRETE);
+	solid({-528, 0, 320}, {528, 528, 336}, "TOOLS/TOOLSSKYBOX");
+	// Pillars and crates.
+	std::vector<SolidRef> details;
+	for (const double x : {-256.0, 256.0}) {
+		details.push_back(solid({x - 24, -280, 0}, {x + 24, -232, 320}, "DEMO/METAL001"));
+	}
+	solid({-448, 320, 0}, {-384, 384, 64}, "DEMO/WOOD001");
+	solid({-440, 328, 64}, {-392, 376, 112}, "DEMO/WOOD001");
+	solid({-360, 300, 0}, {-296, 364, 64}, "BRICK/BRICKWAL001");   // deliberate typo (Problems: autofix)
+	// Glass window.
+	auto glass = solid({516, -128, 96}, {524, 128, 224}, "DEMO/GLASS001");
+	(void)glass;
+
+	// Terrain: displacement on top of a thin block in the north-east.
+	auto terrain = solid({64, 64, 0}, {448, 448, 8}, "DEMO/BLEND_GRASS_DIRT");
+	if (auto* s = doc.findSolid(terrain)) {
+		const auto geometry = buildBrushGeometry(*s);
+		for (auto& side : s->sides) {
+			if (side.plane().normal.z < 0.9) {
+				continue;
+			}
+			constexpr int power = 3, n = (1 << power) + 1;
+			auto dispinfo = KvNode::makeBlock("dispinfo");
+			dispinfo.set("power", std::to_string(power));
+			dispinfo.set("startposition", "[64 64 8]");
+			dispinfo.set("flags", "0");
+			dispinfo.set("elevation", "0");
+			dispinfo.set("subdiv", "0");
+			auto normals = KvNode::makeBlock("normals"), distances = KvNode::makeBlock("distances"), alphas = KvNode::makeBlock("alphas");
+			for (int i = 0; i < n; ++i) {
+				std::string nr, dr, ar;
+				for (int j = 0; j < n; ++j) {
+					const double x = double(i) / (n - 1) - 0.5, y = double(j) / (n - 1) - 0.5;
+					const double h = std::max(0.0, 70 * std::exp(-(x * x + y * y) * 9) + 14 * std::sin(i * 1.3) * std::cos(j * 0.9));
+					nr += "0 0 1 ";
+					dr += formatNumber(std::round(h)) + " ";
+					ar += formatNumber(std::round(std::clamp(h * 3.5, 0.0, 255.0))) + " ";
+				}
+				const auto row = "row" + std::to_string(i);
+				normals.set(row, std::string(trim(nr)));
+				distances.set(row, std::string(trim(dr)));
+				alphas.set(row, std::string(trim(ar)));
+			}
+			dispinfo.children.push_back(normals);
+			dispinfo.children.push_back(distances);
+			dispinfo.children.push_back(alphas);
+			side.extra.push_back(dispinfo);
+		}
+		(void)geometry;
+	}
+
+	// Brush entities.
+	{
+		Selection sel;
+		sel.solids = details;
+		(void)edit::tieToEntity(doc, sel, "func_detail", nullptr);
+		auto door = solid({-64, -520, 0}, {64, -512, 128}, "DEMO/WOOD001");
+		Selection doorSel;
+		doorSel.solids.push_back(door);
+		auto [c, doorId] = edit::tieToEntity(doc, doorSel, "func_door", nullptr);
+		doc.findEntity(doorId)->set("targetname", "door_01");
+		doc.findEntity(doorId)->set("speed", "100");
+		auto trig = solid({-96, -480, 0}, {96, -400, 128}, "TOOLS/TOOLSTRIGGER");
+		Selection trigSel;
+		trigSel.solids.push_back(trig);
+		auto [c2, triggerId] = edit::tieToEntity(doc, trigSel, "trigger_once", nullptr);
+		auto* trigger = doc.findEntity(triggerId);
+		trigger->set("targetname", "trigger_door");
+		trigger->connections.push_back({"OnTrigger", "door_01", "Open", "", 0, -1, ','});
+		trigger->connections.push_back({"OnTrigger", "alarm_sound", "PlaySound", "", 1.5, 1, ','});   // missing target
+		trigger->connections.push_back({"OnTrigger", "relay_start", "Trigger", "", 0, -1, ','});
+	}
+
+	// Point entities.
+	const auto place = [&](const char* cls, Vec3 origin) -> Entity& {
+		auto [change, id] = edit::placeEntity(doc, cls, origin, nullptr);
+		return *doc.findEntity(id);
+	};
+	place("info_player_start", {-380, -380, 0}).set("angles", "0 45 0");
+	auto& sun = place("light_environment", {0, 256, 300});
+	sun.set("angles", "0 35 0");
+	sun.set("pitch", "-50");
+	sun.set("_light", "255 236 205 450");
+	sun.set("_ambient", "140 165 210 70");
+	auto& warm = place("light", {-300, -160, 220});
+	warm.set("_light", "255 180 110 260");
+	auto& cold = place("light", {300, -360, 140});
+	cold.set("_light", "110 160 255 200");
+	auto& spot = place("light_spot", {0, -440, 300});
+	spot.set("_light", "255 245 220 500");
+	spot.set("angles", "0 90 0");
+	spot.set("pitch", "-75");
+	spot.set("_inner_cone", "25");
+	spot.set("_cone", "40");
+	auto& citizen = place("npc_citizen", {-120, 40, 0});
+	citizen.set("targetname", "citizen_01");
+	citizen.set("angles", "0 -60 0");
+	citizen.set("model", "models/humans/group01/male_07.mdl");
+	citizen.set("spawnflags", "4");
+	auto& relay = place("logic_relay", {-200, -440, 32});
+	relay.set("targetname", "relay_start");
+	relay.connections.push_back({"OnTrigger", "citizen_01", "StartPatroling", "", 0, -1, ','});   // typo (autofix)
+	auto& wind = place("ambient_generic", {300, 300, 200});
+	wind.set("targetname", "wind");
+	wind.set("message", "Demo.Wind");
+	place("lihgt", {200, 200, 260}).set("_light", "255 255 255 100");   // misspelled class (autofix)
+
+	writeText(f.mod / "mapsrc/demo.vmf", doc.serialize());
+}
+
+std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, const std::string& include) {
+	std::vector<std::byte> data(408, std::byte{0});
+	const auto put32 = [&](std::size_t offset, std::int32_t value) { std::memcpy(data.data() + offset, &value, 4); };
+	const auto putString = [&](const std::string& s) {
+		const auto offset = data.size();
+		for (const char c : s) {
+			data.push_back(std::byte(c));
+		}
+		data.push_back(std::byte{0});
+		return offset;
+	};
+	std::memcpy(data.data(), "IDST", 4);
+	put32(4, 48);
+	std::memcpy(data.data() + 12, "test/model.mdl", 14);
+	const std::size_t seqIndex = data.size();
+	data.resize(data.size() + 212 * sequences.size(), std::byte{0});
+	put32(188, static_cast<std::int32_t>(sequences.size()));
+	put32(192, static_cast<std::int32_t>(seqIndex));
+	for (std::size_t i = 0; i < sequences.size(); ++i) {
+		const auto base = seqIndex + 212 * i;
+		const auto name = putString(sequences[i]);
+		const auto activity = putString(i == 0 ? "ACT_IDLE" : "");
+		put32(base + 4, static_cast<std::int32_t>(name - base));
+		put32(base + 8, static_cast<std::int32_t>(activity - base));
+	}
+	const std::size_t texIndex = data.size();
+	data.resize(data.size() + 64, std::byte{0});
+	const auto texName = putString("combine_soldier_sheet");
+	put32(texIndex, static_cast<std::int32_t>(texName - texIndex));
+	put32(204, 1);
+	put32(208, static_cast<std::int32_t>(texIndex));
+	const std::size_t cdIndex = data.size();
+	data.resize(data.size() + 4, std::byte{0});
+	put32(cdIndex, static_cast<std::int32_t>(putString("models/combine_soldier/")));
+	put32(212, 1);
+	put32(216, static_cast<std::int32_t>(cdIndex));
+	put32(308, static_cast<std::int32_t>(putString("flesh")));
+	if (!include.empty()) {
+		const std::size_t groupIndex = data.size();
+		data.resize(data.size() + 8, std::byte{0});
+		put32(groupIndex + 4, static_cast<std::int32_t>(putString(include) - groupIndex));
+		put32(336, 1);
+		put32(340, static_cast<std::int32_t>(groupIndex));
+	}
+	return data;
+}
+
+} // namespace sme::test

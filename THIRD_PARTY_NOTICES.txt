@@ -1,0 +1,21 @@
+Source Map Editor uses the following third-party software. Their licenses apply to
+those parts; the editor's own code is released under the Unlicense (see LICENSE).
+
+sourcepp (https://github.com/craftablescience/sourcepp) - MIT License
+    Valve file formats: VPK, VTF, KeyValues, FGD. Copyright (c) 2023 Laura Lewis.
+    sourcepp itself bundles further libraries (bcdec, BufferStream, Compressonator,
+    half, hat-trie, liblzma, libtomcrypt, libtommath, minizip-ng, zlib-ng, zstd, stb, ...);
+    their notices are in LICENSE_sourcepp.txt and THIRD_PARTY_NOTICES_sourcepp.txt
+    next to the program.
+
+Qt 6 (https://www.qt.io) - GNU Lesser General Public License v3
+    Used as dynamically linked libraries (Qt6*.dll). You may replace them with your
+    own build of Qt. Source code: https://download.qt.io/official_releases/qt/
+    License text: https://www.gnu.org/licenses/lgpl-3.0.html
+
+doctest (https://github.com/doctest/doctest) - MIT License
+    Only used by the tests; not part of the released program.
+
+Half-Life 2, Source, Hammer and Steam are trademarks of Valve Corporation. This is an
+independent project and is not affiliated with or endorsed by Valve. It ships no
+game files; it reads the games you have installed.

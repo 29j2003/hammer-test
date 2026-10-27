@@ -1,0 +1,75 @@
+// filesystem.h - The game's virtual file system: folders and VPK archives in search order.
+//
+// Mirrors what the engine does with gameinfo.txt: the first mount that has a file wins.
+// All lookups are case-insensitive and use forward slashes, on every platform.
+// Reading is thread-safe so asset thumbnails can load in the background.
+
+#pragma once
+
+#include <cstddef>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <sme/gameinfo.h>
+
+namespace sme {
+
+/// One folder or VPK in the search order.
+struct Mount {
+	enum class Kind { Directory, Vpk };
+
+	Kind kind = Kind::Directory;
+	std::filesystem::path path;         ///< Folder, or the *_dir.vpk file
+	std::vector<std::string> pathIds;   ///< Lowercase search path ids ("game", "mod", ...)
+	std::string source;                 ///< gameinfo.txt line it came from (for diagnostics)
+	bool present = false;               ///< false if the folder/VPK does not exist or failed to open
+	std::string problem;                ///< Why it is not present
+};
+
+class GameFileSystem {
+public:
+	GameFileSystem();
+	~GameFileSystem();
+	GameFileSystem(GameFileSystem&&) noexcept;
+	GameFileSystem& operator=(GameFileSystem&&) noexcept;
+
+	/// Mounts every resolved search path of `info` in order. Missing paths are kept
+	/// (present = false) so the user can see what is wrong.
+	[[nodiscard]] static GameFileSystem fromGameInfo(const GameInfo& info);
+
+	/// Appends a folder. Like the engine, a pak01_dir.vpk inside the folder is mounted right before it.
+	void addDirectory(const std::filesystem::path& dir, std::vector<std::string> pathIds, std::string source = {});
+
+	/// Appends a VPK; accepts "name.vpk" or "name_dir.vpk".
+	void addVpk(const std::filesystem::path& vpk, std::vector<std::string> pathIds, std::string source = {});
+
+	[[nodiscard]] const std::vector<Mount>& mounts() const;
+
+	/// Index of the mount that provides `path`, or empty if no mount has it.
+	/// `pathId` filters mounts by search path id ("game" matches "game+mod" etc.); empty = all.
+	[[nodiscard]] std::optional<std::size_t> locate(std::string_view path, std::string_view pathId = "game") const;
+
+	[[nodiscard]] bool exists(std::string_view path, std::string_view pathId = "game") const;
+	[[nodiscard]] std::optional<std::vector<std::byte>> read(std::string_view path, std::string_view pathId = "game") const;
+	[[nodiscard]] std::optional<std::string> readText(std::string_view path, std::string_view pathId = "game") const;
+
+	/// All files below `dir` (normalized, lowercase, unique, sorted) with the given extension
+	/// (e.g. ".vmt"; empty = any). Searches recursively.
+	[[nodiscard]] std::vector<std::string> list(std::string_view dir, std::string_view extension = {}, std::string_view pathId = "game") const;
+
+	/// Number of files a mount provides (builds its index if needed).
+	[[nodiscard]] std::size_t fileCount(std::size_t mountIndex) const;
+
+private:
+	struct MountData;
+	std::vector<Mount> m_mounts;
+	std::vector<std::unique_ptr<MountData>> m_data;
+
+	[[nodiscard]] bool mountMatches(std::size_t index, std::string_view pathId) const;
+};
+
+} // namespace sme
