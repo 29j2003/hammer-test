@@ -71,6 +71,7 @@ public:
 		QVector3D cameraPosition;
 		Mode mode = Mode::Lit;
 		bool showToolTextures = true;
+		bool shadows = true;          ///< Real-time shadows in the lighting preview
 	};
 	void render(const Params& params);
 	/// Selected objects drawn with an extra transform (move/rotate preview); `brushes` false
@@ -89,6 +90,8 @@ public:
 	[[nodiscard]] std::size_t triangleCount() const { return m_triangleCount; }
 	[[nodiscard]] int lastDrawCalls() const { return m_drawCalls; }
 	[[nodiscard]] int lightCount() const { return static_cast<int>(m_lights.size()); }
+	/// Lights that cast shadows in the last frame (sun counts as one).
+	[[nodiscard]] int shadowCasterCount() const { return m_shadowCasterCount; }
 
 private:
 	struct Batch {
@@ -139,6 +142,14 @@ private:
 	void setCommonUniforms(QOpenGLShaderProgram& program, const Params& params, const QMatrix4x4& model);
 	void ensureFlagTexture();
 	GpuModel* gpuModel(const QString& path);
+	// Shadows (renderer_shadows.cpp): a sun map over the whole map and an atlas of 16 tiles for
+	// the nearest spot lights (one tile) and point lights (six tiles, one per cube side).
+	bool initShadows(QString* error);
+	void releaseShadows();
+	/// Chooses the shadow casters among `lights` and redraws the maps if anything changed.
+	/// Fills the per-light shadow info (x: first tile or -1, y: 1 for point lights).
+	void updateShadows(const std::vector<const Light*>& lights, QVector4D* shadowInfo);
+	void drawDepth(const QMatrix4x4& viewProjection);
 	/// Draws model instances; `preview` set: only the selected ones, moved by the matrix.
 	void drawModels(QOpenGLShaderProgram& program, bool flat, const QMatrix4x4* preview);
 
@@ -149,6 +160,15 @@ private:
 	std::unique_ptr<QOpenGLShaderProgram> m_program;
 	std::unique_ptr<QOpenGLShaderProgram> m_lineProgram;
 	std::unique_ptr<QOpenGLShaderProgram> m_edgeProgram;
+	std::unique_ptr<QOpenGLShaderProgram> m_depthProgram;
+	GLuint m_sunFbo = 0, m_sunDepth = 0, m_atlasFbo = 0, m_atlasDepth = 0;
+	QMatrix4x4 m_sunMatrix;
+	QMatrix4x4 m_tileMatrices[16];
+	bool m_shadowsDirty = true;
+	bool m_hasShadowMaps = false;
+	std::vector<const Light*> m_shadowLights;   ///< Casters the atlas was drawn for
+	QVector3D m_shadowSunDirection;
+	int m_shadowCasterCount = 0;
 
 	GLuint m_vao = 0, m_vbo = 0;            // brush faces + entity boxes
 	GLuint m_edgeVao = 0, m_edgeVbo = 0;    // wireframe edges

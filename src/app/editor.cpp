@@ -38,6 +38,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_textureLock = settings.value("editor/textureLock", true).toBool();
 	m_currentMaterial = settings.value("editor/material", m_currentMaterial).toString();
 	m_snapping = settings.value("editor/snapping", true).toBool();
+	m_shadows = settings.value("editor/shadows", true).toBool();
 	m_recentMaterials = settings.value("editor/recentMaterials").toStringList();
 	m_shapeOptions.kind = static_cast<ShapeOptions::Kind>(std::clamp(settings.value("shape/kind", 0).toInt(), 0, int(ShapeOptions::Kind::Stairs)));
 	m_shapeOptions.sides = settings.value("shape/sides", m_shapeOptions.sides).toInt();
@@ -410,6 +411,14 @@ void Editor::setSelectMode(SelectMode mode) {
 	m_selection = std::move(converted);
 	emit toolChanged();
 	emit selectionChanged();
+}
+
+void Editor::setShadows(bool on) {
+	if (m_shadows != on) {
+		m_shadows = on;
+		QSettings().setValue("editor/shadows", on);
+		emit settingsChanged();
+	}
 }
 
 void Editor::setRenderMode(RenderMode mode) {

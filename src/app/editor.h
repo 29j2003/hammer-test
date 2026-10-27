@@ -88,6 +88,9 @@ public:
 	void setSelectMode(SelectMode mode);
 	[[nodiscard]] RenderMode renderMode() const { return m_renderMode; }
 	void setRenderMode(RenderMode mode);
+	/// Real-time shadows in the lighting preview.
+	[[nodiscard]] bool shadows() const { return m_shadows; }
+	void setShadows(bool on);
 	[[nodiscard]] double grid() const { return m_grid; }
 	void setGrid(double grid);
 	/// Grid used for snapping: the grid size, or 0 while snapping is off (Shift+W).
@@ -157,6 +160,7 @@ private:
 	Tool m_tool = Tool::Select;
 	SelectMode m_selectMode = SelectMode::Object;
 	RenderMode m_renderMode = RenderMode::Lit;
+	bool m_shadows = true;
 	double m_grid = 16;
 	bool m_snapping = true;
 	double m_rotationSnap = 15;

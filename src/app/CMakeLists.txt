@@ -17,6 +17,7 @@ add_library(smeapp STATIC
 	panels.cpp
 	properties_panel.cpp
 	renderer.cpp
+	renderer_shadows.cpp
 	sound_browser.cpp
 	sound_player.cpp
 	style.cpp

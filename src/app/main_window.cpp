@@ -71,7 +71,7 @@ const char* SHORTCUT_HELP = R"(<h3>Camera</h3>
 <tr><td><b>H</b></td><td>Hide selection</td><td><b>Ctrl+H / U</b></td><td>Hide others / show all</td></tr>
 <tr><td><b>Ctrl+T</b></td><td>Tie brushes to entity</td><td><b>Ctrl+Shift+W</b></td><td>Move to world</td></tr>
 <tr><td><b>Ctrl+D</b></td><td>Duplicate</td><td><b>Del</b></td><td>Delete</td></tr>
-<tr><td><b>F5 / F6 / F8</b></td><td>Unlit / lighting preview / wireframe</td><td><b>F2 F3 F4</b></td><td>Top / front / side view</td></tr>
+<tr><td><b>F5 / F6 / F8, F7</b></td><td>Unlit / lighting preview / wireframe, shadows on/off</td><td><b>F2 F3 F4</b></td><td>Top / front / side view</td></tr>
 <tr><td><b>Shift+Alt+Z</b></td><td>One view / four views</td><td><b>F9</b></td><td>Compile and run</td></tr>
 </table>)";
 
@@ -466,6 +466,12 @@ void MainWindow::createActions() {
 	renderAction(tr("Lit"), QKeySequence("F6"), Editor::RenderMode::Lit, tr("Lighting preview from the light entities"))->setChecked(true);
 	renderAction(tr("Unlit"), QKeySequence("F5"), Editor::RenderMode::Unlit, tr("Textures without lighting"));
 	renderAction(tr("Wire"), QKeySequence("F8"), Editor::RenderMode::Wireframe, tr("Wireframe"));
+	auto* shadows = top->addAction(tr("Shadows"));
+	shadows->setCheckable(true);
+	shadows->setChecked(m_editor->shadows());
+	shadows->setShortcut(QKeySequence("F7"));
+	shadows->setToolTip(tr("Real-time shadows in the lighting preview: sun, nearest spot and point lights (F7)"));
+	connect(shadows, &QAction::toggled, m_editor, &Editor::setShadows);
 	top->addSeparator();
 	auto* layout = top->addAction(tr("1 / 4 views"));
 	layout->setShortcut(QKeySequence("Shift+Alt+Z"));

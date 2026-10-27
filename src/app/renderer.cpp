@@ -89,9 +89,53 @@ uniform vec4 u_lightSpot[64];
 uniform vec4 u_lightSpot2[64];
 uniform int u_previewTint;
 uniform vec4 u_flatColor;      // a > 0: one color (models in wireframe and 2D views)
+uniform int u_shadows;
+uniform sampler2DShadow u_sunShadow;   // unit 3
+uniform sampler2DShadow u_atlas;       // unit 4: 4 x 4 tiles for spot and point lights
+uniform mat4 u_sunMatrix;
+uniform mat4 u_tileMatrix[16];
+uniform vec4 u_lightShadow[64];        // x: first tile or -1, y: 1 = point light (six tiles)
+uniform float u_sunTexel;
+uniform float u_atlasTexel;
 out vec4 fragColor;
 
 vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
+
+// 2 x 2 samples with hardware comparison: soft edges.
+float pcf(sampler2DShadow map, vec3 c, vec4 rect, float texel) {
+	float lit = 0.0;
+	for (int x = -1; x <= 1; x += 2) {
+		for (int y = -1; y <= 1; y += 2) {
+			vec2 uv = clamp(c.xy + vec2(x, y) * 0.75 * texel, rect.xy, rect.zw);
+			lit += texture(map, vec3(uv, c.z));
+		}
+	}
+	return lit * 0.25;
+}
+
+float sunShadow(vec3 world, vec3 n) {
+	vec3 c = (u_sunMatrix * vec4(world + n * 2.0, 1.0)).xyz;
+	if (any(lessThan(c, vec3(0.0))) || any(greaterThan(c, vec3(1.0)))) return 1.0;
+	return pcf(u_sunShadow, c - vec3(0.0, 0.0, 0.0004), vec4(0.0, 0.0, 1.0, 1.0), u_sunTexel);
+}
+
+float lightShadow(int i, vec3 world, vec3 n) {
+	vec4 info = u_lightShadow[i];
+	if (info.x < 0.0) return 1.0;
+	int tile = int(info.x + 0.5);
+	if (info.y > 0.5) {
+		vec3 d = world - u_lightPos[i].xyz;
+		vec3 a = abs(d);
+		tile += (a.x >= a.y && a.x >= a.z) ? (d.x > 0.0 ? 0 : 1) : ((a.y >= a.z) ? (d.y > 0.0 ? 2 : 3) : (d.z > 0.0 ? 4 : 5));
+	}
+	vec4 p = u_tileMatrix[tile] * vec4(world + n * 1.5, 1.0);
+	if (p.w <= 0.0) return 1.0;
+	vec3 c = p.xyz / p.w;
+	if (c.z >= 1.0) return 1.0;
+	float tx = float(tile % 4) * 0.25, ty = float(tile / 4) * 0.25;
+	vec4 rect = vec4(tx, ty, tx + 0.25, ty + 0.25) + vec4(1.0, 1.0, -1.0, -1.0) * u_atlasTexel;
+	return pcf(u_atlas, c - vec3(0.0, 0.0, 0.0002), rect, u_atlasTexel);
+}
 vec3 toGamma(vec3 c) { return pow(c, vec3(1.0 / 2.2)); }
 
 void main() {
@@ -117,7 +161,9 @@ void main() {
 		float shade = 0.78 + 0.22 * dot(n, normalize(vec3(0.35, 0.55, 0.75)));
 		color = base.rgb * shade;
 	} else {
-		vec3 light = u_ambient + u_sunColor * max(dot(n, -u_sunDir), 0.0);
+		float sunLit = max(dot(n, -u_sunDir), 0.0);
+		if (u_shadows == 1 && sunLit > 0.0) sunLit *= sunShadow(v_world, n);
+		vec3 light = u_ambient + u_sunColor * sunLit;
 		for (int i = 0; i < u_lightCount; ++i) {
 			vec3 toLight = u_lightPos[i].xyz - v_world;
 			float d = max(length(toLight), 1.0);
@@ -140,6 +186,7 @@ void main() {
 				}
 				atten *= spot;
 			}
+			if (u_shadows == 1) atten *= lightShadow(i, v_world, n);
 			light += u_lightColor[i].rgb * ndl * atten;
 		}
 		// Soft filmic curve: keeps hot spots near lights from clipping to white.
@@ -301,6 +348,9 @@ bool SceneRenderer::initialize(MaterialCache* materials, QString* error) {
 	if (!build(m_program, SCENE_VS, SCENE_FS) || !build(m_edgeProgram, EDGE_VS, COLOR_FS) || !build(m_lineProgram, LINE_VS, COLOR_FS)) {
 		return false;
 	}
+	if (!initShadows(error)) {
+		return false;
+	}
 
 	glGenVertexArrays(1, &m_vao);
 	glGenBuffers(1, &m_vbo);
@@ -403,6 +453,7 @@ void SceneRenderer::release() {
 	glDeleteVertexArrays(1, &m_vao);
 	glDeleteVertexArrays(1, &m_edgeVao);
 	glDeleteVertexArrays(1, &m_lineVao);
+	releaseShadows();
 	m_program.reset();
 	m_edgeProgram.reset();
 	m_lineProgram.reset();
@@ -433,6 +484,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_sceneBounds = {};
 	m_triangleCount = 0;
 	m_modelInstances.clear();
+	m_shadowsDirty = true;
 	int faceIndex = 0;
 
 	std::vector<int> faceVertexOffset;   // per face: vertex offset within its material list
@@ -923,11 +975,30 @@ void SceneRenderer::render(const Params& params) {
 	for (const auto& light : m_lights) {
 		lights.push_back(&light);
 	}
+	// Nearest first (the nearest ones also get shadows).
+	const auto nearer = [&](const Light* a, const Light* b) {
+		return (a->position.toVector3D() - params.cameraPosition).lengthSquared() < (b->position.toVector3D() - params.cameraPosition).lengthSquared();
+	};
 	if (lights.size() > MAX_LIGHTS) {
-		std::partial_sort(lights.begin(), lights.begin() + MAX_LIGHTS, lights.end(), [&](const Light* a, const Light* b) {
-			return (a->position.toVector3D() - params.cameraPosition).lengthSquared() < (b->position.toVector3D() - params.cameraPosition).lengthSquared();
-		});
+		std::partial_sort(lights.begin(), lights.begin() + MAX_LIGHTS, lights.end(), nearer);
 		lights.resize(MAX_LIGHTS);
+	} else {
+		std::sort(lights.begin(), lights.end(), nearer);
+	}
+	// Shadow maps first (only redrawn when something changed); they rebind their own framebuffer.
+	QVector4D shadowInfo[MAX_LIGHTS];
+	const bool shadows = params.shadows && params.mode == Mode::Lit;
+	if (shadows) {
+		updateShadows(lights, shadowInfo);
+		m_program->bind();
+	} else {
+		m_shadowCasterCount = 0;
+	}
+	m_program->setUniformValue("u_shadows", shadows && m_hasShadowMaps ? 1 : 0);
+	if (shadows) {
+		m_program->setUniformValue("u_sunMatrix", m_sunMatrix);
+		m_program->setUniformValueArray("u_tileMatrix", m_tileMatrices, 16);
+		m_program->setUniformValueArray("u_lightShadow", shadowInfo, MAX_LIGHTS);
 	}
 	QVector4D pos[MAX_LIGHTS], color[MAX_LIGHTS], spot[MAX_LIGHTS], spot2[MAX_LIGHTS];
 	for (std::size_t i = 0; i < lights.size(); ++i) {

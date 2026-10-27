@@ -266,6 +266,7 @@ void Viewport::paintGL() {
 	params.view = m_camera.view();
 	params.projection = m_camera.projection(width(), height());
 	params.cameraPosition = m_camera.position;
+	params.shadows = m_editor->shadows();
 	if (m_camera.is2D()) {
 		params.mode = SceneRenderer::Mode::Flat2D;
 	} else {
@@ -325,12 +326,13 @@ void Viewport::paintGL() {
 		m_fps = m_frames * 1000.0 / m_fpsClock.elapsed();
 		m_frames = 0;
 		m_fpsClock.restart();
-		emit statsChanged(tr("%1 triangles, %2 draw calls, %3 lights, %4 ms CPU/frame, %5 fps")
+		emit statsChanged(tr("%1 triangles, %2 draw calls, %3 lights (%6 with shadows), %4 ms CPU/frame, %5 fps")
 		                      .arg(m_renderer.triangleCount())
 		                      .arg(m_renderer.lastDrawCalls())
 		                      .arg(m_renderer.lightCount())
 		                      .arg(m_frameMs, 0, 'f', 2)
-		                      .arg(m_fps, 0, 'f', 0));
+		                      .arg(m_fps, 0, 'f', 0)
+		                      .arg(m_renderer.shadowCasterCount()));
 	}
 }
 
