@@ -72,14 +72,25 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Eigenschaften: Schalter „Smart Edit“ (aus = Tabelle aller Keys inkl. nicht gesetzter FGD-Keys), Zeile „neuer Key“,
   Feld „Name“ bei jeder Entity. Kopieren/Einfügen: `copy_paste` (`addCopyShortcut`, `onStandardKey` – Item-Views
   verschlucken Strg+C/V sonst; `parseKeyValueLines` für Wiki-Text).
+- Material-Editor als Tab: `MainWindow` hat in der Mitte ein `QTabWidget` (`centralTabs`: „Map“ mit den Views, dazu
+  der Material-Editor über `showMaterialEditor()`, schließbar). Solange ein anderer Tab vorn ist, blendet
+  `setMapWorkspaceShown(false)` Docks und Werkzeugleisten aus und schaltet die Tasten der Karte ab (außer Datei/Hilfe),
+  damit Entf, H usw. die Karte nicht unsichtbar ändern; zurück auf „Map“ kommt alles wieder. `raiseDock("Material
+  Editor")`/`raiseDock("Map")` wechseln den Tab, jeder andere Dock-Name holt zuerst die Karte nach vorn.
+  Aufbau wie in Source 2: links Suche + zuletzt bearbeitete (`QSettings` `materialEditor/recent`), Mitte Gruppen
+  (`FeatureGroup`: Kopf mit Pfeil und ggf. Schalter; Schalter aus = zugeklappt), rechts die Vorschau mit Werkzeugleiste.
+  Feature-Schalter (`setFeature`: `bump`, `env`, `detail`, `phong`) legen ihre Parameter beim Ausschalten in
+  `m_parked` und holen sie beim Einschalten zurück; Relief/Wasserglanz/Flüssigkeit wechseln den Shader (`setShader`).
+  Texturfelder zeigen ein 64-px-Bild (aus denselben Hintergrund-Ladungen wie die Vorschau).
 - Material-Editor (`MaterialEditor` + `MaterialPreview`): Felder für die häufigen Parameter, Tabelle für den Rest,
   Vorschau (Wand/Würfel/Kugel, Sonne/Lampe/Nacht/unbeleuchtet; ssbump über die drei Basisvektoren). Speichern schreibt
   nach `<mod>/materials/<name>.vmt` (VPK-Material → Kopie in der Mod) und meldet `materialSaved` → `MaterialCache::reload`.
-  Abschnitte je Art (`Kind`: Wand, Überblendung, Modell, Wasser, unbeleuchtet), Reihenfolge: Material, Wasser,
-  Flüssigkeit, Normal-Map, Relief, Spiegelung, Transparenz, Detail, Rest.
-- mapbase-fidelity im Material-Editor (Shader der Mod `29j2003/mymod`, `sp/src/materialsystem/fidelity/`): Schalter nur,
-  wenn `fidelityShaders()` die Shader findet (`shaders/fxc/fidelity_parallax_ps30.vcs` oder `bin/game_shader_dx6.dll`
-  der Mod), sonst Hinweis „deploy.bat“. Relief = `Fidelity_Parallax` bzw. `Fidelity_WorldVertexTransition`
+  Gruppen je Art (`Kind`: Wand, Überblendung, Modell, Wasser, unbeleuchtet), Reihenfolge: Material, Wasser,
+  Wasserglanz, Flüssigkeit, Normal-Map, Relief, Spiegelung, Transparenz, Detail, Glanzlichter, Rest.
+- mapbase-fidelity im Material-Editor (Shader der Mod `29j2003/mymod`, `sp/src/materialsystem/fidelity/`): Schalter
+  immer nutzbar (ausprobieren ohne deploy); findet `fidelityShaders()` die Shader nicht
+  (`shaders/fxc/fidelity_parallax_ps30.vcs` oder `bin/game_shader_dx6.dll` der Mod), steht in der Gruppe ein leiser
+  Hinweis, dass das Spiel es erst nach `deploy.bat` zeigt. Relief = `Fidelity_Parallax` bzw. `Fidelity_WorldVertexTransition`
   (`$parallaxmap` weiß = oben, `$parallaxdepth`, `$parallaxao`, `$parallaxfade`); Wasser = `Water_Fidelity`
   (`$fidelityglint`, `$fidelityfoam`); Flüssigkeit = `Fidelity_Liquid` (`$liquidcolor`, `$fill` −1 = zufällig, …).
   Beim Umschalten fallen die Parameter der anderen Variante weg (`RELIEF_KEYS`, `WATER_KEYS`, `LIQUID_KEYS`).

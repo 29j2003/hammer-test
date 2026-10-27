@@ -30,6 +30,7 @@
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
 
@@ -505,6 +506,10 @@ TEST_CASE("editing with the mouse in the real window") {
 		materials->openMaterial("demo/brickwall001");
 		window.raiseDock("Material Editor");
 		REQUIRE(previewed.wait(10000));
+		// Its own tab: the map's docks and tool bars step aside (and come back with the Map tab).
+		CHECK(window.centralTabs()->currentWidget() == materials);
+		CHECK_FALSE(window.assets()->isVisible());
+		CHECK(materials->recentMaterials().value(0) == "demo/brickwall001");
 		CHECK(materials->value("$basetexture") == "demo/brickwall001");
 		CHECK(materials->value("$surfaceprop") == "brick");
 		settle();
@@ -513,9 +518,19 @@ TEST_CASE("editing with the mouse in the real window") {
 		const QImage shot = preview->grabFramebuffer();
 		const QColor middle = shot.pixelColor(shot.width() / 2, shot.height() / 2);
 		CHECK(middle.red() > middle.blue());   // brick red, not the grey background
-		auto* reflection = materials->findChild<QComboBox*>("reflection");
+		auto* reflection = materials->findChild<QCheckBox*>("reflectionOn");
 		REQUIRE(reflection);
-		reflection->setCurrentIndex(1);
+		CHECK_FALSE(materials->findChild<QComboBox*>("reflection")->isVisibleTo(materials));   // folded while off
+		reflection->setChecked(true);
+		CHECK(materials->findChild<QComboBox*>("reflection")->isVisibleTo(materials));
+		// A feature turned off keeps its parameters aside; on again brings them back.
+		auto* normalMap = materials->findChild<QCheckBox*>("normalMapOn");
+		REQUIRE(normalMap);
+		CHECK(normalMap->isChecked());
+		normalMap->setChecked(false);
+		CHECK(materials->value("$bumpmap").isEmpty());
+		normalMap->setChecked(true);
+		CHECK(materials->value("$bumpmap") == "demo/brickwall001_normal");
 		auto* surface = materials->findChild<QComboBox*>("surfaceprop");
 		REQUIRE(surface);
 		surface->setCurrentText("metal");
@@ -695,6 +710,16 @@ TEST_CASE("editing with the mouse in the real window") {
 		QFile written(path);
 		REQUIRE(written.open(QIODevice::ReadOnly));
 		CHECK_FALSE(QString(written.readAll()).contains("mapbase-fidelity: generated"));
+		// Back to the map: its docks return; the closed tab opens again from the View menu.
+		const int tab = window.centralTabs()->indexOf(materials);
+		REQUIRE(tab > 0);
+		emit window.centralTabs()->tabCloseRequested(tab);
+		CHECK(window.centralTabs()->indexOf(materials) < 0);
+		CHECK(window.assets()->isVisible());
+		window.showMaterialEditor();
+		CHECK(window.centralTabs()->currentWidget() == materials);
+		window.raiseDock("Map");
+		CHECK(window.assets()->isVisible());
 	}
 	{
 		// The corner menu of a view switches the look (and shows it on the button).

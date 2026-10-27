@@ -16,7 +16,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
-#include <QGroupBox>
+#include <QListWidget>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -27,6 +27,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSlider>
 #include <QSplitter>
 #include <QStringListModel>
@@ -179,81 +180,195 @@ void HeightZonePainter::mouseMoveEvent(QMouseEvent* event) {
 	else if (event->buttons() & Qt::RightButton) paintAt(event->position(), HeightZone::Normal);
 }
 
+// --- Feature groups ------------------------------------------------------------------------
+
+/// A group of parameters under a header: a fold arrow and the title - or, for a feature, its
+/// switch. A feature's parameters show only while it is on.
+class FeatureGroup : public QFrame {
+public:
+	FeatureGroup(const QString& title, QCheckBox* toggle) : m_toggle(toggle) {
+		setObjectName("featureGroup");
+		auto* v = new QVBoxLayout(this);
+		v->setContentsMargins(0, 0, 0, 0);
+		v->setSpacing(0);
+		auto* header = new QFrame;
+		header->setObjectName("featureHeader");
+		auto* h = new QHBoxLayout(header);
+		h->setContentsMargins(4, 3, 10, 3);
+		h->setSpacing(4);
+		m_arrow = new QToolButton;
+		m_arrow->setAutoRaise(true);
+		m_arrow->setArrowType(Qt::DownArrow);
+		m_arrow->setFixedSize(20, 20);
+		h->addWidget(m_arrow);
+		if (toggle) {
+			toggle->setText(title);
+			toggle->setStyleSheet("font-weight: bold;");
+			h->addWidget(toggle, 1);
+			QObject::connect(toggle, &QCheckBox::toggled, this, [this](bool on) {
+				if (on) m_folded = false;
+				refresh();
+			});
+		} else {
+			auto* label = new QToolButton;   // the title folds the group too
+			label->setText(title);
+			label->setAutoRaise(true);
+			label->setStyleSheet("font-weight: bold; border: none; padding: 0;");
+			QObject::connect(label, &QToolButton::clicked, m_arrow, &QToolButton::click);
+			h->addWidget(label);
+			m_count = new QLabel;
+			m_count->setStyleSheet("color: #8a90a0;");
+			h->addWidget(m_count, 1);
+		}
+		v->addWidget(header);
+		m_body = new QWidget;
+		m_form = new QFormLayout(m_body);
+		m_form->setContentsMargins(16, 10, 10, 14);
+		m_form->setHorizontalSpacing(12);
+		m_form->setVerticalSpacing(8);
+		m_form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		m_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+		v->addWidget(m_body);
+		QObject::connect(m_arrow, &QToolButton::clicked, this, [this] {
+			m_folded = !m_folded;
+			refresh();
+		});
+		refresh();
+	}
+	[[nodiscard]] QFormLayout* form() const { return m_form; }
+	void setFolded(bool folded) {
+		m_folded = folded;
+		refresh();
+	}
+	/// A note after the title ("(3)") of a group without a switch.
+	void setCount(const QString& text) {
+		if (m_count) m_count->setText(text);
+	}
+	void refresh() {
+		const bool on = !m_toggle || m_toggle->isChecked();
+		const bool open = on && !m_folded;
+		m_body->setVisible(open);
+		m_arrow->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+		m_arrow->setEnabled(on);
+	}
+
+private:
+	QCheckBox* m_toggle;
+	QToolButton* m_arrow;
+	QLabel* m_count = nullptr;
+	QWidget* m_body;
+	QFormLayout* m_form;
+	bool m_folded = false;
+};
+
 // --- Editor --------------------------------------------------------------------------------
 
 MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
 	auto* outer = new QHBoxLayout(this);
-	outer->setContentsMargins(6, 6, 6, 6);
+	outer->setContentsMargins(0, 0, 0, 0);
 	auto* split = new QSplitter(Qt::Horizontal);
 	split->setChildrenCollapsible(false);
 	outer->addWidget(split);
 
-	// Left: the fields.
+	// Far left: open a material, the ones edited lately.
+	auto* browse = new QWidget;
+	auto* b = new QVBoxLayout(browse);
+	b->setContentsMargins(10, 10, 6, 10);
+	b->setSpacing(6);
+	m_search = new QLineEdit;
+	m_search->setObjectName("materialSearch");
+	m_search->setPlaceholderText(tr("Open a material ..."));
+	m_search->setClearButtonEnabled(true);
+	connect(m_search, &QLineEdit::returnPressed, this, [this] {
+		if (!m_search->text().trimmed().isEmpty()) openMaterial(m_search->text().trimmed());
+	});
+	b->addWidget(m_search);
+	b->addSpacing(4);
+	auto* recentTitle = new QLabel(tr("Recent"));
+	recentTitle->setStyleSheet("font-weight: bold;");
+	b->addWidget(recentTitle);
+	m_recent = new QListWidget;
+	m_recent->setObjectName("recentMaterials");
+	m_recent->setFrameShape(QFrame::NoFrame);
+	m_recent->setTextElideMode(Qt::ElideLeft);   // the end of a path tells most
+	m_recent->addItems(QSettings().value("materialEditor/recent").toStringList());
+	connect(m_recent, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+		if (item->text() != m_name) openMaterial(item->text());
+	});
+	b->addWidget(m_recent, 1);
+	b->addWidget(hint(tr("Or right-click a material in the Asset Browser: Edit material.")));
+	split->addWidget(browse);
+
+	// Middle: the parameters in groups.
 	auto* scroll = new QScrollArea;
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
+	scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	scroll->setMinimumWidth(420);
 	auto* fields = new QWidget;
-	auto* v = new QVBoxLayout(fields);
-	v->setContentsMargins(4, 4, 10, 4);
-	v->setSpacing(SECTION_SPACING);
+	m_column = new QVBoxLayout(fields);
+	m_column->setContentsMargins(6, 10, 12, 10);
+	m_column->setSpacing(SECTION_SPACING);
 	m_title = new QLabel(tr("<span style='font-size:13pt'><b>No material</b></span>"));
 	m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	v->addWidget(m_title);
-	m_where = hint(tr("Right-click a material in the Asset Browser and choose Edit material, or press Edit next to a selected face."));
+	m_column->addWidget(m_title);
+	m_where = hint(tr("Open a material on the left, or right-click one in the Asset Browser and choose Edit material."));
 	m_where->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	v->addWidget(m_where);
+	m_column->addWidget(m_where);
 	m_notice = new QLabel;
 	m_notice->setWordWrap(true);
 	m_notice->setProperty("role", "warning");
 	m_notice->setVisible(false);
-	v->addWidget(m_notice);
+	m_column->addWidget(m_notice);
+	m_column->addSpacing(4);
+	buildFields();
+	m_column->addStretch(1);
 	scroll->setWidget(fields);
 	split->addWidget(scroll);
-	buildFields();
-	v->addStretch(1);
 
-	// Right: preview, light and shape, save.
+	// Right: the preview, with its tool bar above.
 	auto* right = new QWidget;
 	auto* r = new QVBoxLayout(right);
-	r->setContentsMargins(8, 4, 4, 4);
-	r->setSpacing(8);
-	m_preview = new MaterialPreview;
-	r->addWidget(m_preview, 1);
-	auto* choices = new QHBoxLayout;
-	choices->setSpacing(8);
+	r->setContentsMargins(6, 8, 10, 8);
+	r->setSpacing(6);
+	auto* bar = new QHBoxLayout;
+	bar->setSpacing(6);
 	m_shape = new QComboBox;
 	m_shape->addItems({tr("Wall"), tr("Cube"), tr("Sphere")});
 	m_lighting = new QComboBox;
 	m_lighting->addItems({tr("Sun (outdoors)"), tr("Lamp (indoors, warm)"), tr("Night (dim, cold)"), tr("Unlit (texture only)")});
 	m_lighting->setToolTip(tr("Right drag in the preview moves the light"));
-	choices->addWidget(new QLabel(tr("Shape")));
-	choices->addWidget(m_shape);
-	choices->addSpacing(8);
-	choices->addWidget(new QLabel(tr("Light")));
-	choices->addWidget(m_lighting, 1);
-	r->addLayout(choices);
-	r->addWidget(hint(tr("Left drag turns the shape, right drag moves the light, the wheel zooms. "
-	                     "An approximation of the game's shaders - check the look in the game.")));
-	auto* buttons = new QHBoxLayout;
-	buttons->setSpacing(8);
+	bar->addWidget(new QLabel(tr("Shape")));
+	bar->addWidget(m_shape);
+	bar->addSpacing(10);
+	bar->addWidget(new QLabel(tr("Light")));
+	bar->addWidget(m_lighting);
+	bar->addStretch(1);
 	m_save = new QPushButton(tr("Save"));
 	m_save->setDefault(true);
+	m_save->setProperty("accent", true);
+	m_save->setToolTip(tr("Writes the material into the mod"));
 	m_saveAs = new QPushButton(tr("Save as new ..."));
 	m_save->setEnabled(false);
 	m_saveAs->setEnabled(false);
-	buttons->addWidget(m_save, 1);
-	buttons->addWidget(m_saveAs, 1);
-	r->addLayout(buttons);
+	bar->addWidget(m_save);
+	bar->addWidget(m_saveAs);
+	r->addLayout(bar);
+	m_preview = new MaterialPreview;
+	r->addWidget(m_preview, 1);
+	auto* under = new QHBoxLayout;
+	under->setSpacing(12);
 	m_status = hint(QString());
-	r->addWidget(m_status);
-	// In a scroll area as well, so a low dock still leaves the viewport its room.
-	auto* rightScroll = new QScrollArea;
-	rightScroll->setWidgetResizable(true);
-	rightScroll->setFrameShape(QFrame::NoFrame);
-	rightScroll->setWidget(right);
-	split->addWidget(rightScroll);
-	split->setStretchFactor(0, 3);
-	split->setStretchFactor(1, 2);
+	under->addWidget(m_status, 1);
+	auto* help = hint(tr("Left drag turns it, right drag moves the light, the wheel zooms. An approximation of the game's shaders."));
+	help->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	under->addWidget(help, 2);
+	r->addLayout(under);
+	split->addWidget(right);
+	split->setStretchFactor(0, 0);
+	split->setStretchFactor(1, 0);
+	split->setStretchFactor(2, 1);
+	split->setSizes({210, 470, 900});
 
 	connect(m_shape, &QComboBox::currentIndexChanged, this, [this](int i) { m_preview->setShape(static_cast<MaterialPreview::Shape>(i)); });
 	connect(m_lighting, &QComboBox::currentIndexChanged, this, [this](int i) { m_preview->setLighting(static_cast<MaterialPreview::Lighting>(i)); });
@@ -278,6 +393,11 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 		if (const auto it = images.find("$normalmap"); it != images.end()) {
 			m_preview->setTexture(MaterialPreview::Bump, it->second);
 		}
+		for (auto& [key, thumb] : m_thumbs) {
+			const auto it = images.find(key);
+			thumb->setPixmap(it == images.end() ? QPixmap()
+			                                    : QPixmap::fromImage(it->second.scaled(thumb->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+		}
 		const auto base = images.find("$basetexture");
 		m_baseImage = base == images.end() ? QImage() : base->second;
 		emit previewUpdated();
@@ -290,45 +410,69 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 		m_save->setEnabled(false);
 		m_saveAs->setEnabled(false);
 		updateSections();
-		// Texture names for the completers, read once per game in the background.
+		// Texture and material names for the completers, read once per game in the background.
 		auto* game = m_editor->game();
 		if (!game) return;
 		const GameFileSystem* fs = &game->files;
-		auto* watcher = new QFutureWatcher<QStringList>(this);
+		auto* watcher = new QFutureWatcher<std::pair<QStringList, QStringList>>(this);
 		connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
 			watcher->deleteLater();
-			auto* model = new QStringListModel(watcher->result(), this);
-			for (auto& [key, field] : m_textureFields) {
-				auto* completer = new QCompleter(model, field);
-				completer->setCaseSensitivity(Qt::CaseInsensitive);
-				completer->setFilterMode(Qt::MatchContains);
-				field->setCompleter(completer);
-			}
+			const auto [textures, materials] = watcher->result();
+			const auto completer = [this](const QStringList& names, QLineEdit* field) {
+				auto* c = new QCompleter(new QStringListModel(names, field), field);
+				c->setCaseSensitivity(Qt::CaseInsensitive);
+				c->setFilterMode(Qt::MatchContains);
+				field->setCompleter(c);
+				return c;
+			};
+			for (auto& [key, field] : m_textureFields) completer(textures, field);
+			connect(completer(materials, m_search), qOverload<const QString&>(&QCompleter::activated), this,
+			        [this](const QString& name) { openMaterial(name); });
 		});
 		watcher->setFuture(QtConcurrent::run([fs] {
-			QStringList names;
+			QStringList textures, materials;
 			for (const auto& file : fs->list("materials", ".vtf")) {
-				names << QString::fromStdString(file.substr(10, file.size() - 14));   // without materials/ and .vtf
+				textures << QString::fromStdString(file.substr(10, file.size() - 14));   // without materials/ and .vtf
 			}
-			return names;
+			for (const auto& file : fs->list("materials", ".vmt")) {
+				materials << QString::fromStdString(file.substr(10, file.size() - 14));
+			}
+			return std::pair{textures, materials};
 		}));
 	});
 	updateSections();
 }
 
-QFormLayout* MaterialEditor::section(QGroupBox*& box, const QString& title) {
-	box = new QGroupBox(title);
-	auto* form = new QFormLayout(box);
-	form->setContentsMargins(12, 12, 12, 10);
-	form->setHorizontalSpacing(12);
-	form->setVerticalSpacing(8);
-	form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-	form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-	qobject_cast<QVBoxLayout*>(m_title->parentWidget()->layout())->addWidget(box);
-	return form;
+QStringList MaterialEditor::recentMaterials() const {
+	QStringList names;
+	for (int i = 0; i < m_recent->count(); ++i) names << m_recent->item(i)->text();
+	return names;
 }
 
-QLineEdit* MaterialEditor::textureField(const QString& key, const QString& placeholder) {
+void MaterialEditor::rememberRecent(const QString& name) {
+	for (auto* item : m_recent->findItems(name, Qt::MatchFixedString)) delete item;
+	m_recent->insertItem(0, name);
+	while (m_recent->count() > 20) delete m_recent->takeItem(m_recent->count() - 1);
+	m_recent->setCurrentRow(0);
+	QSettings().setValue("materialEditor/recent", recentMaterials());
+}
+
+QFormLayout* MaterialEditor::section(FeatureGroup*& group, const QString& title, QCheckBox* toggle) {
+	group = new FeatureGroup(title, toggle);
+	m_column->addWidget(group);
+	return group->form();
+}
+
+QWidget* MaterialEditor::textureField(const QString& key, const QString& placeholder) {
+	auto* row = new QWidget;
+	auto* h = new QHBoxLayout(row);
+	h->setContentsMargins(0, 0, 0, 0);
+	h->setSpacing(8);
+	auto* thumb = new QLabel;
+	thumb->setFixedSize(64, 64);
+	thumb->setAlignment(Qt::AlignCenter);
+	thumb->setStyleSheet("background: #1c1e22; border: 1px solid #3a3d44; border-radius: 3px;");
+	m_thumbs[key] = thumb;
 	auto* field = new QLineEdit;
 	field->setObjectName(key);
 	field->setPlaceholderText(placeholder);
@@ -337,7 +481,9 @@ QLineEdit* MaterialEditor::textureField(const QString& key, const QString& place
 		if (field->text().trimmed() != value(key)) setValue(key, field->text().trimmed());
 	});
 	m_textureFields[key] = field;
-	return field;
+	h->addWidget(thumb, 0, Qt::AlignTop);
+	h->addWidget(field, 1, Qt::AlignTop);   // in line with the row's label
+	return row;
 }
 
 QWidget* MaterialEditor::colorField(const QString& key, const QString& placeholder, QLineEdit** out) {
@@ -398,10 +544,10 @@ QWidget* MaterialEditor::sliderField(const QString& key, double minimum, double 
 }
 
 void MaterialEditor::buildFields() {
-	// Shown instead of a switch's effect when the mod lacks the shaders.
-	const auto needsFidelity = [this] {
-		auto* label = hint(tr("Needs mapbase-fidelity's shaders in the mod: run its deploy.bat once."));
-		m_fidelityMissing.push_back(label);
+	// Under each mapbase-fidelity switch while the mod does not have the shaders yet.
+	const auto fidelityNote = [this] {
+		auto* label = hint(tr("The game shows this after deploy.bat (mapbase-fidelity's shaders). Here you see it already."));
+		m_fidelityNotes.push_back(label);
 		return label;
 	};
 	const auto check = [this](const QString& key, const QString& text, const QString& tip = {}) {
@@ -413,8 +559,18 @@ void MaterialEditor::buildFields() {
 		});
 		return box;
 	};
+	// A feature's switch: off keeps its parameters aside, on brings them back.
+	const auto feature = [this](const QString& name, const QString& objectName, const QStringList& keys) {
+		auto* box = new QCheckBox;
+		box->setObjectName(objectName);
+		m_featureKeys[name] = keys;
+		connect(box, &QCheckBox::toggled, this, [this, name](bool on) {
+			if (!m_loading) setFeature(name, on);
+		});
+		return box;
+	};
 
-	// What kind of material it is: decides which sections make sense.
+	// What kind of material it is: decides which groups make sense.
 	auto* kindForm = section(m_texturesBox, tr("Material"));
 	m_kindBox = new QComboBox;
 	m_kindBox->setObjectName("kind");
@@ -453,20 +609,6 @@ void MaterialEditor::buildFields() {
 
 	// Water (also Water_Fidelity).
 	auto* water = section(m_waterBox, tr("Water"));
-	m_fidelityWater = new QCheckBox(tr("Sun glint and foam at the shore"));
-	m_fidelityWater->setObjectName("fidelityWater");
-	connect(m_fidelityWater, &QCheckBox::toggled, this, [this](bool on) {
-		if (m_loading) return;
-		setShader(on ? "Water_Fidelity" : "Water");
-	});
-	water->addRow(QString(), m_fidelityWater);
-	water->addRow(QString(), needsFidelity());
-	auto* glint = sliderField("$fidelityglint", 0, 3, 1, 2);
-	water->addRow(tr("Glint"), glint);
-	m_rows["$fidelityglint"] = glint;
-	auto* foam = sliderField("$fidelityfoam", 0, 3, 1, 2);
-	water->addRow(tr("Foam"), foam);
-	m_rows["$fidelityfoam"] = foam;
 	water->addRow(tr("Waves (normal map)"), textureField("$normalmap", tr("nature/water_canals03_normal")));
 	water->addRow(tr("Reflection colour"), colorField("$reflecttint", "[1 1 1]"));
 	water->addRow(tr("Reflection strength"), sliderField("$reflectamount", 0, 2, 0.8, 2));
@@ -476,19 +618,33 @@ void MaterialEditor::buildFields() {
 	water->addRow(tr("Clear down to"), sliderField("$fogstart", 0, 1000, 0, 0));
 	water->addRow(tr("Opaque from"), sliderField("$fogend", 0, 2000, 300, 0));
 
+	m_fidelityWater = new QCheckBox;
+	m_fidelityWater->setObjectName("fidelityWater");
+	connect(m_fidelityWater, &QCheckBox::toggled, this, [this](bool on) {
+		if (m_loading) return;
+		setShader(on ? "Water_Fidelity" : "Water");
+	});
+	auto* glintForm = section(m_glintBox, tr("Sun glint and shore foam (mapbase-fidelity)"), m_fidelityWater);
+	glintForm->addRow(fidelityNote());
+	auto* glint = sliderField("$fidelityglint", 0, 3, 1, 2);
+	glintForm->addRow(tr("Glint"), glint);
+	m_rows["$fidelityglint"] = glint;
+	auto* foam = sliderField("$fidelityfoam", 0, 3, 1, 2);
+	glintForm->addRow(tr("Foam"), foam);
+	m_rows["$fidelityfoam"] = foam;
+
 	// Liquid in glass props: Fidelity_Liquid.
-	auto* liquid = section(m_liquidBox, tr("Liquid inside (mapbase-fidelity)"));
-	m_liquid = new QCheckBox(tr("This is a glass container with liquid inside"));
+	m_liquid = new QCheckBox;
 	m_liquid->setObjectName("liquid");
 	connect(m_liquid, &QCheckBox::toggled, this, [this](bool on) {
 		if (m_loading) return;
 		setShader(on ? "Fidelity_Liquid" : "VertexLitGeneric");
 	});
-	liquid->addRow(QString(), m_liquid);
-	liquid->addRow(QString(), needsFidelity());
-	liquid->addRow(QString(), hint(tr("Bottles, jars and jugs: the liquid sways when the prop moves, can splash when it breaks "
-	                                  "and pour out when it tips over (Fidelity_Liquid).")));
-	auto* liquidColor = colorField("$liquidcolor", tr("[0.5 0.3 0.1] - empty: the texture's colour"));
+	auto* liquid = section(m_liquidBox, tr("Liquid inside a glass (mapbase-fidelity)"), m_liquid);
+	liquid->addRow(fidelityNote());
+	liquid->addRow(hint(tr("Bottles, jars and jugs: the liquid sways when the prop moves, can splash when it breaks "
+	                       "and pour out when it tips over (Fidelity_Liquid).")));
+	auto* liquidColor = colorField("$liquidcolor", tr("empty: the texture's colour"));
 	liquid->addRow(tr("Liquid colour"), liquidColor);
 	m_rows["$liquidcolor"] = liquidColor;
 	auto* liquidAlpha = sliderField("$liquidalpha", 0, 1, 0.85, 2);
@@ -513,41 +669,32 @@ void MaterialEditor::buildFields() {
 	auto* fillMax = sliderField("$fillmax", 0, 1, 0.8, 2);
 	liquid->addRow(tr("At most"), fillMax);
 	m_rows["$fillmax"] = fillMax;
-	auto* wobble = sliderField("$wobble", 0, 2, 1, 2);
-	liquid->addRow(tr("Sways"), wobble);
-	m_rows["$wobble"] = wobble;
-	auto* viscosity = sliderField("$viscosity", 0, 1, 0, 2);
-	liquid->addRow(tr("Thick (0 water .. 1 syrup)"), viscosity);
-	m_rows["$viscosity"] = viscosity;
-	auto* glassColor = colorField("$glasscolor", "[0.75 0.85 0.8]");
-	liquid->addRow(tr("Glass colour"), glassColor);
-	m_rows["$glasscolor"] = glassColor;
-	auto* glassAlpha = sliderField("$glassalpha", 0, 1, 0.3, 2);
-	liquid->addRow(tr("Glass opacity"), glassAlpha);
-	m_rows["$glassalpha"] = glassAlpha;
+	liquid->addRow(tr("Sways"), sliderField("$wobble", 0, 2, 1, 2));
+	liquid->addRow(tr("Thickness"), sliderField("$viscosity", 0, 1, 0, 2));
+	liquid->addRow(tr("Glass colour"), colorField("$glasscolor", "[0.75 0.85 0.8]"));
+	liquid->addRow(tr("Glass opacity"), sliderField("$glassalpha", 0, 1, 0.3, 2));
 	m_splash = check("$splash", tr("Splashes when the prop breaks"));
 	liquid->addRow(QString(), m_splash);
-	m_rows["$splash"] = m_splash;
 	m_spill = check("$spill", tr("Open bottle: pours out when tipped over"));
 	liquid->addRow(QString(), m_spill);
-	m_rows["$spill"] = m_spill;
 
-	auto* bump = section(m_bumpBox, tr("Normal map"));
+	// Normal map.
+	m_bumpOn = feature("bump", "normalMapOn", {"$bumpmap", "$ssbump", "$bumptransform", "$bumpframe", "$normalmapalphaenvmapmask"});
+	auto* bump = section(m_bumpBox, tr("Normal map"), m_bumpOn);
 	bump->addRow(tr("Normal map"), textureField("$bumpmap", tr("folder/texture_normal")));
 	m_ssbump = check("$ssbump", tr("Self-shadowed ($ssbump, made with height2ssbump)"));
 	bump->addRow(QString(), m_ssbump);
 
 	// Relief: mapbase-fidelity's Fidelity_Parallax.
-	auto* relief = section(m_reliefBox, tr("Relief (real depth, mapbase-fidelity)"));
-	m_relief = new QCheckBox(tr("Give this surface real depth"));
+	m_relief = new QCheckBox;
 	m_relief->setObjectName("relief");
 	connect(m_relief, &QCheckBox::toggled, this, [this](bool on) {
 		if (!m_loading) setRelief(on);
 	});
-	relief->addRow(QString(), m_relief);
-	relief->addRow(QString(), needsFidelity());
-	relief->addRow(QString(), hint(tr("Stones, joints and grooves really go into the wall and hide each other at a slant "
-	                                  "(Fidelity_Parallax). Needs a height map: white is the top.")));
+	auto* relief = section(m_reliefBox, tr("Relief - real depth (mapbase-fidelity)"), m_relief);
+	relief->addRow(fidelityNote());
+	relief->addRow(hint(tr("Stones, joints and grooves really go into the wall and hide each other at a slant "
+	                       "(Fidelity_Parallax). Needs a height map: white is the top.")));
 	relief->addRow(tr("Depth"), sliderField("$parallaxdepth", 0, 0.1, 0.02, 3));
 	relief->addRow(tr("Darker in the depths"), sliderField("$parallaxao", 0, 1, 0.35, 2));
 	relief->addRow(tr("Fades out from"), sliderField("$parallaxfade", 200, 4000, 1000, 0));
@@ -587,14 +734,16 @@ void MaterialEditor::buildFields() {
 	});
 	connect(m_zonesButton, &QPushButton::clicked, this, &MaterialEditor::paintZones);
 
-	auto* env = section(m_envBox, tr("Reflections"));
+	// Reflections.
+	m_envOn = feature("env", "reflectionOn", {"$envmap", "$envmaptint", "$envmapmask", "$basealphaenvmapmask", "$normalmapalphaenvmapmask",
+	                                          "$envmapcontrast", "$envmapsaturation", "$envmapframe", "$fresnelreflection"});
+	auto* env = section(m_envBox, tr("Reflections"), m_envOn);
 	m_reflection = new QComboBox;
 	m_reflection->setObjectName("reflection");
-	m_reflection->addItems({tr("None"), tr("The nearest env_cubemap"), tr("A cubemap texture of its own")});
+	m_reflection->addItems({tr("The nearest env_cubemap"), tr("A cubemap texture of its own")});
 	connect(m_reflection, &QComboBox::currentIndexChanged, this, [this](int index) {
 		if (m_loading) return;
-		if (index == 0) setValue("$envmap", "");
-		else if (index == 1) setValue("$envmap", "env_cubemap");
+		if (index == 0) setValue("$envmap", "env_cubemap");
 		else if (value("$envmap").isEmpty() || value("$envmap") == "env_cubemap") setValue("$envmap", "editor/cubemap");
 	});
 	env->addRow(tr("Reflects"), m_reflection);
@@ -614,9 +763,11 @@ void MaterialEditor::buildFields() {
 	env->addRow(tr("Where"), m_mask);
 	auto* maskField = textureField("$envmapmask", tr("folder/texture_mask"));
 	env->addRow(tr("Mask texture"), maskField);
-	env->addRow(QString(), hint(tr("Mapbase: reflections line up with the room when the env_cubemap that captures this surface has "
-	                               "a room box (select the env_cubemap: Add room box); VBSP adds $envmapparallax itself.")));
+	m_rows["$envmapmask"] = maskField;
+	env->addRow(hint(tr("Mapbase: reflections line up with the room when the env_cubemap that captures this surface has "
+	                    "a room box (select the env_cubemap: Add room box); VBSP adds $envmapparallax itself.")));
 
+	// Transparency and glow (no switch: several independent choices).
 	auto* alpha = section(m_alphaBox, tr("Transparency and glow"));
 	m_transparency = new QComboBox;
 	m_transparency->addItems({tr("Solid"), tr("See-through (glass, smoke)"), tr("Cut out (fences, leaves)"), tr("Glowing, adds light (beams)")});
@@ -635,7 +786,9 @@ void MaterialEditor::buildFields() {
 	m_selfillum = check("$selfillum", tr("Glows ($selfillum, where the alpha is white)"));
 	alpha->addRow(QString(), m_selfillum);
 
-	auto* detail = section(m_detailBox, tr("Detail and shine"));
+	// Detail texture.
+	m_detailOn = feature("detail", "detailOn", {"$detail", "$detailscale", "$detailblendmode", "$detailblendfactor", "$detailtint", "$detailframe"});
+	auto* detail = section(m_detailBox, tr("Detail texture"), m_detailOn);
 	detail->addRow(tr("Detail texture"), textureField("$detail", tr("detail/noise_detail_01")));
 	m_detailScale = new QDoubleSpinBox;
 	m_detailScale->setRange(0.01, 64);
@@ -644,32 +797,31 @@ void MaterialEditor::buildFields() {
 	connect(m_detailScale, &QDoubleSpinBox::valueChanged, this, [this](double scale) {
 		if (!m_loading) setValue("$detailscale", QString::number(scale));
 	});
-	detail->addRow(tr("Detail size"), m_detailScale);
+	detail->addRow(tr("Size"), m_detailScale);
 	m_detailBlend = new QComboBox;
 	m_detailBlend->addItems({tr("Multiply"), tr("Add"), tr("Over the texture")});
 	connect(m_detailBlend, &QComboBox::currentIndexChanged, this, [this](int index) {
 		if (!m_loading) setValue("$detailblendmode", index == 0 ? "" : QString::number(index));
 	});
-	detail->addRow(tr("Detail blend"), m_detailBlend);
-	m_phong = check("$phong", tr("Shiny highlights ($phong)"));
-	detail->addRow(QString(), m_phong);
-	auto* exponent = sliderField("$phongexponent", 1, 150, 5, 0);
-	detail->addRow(tr("Highlight size"), exponent);
-	m_rows["$phongexponent"] = exponent;
-	auto* boost = sliderField("$phongboost", 0, 10, 1, 1);
-	detail->addRow(tr("Highlight strength"), boost);
-	m_rows["$phongboost"] = boost;
+	detail->addRow(tr("Blend"), m_detailBlend);
+
+	// Shine: phong highlights.
+	m_phong = feature("phong", "$phong", {"$phong", "$phongexponent", "$phongboost", "$phongfresnelranges", "$phongexponenttexture", "$phongtint"});
+	auto* phong = section(m_phongBox, tr("Shiny highlights ($phong)"), m_phong);
+	phong->addRow(hint(tr("Masked by the normal map's alpha.")));
+	phong->addRow(tr("Highlight size"), sliderField("$phongexponent", 1, 150, 5, 0));
+	phong->addRow(tr("Highlight strength"), sliderField("$phongboost", 0, 10, 1, 1));
 
 	// Everything else, as text.
-	QGroupBox* otherBox = nullptr;
-	auto* otherForm = section(otherBox, tr("Other parameters"));
+	auto* otherForm = section(m_otherBox, tr("Other parameters"));
+	m_otherBox->setFolded(true);
 	m_other = new QTableWidget;
 	m_other->setObjectName("otherParams");
 	m_other->setColumnCount(2);
 	m_other->setHorizontalHeaderLabels({tr("Parameter"), tr("Value")});
 	m_other->horizontalHeader()->setStretchLastSection(true);
 	m_other->verticalHeader()->setVisible(false);
-	m_other->setMinimumHeight(130);
+	m_other->setMinimumHeight(150);
 	connect(m_other, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
 		if (m_loading || item->column() != 1) return;
 		setValue(m_other->item(item->row(), 0)->text(), item->text());
@@ -695,6 +847,29 @@ void MaterialEditor::buildFields() {
 	addRow->addWidget(val, 3);
 	addRow->addWidget(add);
 	otherForm->addRow(addRow);
+}
+
+void MaterialEditor::setFeature(const QString& feature, bool on) {
+	const QStringList keys = m_featureKeys[feature];
+	if (on) {
+		m_forcedOn.insert(feature);
+		for (const auto& key : keys) {
+			if (const auto it = m_parked.find(key); it != m_parked.end()) {
+				setValue(key, it->second);
+				m_parked.erase(it);
+			}
+		}
+		if (feature == "env" && value("$envmap").isEmpty()) setValue("$envmap", "env_cubemap");
+		if (feature == "phong") setValue("$phong", "1");
+	} else {
+		m_forcedOn.erase(feature);
+		for (const auto& key : keys) {
+			if (value(key).isEmpty()) continue;
+			m_parked[key] = value(key);
+			setValue(key, "");
+		}
+	}
+	loadValuesIntoFields();
 }
 
 MaterialEditor::Kind MaterialEditor::kind() const {
@@ -745,6 +920,7 @@ void MaterialEditor::setValue(const QString& rawKey, const QString& text) {
 	const bool textureKey = key == "$basetexture" || key == "$bumpmap" || key == "$envmapmask" || key == "$detail" || key == "$normalmap";
 	refreshPreview(textureKey);
 	if (!COVERED.contains(key) && !m_loading) fillOtherTable();
+	if (!m_loading) updateSections();
 }
 
 void MaterialEditor::setShader(const QString& shader) {
@@ -1010,6 +1186,9 @@ void MaterialEditor::openMaterial(const QString& rawName) {
 	                                               "alone. Delete the file to get the generated one back.").arg(m_generatedBy));
 	m_notice->setVisible(!m_generatedBy.isEmpty());
 	m_kindBox->setEnabled(!m_isPatch);
+	m_parked.clear();
+	m_forcedOn.clear();
+	rememberRecent(name);
 	m_save->setEnabled(false);
 	m_saveAs->setEnabled(true);
 	m_status->clear();
@@ -1022,52 +1201,40 @@ void MaterialEditor::openMaterial(const QString& rawName) {
 void MaterialEditor::updateSections() {
 	const bool open = !m_name.isEmpty();
 	const Kind k = kind();
-	const bool fidelity = fidelityShaders();
 	const bool surface = k == Kind::Wall || k == Kind::Blend || k == Kind::Model;
 	m_texturesBox->setVisible(open);
+	m_waterBox->setVisible(open && k == Kind::Water);
+	m_glintBox->setVisible(open && k == Kind::Water);
+	m_liquidBox->setVisible(open && k == Kind::Model);
 	m_bumpBox->setVisible(open && k != Kind::Water && k != Kind::Unlit);
 	m_reliefBox->setVisible(open && (k == Kind::Wall || k == Kind::Blend));
 	m_envBox->setVisible(open && surface);
 	m_alphaBox->setVisible(open && k != Kind::Water);
 	m_detailBox->setVisible(open && k != Kind::Water);
-	m_waterBox->setVisible(open && k == Kind::Water);
-	m_liquidBox->setVisible(open && k == Kind::Model);
-	m_rows["$basetexture2"]->setVisible(k == Kind::Blend);
-	if (auto* label = qobject_cast<QFormLayout*>(m_texturesBox->layout())->labelForField(m_rows["$basetexture2"])) label->setVisible(k == Kind::Blend);
-	const auto showRow = [](QGroupBox* box, QWidget* row, bool on) {
+	m_phongBox->setVisible(open && k == Kind::Model);
+	m_otherBox->setVisible(open);
+	const auto showRow = [](FeatureGroup* group, QWidget* row, bool on) {
 		row->setVisible(on);
-		if (auto* label = qobject_cast<QFormLayout*>(box->layout())->labelForField(row)) label->setVisible(on);
+		if (auto* label = group->form()->labelForField(row)) label->setVisible(on);
 	};
 	showRow(m_texturesBox, m_rows["$basetexture"], k != Kind::Water);
-	showRow(m_detailBox, m_rows["$phongexponent"], m_phong->isChecked());
-	showRow(m_detailBox, m_rows["$phongboost"], m_phong->isChecked());
+	showRow(m_texturesBox, m_rows["$basetexture2"], k == Kind::Blend);
+	showRow(m_envBox, m_rows["$envmapmask"], m_mask->currentIndex() == 1);
 
-	// mapbase-fidelity switches: only with its shaders in the mod.
-	const bool relief = m_shader.compare("Fidelity_Parallax", Qt::CaseInsensitive) == 0 ||
-	                    m_shader.compare("Fidelity_WorldVertexTransition", Qt::CaseInsensitive) == 0;
-	m_relief->setEnabled(fidelity || relief);
-	for (auto* label : m_fidelityMissing) label->setVisible(!fidelity);
-	for (auto* w : std::initializer_list<QWidget*>{m_sliders["$parallaxdepth"]->parentWidget(), m_sliders["$parallaxao"]->parentWidget(),
-	                                               m_sliders["$parallaxfade"]->parentWidget(), m_heightLabel->parentWidget()}) {
-		showRow(m_reliefBox, w, relief);
-	}
+	// mapbase-fidelity: usable also before the mod has the shaders (the note says so).
+	const bool fidelity = fidelityShaders();
+	for (auto* label : m_fidelityNotes) label->setVisible(!fidelity);
 	m_fromNormals->setEnabled(!value("$bumpmap").isEmpty());
 	m_zonesButton->setEnabled(m_heightSource.has_value());
 	m_invert->setEnabled(m_heightSource.has_value());
-	const bool fidelityWater = m_shader.compare("Water_Fidelity", Qt::CaseInsensitive) == 0;
-	m_fidelityWater->setEnabled(fidelity || fidelityWater);
-	showRow(m_waterBox, m_rows["$fidelityglint"], fidelityWater);
-	showRow(m_waterBox, m_rows["$fidelityfoam"], fidelityWater);
-	const bool liquid = m_shader.compare("Fidelity_Liquid", Qt::CaseInsensitive) == 0;
-	m_liquid->setEnabled(fidelity || liquid);
-	for (const char* key : {"$liquidcolor", "$liquidalpha", "fillMode", "$fillmin", "$fillmax", "$wobble", "$viscosity", "$glasscolor",
-	                        "$glassalpha", "$splash", "$spill"}) {
-		showRow(m_liquidBox, m_rows[key], liquid);
-	}
-	const bool fixedFill = liquid && !value("$fill").isEmpty() && value("$fill").toDouble() >= 0;
+	const bool fixedFill = !value("$fill").isEmpty() && value("$fill").toDouble() >= 0;
 	showRow(m_liquidBox, m_rows["$fill"], fixedFill);
-	showRow(m_liquidBox, m_rows["$fillmin"], liquid && !fixedFill);
-	showRow(m_liquidBox, m_rows["$fillmax"], liquid && !fixedFill);
+	showRow(m_liquidBox, m_rows["$fillmin"], !fixedFill);
+	showRow(m_liquidBox, m_rows["$fillmax"], !fixedFill);
+	m_otherBox->setCount(m_other->rowCount() > 0 ? QStringLiteral("(%1)").arg(m_other->rowCount()) : QString());
+	for (auto* group : {m_texturesBox, m_waterBox, m_glintBox, m_liquidBox, m_bumpBox, m_reliefBox, m_envBox, m_alphaBox, m_detailBox, m_phongBox, m_otherBox}) {
+		group->refresh();
+	}
 	m_shaderName->setText(open ? tr("Shader: %1").arg(m_shader) : QString());
 }
 
@@ -1093,7 +1260,10 @@ void MaterialEditor::loadValuesIntoFields() {
 	m_surface->setCurrentText(value("$surfaceprop"));
 	m_ssbump->setChecked(value("$ssbump") == "1");
 	const QString envmap = value("$envmap");
-	m_reflection->setCurrentIndex(envmap.isEmpty() ? 0 : (envmap.compare("env_cubemap", Qt::CaseInsensitive) == 0 ? 1 : 2));
+	m_reflection->setCurrentIndex(envmap.isEmpty() || envmap.compare("env_cubemap", Qt::CaseInsensitive) == 0 ? 0 : 1);
+	m_bumpOn->setChecked(!value("$bumpmap").isEmpty() || m_forcedOn.contains("bump"));
+	m_envOn->setChecked(!envmap.isEmpty());
+	m_detailOn->setChecked(!value("$detail").isEmpty() || m_forcedOn.contains("detail"));
 	m_mask->setCurrentIndex(value("$basealphaenvmapmask") == "1" ? 2 : value("$normalmapalphaenvmapmask") == "1" ? 3 : !value("$envmapmask").isEmpty() ? 1 : 0);
 	m_transparency->setCurrentIndex(value("$translucent") == "1" ? 1 : value("$alphatest") == "1" ? 2 : value("$additive") == "1" ? 3 : 0);
 	m_nocull->setChecked(value("$nocull") == "1");
@@ -1137,6 +1307,8 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 	                          : (m_shader.compare("Fidelity_Liquid", Qt::CaseInsensitive) == 0 ? MaterialPreview::Mode::Liquid : MaterialPreview::Mode::Surface);
 	if (s.mode == MaterialPreview::Mode::Liquid && m_shape->currentIndex() == int(MaterialPreview::Shape::Plane)) {
 		m_shape->setCurrentIndex(int(MaterialPreview::Shape::Cube));   // a container, not a wall
+	} else if (s.mode == MaterialPreview::Mode::Water && m_shape->currentIndex() != int(MaterialPreview::Shape::Plane)) {
+		m_shape->setCurrentIndex(int(MaterialPreview::Shape::Plane));   // a water surface
 	}
 	s.ssbump = value("$ssbump") == "1";
 	s.envmap = !value("$envmap").isEmpty() && k != Kind::Water;
@@ -1168,7 +1340,7 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 	auto* game = m_editor->game();
 	if (!game) return;
 	std::map<QString, std::string> wanted;
-	for (const char* key : {"$basetexture", "$bumpmap", "$envmapmask", "$detail", "$normalmap"}) {
+	for (const char* key : {"$basetexture", "$basetexture2", "$bumpmap", "$envmapmask", "$detail", "$normalmap"}) {
 		if (!value(key).isEmpty()) wanted[key] = value(key).toStdString();
 	}
 	const GameFileSystem* fs = &game->files;

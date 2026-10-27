@@ -58,12 +58,17 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
   entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
   `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
-- **Material editor**: right-click a material > *Edit material* (or *Edit* next to a selected face). Change texture,
-  normal map, reflections and where they show, transparency, self-illumination, detail texture, phong and surface
-  property, with a live preview on a wall, cube or sphere under sun, lamp, night or no light. Saving writes the VMT into
-  your mod (a material from the game's VPKs becomes an override copy); *Save as new* makes a new material.
-  Only the sections that fit the kind of material are shown (wall, blended ground, model, water).
-- **mapbase-fidelity shaders** (when the mod has them, i.e. its `deploy.bat` ran once): in the material editor
+- **Material editor**: its own tab next to *Map* (right-click a material > *Edit material*, *Edit* next to a selected
+  face, or *View > Material Editor*). On the left: *Open a material ...* and the materials you edited lately. In the
+  middle the parameters in groups; a group with a switch in its header is a feature (*Normal map*, *Relief*,
+  *Reflections*, *Detail texture*, *Shiny highlights*, ...) and folds away while it is off - turning it off and on again
+  brings its values back. Texture fields show a small picture of the texture. On the right a big live preview (wall,
+  cube or sphere under sun, lamp, night or no light) with *Save* and *Save as new ...* above it. Saving writes the VMT
+  into your mod (a material from the game's VPKs becomes an override copy). Only the groups that fit the kind of
+  material are shown (wall, blended ground, model, water). While the tab is open, the map's panels and keys step aside;
+  they come back with the *Map* tab.
+- **mapbase-fidelity shaders**: in the material editor, also before the mod has them (the preview shows them; the game
+  after the mod's `deploy.bat` ran once)
   - *Relief*: *Give this surface real depth* turns a wall or blended ground into `Fidelity_Parallax` /
     `Fidelity_WorldVertexTransition`. Set the depth, the darkening in the depths and the fade distance. The height map
     is made for you from the normal map (or from the texture's brightness); tick *Upside down* to swap high and low, or

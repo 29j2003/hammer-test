@@ -18,6 +18,7 @@ class QToolButton;
 class QProgressDialog;
 class QLabel;
 class QSplitter;
+class QTabWidget;
 class QDockWidget;
 
 namespace sme::app {
@@ -57,7 +58,11 @@ public:
 	[[nodiscard]] CompileWindow* compileWindow() const { return m_compileWindow; }
 	[[nodiscard]] MaterialEditor* materialEditor() const { return m_materialEditor; }
 	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
+	/// Shows a dock by its title; "Material Editor" and "Map" switch the tab in the middle.
 	void raiseDock(const QString& name);
+	/// Opens the Material Editor tab (adds it again after it was closed).
+	void showMaterialEditor();
+	[[nodiscard]] QTabWidget* centralTabs() const { return m_centralTabs; }
 	/// Update check against the GitHub releases. `manual` also reports "up to date" and errors.
 	void checkForUpdates(bool manual);
 	[[nodiscard]] Updater* updater() const { return m_updater; }
@@ -78,12 +83,18 @@ private:
 	void offerUpdate(const ReleaseInfo& release, bool manual);
 	void runUpdate(const ReleaseInfo& release);
 	[[nodiscard]] Viewport* activeView() const;
+	/// The map's docks, tool bars and keys are away while another tab (Material Editor) is shown.
+	void setMapWorkspaceShown(bool shown);
 
 	Editor* m_editor;
 	MaterialCache* m_materials;
 	std::array<Viewport*, 4> m_views{};
 	QSplitter* m_rows = nullptr;
 	std::array<QSplitter*, 2> m_columns{};
+	QTabWidget* m_centralTabs = nullptr;     ///< "Map" (the views) and the Material Editor
+	QList<QPointer<QWidget>> m_hiddenForTab;    ///< Docks and tool bars put away for another tab
+	QList<QPointer<QAction>> m_disabledForTab;  ///< Map keys switched off for another tab
+	bool m_mapHidden = false;
 	bool m_quad = false;
 	QPointer<Viewport> m_active;
 

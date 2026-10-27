@@ -43,6 +43,9 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
+#include <QSet>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -105,7 +108,15 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 		m_columns[static_cast<std::size_t>(r)]->addWidget(m_views[static_cast<std::size_t>(r * 2 + 1)]);
 		m_rows->addWidget(m_columns[static_cast<std::size_t>(r)]);
 	}
-	setCentralWidget(m_rows);
+	// The views are the "Map" tab; the Material Editor opens as a tab next to it.
+	m_centralTabs = new QTabWidget;
+	m_centralTabs->setObjectName("centralTabs");
+	m_centralTabs->setDocumentMode(true);
+	m_centralTabs->setTabsClosable(true);
+	m_centralTabs->addTab(m_rows, tr("Map"));
+	m_centralTabs->tabBar()->setTabButton(0, QTabBar::RightSide, nullptr);   // the map stays
+	m_centralTabs->tabBar()->setTabButton(0, QTabBar::LeftSide, nullptr);
+	setCentralWidget(m_centralTabs);
 	m_active = m_views[0];
 	connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) {
 		for (auto* view : m_views) {
@@ -227,7 +238,8 @@ void MainWindow::createDocks() {
 	m_sounds = new SoundBrowser(m_editor);
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
-	m_materialEditor = new MaterialEditor(m_editor);
+	m_materialEditor = new MaterialEditor(m_editor, this);   // a tab when opened (showMaterialEditor)
+	m_materialEditor->hide();
 
 	// Tool options on the left next to the tool bar (like XBLAH's "New objects"), properties on the right.
 	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::LeftDockWidgetArea);
@@ -240,13 +252,17 @@ void MainWindow::createDocks() {
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
 	auto* particles = addDock(tr("Particles"), m_particles, Qt::BottomDockWidgetArea);
 	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
-	auto* materialEditor = addDock(tr("Material Editor"), m_materialEditor, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, sounds);
 	tabifyDockWidget(assets, particles);
 	tabifyDockWidget(assets, compile);
-	tabifyDockWidget(assets, materialEditor);
 	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
+	connect(m_centralTabs, &QTabWidget::currentChanged, this, [this](int index) {
+		setMapWorkspaceShown(m_centralTabs->widget(index) == m_rows);
+	});
+	connect(m_centralTabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
+		if (m_centralTabs->widget(index) != m_rows) m_centralTabs->removeTab(index);   // the editor itself stays for later
+	});
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
@@ -277,7 +293,62 @@ void MainWindow::createDocks() {
 	});
 }
 
+void MainWindow::showMaterialEditor() {
+	if (m_centralTabs->indexOf(m_materialEditor) < 0) {
+		m_centralTabs->addTab(m_materialEditor, tr("Material Editor"));
+	}
+	m_centralTabs->setCurrentWidget(m_materialEditor);
+}
+
+void MainWindow::setMapWorkspaceShown(bool shown) {
+	if (shown == !m_mapHidden) return;
+	m_mapHidden = !shown;
+	if (!shown) {
+		// A full tab: the map's docks and tool bars go away, and its keys (Delete, H, tools ...) must not
+		// change the map unseen. File and Help keep working.
+		for (auto* dock : std::as_const(m_docks)) {
+			if (dock->isVisible()) {
+				m_hiddenForTab << dock;
+				dock->hide();
+			}
+		}
+		for (auto* bar : findChildren<QToolBar*>(QString(), Qt::FindDirectChildrenOnly)) {
+			if (bar->isVisible()) {
+				m_hiddenForTab << bar;
+				bar->hide();
+			}
+		}
+		QSet<QAction*> keep;
+		for (auto* entry : menuBar()->actions()) {
+			if (entry->menu() && (entry->text() == tr("&File") || entry->text() == tr("&Help"))) {
+				for (auto* a : entry->menu()->actions()) keep.insert(a);
+			}
+		}
+		for (auto* a : findChildren<QAction*>()) {
+			if (a->menu() || a->shortcut().isEmpty() || keep.contains(a) || !a->isEnabled()) continue;
+			if (a->objectName() == tr("Material Editor")) continue;
+			a->setEnabled(false);
+			m_disabledForTab << a;
+		}
+	} else {
+		for (const auto& widget : std::as_const(m_hiddenForTab)) {
+			if (widget) widget->show();
+		}
+		for (const auto& a : std::as_const(m_disabledForTab)) {
+			if (a) a->setEnabled(true);
+		}
+		m_hiddenForTab.clear();
+		m_disabledForTab.clear();
+	}
+}
+
 void MainWindow::raiseDock(const QString& name) {
+	if (name == tr("Material Editor") || name == "Material Editor") {
+		showMaterialEditor();
+		return;
+	}
+	m_centralTabs->setCurrentWidget(m_rows);   // the docks belong to the map
+	if (name == tr("Map") || name == "Map") return;
 	for (auto* dock : m_docks) {
 		if (dock->objectName() == name || dock->windowTitle() == name) {
 			dock->show();
@@ -619,6 +690,8 @@ void MainWindow::createActions() {
 
 	// View
 	auto* view = menuBar()->addMenu(tr("&View"));
+	view->addAction(action(tr("Material Editor"), QKeySequence(), [this] { showMaterialEditor(); }));
+	view->addSeparator();
 	view->addAction(layout);
 	view->addAction(action(tr("Frame selection"), QKeySequence("F"), [this] { activeView()->frameSelection(); }));
 	action(tr("Frame selection"), QKeySequence("Ctrl+Shift+E"), [this] { activeView()->frameSelection(); });
