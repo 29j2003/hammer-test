@@ -38,6 +38,7 @@ struct EntityProperty {
 	std::string defaultValue;
 	std::string description;
 	bool readOnly = false;
+	std::string origin;          ///< Class that defines it (a base class like "Targetname", or the class itself)
 	std::vector<EntityChoice> choices;
 	std::vector<EntityFlag> flags;
 };

@@ -40,6 +40,7 @@ EntityClass convert(std::string_view name, const toolpp::FGD::Entity& entity, co
 		p.defaultValue = std::string(field.valueDefault);
 		p.description = std::string(field.description);
 		p.readOnly = field.readonly;
+		p.origin = out.name;
 		out.properties.push_back(std::move(p));
 	}
 	for (const auto& field : entity.fieldsWithChoices) {
@@ -51,6 +52,7 @@ EntityClass convert(std::string_view name, const toolpp::FGD::Entity& entity, co
 		p.defaultValue = std::string(field.valueDefault);
 		p.description = std::string(field.description);
 		p.readOnly = field.readonly;
+		p.origin = out.name;
 		for (const auto& choice : field.choices) {
 			p.choices.push_back({std::string(choice.value), std::string(choice.displayName)});
 		}
@@ -64,6 +66,7 @@ EntityClass convert(std::string_view name, const toolpp::FGD::Entity& entity, co
 		p.displayName = std::string(field.displayName);
 		p.description = std::string(field.description);
 		p.readOnly = field.readonly;
+		p.origin = out.name;
 		for (const auto& flag : field.flags) {
 			p.flags.push_back({flag.value, std::string(flag.displayName), flag.enabledByDefault});
 		}

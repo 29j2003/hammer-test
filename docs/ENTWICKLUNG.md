@@ -71,7 +71,14 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
   sonst Raster. Cubemap-Raum-Box: Quadrate auf den Seiten (`Handle::RoomMin…`) bei genau einer ausgewählten
   `env_cubemap` mit Box.
 - Eigenschaften: Schalter „Smart Edit“ (aus = Tabelle aller Keys inkl. nicht gesetzter FGD-Keys), Zeile „neuer Key“,
-  Feld „Name“ bei jeder Entity. Kartenobjekte kopieren/einfügen: Kern-Modul `clipboard` (`copyObjects` = VMF-Text,
+  Feld „Name“ bei jeder Entity. Smart Edit wie XBLAH: Klassen-Combo oben, `QTabBar` „propertyTabs“ (Keyvalues/Outputs/
+  Inputs mit Zahlen, gewählter Tab in `properties/tab`), Gruppen nach `EntityProperty::origin` (die FGD-Klasse, die den
+  Key definiert – beim Laden gesetzt) über `addGroup` (aufklappbar, Zustand in `properties/collapsed`, beim Suchen
+  offen), Zeilen „Label | Editor“ über `addRow`; die Beschreibung steht als Property „help“ am Editor und erscheint im
+  Hilfebereich unten (`showHelp` über `QApplication::focusChanged`), ohne Fokus die Klassenbeschreibung. Ja/Nein-Listen
+  (0 No / 1 Yes) und Flags als `ToggleSwitch` (QCheckBox, eigene Zeichnung). Himmel: `skyboxNames` (Kern, `assets`)
+  + Bild der Vorderseite im Hintergrund (`loadSkies`, einmal pro Spiel), Combo „skyPicker“; Karte > Map properties
+  wählt nichts aus und zeigt die Welt. Kartenobjekte kopieren/einfügen: Kern-Modul `clipboard` (`copyObjects` = VMF-Text,
   `pasteObjects` mit `PasteOptions`: Anzahl, Versatz und Drehung je Kopie, Mittelpunkt, eindeutige Namen samt Ausgängen,
   Präfix; ein Undo-Schritt), `Editor::copySelection/cutSelection/paste`, `MainWindow::pasteHere` (unter der Maus über
   `Viewport::pasteCenter` → `restingPlace`, dieselbe Rechnung wie beim Platzieren) und `pasteSpecialDialog`.

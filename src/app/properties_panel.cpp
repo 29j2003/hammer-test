@@ -7,6 +7,7 @@
 #include "asset_browser.h"
 #include "editor.h"
 #include "material_cache.h"
+#include "toggle_switch.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -21,6 +22,7 @@
 #include <QSettings>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QFrame>
@@ -33,7 +35,10 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QTabBar>
+#include <QtConcurrentRun>
 
+#include <cstring>
 #include <set>
 
 #include <sme/assets.h>
@@ -41,6 +46,7 @@
 #include <sme/game.h>
 #include <sme/history.h>
 #include <sme/text.h>
+#include <sme/texture.h>
 
 namespace sme::app {
 
@@ -66,6 +72,37 @@ QString qs(const std::string& s) {
 	return QString::fromStdString(s);
 }
 
+/// Choices that are just yes/no ("0" No / "1" Yes): shown as a switch. Other two-way choices
+/// ("Do nothing" / "Cancel script") keep their list - a switch would not say what "on" means.
+bool isYesNo(const EntityProperty& property) {
+	if (property.kind != EntityProperty::Kind::Choices || property.choices.size() != 2) return false;
+	static const QRegularExpression no("^(no|false|off|disabled?)$", QRegularExpression::CaseInsensitiveOption);
+	static const QRegularExpression yes("^(yes|true|on|enabled?)$", QRegularExpression::CaseInsensitiveOption);
+	bool hasNo = false, hasYes = false;
+	for (const auto& choice : property.choices) {
+		const QString name = QString::fromStdString(choice.displayName).trimmed();
+		hasNo = hasNo || (choice.value == "0" && no.match(name).hasMatch());
+		hasYes = hasYes || (choice.value == "1" && yes.match(name).hasMatch());
+	}
+	return hasNo && hasYes;
+}
+
+QString helpText(const QString& title, const QString& key, const QString& type, const QString& description) {
+	QString text = QStringLiteral("<b>%1</b>").arg(title.toHtmlEscaped());
+	if (!key.isEmpty() && key.compare(title, Qt::CaseInsensitive) != 0) text += QStringLiteral(" <span style='color:#8a909c'>%1</span>").arg(key.toHtmlEscaped());
+	if (!type.isEmpty()) text += QStringLiteral(" <span style='color:#8a909c'>(%1)</span>").arg(type.toHtmlEscaped());
+	if (!description.isEmpty()) text += QStringLiteral("<br>") + description.simplified().toHtmlEscaped();
+	return text;
+}
+
+QImage toQImage(const ImageRgba& image) {
+	QImage out(int(image.width), int(image.height), QImage::Format_RGBA8888);
+	for (unsigned y = 0; y < image.height; ++y) {
+		std::memcpy(out.scanLine(int(y)), image.pixels.data() + std::size_t(y) * image.width * 4, std::size_t(image.width) * 4);
+	}
+	return out;
+}
+
 QString studioPath(const std::string& helper) {
 	QString path = qs(helper).trimmed();
 	path.remove('"');
@@ -87,12 +124,16 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	: QWidget(parent), m_editor(editor), m_assets(assets), m_materials(materials) {
 	auto* layout = new QVBoxLayout(this);
 	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(0);
 	auto* top = new QHBoxLayout;
-	top->setContentsMargins(4, 2, 4, 2);
+	top->setContentsMargins(6, 4, 6, 4);
+	top->setSpacing(8);
 	m_filter = new QLineEdit;
-	m_filter->setPlaceholderText(tr("Filter keys ..."));
+	m_filter->setObjectName("propertyFilter");
+	m_filter->setPlaceholderText(tr("Find a property or flag"));
 	m_filter->setClearButtonEnabled(true);
 	m_smartEdit = new QCheckBox(tr("Smart Edit"));
+	m_smartEdit->setObjectName("smartEdit");
 	m_smartEdit->setToolTip(tr("On: fitting editors with descriptions. Off: every key as plain text, like Hammer"));
 	m_smartEdit->setChecked(QSettings().value("properties/smartEdit", true).toBool());
 	top->addWidget(m_filter, 1);
@@ -106,6 +147,25 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	m_scroll->setWidgetResizable(true);
 	m_scroll->setFrameShape(QFrame::NoFrame);
 	layout->addWidget(m_scroll, 1);
+	// Help area: what the focused key does (instead of a description under every key).
+	m_help = new QLabel;
+	m_help->setObjectName("propertyHelp");
+	m_help->setWordWrap(true);
+	m_help->setTextFormat(Qt::RichText);
+	m_help->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+	m_help->setContentsMargins(10, 8, 10, 8);
+	m_help->setMinimumHeight(64);
+	m_help->setProperty("role", "help");
+	layout->addWidget(m_help);
+	connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) { showHelp(now); });
+	for (const auto& name : QSettings().value("properties/collapsed").toStringList()) {
+		m_collapsed.insert(name);
+	}
+	m_tab = QSettings().value("properties/tab", 0).toInt();
+	connect(&m_skyWatcher, &QFutureWatcherBase::finished, this, [this] {
+		m_skies = m_skyWatcher.result();
+		scheduleRebuild();
+	});
 	connect(m_filter, &QLineEdit::textChanged, this, [this](const QString& text) {
 		m_filterText = text;
 		scheduleRebuild();
@@ -132,7 +192,11 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	});
 	connect(editor, &Editor::selectionChanged, this, &PropertiesPanel::scheduleRebuild);
 	connect(editor, &Editor::documentChanged, this, &PropertiesPanel::scheduleRebuild);
-	connect(editor, &Editor::gameChanged, this, &PropertiesPanel::scheduleRebuild);
+	connect(editor, &Editor::gameChanged, this, [this] {
+		m_skies.clear();
+		m_skiesGame.clear();
+		scheduleRebuild();
+	});
 	connect(editor, &Editor::toolChanged, this, &PropertiesPanel::scheduleRebuild);
 	scheduleRebuild();
 }
@@ -219,6 +283,7 @@ QStringList PropertiesPanel::sequencesFor(const Entity& entity) const {
 }
 
 void PropertiesPanel::rebuild() {
+	m_defaultHelp.clear();
 	auto* content = new QWidget;
 	auto* layout = new QVBoxLayout(content);
 	layout->setContentsMargins(8, 8, 8, 8);
@@ -232,21 +297,53 @@ void PropertiesPanel::rebuild() {
 	} else if (!selection.solids.empty()) {
 		buildBrushes(layout);
 	} else {
-		auto* title = new QLabel(tr("<b>Map</b> (nothing selected)"));
-		layout->addWidget(title);
-		const auto& doc = m_editor->doc();
-		layout->addWidget(descriptionLabel(tr("%1 brushes, %2 entities. Below are the world settings (worldspawn).").arg(doc.solidCount()).arg(doc.entities.size())));
 		buildEntity(layout, {0});
 	}
 	layout->addStretch(1);
 	m_scroll->setWidget(content);   // deletes the previous content
 	m_content = content;
+	m_help->setText(m_defaultHelp);
+	m_help->setVisible(!m_defaultHelp.isEmpty());
+}
+
+void PropertiesPanel::showHelp(QWidget* focused) {
+	if (!m_content) return;
+	for (QWidget* w = focused; w; w = w->parentWidget()) {
+		if (w == m_content || w == this) break;
+		if (const QVariant help = w->property("help"); help.isValid()) {
+			m_help->setText(help.toString());
+			m_help->setVisible(true);
+			return;
+		}
+	}
 }
 
 QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed) {
 	const std::string key = property.name;
 	const auto commit = [this, ids, key](const QString& v) { setKey(ids, key, v); };
 	const QString type = qs(property.type);
+
+	if (iequals(key, "skyname")) {
+		return makeSkyPicker(value);
+	}
+	if (isYesNo(property)) {
+		// Yes/no as a switch.
+		auto* holder = new QWidget;
+		auto* h = new QHBoxLayout(holder);
+		h->setContentsMargins(0, 0, 0, 0);
+		auto* toggle = new ToggleSwitch;
+		const QString effective = value.isEmpty() ? qs(property.defaultValue) : value;
+		toggle->setChecked(!mixed && effective == "1");
+		if (mixed) toggle->setToolTip(tr("(different)"));
+		connect(toggle, &QCheckBox::toggled, this, [commit](bool on) { commit(on ? QStringLiteral("1") : QStringLiteral("0")); });
+		h->addWidget(toggle);
+		auto* state = new QLabel(mixed ? tr("(different)") : QString());
+		state->setProperty("role", "description");
+		h->addWidget(state);
+		h->addStretch(1);
+		holder->setFocusProxy(toggle);
+		return holder;
+	}
 
 	if (property.kind == EntityProperty::Kind::Choices) {
 		auto* combo = new QComboBox;
@@ -398,6 +495,65 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 	return row;
 }
 
+void PropertiesPanel::loadSkies() {
+	const auto* game = m_editor->game();
+	const QString key = m_editor->gameEntry() ? QString::fromStdString(m_editor->gameEntry()->key()) : QString();
+	if (!game || key == m_skiesGame || m_skyWatcher.isRunning()) {
+		return;
+	}
+	m_skiesGame = key;
+	const GameFileSystem* fs = &game->files;
+	// Names and a small picture of each sky's front, read in the background (VPKs can be slow).
+	m_skyWatcher.setFuture(QtConcurrent::run([fs] {
+		std::vector<std::pair<QString, QImage>> skies;
+		for (const auto& name : skyboxNames(*fs)) {
+			QImage picture;
+			if (const auto image = loadTexture(*fs, "skybox/" + name + "ft", 64)) {
+				picture = toQImage(*image);
+			}
+			skies.emplace_back(QString::fromStdString(name), std::move(picture));
+		}
+		return skies;
+	}));
+}
+
+QWidget* PropertiesPanel::makeSkyPicker(const QString& value) {
+	loadSkies();
+	auto* combo = new QComboBox;
+	combo->setObjectName("skyPicker");
+	combo->setEditable(true);
+	combo->setInsertPolicy(QComboBox::NoInsert);
+	combo->setIconSize(QSize(28, 28));
+	QStringList names;
+	for (const auto& [name, picture] : m_skies) {
+		combo->addItem(picture.isNull() ? QIcon() : QIcon(QPixmap::fromImage(picture)), name);
+		names << name;
+	}
+	auto* completer = new QCompleter(names, combo);
+	completer->setCaseSensitivity(Qt::CaseInsensitive);
+	completer->setFilterMode(Qt::MatchContains);
+	combo->setCompleter(completer);
+	const int index = combo->findText(value, Qt::MatchFixedString);
+	combo->setCurrentIndex(index);   // -1: no picture of another sky next to an unknown name
+	if (index < 0) {
+		combo->setEditText(value);
+	}
+	if (m_skies.empty()) {
+		combo->lineEdit()->setPlaceholderText(m_skyWatcher.isRunning() ? tr("reading the game's skies ...") : tr("no skies found in materials/skybox"));
+	} else if (!value.isEmpty() && index < 0) {
+		combo->setToolTip(tr("This game has no sky called \"%1\" (materials/skybox/%1up.vmt)").arg(value));
+		combo->setProperty("problem", true);
+	}
+	const std::vector<int> world{0};
+	connect(combo, &QComboBox::activated, this, [this, combo, world, value] {
+		if (combo->currentText() != value) setKey(world, "skyname", combo->currentText());
+	});
+	connect(combo->lineEdit(), &QLineEdit::editingFinished, this, [this, combo, world, value] {
+		if (combo->currentText() != value) setKey(world, "skyname", combo->currentText());
+	});
+	return combo;
+}
+
 void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& entityIds) {
 	const auto& doc = m_editor->doc();
 	const auto* catalog = m_editor->entities();
@@ -405,6 +561,7 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	if (!first) {
 		return;
 	}
+	const bool world = entityIds.front() == 0;
 	const std::string classname = first->classname();
 	const bool sameClass = std::all_of(entityIds.begin(), entityIds.end(), [&](int id) {
 		const auto* e = doc.findEntity(id);
@@ -412,13 +569,19 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	});
 	const EntityClass* definition = catalog ? catalog->find(classname) : nullptr;
 
-	// Header: class with completion, description.
-	if (entityIds.front() != 0) {
-		auto* header = new QHBoxLayout;
-		auto* title = new QLabel(entityIds.size() > 1 ? tr("<b>%1 entities</b>").arg(entityIds.size()) : tr("<b>Entity</b> (id %1)").arg(first->id));
-		header->addWidget(title);
+	// Class line: the class (a drop-down changes it, keeping the keys) and what is selected.
+	auto* header = new QHBoxLayout;
+	header->setSpacing(8);
+	if (world) {
+		auto* worldLabel = new QLabel(QStringLiteral("<b>worldspawn</b>"));
+		worldLabel->setObjectName("entityClass");
+		header->addWidget(worldLabel, 1);
+		header->addWidget(descriptionLabel(tr("%1 brushes, %2 entities").arg(doc.solidCount()).arg(doc.entities.size())));
+	} else {
 		auto* classCombo = new QComboBox;
+		classCombo->setObjectName("entityClass");
 		classCombo->setEditable(true);
+		classCombo->setToolTip(tr("Class of the entity - pick another to change it (its keys stay)"));
 		QStringList classes;
 		if (catalog) {
 			for (const auto* cls : catalog->placeable()) {
@@ -435,16 +598,17 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		classCombo->setEditText(sameClass ? qs(classname) : tr("(different classes)"));
 		connect(classCombo, &QComboBox::activated, this, [this, classCombo, entityIds] { setKey(entityIds, "classname", classCombo->currentText()); });
 		header->addWidget(classCombo, 1);
-		layout->addLayout(header);
+		header->addWidget(descriptionLabel(entityIds.size() > 1 ? tr("%1 entities").arg(entityIds.size()) : tr("id %1").arg(first->id)));
 	}
+	layout->addLayout(header);
 	if (!sameClass) {
 		layout->addWidget(descriptionLabel(tr("Select entities of one class to edit their keys together.")));
 		return;
 	}
 	if (definition && !definition->description.empty()) {
-		auto* desc = descriptionLabel(qs(definition->description).simplified());
-		desc->setTextInteractionFlags(Qt::TextSelectableByMouse);
-		layout->addWidget(desc);
+		// The class description: in the help area while no key has the focus, short above.
+		// The class description is in the help area while no key has the focus.
+		m_defaultHelp = helpText(qs(classname), QString(), QString(), qs(definition->description));
 	} else if (!definition && catalog) {
 		auto* warn = new QLabel(tr("Class \"%1\" is not in the loaded FGDs - only raw keys can be edited.").arg(qs(classname)));
 		warn->setProperty("role", "warning");
@@ -453,24 +617,115 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	}
 
 	// NPC helper first: posing NPCs is the common job.
-	if (entityIds.size() == 1 && entityIds.front() != 0) {
+	if (entityIds.size() == 1 && !world) {
 		buildNpcHelper(layout, *first, definition);
 	}
-
 	if (entityIds.size() == 1 && iequals(classname, "env_cubemap")) {
 		buildCubemapBox(layout, *first);
 	}
 
+	// Tabs: Keyvalues / Outputs / Inputs with their counts (outputs and inputs for one entity).
+	const bool single = entityIds.size() == 1 && !world;
+	auto* keyPage = new QWidget;
+	auto* keyLayout = new QVBoxLayout(keyPage);
+	keyLayout->setContentsMargins(0, 4, 0, 0);
+	keyLayout->setSpacing(6);
+	int keyCount = 0;
 	if (!m_smartEdit->isChecked()) {
-		buildRawKeys(layout, entityIds, definition);
-		if (entityIds.size() == 1 && entityIds.front() != 0) {
-			buildOutputs(layout, entityIds.front());
-			buildIncoming(layout, *first);
-		}
+		buildRawKeys(keyLayout, entityIds, definition);
+		keyCount = int(first->keyValues.size());
+	} else {
+		keyCount = buildKeyvalues(keyLayout, entityIds, definition);
+	}
+	if (!single) {
+		layout->addWidget(keyPage);
 		return;
 	}
+	auto* outputPage = new QWidget;
+	auto* outputLayout = new QVBoxLayout(outputPage);
+	outputLayout->setContentsMargins(0, 4, 0, 0);
+	buildOutputs(outputLayout, first->id);
+	auto* inputPage = new QWidget;
+	auto* inputLayout = new QVBoxLayout(inputPage);
+	inputLayout->setContentsMargins(0, 4, 0, 0);
+	buildIncoming(inputLayout, *first);
 
-	// Smart keyvalue editors.
+	auto* tabs = new QTabBar;
+	tabs->setObjectName("propertyTabs");
+	tabs->setDrawBase(false);
+	tabs->setExpanding(false);
+	tabs->addTab(tr("Keyvalues  %1").arg(keyCount));
+	tabs->addTab(tr("Outputs  %1").arg(first->connections.size()));
+	tabs->addTab(tr("Inputs  %1").arg(incomingCount(*first)));
+	layout->addWidget(tabs);
+	QWidget* pages[3] = {keyPage, outputPage, inputPage};
+	const int current = std::clamp(m_tab, 0, 2);
+	for (int i = 0; i < 3; ++i) {
+		layout->addWidget(pages[i]);
+		pages[i]->setVisible(i == current);
+	}
+	tabs->setCurrentIndex(current);
+	connect(tabs, &QTabBar::currentChanged, this, [this, keyPage, outputPage, inputPage](int index) {
+		m_tab = index;
+		QSettings().setValue("properties/tab", index);
+		keyPage->setVisible(index == 0);
+		outputPage->setVisible(index == 1);
+		inputPage->setVisible(index == 2);
+	});
+}
+
+QGridLayout* PropertiesPanel::addGroup(QVBoxLayout* layout, const QString& name, int count) {
+	auto* header = new QPushButton;
+	header->setObjectName(QStringLiteral("group:%1").arg(name));
+	header->setProperty("role", "groupHeader");
+	header->setCursor(Qt::PointingHandCursor);
+	header->setFocusPolicy(Qt::NoFocus);
+	auto* body = new QWidget;
+	auto* grid = new QGridLayout(body);
+	grid->setContentsMargins(10, 4, 2, 6);
+	grid->setHorizontalSpacing(10);
+	grid->setVerticalSpacing(5);
+	grid->setColumnStretch(1, 1);
+	// While searching every group with a match is open.
+	const bool open = !m_filterText.isEmpty() || !m_collapsed.contains(name);
+	const auto label = [name, count](bool isOpen) {
+		return QStringLiteral("%1  %2   %3").arg(isOpen ? QStringLiteral("▾") : QStringLiteral("▸"), name).arg(count);
+	};
+	header->setText(label(open));
+	body->setVisible(open);
+	connect(header, &QPushButton::clicked, this, [this, header, body, name, label] {
+		const bool nowOpen = !body->isVisible();
+		body->setVisible(nowOpen);
+		header->setText(label(nowOpen));
+		if (nowOpen) m_collapsed.erase(name);
+		else m_collapsed.insert(name);
+		QStringList list(m_collapsed.begin(), m_collapsed.end());
+		QSettings().setValue("properties/collapsed", list);
+	});
+	layout->addWidget(header);
+	layout->addWidget(body);
+	return grid;
+}
+
+void PropertiesPanel::addRow(QGridLayout* grid, const QString& label, QWidget* editor, const QString& help) {
+	const int row = grid->rowCount();
+	auto* name = new QLabel(label);
+	name->setProperty("role", "rowLabel");
+	name->setWordWrap(true);
+	name->setMinimumWidth(110);
+	name->setMaximumWidth(160);
+	name->setToolTip(help);
+	name->setBuddy(editor);
+	editor->setProperty("help", help);
+	if (editor->toolTip().isEmpty()) editor->setToolTip(help);
+	grid->addWidget(name, row, 0, Qt::AlignVCenter);
+	grid->addWidget(editor, row, 1);
+}
+
+int PropertiesPanel::buildKeyvalues(QVBoxLayout* layout, const std::vector<int>& entityIds, const EntityClass* definition) {
+	const auto& doc = m_editor->doc();
+	const Entity* first = doc.findEntity(entityIds.front());
+	const bool world = entityIds.front() == 0;
 	const auto valueOf = [&](const std::string& key, bool& mixed) {
 		const QString v = qs(first->get(key));
 		mixed = false;
@@ -481,153 +736,170 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		}
 		return v;
 	};
-	auto* keysBox = new QGroupBox(tr("Properties"));
-	auto* keys = new QVBoxLayout(keysBox);
-	keys->setSpacing(2);
+	const auto matches = [this](const QString& display, const std::string& key) {
+		return m_filterText.isEmpty() || display.contains(m_filterText, Qt::CaseInsensitive) || qs(key).contains(m_filterText, Qt::CaseInsensitive);
+	};
+	int shown = 0;
 	std::set<std::string> known = {"classname", "id"};
-	const bool hasName = definition && std::any_of(definition->properties.begin(), definition->properties.end(),
-	                                               [](const EntityProperty& p) { return iequals(p.name, "targetname"); });
-	if (!hasName && entityIds.front() != 0 && (m_filterText.isEmpty() || QStringLiteral("name targetname").contains(m_filterText, Qt::CaseInsensitive))) {
-		// Every entity can have a name (outputs and scripts find it by that), even when its FGD forgot it.
-		known.insert("targetname");
+	if (world) {
+		known.insert("mapversion");   // written by the editor on save, like Hammer
+	}
+
+	// Groups by the FGD class that defines the key, in FGD order (Targetname, Parentname, ..., the class).
+	struct Row {
+		const EntityProperty* property;
+		QString display;
+	};
+	std::vector<std::pair<QString, std::vector<Row>>> groups;
+	const auto groupFor = [&](const QString& name) -> std::vector<Row>& {
+		for (auto& [groupName, rows] : groups) {
+			if (groupName == name) return rows;
+		}
+		groups.emplace_back(name, std::vector<Row>{});
+		return groups.back().second;
+	};
+	// Every entity can have a name (outputs and scripts find it by that), even when its FGD forgot it.
+	static EntityProperty nameProperty = [] {
 		EntityProperty name;
 		name.name = "targetname";
 		name.type = "target_source";
-		name.kind = EntityProperty::Kind::Plain;
-		name.displayName = tr("Name").toStdString();
-		name.description = tr("The name that other entities refer to this entity by.").toStdString();
-		bool mixed = false;
-		const QString value = valueOf("targetname", mixed);
-		auto* label = new QLabel(tr("Name"));
-		label->setProperty("role", "key");
-		keys->addWidget(label);
-		keys->addWidget(makeEditor(name, entityIds, value, mixed));
-		keys->addWidget(descriptionLabel(qs(name.description)));
-		keys->addSpacing(4);
+		name.origin = "Targetname";
+		return name;
+	}();
+	nameProperty.displayName = tr("Name").toStdString();
+	nameProperty.description = tr("The name that other entities refer to this entity by.").toStdString();
+	const bool hasName = definition && definition->property("targetname");
+	if (!hasName && !world) {
+		known.insert("targetname");
+		if (matches(tr("Name"), "targetname")) groupFor(QStringLiteral("Targetname")).push_back({&nameProperty, tr("Name")});
 	}
+	std::vector<const EntityProperty*> flagProperties;
 	if (definition) {
 		for (const auto& property : definition->properties) {
 			known.insert(toLower(property.name));
 			if (property.kind == EntityProperty::Kind::Flags) {
+				flagProperties.push_back(&property);
 				continue;
 			}
 			const QString display = property.displayName.empty() ? qs(property.name) : qs(property.displayName);
-			if (!m_filterText.isEmpty() && !display.contains(m_filterText, Qt::CaseInsensitive) && !qs(property.name).contains(m_filterText, Qt::CaseInsensitive)) {
-				continue;
-			}
+			if (!matches(display, property.name)) continue;
+			groupFor(property.origin.empty() ? qs(definition->name) : qs(property.origin)).push_back({&property, display});
+		}
+	}
+	for (auto& [groupName, rows] : groups) {
+		if (rows.empty()) continue;
+		auto* grid = addGroup(layout, groupName, int(rows.size()));
+		for (const auto& [property, display] : rows) {
 			bool mixed = false;
-			const QString value = valueOf(property.name, mixed);
-			auto* label = new QLabel(display);
-			label->setProperty("role", "key");
-			label->setToolTip(QStringLiteral("<b>%1</b> (%2)<br>%3").arg(qs(property.name), qs(property.type), qs(property.description).toHtmlEscaped()));
-			keys->addWidget(label);
-			auto* editor = makeEditor(property, entityIds, value, mixed);
-			editor->setToolTip(label->toolTip());
-			keys->addWidget(editor);
-			if (!property.description.empty()) {
-				keys->addWidget(descriptionLabel(shortDescription(property.description)));
-			}
-			keys->addSpacing(4);
+			const QString value = valueOf(property->name, mixed);
+			auto* editor = makeEditor(*property, entityIds, value, mixed);
+			addRow(grid, display, editor, helpText(display, qs(property->name), qs(property->type), qs(property->description)));
+			++shown;
 		}
 	}
-	// Keys the FGD does not know.
-	bool anyOther = false;
-	for (const auto& [key, value] : first->keyValues) {
-		if (known.contains(toLower(key)) || iequals(key, "origin") || iequals(key, "angles")) {
-			continue;
-		}
-		if (!m_filterText.isEmpty() && !qs(key).contains(m_filterText, Qt::CaseInsensitive)) {
-			continue;
-		}
-		if (!anyOther) {
-			keys->addWidget(new QLabel(tr("<i>Other keys</i>")));
-			anyOther = true;
-		}
-		auto* row = new QHBoxLayout;
-		auto* keyLabel = new QLabel(qs(key));
-		keyLabel->setMinimumWidth(110);
-		auto* edit = new QLineEdit(qs(value));
-		auto* remove = new QToolButton;
-		remove->setText(QStringLiteral("✕"));
-		remove->setToolTip(tr("Remove this key"));
-		const std::string k = key;
-		connect(edit, &QLineEdit::editingFinished, this, [this, edit, entityIds, k, value] {
-			if (edit->text().toStdString() != value) {
-				setKey(entityIds, k, edit->text());
-			}
-		});
-		connect(remove, &QToolButton::clicked, this, [this, entityIds, k] { m_editor->commit(edit::setKeyValue(m_editor->doc(), entityIds, k, std::nullopt)); });
-		row->addWidget(keyLabel);
-		row->addWidget(edit, 1);
-		row->addWidget(remove);
-		keys->addLayout(row);
-	}
-	// Position and rotation of point entities.
-	if (first->solids.empty() && entityIds.front() != 0) {
-		for (const char* key : {"origin", "angles"}) {
-			if (known.contains(key)) {
-				continue;
-			}
-			auto* row = new QHBoxLayout;
-			auto* keyLabel = new QLabel(key == std::string("origin") ? tr("Position") : tr("Rotation (pitch yaw roll)"));
-			keyLabel->setMinimumWidth(110);
-			bool mixed = false;
-			const QString value = valueOf(key, mixed);
-			auto* edit = new QLineEdit(mixed ? QString() : value);
-			const std::string k = key;
-			connect(edit, &QLineEdit::editingFinished, this, [this, edit, entityIds, k, value] {
-				if (edit->text() != value) {
-					setKey(entityIds, k, edit->text());
-				}
-			});
-			row->addWidget(keyLabel);
-			row->addWidget(edit, 1);
-			keys->addLayout(row);
-		}
-	}
-	buildAddKeyRow(keys, entityIds);
-	layout->addWidget(keysBox);
 
-	// Flags as checkboxes with their names.
-	if (definition) {
-		for (const auto& property : definition->properties) {
-			if (property.kind != EntityProperty::Kind::Flags || property.flags.empty()) {
-				continue;
-			}
-			auto* box = new QGroupBox(property.displayName.empty() ? tr("Flags") : qs(property.displayName));
-			auto* v = new QVBoxLayout(box);
-			v->setSpacing(1);
-			bool mixed = false;
-			const auto current = valueOf(property.name, mixed).toULongLong();
-			for (const auto& flag : property.flags) {
-				auto* check = new QCheckBox(qs(flag.displayName));
-				check->setChecked(first->get(property.name).empty() ? flag.enabledByDefault : (current & flag.value) != 0);
-				check->setToolTip(tr("Flag value %1").arg(flag.value));
-				const std::string key = property.name;
-				const auto value = flag.value;
-				connect(check, &QCheckBox::toggled, this, [this, entityIds, key, value](bool on) {
-					// Toggle the bit on every selected entity, keeping their other bits.
-					Transaction t(m_editor->doc(), "Edit flags");
-					for (const int id : entityIds) {
-						if (auto* e = m_editor->doc().findEntity(id)) {
-							t.touchEntity(id);
-							auto bits = std::stoull(e->get(key, "0").empty() ? "0" : e->get(key, "0"));
-							bits = on ? (bits | value) : (bits & ~value);
-							e->set(key, std::to_string(bits));
-						}
+	// Flags as switches, in a group of their own.
+	for (const auto* property : flagProperties) {
+		std::vector<const EntityFlag*> flags;
+		for (const auto& flag : property->flags) {
+			if (matches(qs(flag.displayName), property->name)) flags.push_back(&flag);
+		}
+		if (flags.empty()) continue;
+		auto* grid = addGroup(layout, property->displayName.empty() || iequals(property->displayName, "spawnflags") ? tr("Flags") : qs(property->displayName),
+		                      int(flags.size()));
+		bool mixed = false;
+		const auto current = valueOf(property->name, mixed).toULongLong();
+		for (const auto* flag : flags) {
+			auto* toggle = new ToggleSwitch;
+			toggle->setChecked(first->get(property->name).empty() ? flag->enabledByDefault : (current & flag->value) != 0);
+			const std::string key = property->name;
+			const auto bit = flag->value;
+			connect(toggle, &QCheckBox::toggled, this, [this, entityIds, key, bit](bool on) {
+				// Toggle the bit on every selected entity, keeping their other bits.
+				Transaction t(m_editor->doc(), "Edit flags");
+				for (const int id : entityIds) {
+					if (auto* e = m_editor->doc().findEntity(id)) {
+						t.touchEntity(id);
+						auto bits = std::stoull(e->get(key, "0").empty() ? "0" : e->get(key, "0"));
+						bits = on ? (bits | bit) : (bits & ~bit);
+						e->set(key, std::to_string(bits));
 					}
-					m_editor->commit(t.finish());
-				});
-				v->addWidget(check);
-			}
-			layout->addWidget(box);
+				}
+				m_editor->commit(t.finish());
+			});
+			auto* holder = new QWidget;
+			auto* h = new QHBoxLayout(holder);
+			h->setContentsMargins(0, 0, 0, 0);
+			h->addWidget(toggle);
+			h->addStretch(1);
+			holder->setFocusProxy(toggle);
+			addRow(grid, qs(flag->displayName), holder, helpText(qs(flag->displayName), qs(property->name), tr("flag %1").arg(flag->value), QString()));
+			toggle->setProperty("help", holder->property("help"));
+			++shown;
 		}
 	}
 
-	if (entityIds.size() == 1 && entityIds.front() != 0) {
-		buildOutputs(layout, entityIds.front());
-		buildIncoming(layout, *first);
+	// Keys the FGD does not know.
+	std::vector<std::pair<std::string, std::string>> others;
+	for (const auto& [key, value] : first->keyValues) {
+		if (known.contains(toLower(key)) || iequals(key, "origin") || iequals(key, "angles")) continue;
+		if (!matches(qs(key), key)) continue;
+		others.emplace_back(key, value);
 	}
+	if (!others.empty()) {
+		auto* grid = addGroup(layout, tr("Other keys"), int(others.size()));
+		for (const auto& [key, value] : others) {
+			auto* row = new QWidget;
+			auto* h = new QHBoxLayout(row);
+			h->setContentsMargins(0, 0, 0, 0);
+			h->setSpacing(4);
+			auto* edit = new QLineEdit(qs(value));
+			auto* remove = new QToolButton;
+			remove->setText(QStringLiteral("✕"));
+			remove->setToolTip(tr("Remove this key"));
+			const std::string k = key;
+			const std::string v = value;
+			connect(edit, &QLineEdit::editingFinished, this, [this, edit, entityIds, k, v] {
+				if (edit->text().toStdString() != v) setKey(entityIds, k, edit->text());
+			});
+			connect(remove, &QToolButton::clicked, this, [this, entityIds, k] { m_editor->commit(edit::setKeyValue(m_editor->doc(), entityIds, k, std::nullopt)); });
+			h->addWidget(edit, 1);
+			h->addWidget(remove);
+			row->setFocusProxy(edit);
+			addRow(grid, qs(key), row, helpText(qs(key), QString(), QString(), tr("A key the FGD does not list.")));
+			++shown;
+		}
+	}
+
+	// Position and rotation of point entities.
+	if (first->solids.empty() && !world) {
+		std::vector<const char*> placement;
+		for (const char* key : {"origin", "angles"}) {
+			if (!known.contains(key) && matches(key == std::string("origin") ? tr("Position") : tr("Rotation"), key)) placement.push_back(key);
+		}
+		if (!placement.empty()) {
+			auto* grid = addGroup(layout, tr("Placement"), int(placement.size()));
+			for (const char* key : placement) {
+				bool mixed = false;
+				const QString value = valueOf(key, mixed);
+				auto* edit = new QLineEdit(mixed ? QString() : value);
+				const std::string k = key;
+				connect(edit, &QLineEdit::editingFinished, this, [this, edit, entityIds, k, value] {
+					if (edit->text() != value) setKey(entityIds, k, edit->text());
+				});
+				const bool origin = key == std::string("origin");
+				addRow(grid, origin ? tr("Position") : tr("Rotation"), edit,
+				       helpText(origin ? tr("Position") : tr("Rotation"), qs(key), QString(),
+				                origin ? tr("Where the entity is (x y z).") : tr("Pitch yaw roll in degrees.")));
+				++shown;
+			}
+		}
+	}
+	if (shown == 0 && !m_filterText.isEmpty()) {
+		layout->addWidget(descriptionLabel(tr("No key or flag matches \"%1\".").arg(m_filterText)));
+	}
+	buildAddKeyRow(layout, entityIds);
+	return shown;
 }
 
 void PropertiesPanel::buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap) {
@@ -972,9 +1244,12 @@ void PropertiesPanel::buildOutputs(QVBoxLayout* layout, int entityId) {
 	const auto* entity = m_editor->doc().findEntity(entityId);
 	const auto* catalog = m_editor->entities();
 	const EntityClass* definition = catalog ? catalog->find(entity->classname()) : nullptr;
-	auto* box = new QGroupBox(tr("Outputs (%1)").arg(entity->connections.size()));
-	auto* v = new QVBoxLayout(box);
+	auto* v = layout;
 	v->setSpacing(6);
+	if (entity->connections.empty()) {
+		v->addWidget(descriptionLabel(tr("No outputs yet. Outputs tell other entities what to do when something happens here "
+		                                 "(OnTrigger -> door Open).")));
+	}
 
 	const QStringList targets = targetNames() + SPECIAL_TARGETS;
 	auto connections = std::make_shared<std::vector<Connection>>(entity->connections);
@@ -1111,34 +1386,60 @@ void PropertiesPanel::buildOutputs(QVBoxLayout* layout, int entityId) {
 		commit();
 	});
 	v->addWidget(add);
-	layout->addWidget(box);
+}
+
+int PropertiesPanel::incomingCount(const Entity& entity) const {
+	const auto name = entity.get("targetname");
+	if (name.empty()) return 0;
+	int count = 0;
+	for (const auto& other : m_editor->doc().entities) {
+		for (const auto& c : other.connections) {
+			if (iequals(c.target, name)) ++count;
+		}
+	}
+	return count;
 }
 
 void PropertiesPanel::buildIncoming(QVBoxLayout* layout, const Entity& entity) {
 	const auto name = entity.get("targetname");
+	layout->setSpacing(4);
 	if (name.empty()) {
+		layout->addWidget(descriptionLabel(tr("Give this entity a name: other entities' outputs reach it by its name.")));
 		return;
 	}
-	QStringList lines;
+	int rows = 0;
 	for (const auto& other : m_editor->doc().entities) {
 		for (const auto& c : other.connections) {
-			if (iequals(c.target, name)) {
-				const auto otherName = other.get("targetname");
-				lines << QStringLiteral("%1 <b>%2</b> → %3%4")
-				             .arg(qs(otherName.empty() ? other.classname() : otherName), qs(c.output), qs(c.input),
-				                  c.parameter.empty() ? QString() : QStringLiteral(" (%1)").arg(qs(c.parameter)));
-			}
+			if (!iequals(c.target, name)) continue;
+			const auto otherName = other.get("targetname");
+			auto* row = new QFrame;
+			row->setProperty("role", "card");
+			auto* h = new QHBoxLayout(row);
+			h->setContentsMargins(8, 4, 4, 4);
+			auto* text = new QLabel(QStringLiteral("%1 <b>%2</b> → %3%4%5")
+			                            .arg(qs(otherName.empty() ? other.classname() : otherName).toHtmlEscaped(), qs(c.output).toHtmlEscaped(),
+			                                 qs(c.input).toHtmlEscaped(),
+			                                 c.parameter.empty() ? QString() : QStringLiteral(" (%1)").arg(qs(c.parameter).toHtmlEscaped()),
+			                                 c.delay > 0 ? tr(" after %1 s").arg(c.delay) : QString()));
+			text->setWordWrap(true);
+			auto* go = new QToolButton;
+			go->setText(tr("Go to"));
+			go->setToolTip(tr("Select the entity that sends this"));
+			const int otherId = other.id;
+			connect(go, &QToolButton::clicked, this, [this, otherId] {
+				Selection selection;
+				selection.entities.push_back(otherId);
+				m_editor->setSelection(std::move(selection));
+			});
+			h->addWidget(text, 1);
+			h->addWidget(go);
+			layout->addWidget(row);
+			++rows;
 		}
 	}
-	if (lines.isEmpty()) {
-		return;
+	if (rows == 0) {
+		layout->addWidget(descriptionLabel(tr("No other entity sends anything to \"%1\" yet.").arg(qs(name))));
 	}
-	auto* box = new QGroupBox(tr("Inputs from other entities (%1)").arg(lines.size()));
-	auto* v = new QVBoxLayout(box);
-	auto* label = new QLabel(lines.join("<br>"));
-	label->setWordWrap(true);
-	v->addWidget(label);
-	layout->addWidget(box);
 }
 
 void PropertiesPanel::buildFaces(QVBoxLayout* layout) {

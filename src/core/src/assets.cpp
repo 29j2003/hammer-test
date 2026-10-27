@@ -458,6 +458,21 @@ std::vector<std::string> particleSystemNames(std::span<const std::byte> pcf) {
 	return names;
 }
 
+std::vector<std::string> skyboxNames(const GameFileSystem& fs) {
+	// The engine loads <skyname> + up/dn/lf/rt/ft/bk from materials/skybox/.
+	const auto files = fs.list("materials/skybox", ".vmt");
+	const std::set<std::string> present(files.begin(), files.end());
+	std::vector<std::string> names;
+	constexpr std::string_view prefix = "materials/skybox/";
+	for (const auto& file : files) {
+		if (!file.starts_with(prefix) || !file.ends_with("up.vmt")) continue;
+		const std::string name = file.substr(prefix.size(), file.size() - prefix.size() - 6);
+		if (name.empty() || name.find('/') != std::string::npos) continue;
+		if (present.contains(std::string(prefix) + name + "ft.vmt")) names.push_back(name);
+	}
+	return names;   // list() is sorted
+}
+
 std::vector<ParticleSystem> particleSystems(const GameFileSystem& fs) {
 	std::vector<std::string> files;
 	if (const auto manifest = fs.readText("particles/particles_manifest.txt")) {
