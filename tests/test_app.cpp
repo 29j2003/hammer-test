@@ -91,6 +91,8 @@
 #include "visgroups_panel.h"
 #include "maps_panel.h"
 #include "new_mod_dialog.h"
+#include <sme/mod_menu.h>
+#include "menu_editor.h"
 #include "tool_panel.h"
 #include "updater.h"
 #include "viewport.h"
@@ -2366,6 +2368,96 @@ TEST_CASE("maps panel: map list with compile state, new map, batch compile; a ne
 	}
 	REQUIRE(create);
 	CHECK_FALSE(create->isEnabled());
+}
+
+TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's files") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	test::writeText(f.mod / "maps/demo.bsp", "VBSP fake map");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	REQUIRE(editor.openGame("sourcemods/mymod"));
+	const std::string gameinfoBefore = readFileText(f.mod / "gameinfo.txt").value_or(std::string());
+	REQUIRE_FALSE(gameinfoBefore.empty());
+
+	MenuEditor menu(&editor);
+	menu.resize(1200, 800);
+	menu.show();
+	QApplication::processEvents();
+	// The mod has no GameMenu.res: the default menu is shown (main menu without the in-game entries).
+	CHECK_FALSE(menu.menu().menuFromMod);
+	CHECK(menu.preview()->entries().contains("New Game"));
+	CHECK_FALSE(menu.preview()->entries().contains("Resume Game"));
+	menu.findChild<QCheckBox*>("menuInGame")->setChecked(true);
+	CHECK(menu.preview()->entries().contains("Resume Game"));
+
+	// The title, typed like a user does.
+	auto* title = menu.findChild<QLineEdit*>("menuInfo_title");
+	REQUIRE(title);
+	title->selectAll();
+	QTest::keyClicks(title, "DEMO STORY");
+	CHECK(menu.menu().info.at("title") == "DEMO STORY");
+
+	// A chapter starting the demo map, with a title.
+	menu.findChild<QPushButton*>("menuAddChapter")->click();
+	QApplication::processEvents();
+	REQUIRE(menu.menu().chapters.size() == 1);
+	auto* map = menu.findChild<QComboBox*>("chapterMap");
+	REQUIRE(map);
+	CHECK(map->findText("demo") >= 0);   // offered from maps/ and mapsrc/
+	map->setCurrentText("demo");
+	auto* chapterTitle = menu.findChild<QLineEdit*>("chapterTitle");
+	REQUIRE(chapterTitle);
+	chapterTitle->clear();
+	QTest::keyClicks(chapterTitle, "THE BEGINNING");
+
+	// A menu entry that starts the map directly, moved to the top.
+	menu.findChild<QPushButton*>("menuAddItem")->click();
+	QApplication::processEvents();
+	auto labels = menu.findChildren<QLineEdit*>("itemLabel");
+	REQUIRE_FALSE(labels.isEmpty());
+	labels.back()->clear();
+	QTest::keyClicks(labels.back(), "Play the demo");
+	menu.findChildren<QComboBox*>("itemCommand").back()->setCurrentText("engine map demo");
+	CHECK(menu.preview()->entries().contains("Play the demo"));
+
+	QString error;
+	REQUIRE(menu.save(&error));
+	CHECK(error.isEmpty());
+	// The files in the mod.
+	const std::string gameinfo = readFileText(f.mod / "gameinfo.txt").value_or(std::string());
+	CHECK(gameInfoValue(gameinfo, "title") == "DEMO STORY");
+	CHECK(gameinfo.find("SearchPaths") != std::string::npos);   // the rest stayed
+	CHECK(readFileText(f.mod / "gameinfo.txt.bak").value_or(std::string()) == gameinfoBefore);
+	CHECK(chapterMap(readFileText(f.mod / "cfg/chapter1.cfg").value_or(std::string())) == "demo");
+	const auto locText = readFileText(f.mod / "resource/mymod_english.txt").value_or(std::string());
+	REQUIRE(locText.size() > 2);
+	CHECK(static_cast<unsigned char>(locText[0]) == 0xFF);   // UTF-16 LE with BOM
+	std::vector<std::byte> locBytes(locText.size());
+	std::transform(locText.begin(), locText.end(), locBytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+	CHECK(parseLocalization(decodeTextFile(locBytes)).get("MYMOD_Chapter1_Title") == "THE BEGINNING");
+	const auto items = parseGameMenu(readFileText(f.mod / "resource/GameMenu.res").value_or(std::string()));
+	REQUIRE_FALSE(items.empty());
+	CHECK(items.back().label == "Play the demo");
+	CHECK(items.back().command == "engine map demo");
+
+	// Reading again gives the same.
+	menu.reload();
+	CHECK(menu.menu().menuFromMod);
+	REQUIRE(menu.menu().chapters.size() == 1);
+	CHECK(menu.menu().chapters[0].title == "THE BEGINNING");
+	CHECK(menu.findChild<QLineEdit*>("menuInfo_title")->text() == "DEMO STORY");
+	QApplication::processEvents();   // the rebuilt cards show on the next round of events
+	CHECK(menu.findChildren<QFrame*>("chapterCard").size() == 1);
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		menu.grab().save(QDir(shots).filePath("menu_editor.png"));
+	}
 }
 
 int main(int argc, char** argv) {

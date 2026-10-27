@@ -40,6 +40,7 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 | `visgroups` | VisGroups: Liste aus dem Block `visgroups` vor der Welt (verschachtelt, `name`/`visgroupid`/`color`), Mitglieder über `visgroupid` im `editor`-Block von Welt-Brushes und Entities (mehrere möglich, bleiben in `extra`); Änderungen als Transaction (Gruppe anlegen – auch aus der Auswahl und unter einer Gruppe –, umbenennen, Farbe, löschen: Untergruppen rücken hoch, Mitglieder verlieren nur diese Id; Auswahl hinzufügen/entfernen). Die Gruppenliste ist ein Kopfblock: `Change` merkt sich dafür `headerBefore/After` (`Transaction::touchHeader`). Sichtbarkeit ist keine Kartenänderung: der Editor hält die versteckten Gruppen, `hiddenByVisGroups` liefert die Objekte (auch über Eltern-Gruppen), `writeVisGroupShown` schreibt beim Speichern `visgroupshown` in eine Kopie, `hiddenVisGroupsInFile` liest es beim Öffnen |
 | `instances` | `func_instance`: Einstellungen (`file`, `targetname`, `fixup_style`, `replaceNN` = „$var Wert“), Datei suchen (Ordner der Karte, Kartenordner des Spiels, ohne Endung → `.vmf`, `\` → `/`), `InstanceCache` (pro Pfad + Änderungszeit), `prepareInstance` (Variablen ersetzen – längste zuerst, Vorgaben aus `func_instance_parms` –, Namen mit Prefix/Postfix wie VBSP, `@`/`!` bleiben, Keys mit FGD-Typ `target_source/target_destination/target_name_or_class`, ohne FGD eine feste Liste; Ausgänge; drehen + verschieben mit Texture Lock), `buildInstancePreview`, `collapseInstance` (neue Ids, VisGroup-Ids der Instanz entfernt, ein Undo-Schritt) |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
+| `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
@@ -157,6 +158,16 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Neue Mod: `NewModDialog`/`runNewModDialog` (`new_mod_dialog.cpp`), `createModAndSwitch` legt über `createMod` an,
   ruft `Editor::discover` mit dem bekannten Steam-Ordner neu auf und öffnet `sourcemods/<ordner>`
   (`gameChanged` → Hauptfenster aktualisiert die Spieleliste).
+- Hauptmenü der Mod: Kern `mod_menu` (ohne Qt) liest/schreibt `gameinfo.txt` (nur die Anzeige-Keys aus
+  `gameInfoDisplayKeys()`, zeilenweise im GameInfo-Block ersetzt/eingefügt/entfernt – Kommentare, Abstände, CRLF und
+  alles andere bleiben), `cfg/chapterN.cfg` (`chapterMap`/`setChapterMap`), die Lokalisierung
+  `resource/<mod>_<sprache>.txt` (UTF-16 LE mit BOM: `decodeTextFile`/`encodeUtf16Le`, eigener Leser mit `\"`-Escapes,
+  Token `<MODORDNER>_Chapter<N>_Title`), `scripts/ChapterBackgrounds.txt` und `resource/GameMenu.res` (`GameMenuItem`,
+  unbekannte Keys bleiben in `extra`). `loadModMenu` nimmt fehlende Dateien vom Grundspiel (über das Dateisystem),
+  `saveModMenu` nummeriert Kapitel neu, entfernt überzählige `chapterN.cfg`, legt vor dem ersten Überschreiben je Datei
+  einmal `<datei>.bak` an und lässt unveränderte Dateien unberührt. UI: `MenuEditor` (`menu_editor.cpp`, eigenständiges
+  Widget für die Project-Seite) mit `MenuPreview` (QPainter-Attrappe im Stil von Source 2013, Hintergrund aus
+  `materials/console/<bg>_widescreen.vtf`).
 - Quellcode-Verwaltung: `SourceControlPanel` (`source_control_panel.cpp`, eigenständiges Widget für die
   Project-Seite) ruft das System-`git` per `QProcess` auf, nacheinander aus einer Warteschlange (`run` → `startNext`),
   nie blockierend; `GIT_TERMINAL_PROMPT=0`, damit nichts auf ein Passwort in einer unsichtbaren Konsole wartet.
@@ -345,6 +356,9 @@ tests/      doctest   – Kern-Tests, UI-Tests (Label "ui"), Fixture + Demo
 - Modelle: VTX-Layout (25/33 Byte) wird ausprobiert; mit echten HL2-/Mapbase-Modellen prüfen (`sme-probe model GAME PATH`).
   Overlays/Decals werden noch nicht gezeichnet.
 - Material-Vorschau ist eine Annäherung an die Shader der Engine (kein HDR, Cubemap = einfacher Himmel).
+- Menü-Editor: nicht im Spiel getestet. Offen: ob die Kapiteltitel-Tokens bei jeder Mod-Basis gefunden werden (der
+  Ordnername wird groß geschrieben; die Engine vergleicht ohne Groß-/Kleinschreibung), das Logo-Bild bei `gamelogo 1`
+  (`resource/GameLogo.res`) wird nicht bearbeitet, die Vorschau nutzt nicht das Schema der Mod (Schriften, Farben).
 - Ship (`ship_panel`, Kern `shipping`): `bspzip -addorupdatelist <bsp> <liste> <bsp> -game <mod>` und der Start von steamcmd
   (`+login <name> +workshop_build_item <vdf> +quit`, eigenes Konsolenfenster unter Windows) sind nur mit fehlendem Werkzeug
   getestet, nicht mit echtem bspzip/steamcmd. Die Abhängigkeiten kommen aus der offenen VMF, nicht aus der BSP; Materialien

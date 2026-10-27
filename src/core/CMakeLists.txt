@@ -24,6 +24,7 @@ add_library(smecore STATIC
 	src/visgroups.cpp
 	src/instances.cpp
 	src/mod_template.cpp
+	src/mod_menu.cpp
 	src/editing.cpp
 	src/entity_catalog.cpp
 	src/filesystem.cpp
