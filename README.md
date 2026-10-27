@@ -3,6 +3,10 @@
 A modern, 3D-first map editor for **Source 1** games — Half-Life 2, Mapbase mods, Black Mesa and other Source games —
 that works like **Source 2 Hammer** but saves ordinary `.vmf` files for the normal compile tools (VBSP, VVIS, VRAD).
 
+**[Manual](https://29j2003.github.io/hammer-test/)**: the complete user manual, from the first room to Source mapping
+basics. (The manual is a GitHub Pages site built from `docs/`; Pages must be enabled for this repository, otherwise
+the link shows a 404. Until then, read it in [`docs/manual/`](docs/manual/).)
+
 It started as an experiment: how far can an AI-built editor go? This is the first usable iteration. Its ideas are
 inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons and design are its own.
 
