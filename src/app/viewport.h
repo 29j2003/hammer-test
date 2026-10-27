@@ -201,6 +201,8 @@ private:
 	Vec3 m_orbitPivot;
 	Handle m_hover = Handle::None;
 	bool m_flyMode = false;     ///< Z: look without holding the mouse button
+	bool m_lookFlew = false;     ///< W A S D or the wheel was used while looking (no context menu then)
+	QElapsedTimer m_lookClock;
 	bool m_looking = false;     ///< Mouse look active (camera turns, W A S D fly)
 	QPoint m_lookAnchor;        ///< Global cursor position the cursor is warped back to
 	QPoint m_lookLast;          ///< Global cursor position of the last look update

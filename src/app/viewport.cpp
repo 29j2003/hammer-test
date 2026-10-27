@@ -830,6 +830,7 @@ void Viewport::moveCamera() {
 	}
 	const float boost = m_keys.contains(Qt::Key_Shift) ? 3.f : 1.f;
 	m_camera.position += dir.normalized() * float(m_flySpeed * boost * dt);
+	m_lookFlew = true;
 	update();
 }
 
@@ -842,6 +843,7 @@ void Viewport::wheelEvent(QWheelEvent* event) {
 		m_camera.position += toQt(before - after);
 	} else if (m_looking) {
 		m_flySpeed = float(std::clamp(m_flySpeed * std::pow(1.25, steps), 50.0, 20000.0));
+		m_lookFlew = true;   // the wheel changed the speed: no menu when letting go
 		emit statsChanged(tr("Fly speed: %1").arg(m_flySpeed, 0, 'f', 0));
 	} else {
 		m_camera.position += m_camera.forward() * float(steps * std::max(32.0, m_flySpeed * 0.25));
@@ -1150,7 +1152,9 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 	const Drag drag = m_drag;
 	if (event->button() == Qt::RightButton && m_looking) {
 		if (!m_flyMode) {
-			const bool click = m_lookTravel <= 3;
+			// Only a quick click opens the menu - not letting go after looking around or flying
+			// with W A S D (the mouse may not have moved at all then).
+			const bool click = m_lookTravel <= 3 && !m_lookFlew && m_lookClock.elapsed() < 400;
 			const QPointF at = mapFromGlobal(m_lookAnchor);
 			endLook();
 			if (click && m_drag == Drag::None) {
@@ -1933,6 +1937,8 @@ void Viewport::beginLook(const QPointF& anchor) {
 	m_lookAnchor = mapToGlobal(anchor.toPoint());
 	m_lookLast = QCursor::pos();
 	m_lookTravel = 0;
+	m_lookFlew = false;
+	m_lookClock.start();
 	m_moveClock.restart();
 	m_moveTimer.start();
 	setCursor(Qt::BlankCursor);

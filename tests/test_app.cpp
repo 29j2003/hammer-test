@@ -1450,6 +1450,14 @@ TEST_CASE("editing with the mouse in the real window") {
 		settle();
 		CHECK(menu.size() == 1);
 		CHECK(editor.selection().contains(block));
+		// Holding the right button to look around or fly (even without moving the mouse) and
+		// letting go opens no menu.
+		QTest::mousePress(view, Qt::RightButton, {}, onBlock);
+		QTest::qWait(600);
+		QTest::mouseRelease(view, Qt::RightButton, {}, onBlock);
+		settle();
+		CHECK(menu.size() == 1);
+		closer.stop();
 	}
 
 	{
