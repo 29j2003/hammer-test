@@ -1,11 +1,19 @@
 // material_editor.h - "Material Editor" dock: edits a VMT with fields for what mappers change
-// most (shader, textures, normal map, reflections and their mask, transparency, self-illumination,
-// detail texture, phong, surface property) plus a table of every other parameter, and a live
-// preview with different lights. Saving writes the VMT into the mod (a material from the game's
-// VPKs is saved as an override in the mod's materials folder); "Save as new" makes a copy.
+// most and a live preview with different lights. The fields shown depend on the kind of
+// material (wall, blended ground, model, water); every other parameter is in a table.
+//
+// Mods with mapbase-fidelity's shaders get switches for them: relief (Fidelity_Parallax: real
+// depth from a height map - made here from the normal map or the texture, turned upside down,
+// with painted zones that stay flat or are inverted), water with the sun's glint and foam
+// (Water_Fidelity) and liquid in glass props (Fidelity_Liquid).
+//
+// Saving writes the VMT into the mod (a material from the game's VPKs is saved as a copy in the
+// mod's materials folder; one deploy.bat made becomes the mod's own and deploy.bat leaves it
+// alone from then on); "Save as new" makes a copy under another name.
 
 #pragma once
 
+#include <QDialog>
 #include <QFutureWatcher>
 #include <QImage>
 #include <QWidget>
@@ -13,21 +21,54 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include <sme/heightmap.h>
 #include <sme/material.h>
 
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
+class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QSlider;
 class QTableWidget;
 
 namespace sme::app {
 
 class Editor;
 class MaterialPreview;
+
+/// Paints relief zones over a texture: left mouse paints the chosen zone, right mouse erases.
+class HeightZonePainter : public QWidget {
+	Q_OBJECT
+
+public:
+	HeightZonePainter(const QImage& texture, unsigned zonesWidth, unsigned zonesHeight, std::vector<std::uint8_t> zones, QWidget* parent = nullptr);
+	void setZone(HeightZone zone) { m_zone = zone; }
+	void setBrush(int texels) { m_brush = texels; }
+	void clear();
+	[[nodiscard]] const std::vector<std::uint8_t>& zones() const { return m_zones; }
+	[[nodiscard]] QSize sizeHint() const override;
+
+protected:
+	void paintEvent(QPaintEvent* event) override;
+	void mousePressEvent(QMouseEvent* event) override;
+	void mouseMoveEvent(QMouseEvent* event) override;
+
+private:
+	void paintAt(const QPointF& pos, HeightZone zone);
+	[[nodiscard]] QRectF imageRect() const;
+
+	QImage m_texture;
+	unsigned m_width, m_height;
+	std::vector<std::uint8_t> m_zones;
+	HeightZone m_zone = HeightZone::Flat;
+	int m_brush = 12;
+};
 
 class MaterialEditor : public QWidget {
 	Q_OBJECT
@@ -37,44 +78,99 @@ public:
 	/// Shows a material ("concrete/wall01") for editing.
 	void openMaterial(const QString& name);
 	[[nodiscard]] QString materialName() const { return m_name; }
+	[[nodiscard]] QString shader() const { return m_shader; }
 	/// Current value of a parameter as it would be saved ("" if not set).
 	[[nodiscard]] QString value(const QString& key) const;
 	/// Where Save writes ("<mod>/materials/<name>.vmt").
 	[[nodiscard]] QString savePath(const QString& name) const;
 	/// Saves into the mod; with `asName` a new material of that name. False with a message on failure.
 	bool save(const QString& asName = {});
+	/// The mod has mapbase-fidelity's shaders (relief, water, liquid switches work).
+	[[nodiscard]] bool fidelityShaders() const;
+	/// Relief on/off (Fidelity_Parallax). On without a height map makes one (normal map, else texture).
+	void setRelief(bool on);
+	/// Makes the height map again: from the normal map (`fromNormalMap`) or the texture's brightness.
+	void makeHeightMap(bool fromNormalMap);
+	void setHeightInverted(bool inverted);
+	/// Zones painted onto the height map (HeightZone per texel of `width` x `height`).
+	void setHeightZones(std::vector<std::uint8_t> zones, unsigned width, unsigned height);
+	/// The height map as it would be saved (invert and zones applied), if there is one.
+	[[nodiscard]] std::optional<HeightMap> currentHeights() const;
 
 signals:
 	void materialSaved(const QString& name);
 	/// Preview textures were read (tests wait for this).
 	void previewUpdated();
+	/// A height map was made or read.
+	void heightsReady();
 
 private:
+	enum class Kind { Wall, Blend, Model, Water, Unlit, Other };
+	[[nodiscard]] Kind kind() const;
+	[[nodiscard]] QString baseShader() const;   ///< The shader without the fidelity variant
 	void buildFields();
-	void loadValuesIntoFields();
-	void setValue(const QString& key, const QString& value);   ///< "" removes the parameter
-	void refreshPreview(bool reloadTextures);
-	void fillOtherTable();
+	QFormLayout* section(QGroupBox*& box, const QString& title);
 	QLineEdit* textureField(const QString& key, const QString& placeholder);
+	QWidget* colorField(const QString& key, const QString& placeholder, QLineEdit** field = nullptr);
+	QWidget* sliderField(const QString& key, double minimum, double maximum, double fallback, int decimals, QSlider** slider = nullptr);
+	void loadValuesIntoFields();
+	void updateSections();
+	void setValue(const QString& key, const QString& value);   ///< "" removes the parameter
+	void setShader(const QString& shader);
+	void refreshPreview(bool reloadTextures);
+	void refreshHeights();
+	void loadHeightSource();
+	void fillOtherTable();
+	void paintZones();
 
 	Editor* m_editor;
 	QString m_name;
 	std::string m_originalText;           ///< VMT text as read (empty for a new material)
+	QString m_generatedBy;                ///< "parallax" etc. when deploy.bat made this material
 	std::optional<Material> m_base;       ///< Patch materials: what they include, resolved
 	bool m_isPatch = false;
 	QString m_shader;
 	std::map<QString, QString> m_values;  ///< lowercase key -> value (resolved material + edits)
 	std::map<QString, std::optional<QString>> m_edits;
 	bool m_loading = false;
+	bool m_shaderChanged = false;
+
+	// Relief height map: what it starts from, and what the mapper did to it.
+	std::optional<HeightMap> m_heightSource;
+	QString m_heightOrigin;               ///< Shown to the mapper ("made from the normal map", ...)
+	bool m_heightInverted = false;
+	std::vector<std::uint8_t> m_zones;
+	unsigned m_zonesWidth = 0, m_zonesHeight = 0;
+	bool m_heightDirty = false;           ///< Save writes a new height map
+	int m_heightGeneration = 0;
 
 	QLabel* m_title;
 	QLabel* m_where;
-	QComboBox* m_shaderBox;
+	QLabel* m_notice;
+	QComboBox* m_kindBox;
+	QLabel* m_shaderName;
 	std::map<QString, QLineEdit*> m_textureFields;
+	std::map<QString, QLineEdit*> m_colorFields;
+	std::map<QString, QSlider*> m_sliders;
+	std::map<QString, QWidget*> m_rows;   ///< Rows hidden by kind ("$basetexture2", ...)
+	QGroupBox* m_texturesBox;
+	QGroupBox* m_bumpBox;
+	QGroupBox* m_reliefBox;
+	QGroupBox* m_envBox;
+	QGroupBox* m_alphaBox;
+	QGroupBox* m_detailBox;
+	QGroupBox* m_waterBox;
+	QGroupBox* m_liquidBox;
 	QComboBox* m_surface;
 	QCheckBox* m_ssbump;
+	QCheckBox* m_relief;
+	QLabel* m_heightLabel;
+	QCheckBox* m_invert;
+	QPushButton* m_fromNormals;
+	QPushButton* m_fromTexture;
+	QPushButton* m_zonesButton;
+	std::vector<QLabel*> m_fidelityMissing;   ///< "Needs mapbase-fidelity's shaders" under each switch
 	QComboBox* m_reflection;
-	QLineEdit* m_envTint;
 	QComboBox* m_mask;
 	QComboBox* m_transparency;
 	QCheckBox* m_nocull;
@@ -82,9 +178,11 @@ private:
 	QDoubleSpinBox* m_detailScale;
 	QComboBox* m_detailBlend;
 	QCheckBox* m_phong;
-	QDoubleSpinBox* m_phongExponent;
-	QDoubleSpinBox* m_phongBoost;
-	QLabel* m_parallaxNote;
+	QCheckBox* m_fidelityWater;
+	QCheckBox* m_liquid;
+	QComboBox* m_fillMode;
+	QCheckBox* m_splash;
+	QCheckBox* m_spill;
 	QTableWidget* m_other;
 	MaterialPreview* m_preview;
 	QComboBox* m_shape;
@@ -93,7 +191,7 @@ private:
 	QPushButton* m_saveAs;
 	QLabel* m_status;
 	QFutureWatcher<std::map<QString, QImage>> m_textureWatcher;
-	int m_textureGeneration = 0;
+	QImage m_baseImage;                   ///< For painting zones
 };
 
 } // namespace sme::app

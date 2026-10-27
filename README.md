@@ -12,24 +12,37 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
 - **Finds your games and mods by itself**: every Source 1 game in your Steam libraries and every mod in
   `steamapps/sourcemods` (Mapbase mods included), shown with clear names and grouped by game, with a search field.
   FGDs and compile tools are taken from your Hammer/Hammer++ setup; Mapbase mods also get Mapbase's FGD, so entities
-  like `env_global_light` are there.
+  like `env_global_light` are there. Folders that are only content of another game (like `hl2` inside Entropy : Zero 2)
+  are marked "base content" and listed last.
 - **3D view first**, like Source 2 Hammer: look around with the right mouse button and fly with W A S D (also while
   placing a block), orbit with Alt, gizmos to move/rotate/scale, Shift+drag to copy. Optional 2D views (top/front/side).
+  The menu in the top left corner of each view switches between 3D, top, front and side, and between lighting preview,
+  textured and wireframe.
+- **Snap to corners**: the move tool shows small squares on the corners of the selection; drag one onto a corner of
+  another brush or model and they line up exactly.
 - **Lighting preview with real-time shadows** from your light entities (light, light_spot, light_environment), using
   VRAD's own falloff formulas: the sun and the nearest spot and point lights cast shadows (F7 turns them off).
+  Entities show their editor icons (the sprites and models Hammer uses).
 - **Models**: props and NPCs are drawn with their real model and textures. The model browser shows a preview of every
   model; drag one into the 3D view to place it as a prop_static.
 - **Shapes**: the block tool makes blocks, wedges, cylinders, spikes (pyramids, cones), spheres, arches (rings and
   spirals) and stairs. Change the settings in the **Tool** panel right after creating a shape and it is rebuilt.
+  Click or press Enter to create a block and simply drag on for the next one.
 - **Brush tools** (right-click menu or the **Brushes** menu): hollow (wall thickness, walls inside or outside), carve,
   merge into one brush, round or bevel the edge between two faces, drop to floor, select a whole path_track chain.
 - **Clip, vertex and polygon tools**: cut brushes with a line (2D view) or three points (3D view); drag corners and edge
   middles (brushes always stay convex); draw a brush from the corners of its base.
-- **Entity tool**: choosing it opens the entity list in the Tool panel (search, groups, descriptions, recently used);
-  click on a surface and the entity sits on it.
+- **Entity tool**: the Tool panel on the left lists every point and brush entity with its icon (search with words like
+  "global light", A–Z or in groups). The class you pick is *armed*: the next click places it on the surface under the
+  cursor; a brush entity (trigger, door, …) is built from the next box you drag. **Random yaw** turns every new prop
+  differently.
 - **Smart properties for every entity**: each key has a fitting editor (lists, flags, colors, targets, models,
   animations, sounds, particle systems) and a short description of what it does. Outputs are edited as readable cards
-  ("When OnTrigger tell door_01 to Open") with drop-downs for the target's inputs.
+  ("When OnTrigger tell door_01 to Open") with drop-downs for the target's inputs. Every entity has a Name field. Turn
+  **Smart Edit** off to see every key as plain text, like Hammer; add any key with the *new key | value | + Add* row.
+- **Copy and paste**: Ctrl+C on a material, model, sound, particle or entity class copies its name; Ctrl+V puts it into
+  any field. Lines like `"_light" "255 255 255 200"` or `skyname<Tab>sky_day01_01` (from a wiki or another map) pasted
+  into the properties set those keys at once.
 - **NPC helper**: pick an animation from the NPC's model and pose the NPC in it (scripted_sequence) or turn it into a
   static prop_dynamic — in one click.
 - **Fast texturing**: hold Ctrl + right mouse and paint the current material over faces; double-click a face to select
@@ -40,8 +53,29 @@ It started as an experiment: how far can an AI-built editor go? This is the firs
   snaps to a step you choose (1° to 90°) just like moving snaps to the grid (down to 0.125 units); Shift+W turns snapping off and on.
 - **Browsers**: materials filtered by kind (brush, blend/displacement, model, tool, see-through, water, decals, skybox,
   used in this map), models with previews, a **Sounds** tab with every sound script entry, sound file and soundscape
-  (play them, drag them into the map for an ambient_generic or env_soundscape) and a **Particles** tab (drag a particle
-  system in for an info_particle_system).
+  and a **Particles** tab (drag a particle system in for an info_particle_system).
+- **Sounds**: click a sound to hear it (WAV including ADPCM, MP3, OGG) with its waveform and loop point; click into the
+  waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
+  entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
+  `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
+- **Material editor**: right-click a material > *Edit material* (or *Edit* next to a selected face). Change texture,
+  normal map, reflections and where they show, transparency, self-illumination, detail texture, phong and surface
+  property, with a live preview on a wall, cube or sphere under sun, lamp, night or no light. Saving writes the VMT into
+  your mod (a material from the game's VPKs becomes an override copy); *Save as new* makes a new material.
+  Only the sections that fit the kind of material are shown (wall, blended ground, model, water).
+- **mapbase-fidelity shaders** (when the mod has them, i.e. its `deploy.bat` ran once): in the material editor
+  - *Relief*: *Give this surface real depth* turns a wall or blended ground into `Fidelity_Parallax` /
+    `Fidelity_WorldVertexTransition`. Set the depth, the darkening in the depths and the fade distance. The height map
+    is made for you from the normal map (or from the texture's brightness); tick *Upside down* to swap high and low, or
+    *Paint zones ...* to mark places that stay flat (blue) or are turned upside down (orange). Saving writes
+    `<material>_relief.vtf` next to the material.
+  - *Water*: *Sun glint and foam at the shore* makes it `Water_Fidelity`, with sliders for glint and foam.
+  - *Liquid inside*: for glass props (`Fidelity_Liquid`): liquid and glass colour, fill level (fixed or different in
+    every prop), how it sways and how thick it is, splashing and pouring out.
+  A material made by `deploy.bat` is marked as such; saving it makes it the mod's own, so `deploy.bat` leaves it alone.
+- **Parallax-corrected cubemaps (Mapbase)**: select an env_cubemap and press *Add room box*: the box is fitted to the
+  walls around it; drag the squares on its sides in the view to change it. The editor creates and names the
+  parallax_obb and links it to the cubemap.
 - **Problem check with autofix**: broken brushes, misspelled materials or entity classes ("did you mean …?"), outputs
   to entities that do not exist, unknown inputs, missing player start, zero texture scale, … Each problem has a
   **Select** button and, where the fix is obvious, a fix button.
@@ -99,6 +133,7 @@ whether a model loads.
 | H / Ctrl+H / U | Hide / hide others / show all | Ctrl+T / Ctrl+Shift+W | Tie to entity / move to world |
 | Ctrl+Shift+H / C / M / R | Hollow / carve / merge / round edge | Ctrl+Shift+F | Drop to floor |
 | F5 / F6 / F8, F7 | Unlit / lighting preview / wireframe, shadows | F9 | Compile & run |
+| Ctrl+C / Ctrl+V | Copy a name / paste into a field or keys into the properties | Enter (block tool) | Create the block |
 | Tab, Enter (clip tool) | Which part stays, cut | Enter, Backspace (polygon tool) | Make the brush, remove a corner |
 
 Press **F1** in the editor for the full list.
@@ -106,7 +141,8 @@ Press **F1** in the editor for the full list.
 ## Building from source
 
 Requirements: CMake 3.25+, a C++20 compiler (Visual Studio 2022, GCC 13, Clang 16), Qt 6.4+ (Widgets, OpenGL;
-Multimedia for playing sounds, optional).
+Multimedia for playing sounds, optional). stb_vorbis and minimp3 are downloaded by CMake (pinned to a commit and
+checked by hash).
 
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -127,5 +163,5 @@ in the 3D view, and a full physics simulation (Drop to floor only lets objects f
 ## License
 
 The editor's code is released into the public domain ([Unlicense](LICENSE)). Third-party parts (sourcepp, Qt) keep
-their licenses, see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). Half-Life 2, Source, Hammer and Steam are
+their licenses, see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) (also stb_vorbis and minimp3 for sounds). Half-Life 2, Source, Hammer and Steam are
 trademarks of Valve; this project is not affiliated with Valve and ships no game files.

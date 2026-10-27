@@ -12,9 +12,11 @@
 #include <sme/checks.h>
 #include <sme/compile_log.h>
 #include <sme/game.h>
+#include <sme/heightmap.h>
 #include <sme/keyvalues.h>
 #include <sme/material.h>
 #include <sme/text.h>
+#include <sme/texture.h>
 
 #include <algorithm>
 #include <cmath>
@@ -666,4 +668,89 @@ TEST_CASE("material editing keeps the rest of the VMT") {
 	REQUIRE(fresh);
 	CHECK(fresh->shader == "UnlitGeneric");
 	CHECK(fresh->flag("$translucent"));
+}
+
+TEST_CASE("height maps for relief shaders") {
+	// A tiling relief (bumps), its normal map as Source's tools make it (green along v, down).
+	constexpr unsigned SIZE = 64;
+	std::vector<double> truth(SIZE * SIZE);
+	for (unsigned y = 0; y < SIZE; ++y) {
+		for (unsigned x = 0; x < SIZE; ++x) {
+			truth[y * SIZE + x] = std::sin(x * 2 * 3.14159265 * 4 / SIZE) * std::cos(y * 2 * 3.14159265 * 3 / SIZE);
+		}
+	}
+	ImageRgba normals;
+	normals.width = normals.height = SIZE;
+	normals.pixels.resize(SIZE * SIZE * 4);
+	const double scale = 3.0;   // slope steepness
+	for (unsigned y = 0; y < SIZE; ++y) {
+		for (unsigned x = 0; x < SIZE; ++x) {
+			const double dx = (truth[y * SIZE + (x + 1) % SIZE] - truth[y * SIZE + (x + SIZE - 1) % SIZE]) * 0.5 * scale;
+			const double dy = (truth[((y + 1) % SIZE) * SIZE + x] - truth[((y + SIZE - 1) % SIZE) * SIZE + x]) * 0.5 * scale;
+			const double length = std::sqrt(dx * dx + dy * dy + 1);
+			auto* p = &normals.pixels[(y * SIZE + x) * 4];
+			p[0] = std::byte(static_cast<unsigned char>((-dx / length + 1) * 127.5));
+			p[1] = std::byte(static_cast<unsigned char>((-dy / length + 1) * 127.5));
+			p[2] = std::byte(static_cast<unsigned char>((1 / length + 1) * 127.5));
+			p[3] = std::byte(255);
+		}
+	}
+	std::string error;
+	auto heights = heightFromNormalMap(normals, false, &error);
+	REQUIRE_MESSAGE(heights, error);
+	REQUIRE(heights->width == SIZE);
+	// The integrated heights follow the relief (correlation close to 1).
+	double mean = 0, meanTruth = 0;
+	for (std::size_t i = 0; i < truth.size(); ++i) {
+		mean += heights->values[i];
+		meanTruth += truth[i];
+	}
+	mean /= double(truth.size());
+	meanTruth /= double(truth.size());
+	double cov = 0, var = 0, varTruth = 0;
+	for (std::size_t i = 0; i < truth.size(); ++i) {
+		cov += (heights->values[i] - mean) * (truth[i] - meanTruth);
+		var += (heights->values[i] - mean) * (heights->values[i] - mean);
+		varTruth += (truth[i] - meanTruth) * (truth[i] - meanTruth);
+	}
+	CHECK(cov / std::sqrt(var * varTruth) > 0.95);
+
+	// Zones: flat stays on top, inverted turns round.
+	HeightMap map = *heights;
+	std::vector<std::uint8_t> zones(4, 0);   // 2 x 2: top left flat, top right inverted
+	zones[0] = std::uint8_t(HeightZone::Flat);
+	zones[1] = std::uint8_t(HeightZone::Inverted);
+	applyHeightZones(map, zones, 2, 2);
+	CHECK(map.at(5, 5) == 1.f);
+	CHECK(map.at(40, 5) == doctest::Approx(1.f - heights->at(40, 5)));
+	CHECK(map.at(40, 40) == heights->at(40, 40));
+	invertHeights(map);
+	CHECK(map.at(5, 5) == 0.f);
+
+	// Written as an I8 .vtf and read back.
+	const auto vtf = encodeHeightVtf(*heights);
+	REQUIRE_FALSE(vtf.empty());
+	const auto info = readTextureInfo(vtf);
+	REQUIRE(info);
+	CHECK(info->format == "I8");
+	CHECK(info->mipCount > 1);
+	const auto image = decodeTexture(vtf);
+	REQUIRE(image);
+	CHECK(std::abs(std::to_integer<int>(image->pixels[(10 * SIZE + 20) * 4]) - int(heights->at(20, 10) * 255 + 0.5f)) <= 1);
+
+	// From a base texture: bright stones high, dark joints low.
+	ImageRgba bricks;
+	bricks.width = bricks.height = SIZE;
+	bricks.pixels.resize(SIZE * SIZE * 4);
+	for (unsigned y = 0; y < SIZE; ++y) {
+		for (unsigned x = 0; x < SIZE; ++x) {
+			const bool joint = y % 16 < 2 || x % 32 < 2;
+			for (int k = 0; k < 3; ++k) bricks.pixels[(y * SIZE + x) * 4 + std::size_t(k)] = std::byte(joint ? 40 : 180);
+			bricks.pixels[(y * SIZE + x) * 4 + 3] = std::byte(255);
+		}
+	}
+	const auto fromColor = heightFromColor(bricks, &error);
+	REQUIRE_MESSAGE(fromColor, error);
+	CHECK(fromColor->at(16, 8) > fromColor->at(16, 0) + 0.3f);
+	CHECK_FALSE(heightFromNormalMap(ImageRgba{}, false, &error));
 }

@@ -50,34 +50,100 @@ uniform sampler2D u_base;
 uniform sampler2D u_bump;
 uniform sampler2D u_mask;
 uniform sampler2D u_detail;
-uniform int u_hasBase, u_hasBump, u_hasMask, u_hasDetail;
-uniform int u_ssbump, u_envmap, u_maskMode, u_alphaMode, u_selfillum, u_phong, u_detailBlend, u_unlit;
+uniform sampler2D u_height;
+uniform int u_hasBase, u_hasBump, u_hasMask, u_hasDetail, u_hasHeight;
+uniform int u_ssbump, u_envmap, u_maskMode, u_alphaMode, u_selfillum, u_phong, u_detailBlend, u_unlit, u_mode;
 uniform vec3 u_envTint, u_selfTint, u_lightDir, u_lightColor, u_ambient, u_camPos;
-uniform float u_detailScale, u_phongBoost, u_phongExp, u_alphaRef;
+uniform vec3 u_reflectTint, u_fogColor, u_liquidColor, u_glassColor;
+uniform float u_detailScale, u_phongBoost, u_phongExp, u_alphaRef, u_depth, u_ao, u_glint, u_reflectAmount;
+uniform float u_liquidAlpha, u_fill, u_glassAlpha, u_time, u_shapeTop;
 out vec4 fragColor;
 
 // The reflected world: sky, horizon, ground and the sun (what env_cubemap would capture outdoors).
-vec3 sky(vec3 d) {
+vec3 skyOnly(vec3 d) {
 	vec3 up = mix(vec3(0.55, 0.65, 0.8), vec3(0.25, 0.45, 0.8), clamp(d.z, 0.0, 1.0));
 	vec3 down = mix(vec3(0.35, 0.32, 0.28), vec3(0.2, 0.18, 0.16), clamp(-d.z, 0.0, 1.0));
-	vec3 c = d.z > 0.0 ? up : down;
-	return c + u_lightColor * pow(max(dot(d, u_lightDir), 0.0), 300.0) * 4.0;
+	return d.z > 0.0 ? up : down;
+}
+
+vec3 sky(vec3 d) {
+	return skyOnly(d) + u_lightColor * pow(max(dot(d, u_lightDir), 0.0), 300.0) * 4.0;
+}
+
+// Relief: walks into the height map (white = top) along the view, as Fidelity_Parallax does.
+vec2 parallax(vec2 uv, vec3 viewTS, out float height) {
+	height = 1.0;
+	if (u_hasHeight == 0 || u_depth <= 0.0) return uv;
+	const int STEPS = 32;
+	vec2 shift = viewTS.xy / max(viewTS.z, 0.2) * u_depth;
+	float layer = 1.0 / float(STEPS);
+	float depth = 0.0;
+	vec2 current = uv;
+	float mapDepth = 1.0 - texture(u_height, current).r;
+	vec2 previous = current;
+	float previousDepth = 0.0, previousMap = mapDepth;
+	for (int i = 0; i < STEPS && depth < mapDepth; ++i) {
+		previous = current;
+		previousDepth = depth;
+		previousMap = mapDepth;
+		current -= shift * layer;
+		depth += layer;
+		mapDepth = 1.0 - texture(u_height, current).r;
+	}
+	float after = mapDepth - depth, before = previousMap - previousDepth;
+	float t = clamp(after / (after - before), 0.0, 1.0);
+	vec2 hit = mix(current, previous, t);
+	height = texture(u_height, hit).r;
+	return hit;
 }
 
 void main() {
-	vec4 base = u_hasBase == 1 ? texture(u_base, v_uv) : vec4(0.62, 0.62, 0.62, 1.0);
+	vec3 N = normalize(v_normal);
+	vec3 T = normalize(v_tangent), B = normalize(v_bitangent);
+	vec3 V = normalize(u_camPos - v_pos);
+	vec3 L = normalize(u_lightDir);
+
+	if (u_mode == 1) {
+		// Water: waves from the normal map, reflection by Fresnel, the depth's fog colour below,
+		// the sun glinting on the waves (Water_Fidelity).
+		vec2 uv = v_uv * 2.0;
+		vec3 n1 = texture(u_bump, uv + vec2(u_time * 0.03, u_time * 0.02)).xyz * 2.0 - 1.0;
+		vec3 n2 = texture(u_bump, uv * 0.7 - vec2(u_time * 0.02, -u_time * 0.025)).xyz * 2.0 - 1.0;
+		vec3 n = u_hasBump == 1 ? normalize(n1 + n2) : vec3(0.0, 0.0, 1.0);
+		vec3 Nw = normalize(T * n.x * 0.4 + B * n.y * 0.4 + N * n.z);
+		float fresnel = pow(1.0 - max(dot(Nw, V), 0.0), 5.0) * 0.9 + 0.1;
+		vec3 reflection = skyOnly(reflect(-V, Nw)) * u_reflectTint * u_reflectAmount;
+		vec3 color = mix(u_fogColor * (u_unlit == 1 ? vec3(1.0) : (u_ambient + u_lightColor * 0.5)), reflection, fresnel);
+		// The sun mirrored by the waves: small and sharp; Water_Fidelity makes it sparkle.
+		float glint = pow(max(dot(reflect(-L, Nw), V), 0.0), 1500.0) * (0.6 + 2.5 * u_glint);
+		color += u_lightColor * glint * (u_unlit == 1 ? 0.0 : 1.0);
+		fragColor = vec4(color, 1.0);
+		return;
+	}
+
+	vec2 uv = v_uv;
+	float height = 1.0;
+	vec3 viewTS = vec3(dot(V, T), dot(V, B), dot(V, N));
+	uv = parallax(uv, viewTS, height);
+
+	vec4 base = u_hasBase == 1 ? texture(u_base, uv) : vec4(0.62, 0.62, 0.62, 1.0);
 	if (u_hasDetail == 1) {
-		vec4 d = texture(u_detail, v_uv * u_detailScale);
+		vec4 d = texture(u_detail, uv * u_detailScale);
 		if (u_detailBlend == 1) base.rgb += d.rgb;                      // additive
 		else if (u_detailBlend == 2) base.rgb = mix(base.rgb, d.rgb, d.a); // detail over base
 		else base.rgb *= d.rgb * 2.0;                                  // mod2x (default)
 	}
 	if (u_alphaMode == 2 && base.a < u_alphaRef) discard;
 
-	vec3 N = normalize(v_normal);
-	vec3 T = normalize(v_tangent), B = normalize(v_bitangent);
-	vec4 nm = u_hasBump == 1 ? texture(u_bump, v_uv) : vec4(0.5, 0.5, 1.0, 1.0);
-	vec3 L = normalize(u_lightDir);
+	vec4 nm = u_hasBump == 1 ? texture(u_bump, uv) : vec4(0.5, 0.5, 1.0, 1.0);
+	if (u_hasBump == 0 && u_hasHeight == 1 && u_depth > 0.0) {
+		// No normal map: the relief's normal from the height map's slopes.
+		vec2 texel = 1.0 / vec2(textureSize(u_height, 0));
+		float hx = texture(u_height, uv + vec2(texel.x, 0.0)).r - texture(u_height, uv - vec2(texel.x, 0.0)).r;
+		float hy = texture(u_height, uv + vec2(0.0, texel.y)).r - texture(u_height, uv - vec2(0.0, texel.y)).r;
+		vec3 n = normalize(vec3(-hx, -hy, 2.0 * texel.x / max(u_depth, 0.001)));
+		nm = vec4(n * 0.5 + 0.5, 1.0);
+	}
 	float diffuse;
 	if (u_hasBump == 1 && u_ssbump == 1) {
 		// Self-shadowed bump: brightness towards three basis directions.
@@ -87,20 +153,18 @@ void main() {
 		vec3 b2 = vec3(-0.40824829, -0.70710678, 0.57735027);
 		diffuse = dot(nm.rgb, max(vec3(dot(Lt, b0), dot(Lt, b1), dot(Lt, b2)), 0.0));
 	} else {
-		if (u_hasBump == 1) {
-			vec3 n = nm.xyz * 2.0 - 1.0;
-			N = normalize(T * n.x + B * n.y + N * n.z);
-		}
+		vec3 n = nm.xyz * 2.0 - 1.0;
+		N = normalize(T * n.x + B * n.y + N * n.z);
 		diffuse = max(dot(N, L), 0.0);
 	}
 	vec3 lighting = u_unlit == 1 ? vec3(1.0) : u_ambient + u_lightColor * diffuse;
+	if (u_hasHeight == 1 && u_depth > 0.0) lighting *= 1.0 - (1.0 - height) * u_ao;   // deep parts darker
 	vec3 color = base.rgb * lighting;
 	if (u_selfillum == 1) color = mix(color, base.rgb * u_selfTint, base.a);
 
-	vec3 V = normalize(u_camPos - v_pos);
 	if (u_envmap == 1) {
 		float mask = 1.0;
-		if (u_maskMode == 1) mask = u_hasMask == 1 ? texture(u_mask, v_uv).r : 1.0;
+		if (u_maskMode == 1) mask = u_hasMask == 1 ? texture(u_mask, uv).r : 1.0;
 		else if (u_maskMode == 2) mask = base.a;
 		else if (u_maskMode == 3) mask = nm.a;
 		color += sky(reflect(-V, N)) * u_envTint * mask;
@@ -110,6 +174,23 @@ void main() {
 		color += u_lightColor * spec;
 	}
 	float alpha = u_alphaMode == 1 ? base.a : 1.0;
+
+	if (u_mode == 2) {
+		// Liquid in a glass: below the fill level the liquid's colour, a foam line at its surface,
+		// above it the tinted, see-through glass (the shape's own texture shows on top).
+		float level = mix(-u_shapeTop, u_shapeTop, u_fill);
+		vec3 glass = mix(color, u_glassColor * (u_unlit == 1 ? vec3(1.0) : (u_ambient + u_lightColor * 0.8)), 0.6)
+		             + sky(reflect(-V, normalize(v_normal))) * 0.25;
+		if (v_pos.z < level) {
+			vec3 liquid = u_liquidColor * (u_unlit == 1 ? vec3(1.0) : (u_ambient + u_lightColor * diffuse));
+			float foam = smoothstep(level - 0.06, level, v_pos.z);
+			color = mix(liquid, vec3(0.85), foam * 0.7);
+			alpha = max(u_liquidAlpha, foam);
+		} else {
+			color = glass;
+			alpha = u_glassAlpha;
+		}
+	}
 	fragColor = vec4(color, alpha);
 }
 )";
@@ -131,8 +212,13 @@ void face(std::vector<float>& out, const QVector3D& center, const QVector3D& n, 
 
 } // namespace
 
-MaterialPreview::MaterialPreview(QWidget* parent) : QOpenGLWidget(parent) {
+MaterialPreview::MaterialPreview(QWidget* parent) : QOpenGLWidget(parent), m_clock(new QTimer(this)) {
 	setMinimumSize(200, 200);
+	m_clock->setInterval(33);
+	connect(m_clock, &QTimer::timeout, this, [this] {
+		m_time += 0.033f;
+		update();
+	});
 	setToolTip(tr("Left drag: turn - right drag: move the light - wheel: zoom"));
 }
 
@@ -155,8 +241,33 @@ void MaterialPreview::setTexture(Slot slot, const QImage& image) {
 }
 
 void MaterialPreview::setSettings(const Settings& settings) {
+	if (settings.mode != m_settings.mode) {
+		m_meshDirty = true;
+		if (settings.mode == Mode::Water) {
+			// Look down onto the water, the sun opposite: its glint on the waves is in the picture.
+			m_pitch = std::max(m_pitch, 35.f);
+			m_lightYaw = m_yaw + 180;
+			m_lightPitch = m_pitch + 4;
+		}
+	}
 	m_settings = settings;
+	// Water moves; everything else is only drawn when something changes.
+	if (settings.mode == Mode::Water && isVisible()) {
+		m_clock->start();
+	} else {
+		m_clock->stop();
+	}
 	update();
+}
+
+void MaterialPreview::showEvent(QShowEvent* event) {
+	QOpenGLWidget::showEvent(event);
+	if (m_settings.mode == Mode::Water) m_clock->start();
+}
+
+void MaterialPreview::hideEvent(QHideEvent* event) {
+	QOpenGLWidget::hideEvent(event);
+	m_clock->stop();
 }
 
 void MaterialPreview::setShape(Shape shape) {
@@ -203,7 +314,11 @@ void MaterialPreview::buildMesh() {
 	std::vector<float> data;
 	const QVector3D X(1, 0, 0), Y(0, 1, 0), Z(0, 0, 1);
 	if (m_shape == Shape::Plane) {
-		face(data, {0, 0, 0}, X, Y, -Z);   // a wall facing the camera, texture upright
+		if (m_settings.mode == Mode::Water) {
+			face(data, {0, 0, 0}, Z, Y, X);   // water lies flat
+		} else {
+			face(data, {0, 0, 0}, X, Y, -Z);   // a wall facing the camera, texture upright
+		}
 	} else if (m_shape == Shape::Cube) {
 		const float h = 0.75f;
 		face(data, X * h, X, Y * h, -Z * h);
@@ -285,7 +400,7 @@ void MaterialPreview::paintGL() {
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
 	const auto& s = m_settings;
-	if (s.alphaMode == 1) {
+	if (s.alphaMode == 1 || s.mode == Mode::Liquid) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	} else if (s.alphaMode == 3) {
@@ -302,8 +417,8 @@ void MaterialPreview::paintGL() {
 	m_program->setUniformValue("u_lightColor", lightColor);
 	m_program->setUniformValue("u_ambient", ambient);
 	m_program->setUniformValue("u_unlit", m_lighting == Lighting::Unlit ? 1 : 0);
-	const char* samplers[SlotCount] = {"u_base", "u_bump", "u_mask", "u_detail"};
-	const char* flags[SlotCount] = {"u_hasBase", "u_hasBump", "u_hasMask", "u_hasDetail"};
+	const char* samplers[SlotCount] = {"u_base", "u_bump", "u_mask", "u_detail", "u_height"};
+	const char* flags[SlotCount] = {"u_hasBase", "u_hasBump", "u_hasMask", "u_hasDetail", "u_hasHeight"};
 	for (int slot = 0; slot < SlotCount; ++slot) {
 		glActiveTexture(GL_TEXTURE0 + slot);
 		glBindTexture(GL_TEXTURE_2D, m_textures[static_cast<std::size_t>(slot)]);
@@ -324,6 +439,20 @@ void MaterialPreview::paintGL() {
 	m_program->setUniformValue("u_phongBoost", s.phongBoost);
 	m_program->setUniformValue("u_phongExp", std::max(1.f, s.phongExponent));
 	m_program->setUniformValue("u_alphaRef", s.alphaRef);
+	m_program->setUniformValue("u_mode", static_cast<int>(s.mode));
+	m_program->setUniformValue("u_depth", s.parallaxDepth);
+	m_program->setUniformValue("u_ao", s.parallaxAO);
+	m_program->setUniformValue("u_glint", s.waterGlint);
+	m_program->setUniformValue("u_reflectTint", s.reflectTint);
+	m_program->setUniformValue("u_reflectAmount", s.reflectAmount);
+	m_program->setUniformValue("u_fogColor", s.fogColor);
+	m_program->setUniformValue("u_liquidColor", s.liquidColor);
+	m_program->setUniformValue("u_liquidAlpha", s.liquidAlpha);
+	m_program->setUniformValue("u_fill", s.fill);
+	m_program->setUniformValue("u_glassColor", s.glassColor);
+	m_program->setUniformValue("u_glassAlpha", s.glassAlpha);
+	m_program->setUniformValue("u_time", m_time);
+	m_program->setUniformValue("u_shapeTop", m_shape == Shape::Plane ? 1.0f : (m_shape == Shape::Cube ? 0.75f : 1.0f));
 	glBindVertexArray(m_vao);
 	glDrawArrays(GL_TRIANGLES, 0, m_vertexCount);
 	glBindVertexArray(0);

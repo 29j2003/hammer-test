@@ -24,6 +24,7 @@
 #include <QPixmap>
 #include <QTreeWidget>
 #include <QPushButton>
+#include <QSlider>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QSurfaceFormat>
@@ -33,7 +34,9 @@
 #include <QToolButton>
 
 #include <sme/brush.h>
+#include <sme/heightmap.h>
 #include <sme/material.h>
+#include <sme/texture.h>
 #include <sme/map_tools.h>
 
 #include <functional>
@@ -529,6 +532,169 @@ TEST_CASE("editing with the mouse in the real window") {
 		const auto copy = loadMaterial(editor.game()->files, "demo/brickwall_dark");
 		REQUIRE(copy);
 		CHECK(copy->param("$envmap") == "env_cubemap");
+	}
+	{
+		// mapbase-fidelity relief per material: on, depth, height map from the normal map, upside down,
+		// painted zones; Save writes the height map next to the material.
+		auto* materials = window.materialEditor();
+		REQUIRE(materials->fidelityShaders());
+		QSignalSpy previewed(materials, &MaterialEditor::previewUpdated);
+		QSignalSpy heightsReady(materials, &MaterialEditor::heightsReady);
+		materials->openMaterial("demo/brickwall001");
+		REQUIRE(previewed.wait(10000));
+		auto* relief = materials->findChild<QCheckBox*>("relief");
+		REQUIRE(relief);
+		CHECK(relief->isVisibleTo(materials));
+		CHECK(relief->isEnabled());
+		CHECK_FALSE(relief->isChecked());
+		relief->setChecked(true);
+		CHECK(materials->shader() == "Fidelity_Parallax");
+		CHECK(materials->value("$parallaxdepth") == "0.02");
+		REQUIRE(heightsReady.wait(10000));
+		const auto made = materials->currentHeights();
+		REQUIRE(made);
+		const auto rowAverage = [&](const HeightMap& map, unsigned y) {
+			double sum = 0;
+			for (unsigned x = 0; x < map.width; ++x) sum += map.values[std::size_t(y) * map.width + x];
+			return sum / map.width;
+		};
+		const unsigned brickRow = made->height / 16, mortarRow = made->height / 8;   // middle of a brick row, a mortar line
+		CHECK(rowAverage(*made, brickRow) > rowAverage(*made, mortarRow) + 0.1);    // the mortar lies deeper
+		auto* depth = materials->findChild<QSlider*>("$parallaxdepth");
+		REQUIRE(depth);
+		CHECK(depth->isVisibleTo(materials));
+		depth->setValue(500);
+		CHECK(materials->value("$parallaxdepth") == "0.050");
+		// Upside down: what stuck out goes in.
+		const std::size_t probe = std::size_t(brickRow) * made->width + made->width / 3;
+		auto* invert = materials->findChild<QCheckBox*>("heightInvert");
+		REQUIRE(invert);
+		invert->setChecked(true);
+		const auto inverted = materials->currentHeights();
+		REQUIRE(inverted);
+		CHECK(inverted->values[probe] == doctest::Approx(1 - made->values[probe]));
+		// Zones: one place stays flat, another is turned over again.
+		std::vector<std::uint8_t> zones(std::size_t(made->width) * made->height, std::uint8_t(HeightZone::Normal));
+		zones[probe] = std::uint8_t(HeightZone::Flat);
+		zones[probe + 1] = std::uint8_t(HeightZone::Inverted);
+		materials->setHeightZones(zones, made->width, made->height);
+		const auto zoned = materials->currentHeights();
+		REQUIRE(zoned);
+		CHECK(zoned->values[probe] == doctest::Approx(1));
+		CHECK(zoned->values[probe + 1] == doctest::Approx(made->values[probe + 1]));
+		REQUIRE(materials->save());
+		CHECK(materials->value("$parallaxmap") == "demo/brickwall001_relief");
+		const auto saved = loadMaterial(editor.game()->files, "demo/brickwall001");
+		REQUIRE(saved);
+		CHECK(saved->shader == "Fidelity_Parallax");
+		CHECK(saved->param("$parallaxdepth") == "0.050");
+		CHECK(saved->param("$bumpmap") == "demo/brickwall001_normal");
+		const auto heightTexture = loadTexture(editor.game()->files, "demo/brickwall001_relief");
+		REQUIRE(heightTexture);
+		CHECK(heightTexture->width == made->width);
+		// Relief off again: back to LightmappedGeneric without the relief parameters.
+		REQUIRE(heightsReady.wait(10000));   // the saved height map is read again
+		relief->setChecked(false);
+		CHECK(materials->shader() == "LightmappedGeneric");
+		CHECK(materials->value("$parallaxmap").isEmpty());
+		CHECK(materials->value("$parallaxdepth").isEmpty());
+		CHECK_FALSE(depth->isVisibleTo(materials));
+	}
+	{
+		// The zone painter: left paints the chosen zone, right erases; the texture repeats.
+		QImage texture(64, 64, QImage::Format_RGB32);
+		texture.fill(Qt::gray);
+		HeightZonePainter painter(texture, 32, 32, std::vector<std::uint8_t>(32 * 32, 0));
+		painter.resize(320, 320);   // the picture fills it with a 4 pixel border
+		painter.show();
+		REQUIRE(QTest::qWaitForWindowExposed(&painter));
+		painter.setBrush(4);
+		QTest::mouseClick(&painter, Qt::LeftButton, {}, QPoint(160, 160));
+		CHECK(painter.zones()[16 * 32 + 16] == std::uint8_t(HeightZone::Flat));
+		painter.setZone(HeightZone::Inverted);
+		QTest::mouseClick(&painter, Qt::LeftButton, {}, QPoint(5, 160));
+		CHECK(painter.zones()[16 * 32 + 31] == std::uint8_t(HeightZone::Inverted));   // over the edge: the other side
+		QTest::mouseClick(&painter, Qt::RightButton, {}, QPoint(160, 160));
+		CHECK(painter.zones()[16 * 32 + 16] == std::uint8_t(HeightZone::Normal));
+	}
+	{
+		// Water: the fidelity switch makes it Water_Fidelity with glint and foam; walls' sections are hidden.
+		auto* materials = window.materialEditor();
+		QSignalSpy previewed(materials, &MaterialEditor::previewUpdated);
+		materials->openMaterial("demo/water001");
+		REQUIRE(previewed.wait(10000));
+		auto* water = materials->findChild<QCheckBox*>("fidelityWater");
+		REQUIRE(water);
+		CHECK(water->isVisibleTo(materials));
+		CHECK_FALSE(materials->findChild<QCheckBox*>("relief")->isVisibleTo(materials));
+		CHECK_FALSE(materials->findChild<QCheckBox*>("liquid")->isVisibleTo(materials));
+		auto* glint = materials->findChild<QSlider*>("$fidelityglint");
+		REQUIRE(glint);
+		CHECK_FALSE(glint->isVisibleTo(materials));
+		water->setChecked(true);
+		CHECK(materials->shader() == "Water_Fidelity");
+		CHECK(glint->isVisibleTo(materials));
+		glint->setValue(500);
+		CHECK(materials->value("$fidelityglint") == "1.50");
+		REQUIRE(materials->save());
+		const auto saved = loadMaterial(editor.game()->files, "demo/water001");
+		REQUIRE(saved);
+		CHECK(saved->shader == "Water_Fidelity");
+		CHECK(saved->param("$normalmap") == "demo/water001_normal");
+		CHECK(saved->param("$fidelityglint") == "1.50");
+		water->setChecked(false);
+		CHECK(materials->shader() == "Water");
+		CHECK(materials->value("$fidelityglint").isEmpty());
+	}
+	{
+		// Liquid in a glass prop: Fidelity_Liquid, the fill level fixed or different in every prop.
+		auto* materials = window.materialEditor();
+		QSignalSpy previewed(materials, &MaterialEditor::previewUpdated);
+		materials->openMaterial("models/props_demo/bottle001");
+		REQUIRE(previewed.wait(10000));
+		auto* liquid = materials->findChild<QCheckBox*>("liquid");
+		REQUIRE(liquid);
+		CHECK(liquid->isVisibleTo(materials));
+		CHECK_FALSE(materials->findChild<QCheckBox*>("relief")->isVisibleTo(materials));
+		liquid->setChecked(true);
+		CHECK(materials->shader() == "Fidelity_Liquid");
+		auto* fill = materials->findChild<QSlider*>("$fill");
+		REQUIRE(fill);
+		CHECK_FALSE(fill->isVisibleTo(materials));   // random by default
+		auto* fillMode = materials->findChild<QComboBox*>("fillMode");
+		REQUIRE(fillMode);
+		fillMode->setCurrentIndex(1);
+		CHECK(fill->isVisibleTo(materials));
+		CHECK(materials->value("$fill") == "0.6");
+		REQUIRE(materials->save());
+		const auto saved = loadMaterial(editor.game()->files, "models/props_demo/bottle001");
+		REQUIRE(saved);
+		CHECK(saved->shader == "Fidelity_Liquid");
+		CHECK(saved->param("$fill") == "0.6");
+	}
+	{
+		// A material deploy.bat made: the editor says so; saving makes it the mod's own (marker gone).
+		auto* materials = window.materialEditor();
+		const QString path = materials->savePath("demo/generated001");
+		QDir().mkpath(QFileInfo(path).path());
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write("// mapbase-fidelity: generated by deploy.ps1 (parallax) from demo/concretewall001\n"
+		           "\"Fidelity_Parallax\"\n{\n\t\"$basetexture\" \"demo/concretewall001\"\n\t\"$parallaxdepth\" \"0.02\"\n}\n");
+		file.close();
+		editor.game()->files.noteWrittenFile(path.toStdString());
+		materials->openMaterial("demo/generated001");
+		QLabel* found = nullptr;
+		for (auto* label : materials->findChildren<QLabel*>()) {
+			if (label->text().contains("deploy.bat") && label->isVisibleTo(materials)) found = label;
+		}
+		REQUIRE(found);
+		CHECK(found->text().contains("parallax"));
+		CHECK(materials->findChild<QCheckBox*>("relief")->isChecked());
+		REQUIRE(materials->save());
+		QFile written(path);
+		REQUIRE(written.open(QIODevice::ReadOnly));
+		CHECK_FALSE(QString(written.readAll()).contains("mapbase-fidelity: generated"));
 	}
 	{
 		// The corner menu of a view switches the look (and shows it on the button).

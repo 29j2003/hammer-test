@@ -18,6 +18,7 @@ add_library(smecore STATIC
 	src/game_discovery.cpp
 	src/gameinfo.cpp
 	src/hammer_config.cpp
+	src/heightmap.cpp
 	src/history.cpp
 	src/keyvalues.cpp
 	src/map.cpp

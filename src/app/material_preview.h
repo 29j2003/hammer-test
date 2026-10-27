@@ -1,8 +1,10 @@
 // material_preview.h - Live preview of a material for the material editor: a plane, cube or
 // sphere with the base texture, normal map (also self-shadowed "ssbump"), detail texture,
 // reflections (env_cubemap seen as a sky), masks, transparency, self-illumination and phong,
-// under a choice of lights (sun, indoor, night, unlit). Left drag turns the object, right drag
-// moves the light. An approximation of the game's shaders, not the game's renderer.
+// relief from a height map (parallax occlusion mapping, as mapbase-fidelity's Fidelity_Parallax),
+// water (reflection, fog colour, the sun's glint) and liquid in a glass (Fidelity_Liquid), under a
+// choice of lights (sun, indoor, night, unlit). Left drag turns the object, right drag moves the
+// light. An approximation of the game's shaders, not the game's renderer.
 
 #pragma once
 
@@ -10,6 +12,7 @@
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLWidget>
+#include <QTimer>
 #include <QVector3D>
 
 #include <array>
@@ -23,7 +26,8 @@ class MaterialPreview : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Cor
 public:
 	enum class Shape { Plane, Cube, Sphere };
 	enum class Lighting { Sun, Indoor, Night, Unlit };
-	enum Slot { Base, Bump, Mask, Detail, SlotCount };
+	enum Slot { Base, Bump, Mask, Detail, Height, SlotCount };
+	enum class Mode { Surface, Water, Liquid };
 
 	struct Settings {
 		bool ssbump = false;
@@ -39,6 +43,18 @@ public:
 		float phongBoost = 1;
 		float phongExponent = 5;
 		float alphaRef = 0.5f;
+		Mode mode = Mode::Surface;
+		float parallaxDepth = 0;       ///< In texture units (Fidelity_Parallax's $parallaxdepth); 0 = no relief
+		float parallaxAO = 0.35f;
+		float waterGlint = 1;          ///< Water_Fidelity's sun glint (0 = plain water)
+		QVector3D reflectTint{1, 1, 1};
+		QVector3D fogColor{0.1f, 0.18f, 0.2f};
+		float reflectAmount = 0.8f;
+		QVector3D liquidColor{0.55f, 0.35f, 0.12f};
+		float liquidAlpha = 0.85f;
+		float fill = 0.55f;            ///< 0..1 of the shape's height
+		QVector3D glassColor{0.75f, 0.85f, 0.8f};
+		float glassAlpha = 0.3f;
 	};
 
 	explicit MaterialPreview(QWidget* parent = nullptr);
@@ -55,6 +71,8 @@ protected:
 	void mousePressEvent(QMouseEvent* event) override;
 	void mouseMoveEvent(QMouseEvent* event) override;
 	void wheelEvent(QWheelEvent* event) override;
+	void showEvent(QShowEvent* event) override;
+	void hideEvent(QHideEvent* event) override;
 
 private:
 	void buildMesh();
@@ -74,6 +92,8 @@ private:
 	float m_yaw = 20, m_pitch = 15, m_distance = 3.2f;
 	float m_lightYaw = 40, m_lightPitch = 45;
 	QPointF m_last;
+	QTimer* m_clock;   ///< Moves the water while it is shown
+	float m_time = 0;
 };
 
 } // namespace sme::app

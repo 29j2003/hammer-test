@@ -9,6 +9,7 @@
 #include <sme/map.h>
 #include <sme/text.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include <fstream>
 #include <tuple>
 #include <functional>
+#include <numbers>
 
 #include <vtfpp/VTF.h>
 
@@ -298,10 +300,30 @@ void createDemo(Fixture& f) {
 		const double streak = std::max(0.0, std::sin((u + v) * 12) - 0.8) * 1.5;
 		return Rgba{0.65 + streak, 0.8 + streak, 0.9 + streak, 0.32 + streak * 0.3};
 	}, true));
+	// Normal map of the bricks (mortar lies deeper), so relief can be made from it.
+	writeBytes(mat / "demo/brickwall001_normal.vtf", makeTexture(256, [](double u, double v) {
+		const auto height = [](double hu, double hv) {
+			const double row = std::floor(hv * 8);
+			const double bu = hu * 4 + (std::fmod(row, 2) * 0.5);
+			const double mortarV = std::min(std::fmod(hv * 8, 1.0), 1 - std::fmod(hv * 8, 1.0));
+			const double mortarU = std::min(std::fmod(bu, 1.0), 1 - std::fmod(bu, 1.0));
+			return std::clamp(std::min(mortarV / 0.08, mortarU / 0.04), 0.0, 1.0);
+		};
+		const double e = 1.0 / 256;
+		const double dx = (height(u + e, v) - height(u - e, v)) * 2, dy = (height(u, v + e) - height(u, v - e)) * 2;
+		const double len = std::sqrt(dx * dx + dy * dy + 1);
+		return Rgba{(-dx / len) * 0.5 + 0.5, (dy / len) * 0.5 + 0.5, (1 / len) * 0.5 + 0.5};
+	}));
+	// Waves for the water.
+	writeBytes(mat / "demo/water001_normal.vtf", makeTexture(128, [](double u, double v) {
+		const double dx = std::cos((u * 3 + v) * 2 * std::numbers::pi) * 0.3, dy = std::cos((v * 2 - u) * 2 * std::numbers::pi) * 0.3;
+		const double len = std::sqrt(dx * dx + dy * dy + 1);
+		return Rgba{(-dx / len) * 0.5 + 0.5, (dy / len) * 0.5 + 0.5, (1 / len) * 0.5 + 0.5};
+	}));
 	writeBytes(mat / "models/humans/male_sheet.vtf", makeTexture(128, [](double u, double v) {
 		return Rgba{0.5 + fbm(u, v, 81) * 0.3, 0.35, 0.3};
 	}));
-	writeText(mat / "demo/brickwall001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/brickwall001\"\n\t\"$surfaceprop\" \"brick\"\n"));
+	writeText(mat / "demo/brickwall001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/brickwall001\"\n\t\"$bumpmap\" \"demo/brickwall001_normal\"\n\t\"$surfaceprop\" \"brick\"\n"));
 	writeText(mat / "demo/concretewall001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/concretewall001\"\n\t\"$surfaceprop\" \"concrete\"\n"));
 	writeText(mat / "demo/floortile001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/floortile001\"\n\t\"$surfaceprop\" \"tile\"\n"));
 	writeText(mat / "demo/metal001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/metal001\"\n\t\"$surfaceprop\" \"metal\"\n"));
@@ -309,6 +331,14 @@ void createDemo(Fixture& f) {
 	writeText(mat / "demo/grass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/grass001\"\n"));
 	writeText(mat / "demo/blend_grass_dirt.vmt",
 	          vmt("WorldVertexTransition", "\t\"$basetexture\" \"demo/grass001\"\n\t\"$basetexture2\" \"demo/dirt001\"\n\t\"$surfaceprop\" \"dirt\"\n"));
+	writeText(mat / "demo/water001.vmt",
+	          vmt("Water", "\t\"$normalmap\" \"demo/water001_normal\"\n\t\"$forcecheap\" \"1\"\n\t\"$fogenable\" \"1\"\n"
+	                       "\t\"$fogcolor\" \"{30 50 50}\"\n\t\"$fogstart\" \"0\"\n\t\"$fogend\" \"300\"\n\t\"$surfaceprop\" \"water\"\n"));
+	writeText(mat / "models/props_demo/bottle001.vmt",
+	          vmt("VertexLitGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glassbottle\"\n"));
+	// mapbase-fidelity's shaders are installed (deploy.bat copies their .vcs files into the mod);
+	// a stand-in file, enough for the editor to offer relief, water and liquid.
+	writeText(f.mod / "shaders/fxc/fidelity_parallax_ps30.vcs", "stand-in for the test\n");
 	writeText(mat / "demo/glass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glass\"\n"));
 	// Editor sprites (iconsprite in the FGD): a ring in the class color around a small symbol.
 	struct Sprite {
