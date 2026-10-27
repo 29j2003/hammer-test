@@ -11,7 +11,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
   `assets` inkl. Sounds/Soundscapes/Partikel, Soundscapes bearbeiten `soundscape`, Höhenkarten für Relief `heightmap`, Sound-Decoder `audio`, Partikel aus PCF + Vorschau-Simulation `particles`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
   (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
-  Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
+  Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), VisGroups (`visgroups`), func_instance laden/auflösen (`instances`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), Prüfungen mit Autofix + Leaks (`checks`), Kompilier-Meldungen (`compile_log`),
   Export glTF/OBJ (`scene_export`).
 - `src/app/` – Qt-6-Editor (`smeapp` + `SourceMapEditor`): `editor` (Zustand, alle Änderungen über `commit()`),
   `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
@@ -20,7 +20,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   `asset_browser` (Materialien, Modelle), `material_editor` + `material_preview` (inkl. Schalter für die mapbase-fidelity-Shader der Mod), `sound_browser` + `sound_player` + `soundscape_editor`
   (Sounds-Tab, Wiedergabe über QAudioSink, optional), `copy_paste`,
   `map_look_panel`, `mod_page` (Seite „Mod“ der Seitenleiste), `source_control_panel` (Git: Änderungen, Commit, Pull/Push), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
-  Justify), `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
+  Justify; func_instance-Kasten in `properties_instance`), `visgroups_panel`, `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
   `shortcut_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste: Map, Materials, Sounds, Particles, Mod), `style`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
 - `tests/` – doctest; `fixture` (künstliche Steam-Installation, keine Valve-Dateien), `demo` (Demo-Inhalte + Demo-Karte),

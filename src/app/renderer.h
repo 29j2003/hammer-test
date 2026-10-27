@@ -15,6 +15,8 @@
 #include <QSet>
 #include <QVector3D>
 
+#include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -22,6 +24,7 @@
 
 #include <sme/editing.h>
 #include <sme/entity_catalog.h>
+#include <sme/instances.h>
 #include <sme/map.h>
 
 #include "camera.h"
@@ -61,6 +64,12 @@ public:
 
 	/// Rebuilds all geometry from the document.
 	void rebuild(const MapDocument& doc, const EntityCatalog* catalog);
+	/// Gives the read-only content of a func_instance (nullptr if there is none); asked for on
+	/// every rebuild, so the provider should cache (the Editor does).
+	using InstanceProvider = std::function<const InstancePreview*(const Entity&)>;
+	void setInstanceProvider(InstanceProvider provider) { m_instanceProvider = std::move(provider); }
+	/// Box around the drawn content of a func_instance (empty if it has none).
+	[[nodiscard]] Bounds instanceBounds(int entityId) const;
 	/// Updates selection flags (cheap).
 	void setSelection(const MapDocument& doc, const Selection& selection, const Selection& hidden = {}, int hoverSideId = 0);
 	/// Hides the selected objects (they are drawn by drawPreview while dragging).
@@ -144,6 +153,7 @@ private:
 		Bounds bounds;
 		std::vector<Vec3> triangles;   ///< Displacement triangles (picked instead of the planes)
 		std::vector<int> triangleSides;
+		const Solid* detached = nullptr;   ///< Instance content: not in the document (selects its func_instance)
 	};
 	struct ModelInstance {
 		QString path;
@@ -243,6 +253,9 @@ private:
 	std::vector<std::pair<GLint, GLsizei>> m_selectedRanges;
 
 	std::vector<PickItem> m_pickItems;
+	InstanceProvider m_instanceProvider;
+	std::deque<Solid> m_instanceSolids;              ///< Instance brushes drawn this build (stable addresses for picking)
+	std::unordered_map<int, Bounds> m_instanceBounds;
 	Selection m_hidden;
 	std::vector<Light> m_lights;
 	QVector3D m_sunDirection{0.3f, 0.2f, -0.9f};

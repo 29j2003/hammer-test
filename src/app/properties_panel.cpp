@@ -625,6 +625,9 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	if (entityIds.size() == 1 && iequals(classname, "env_cubemap")) {
 		buildCubemapBox(layout, *first);
 	}
+	if (entityIds.size() == 1 && iequals(classname, "func_instance")) {
+		buildInstanceBox(layout, *first);
+	}
 
 	// Tabs: Keyvalues / Outputs / Inputs with their counts (outputs and inputs for one entity).
 	const bool single = entityIds.size() == 1 && !world;

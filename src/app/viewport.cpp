@@ -331,6 +331,8 @@ void Viewport::initializeGL() {
 	QString error;
 	m_glReady = m_renderer.initialize(m_materials, &error);
 	m_renderer.setModels(m_editor->models());
+	// func_instance content comes from the editor's instance cache.
+	m_renderer.setInstanceProvider([this](const Entity& entity) { return m_editor->instancePreview(entity); });
 	if (!m_glReady) {
 		m_glError = error;
 		emit statsChanged(tr("OpenGL error: %1").arg(error));

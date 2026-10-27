@@ -18,6 +18,8 @@ add_library(smecore STATIC
 	src/sky_presets.cpp
 	src/soundscape.cpp
 	src/shipping.cpp
+	src/visgroups.cpp
+	src/instances.cpp
 	src/editing.cpp
 	src/entity_catalog.cpp
 	src/filesystem.cpp

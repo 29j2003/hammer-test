@@ -23,6 +23,7 @@ add_library(smeapp STATIC
 	panels.cpp
 	particle_browser.cpp
 	properties_panel.cpp
+	properties_instance.cpp
 	renderer.cpp
 	renderer_shadows.cpp
 	ship_panel.cpp
@@ -36,7 +37,8 @@ add_library(smeapp STATIC
 	toggle_switch.cpp
 	updater.cpp
 	viewport.cpp
-	viewport_tools.cpp)
+	viewport_tools.cpp
+	visgroups_panel.cpp)
 target_include_directories(smeapp PUBLIC .)
 target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)
 target_link_libraries(smeapp PUBLIC smecore Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network)

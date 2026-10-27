@@ -61,6 +61,9 @@ void apply(MapDocument& doc, const Change& change, bool after) {
 	if (const auto& world = after ? change.worldAfter : change.worldBefore) {
 		applyWorld(doc, *world);
 	}
+	if (const auto& header = after ? change.headerAfter : change.headerBefore) {
+		doc.headerBlocks = *header;
+	}
 }
 
 } // namespace
@@ -103,6 +106,12 @@ void Transaction::touchWorld() {
 	}
 }
 
+void Transaction::touchHeader() {
+	if (!m_change.headerBefore) {
+		m_change.headerBefore = m_doc.headerBlocks;
+	}
+}
+
 Change Transaction::finish() {
 	for (auto& s : m_change.solids) {
 		if (const auto* solid = m_doc.findSolid(s.ref)) {
@@ -116,6 +125,9 @@ Change Transaction::finish() {
 	}
 	if (m_change.worldBefore) {
 		m_change.worldAfter = worldState(m_doc);
+	}
+	if (m_change.headerBefore) {
+		m_change.headerAfter = m_doc.headerBlocks;
 	}
 	m_doc.updateIdCounters();
 	return std::move(m_change);
@@ -148,6 +160,12 @@ void History::push(Change change, bool merge) {
 				last.worldBefore = std::move(change.worldBefore);
 			}
 			last.worldAfter = std::move(change.worldAfter);
+		}
+		if (change.headerBefore) {
+			if (!last.headerBefore) {
+				last.headerBefore = std::move(change.headerBefore);
+			}
+			last.headerAfter = std::move(change.headerAfter);
 		}
 		++m_revision;
 		return;

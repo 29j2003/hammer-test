@@ -57,6 +57,8 @@ public:
 	static void fillShowMenu(QMenu* menu, Editor* editor);
 	/// Entity tool preview box under the mouse (none while nothing is armed or the mouse is away).
 	[[nodiscard]] std::optional<Bounds> ghostBox() const { return m_ghost ? std::optional<Bounds>(m_ghost->box) : std::nullopt; }
+	/// Box around the drawn content of a func_instance (empty before it was drawn or without content).
+	[[nodiscard]] Bounds instanceBounds(int entityId) const { return m_renderer.instanceBounds(entityId); }
 	/// Where pasted objects with this box go: their center under the mouse (resting on the
 	/// surface in 3D), or nothing when the mouse is not over this view.
 	[[nodiscard]] std::optional<Vec3> pasteCenter(const Bounds& box) const;
