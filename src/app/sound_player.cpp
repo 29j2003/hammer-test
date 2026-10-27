@@ -145,7 +145,7 @@ void SoundPlayer::play(std::shared_ptr<const DecodedAudio> audio, double fromSec
 	}
 	impl.source.open(QIODevice::ReadOnly);
 	impl.sink = std::make_unique<QAudioSink>(device, format);
-	impl.sink->setVolume(m_volume);
+	impl.sink->setVolume(gain(m_volume));
 	connect(impl.sink.get(), &QAudioSink::stateChanged, this, [this](QAudio::State state) {
 		if (state == QAudio::IdleState || state == QAudio::StoppedState) {
 			if (state == QAudio::IdleState) {
@@ -204,7 +204,7 @@ void SoundPlayer::setLoop(bool on) {
 void SoundPlayer::setVolume(float volume) {
 	m_volume = std::clamp(volume, 0.f, 1.f);
 	if (m_impl && m_impl->sink) {
-		m_impl->sink->setVolume(m_volume);
+		m_impl->sink->setVolume(gain(m_volume));
 	}
 }
 
@@ -242,5 +242,11 @@ void SoundPlayer::setVolume(float volume) {
 }
 
 #endif
+
+float SoundPlayer::gain(float position) {
+	constexpr float RANGE_DB = 50;
+	if (position <= 0) return 0;
+	return std::pow(10.f, (std::min(position, 1.f) - 1) * RANGE_DB / 20);
+}
 
 } // namespace sme::app

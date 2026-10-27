@@ -31,7 +31,10 @@ public:
 	[[nodiscard]] double position() const;
 	void setLoop(bool on);
 	[[nodiscard]] bool loop() const { return m_loop; }
-	void setVolume(float volume);   ///< 0..1
+	void setVolume(float volume);   ///< 0..1 slider position (heard in decibels, see gain())
+	/// Loudness the way ears hear it: the slider spans -50 dB .. 0 dB, so the lower half is really
+	/// quiet (a linear volume stays loud until the very bottom). 0 is silent.
+	[[nodiscard]] static float gain(float position);
 
 signals:
 	void stateChanged(bool playing);

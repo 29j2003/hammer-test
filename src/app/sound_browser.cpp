@@ -208,9 +208,9 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	m_playOnClick->setChecked(QSettings().value("sounds/playOnClick", true).toBool());
 	m_volume = new QSlider(Qt::Horizontal);
 	m_volume->setRange(0, 100);
-	m_volume->setValue(QSettings().value("sounds/volume", 80).toInt());
+	m_volume->setValue(QSettings().value("sounds/volume2", 60).toInt());   // "2": the scale is in decibels now
 	m_volume->setMaximumWidth(120);
-	m_volume->setToolTip(tr("Volume of the preview"));
+	m_volume->setToolTip(tr("Volume of the preview (from silent up to as loud as the file)"));
 	controls->addWidget(m_play);
 	controls->addWidget(m_loop);
 	controls->addWidget(m_playOnClick);
@@ -299,7 +299,7 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	connect(m_playOnClick, &QCheckBox::toggled, this, [](bool on) { QSettings().setValue("sounds/playOnClick", on); });
 	connect(m_volume, &QSlider::valueChanged, this, [this](int value) {
 		m_player->setVolume(value / 100.f);
-		QSettings().setValue("sounds/volume", value);
+		QSettings().setValue("sounds/volume2", value);
 	});
 	m_player->setVolume(m_volume->value() / 100.f);
 	connect(m_waveform, &SoundWaveform::seekRequested, this, [this](double seconds) {

@@ -64,6 +64,7 @@
 #include "material_preview.h"
 #include "material_editor.h"
 #include "panels.h"
+#include "sound_player.h"
 #include "style.h"
 #include "sound_browser.h"
 #include "tool_panel.h"
@@ -299,6 +300,13 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(editor.selection().solids == std::vector<SolidRef>{block});   // still selected, not a marquee
 		editor.undo();
 		CHECK(boundsOf(editor, block).max.z == doctest::Approx(b.max.z));
+	}
+	{
+		// Preview volume in decibels: half way is quiet, the bottom silent, the top as recorded.
+		CHECK(SoundPlayer::gain(0) == 0.f);
+		CHECK(SoundPlayer::gain(1) == doctest::Approx(1));
+		CHECK(SoundPlayer::gain(0.5f) < 0.1f);
+		CHECK(SoundPlayer::gain(0.1f) < 0.01f);
 	}
 	{
 		// The Tool panel lists the keys of the current tool, with the shortcuts as they are set.
