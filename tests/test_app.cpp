@@ -31,6 +31,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QPixmap>
+#include <QPointer>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QStackedWidget>
@@ -63,6 +64,7 @@
 #include <sme/soundscape_area.h>
 
 #include <cmath>
+#include <cstdio>
 #include <functional>
 
 #include "asset_browser.h"
@@ -2530,6 +2532,31 @@ TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's 
 	}
 }
 
+namespace {
+
+/// Watches for windows that pop up by accident: a widget shown before it is put into a layout is
+/// briefly its own top-level window (a tiny empty "Mapsmith" window in the user's video). Such a
+/// widget is shown without a parent and gets one right after; widgets the tests open on purpose
+/// as windows keep having none.
+class StrayWindowWatch : public QObject {
+public:
+	QStringList strays;
+
+	bool eventFilter(QObject* object, QEvent* event) override {
+		if (event->type() != QEvent::Show || !object->isWidgetType()) return false;
+		auto* widget = static_cast<QWidget*>(object);
+		if (!widget->isWindow() || widget->parentWidget()) return false;
+		QPointer<QWidget> watched(widget);
+		const QString name = QString::fromLatin1(widget->metaObject()->className()) + " '" + widget->objectName() + "'";
+		QTimer::singleShot(0, this, [this, watched, name] {
+			if (watched && watched->parentWidget()) strays << name;
+		});
+		return false;
+	}
+};
+
+} // namespace
+
 int main(int argc, char** argv) {
 	QSurfaceFormat format;
 	format.setVersion(3, 3);
@@ -2540,6 +2567,12 @@ int main(int argc, char** argv) {
 	QApplication app(argc, argv);
 	QApplication::setOrganizationName("hammer-test-tests");
 	QApplication::setApplicationName("Mapsmith Tests");
+	StrayWindowWatch strays;
+	app.installEventFilter(&strays);
 	doctest::Context context(argc, argv);
-	return context.run();
+	const int result = context.run();
+	for (const auto& stray : strays.strays) {
+		std::fprintf(stderr, "Shown as its own window before it had a parent: %s\n", qPrintable(stray));
+	}
+	return strays.strays.isEmpty() ? result : 1;
 }

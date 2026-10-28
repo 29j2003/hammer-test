@@ -705,7 +705,6 @@ QGridLayout* PropertiesPanel::addGroup(QVBoxLayout* layout, const QString& name,
 		return QStringLiteral("%1  %2   %3").arg(isOpen ? QStringLiteral("▾") : QStringLiteral("▸"), name).arg(count);
 	};
 	header->setText(label(open));
-	body->setVisible(open);
 	connect(header, &QPushButton::clicked, this, [this, header, body, name, label] {
 		const bool nowOpen = !body->isVisible();
 		body->setVisible(nowOpen);
@@ -717,6 +716,7 @@ QGridLayout* PropertiesPanel::addGroup(QVBoxLayout* layout, const QString& name,
 	});
 	layout->addWidget(header);
 	layout->addWidget(body);
+	body->setVisible(open);   // only now: shown without a parent it would flash up as its own window
 	return grid;
 }
 
