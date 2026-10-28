@@ -55,90 +55,113 @@ void cube(QPainter& p, QPointF center, double r, const QColor& top, const QColor
 	p.drawPolygon(QPolygonF{c, c + rt, c + rb, c + dn});
 }
 
-void drawIcon(QPainter& p, const QString& name) {
+/// Side bar pages: calm line drawings with one orange detail (the page that is open is drawn
+/// all in orange, see icon()). `line` is the stroke colour, `accent` the detail.
+void drawPageIcon(QPainter& p, const QString& name, const QColor& line, const QColor& accent) {
 	p.setRenderHint(QPainter::Antialiasing);
-	// --- Side bar pages (coloured) -----------------------------------------------------------
+	const double w = 4.2;
+	p.setBrush(Qt::NoBrush);
 	if (name == "page:map") {
-		QPainterPath frame;
-		frame.addRoundedRect(QRectF(6, 10, 52, 44), 8, 8);
-		p.setClipPath(frame);
-		QLinearGradient sky(0, 10, 0, 54);
-		sky.setColorAt(0, QColor(94, 196, 240));
-		sky.setColorAt(1, QColor(170, 225, 250));
-		p.fillRect(QRectF(6, 10, 52, 44), sky);
+		// A block standing on a grid floor.
+		p.setPen(pen(line, 2));
+		const QPointF L(4, 46), T(32, 32), R(60, 46), B(32, 60);
+		p.drawPolygon(QPolygonF{L, T, R, B});
+		for (const double f : {1.0 / 3, 2.0 / 3}) {
+			p.drawLine(L + (B - L) * f, T + (R - T) * f);
+			p.drawLine(L + (T - L) * f, B + (R - B) * f);
+		}
+		const QPointF c(32, 27);
+		const double r = 14;
+		const QPointF up(0, -r), lt(-r * 0.87, -r * 0.5), rt(r * 0.87, -r * 0.5), dn(0, r), lb(-r * 0.87, r * 0.5), rb(r * 0.87, r * 0.5);
 		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(255, 214, 80));
-		p.drawEllipse(QPointF(44, 22), 5, 5);
-		p.setBrush(QColor(48, 158, 86));
-		p.drawPolygon(QPolygonF{{2, 56}, {24, 26}, {44, 56}});
-		p.setBrush(QColor(78, 196, 108));
-		p.drawPolygon(QPolygonF{{20, 56}, {42, 32}, {62, 56}});
-		p.setClipping(false);
+		p.setBrush(accent);
+		p.drawPolygon(QPolygonF{c + up, c + rt, c, c + lt});
+		p.setBrush(Qt::NoBrush);
+		p.setPen(pen(line, w));
+		p.drawPolygon(QPolygonF{c + up, c + rt, c + rb, c + dn, c + lb, c + lt});
+		p.drawLine(c, c + dn);
+		p.drawLine(c, c + lt);
+		p.drawLine(c, c + rt);
 		return;
 	}
 	if (name == "page:materials") {
-		QRadialGradient ball(QPointF(24, 22), 34);
-		ball.setColorAt(0, QColor(250, 250, 252));
-		ball.setColorAt(0.55, QColor(170, 176, 186));
-		ball.setColorAt(1, QColor(84, 90, 102));
+		// A tile with a checker: two squares in the accent.
+		const QRectF tile(12, 12, 40, 40);
 		p.setPen(Qt::NoPen);
-		p.setBrush(ball);
-		p.drawEllipse(QPointF(32, 32), 24, 24);
-		p.setPen(pen(QColor(255, 255, 255, 120), 3));
-		p.drawLine(QPointF(18, 46), QPointF(46, 18));
+		p.setBrush(accent);
+		p.drawRect(QRectF(12, 12, 20, 20));
+		p.drawRect(QRectF(32, 32, 20, 20));
+		p.setBrush(Qt::NoBrush);
+		p.setPen(pen(line, w));
+		p.drawRoundedRect(tile, 4, 4);
 		return;
 	}
 	if (name == "page:models") {
-		cube(p, {32, 34}, 24, QColor(222, 168, 96), QColor(186, 132, 68), QColor(150, 102, 50));
-		p.setPen(pen(QColor(110, 72, 34), 2));
-		p.drawLine(QPointF(32, 34), QPointF(32, 58));
-		p.drawLine(QPointF(11, 22), QPointF(32, 34));
-		p.drawLine(QPointF(53, 22), QPointF(32, 34));
+		// A barrel: the prop everyone places first.
+		p.setPen(pen(line, w));
+		p.drawLine(QPointF(17, 16), QPointF(17, 48));
+		p.drawLine(QPointF(47, 16), QPointF(47, 48));
+		p.drawEllipse(QRectF(17, 10, 30, 12));
+		p.drawArc(QRectF(17, 42, 30, 12), 180 * 16, 180 * 16);
+		p.setPen(pen(accent, w));
+		p.drawArc(QRectF(17, 24, 30, 12), 180 * 16, 180 * 16);
+		p.drawArc(QRectF(17, 32, 30, 12), 180 * 16, 180 * 16);
 		return;
 	}
 	if (name == "page:sounds") {
-		const QColor pink(255, 84, 140);
-		p.setPen(Qt::NoPen);
-		p.setBrush(pink);
-		p.drawEllipse(QPointF(22, 48), 10, 8);
-		p.setPen(pen(pink, 6));
-		p.drawLine(QPointF(30, 46), QPointF(30, 10));
-		QPainterPath flag;
-		flag.moveTo(30, 10);
-		flag.cubicTo(40, 14, 50, 18, 48, 32);
-		p.setPen(pen(pink, 6));
-		p.setBrush(Qt::NoBrush);
-		p.drawPath(flag);
+		// Waveform bars.
+		const double heights[] = {12, 26, 40, 22, 32, 14};
+		for (int i = 0; i < 6; ++i) {
+			const double x = 12 + i * 8;
+			p.setPen(pen(i == 2 ? accent : line, 5));
+			p.drawLine(QPointF(x, 32 - heights[i] / 2), QPointF(x, 32 + heights[i] / 2));
+		}
 		return;
 	}
 	if (name == "page:particles") {
+		// A spark with a few embers.
+		QPainterPath star;
+		star.moveTo(28, 10);
+		star.quadTo(30, 28, 46, 30);
+		star.quadTo(30, 32, 28, 50);
+		star.quadTo(26, 32, 10, 30);
+		star.quadTo(26, 28, 28, 10);
 		p.setPen(Qt::NoPen);
-		for (int i = 0; i < 8; ++i) {
-			const double a = i * M_PI / 4;
-			const double r = (i % 2) ? 5.0 : 6.5;
-			p.setBrush(i % 2 ? QColor(255, 140, 190) : QColor(240, 80, 160));
-			p.drawEllipse(QPointF(32 + std::cos(a) * 21, 32 + std::sin(a) * 21), r, r);
-		}
-		p.setBrush(QColor(255, 200, 90));
-		p.drawEllipse(QPointF(32, 32), 7, 7);
+		p.setBrush(accent);
+		p.drawPath(star);
+		p.setBrush(line);
+		p.drawEllipse(QPointF(48, 14), 3.5, 3.5);
+		p.drawEllipse(QPointF(52, 46), 2.8, 2.8);
+		p.drawEllipse(QPointF(42, 54), 2.2, 2.2);
 		return;
 	}
 	if (name == "page:mod") {
-		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(58, 142, 230));
-		p.drawRoundedRect(QRectF(8, 10, 48, 44), 7, 7);
-		p.setBrush(QColor(235, 242, 252));
-		p.drawRoundedRect(QRectF(14, 22, 36, 26), 3, 3);
-		p.setBrush(QColor(170, 206, 245));
-		p.drawEllipse(QPointF(15, 16), 2.5, 2.5);
-		p.drawEllipse(QPointF(23, 16), 2.5, 2.5);
+		// A package: what gets shipped.
+		p.setPen(pen(line, w));
+		p.drawRoundedRect(QRectF(10, 22, 44, 32), 3, 3);
+		p.drawLine(QPointF(10, 22), QPointF(18, 10));
+		p.drawLine(QPointF(54, 22), QPointF(46, 10));
+		p.drawLine(QPointF(18, 10), QPointF(46, 10));
+		p.setPen(pen(accent, w));
+		p.drawLine(QPointF(32, 10), QPointF(32, 34));
+		p.drawLine(QPointF(25, 34), QPointF(39, 34));
 		return;
 	}
 	if (name == "page:texts") {
-		p.setPen(Qt::NoPen);
-		p.setBrush(QColor(166, 98, 255));
-		p.drawRect(QRectF(12, 10, 40, 9));
-		p.drawRect(QRectF(27, 10, 10, 44));
+		p.setPen(pen(line, w));
+		p.drawLine(QPointF(14, 14), QPointF(38, 14));
+		p.drawLine(QPointF(26, 14), QPointF(26, 46));
+		p.setPen(pen(accent, w));
+		p.drawLine(QPointF(40, 34), QPointF(52, 34));
+		p.drawLine(QPointF(40, 44), QPointF(52, 44));
+		return;
+	}
+}
+
+void drawIcon(QPainter& p, const QString& name) {
+	p.setRenderHint(QPainter::Antialiasing);
+	if (name.startsWith(QLatin1String("page:"))) {
+		drawPageIcon(p, name, LINE, ACCENT);
 		return;
 	}
 
@@ -544,6 +567,16 @@ QIcon icon(const QString& name, const QString& shortcut) {
 		}
 	}
 	QIcon result(pixmap);
+	if (name.startsWith(QLatin1String("page:"))) {
+		// The open page: all in the accent.
+		QPixmap on(SIZE, SIZE);
+		on.fill(Qt::transparent);
+		QPainter p(&on);
+		drawPageIcon(p, name, ACCENT, QColor(255, 226, 170));
+		p.end();
+		result.addPixmap(on, QIcon::Normal, QIcon::On);
+		result.addPixmap(on, QIcon::Active, QIcon::On);
+	}
 	cache.insert(key, result);
 	return result;
 }
