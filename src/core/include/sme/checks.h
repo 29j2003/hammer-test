@@ -49,6 +49,10 @@ struct Problem {
 		MultipleSkyCameras,
 		NoCubemap,              ///< Shiny materials ($envmap env_cubemap) but no env_cubemap: they mirror the sky
 		CubemapsNotBuilt,       ///< The compiled map has env_cubemaps whose reflections were never built
+		PlayerStartInSolid,     ///< layout_checks: the player spawns stuck
+		EntityOutsideWorld,     ///< layout_checks: a point entity in the void
+		LightmapScale,          ///< layout_checks: extreme lightmap scales (to = the new scale)
+		NpcsWithoutNodes,       ///< layout_checks: NPCs but no info_node (objects = the NPCs)
 	};
 
 	Severity severity = Severity::Warning;

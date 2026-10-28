@@ -56,6 +56,8 @@ add_library(smeapp STATIC
 	viewport.cpp
 	viewport_tools.cpp
 	viewport_doors.cpp
+	viewport_ropes.cpp
+	editor_helpers.cpp
 	viewport_displace.cpp
 	visgroups_panel.cpp)
 target_include_directories(smeapp PUBLIC .)

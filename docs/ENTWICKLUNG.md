@@ -101,6 +101,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; `makeWater` (Oberseite Wasser, Rest nodraw, `water_lod_control` + `env_cubemap` mit `sides`, ein Undo-Schritt); Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`); Start-Raum `edit::starterRoom` (sechs Brushes ohne Leak, Licht, info_player_start, env_cubemap; ein Undo-Schritt) |
 | `recent_projects` | Liste „zuletzt bearbeitet“ für die Startseite: `rememberProject` (neueste oben, je Karte einmal, Pfad ohne Groß-/Kleinschreibung und Slash-Richtung), Text `zeit\tspiel\tpfad` je Zeile |
 | `soundscape_area` | Wo ein Soundscape-Entity zu hören ist: Kugel (`radius`, −1 = überall; `soundscapeRadius`) oder Block (`trigger_soundscape`, dessen Key `soundscape` den Namen trägt; `soundscapeTrigger`). `setSoundscapeRadius`, `makeSoundscapeBlock` (macht `env_soundscape` zu `env_soundscape_triggerable`, vergibt einen Namen, legt den Trigger an oder ändert seine Größe), `removeSoundscapeBlock` (zurück zur Kugel) – je ein Undo-Schritt |
+| `layout_checks` | Prüfungen zur Lage (von `checkMap` angehängt, Fixes über `applyFix`): Spielerstart im Brush (Hülle 32 × 32 × 72 über dem Origin gegen Welt + `func_detail`, Hint/Skip/Trigger/Wasser blockieren nicht; Fix hebt auf die Oberkante), Punkt-Entities außerhalb der Welt-Box (Leak), Lightmap-Scale < 4 / > 128 (Werkzeug-Flächen nicht; Fix 16 / 64), laufende NPCs ohne `info_node` (Fix: 3 × 3 Knoten im Abstand 96 um jedes NPC, nur auf freiem Boden, `nodeSpotsAround`). Box-gegen-Brush: Trennung über die Brush-Ebenen und die Box-Achsen |
+| `map_helpers` | Seile: `edit::makeRope` (move_rope + keyframe_ropes, `NextKey`, FGD-Standards, Slack), `ropePointsOf` (Origins bzw. Oberkante von Brushes), `ropeCurves` + `ropeSag` (Parabel: Länge ≈ Spannweite + 8·Durchhang²/(3·Spannweite)); Leitern: `edit::makeLadder` (dünne Achse = Tiefe, Vorderseite = Seite mit Platz für den Spieler; `func_useableladder` mit `point0`/`point1` 18 Einheiten davor, `info_ladder_dismount` oben hinter der Kante und unten einen Schritt zurück) |
 | `checks` | Prüfungen mit Autofix, Leak aus `.lin`; Prop-Klasse passend zum Modell (`betterPropClass`), `ambient_generic` „Is NOT Looped“ gegen die WAV, mehrere `sky_camera`; `CheckCache` (im Problems-Panel) liest jedes Modell und jeden Sound nur einmal je Spiel; Spiegelungen: glänzende Materialien (`$envmap env_cubemap`, je Material einmal gelesen) ohne `env_cubemap` → `NoCubemap` (Autofix setzt eins über den Spielerstart), kompilierte Karte (`CheckContext::compiledMap`, nur wenn nicht älter als die `.vmf`; `readBspCubemaps` aus `compile_log`, erneut nur bei geänderter Datei) mit Samples aber ohne gebaute Cubemaps → `CubemapsNotBuilt` mit `Problem::action` „buildCubemaps“ (keine Kartenänderung: `ProblemsPanel::actionRequested` → `MainWindow::buildCubemapsInCompile` öffnet den Compile-Dialog mit Cubemaps an) |
 | `doors` | Türen: `DoorSettings` ↔ Keys (`readDoor`, `edit::setDoor`), Rahmen aus der Brush-Box (`doorFrame`: dünne Seite = vorn, rechts = rechte Hand, wenn man auf die Vorderseite schaut), Scharnier-Origin (`hingePoint`), `movedir` ↔ Richtung, Schiebeweg wie `CBaseDoor::Spawn` (Größe − 2 − Lip), Vorschau-Bewegung (`doorMotion`: Scharnier, Drehungen gegen den Uhrzeigersinn, bei „away from player“ beide; Prop-Türen: vorwärts = −distance wie `CPropDoorRotating`), `edit::makeDoor` (Brush-Türen behalten die Brushes, Doppeltür per `splitSolid` in der Mitte, gleiche `targetname`; Prop-Tür ersetzt den Block, Gierwinkel aus der Modell-Box, ohne Box HL2-Konvention Blatt entlang +Y), Tür-Sounds/-Modelle, `uniqueTargetName`, Areaportal finden/verknüpfen |
 | `io_links` | Verbinden in einem Schritt: `rankedOutputs`/`rankedInputs` (kleine Vorzugstabellen je Klasse/Familie `trigger_` + FGD-Reihenfolge), `suggestConnections`, `edit::connect` (benennt das Ziel, falls nötig, im selben Undo-Schritt); `edit::setTarget` (Ziel-Feld wie *Target NPC* auf ein Entity ohne Namen: bekommt im selben Schritt einen) |
@@ -129,10 +131,10 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | Datei(en) | Aufgabe |
 |---|---|
 | `main` | Start, Kommandozeilen-Optionen (Automatik, Screenshots), alte Einstellungen übernehmen |
-| `editor` | `Editor`: Spiel, Karte, Undo, Auswahl, Werkzeug, Einstellungen; alle Änderungen über `commit()` |
+| `editor`, `editor_helpers` | `Editor`: Spiel, Karte, Undo, Auswahl, Werkzeug, Einstellungen; alle Änderungen über `commit()`; Make rope / Make ladder aus der Auswahl in `editor_helpers` |
 | `main_window` | Hauptfenster: Seitenleiste, Ansichten, Docks, Menüs, Werkzeugleisten, Statusleiste |
 | `camera` | Kamera einer Ansicht (Matrizen, Strahlen) |
-| `viewport`, `viewport_tools`, `viewport_displace`, `viewport_doors` | eine Ansicht: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools`, Displacement-Werkzeug (Pinsel, Striche) in `viewport_displace`, Tür-Vorschau (Scharnier, Bogen, Geist, „Test open“) in `viewport_doors`; Verbinden-Modus und anklickbare Verbindungslinien (`connectionAt`) in `viewport` |
+| `viewport`, `viewport_tools`, `viewport_displace`, `viewport_doors`, `viewport_ropes` | eine Ansicht; hängende Seile (`drawRopes`, nur nach Änderungen neu berechnet, mit den Helfern ausblendbar) in `viewport_ropes`;: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools`, Displacement-Werkzeug (Pinsel, Striche) in `viewport_displace`, Tür-Vorschau (Scharnier, Bogen, Geist, „Test open“) in `viewport_doors`; Verbinden-Modus und anklickbare Verbindungslinien (`connectionAt`) in `viewport` |
 | `renderer`, `renderer_shadows`, `renderer_cubemaps` | OpenGL 3.3: Brushes, Displacements, Entities, Modelle, Himmel, Licht-Vorschau; Schattenkarten; Cubemap-Reflexionen; Ansicht *Lightmap density* (`u_mode` 2: Lightmap-Scale je Fläche als R8UI-Textur auf Einheit 16, beim Neuaufbau gefüllt, Schachbrett je Luxel, Legende `densityLegend` im Viewport) |
 | `material_cache` | Materialien/Texturen im Hintergrund laden (auch Relief-Höhen) |
 | `model_cache`, `model_thumbnails` | Modelle im Hintergrund laden; Vorschaubilder per CPU-Rasterizer |
@@ -678,6 +680,30 @@ mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo un
   alle Nicht-Modell-Materialien werden einmal fürs Wasser gelesen) – Dauer mit echtem HL2 messen.
 
 ## Fahrplan
+
+### Recherche Oktober 2026: was einem Source-1-Mapper noch fehlt (nach Nutzen für Mapper ohne Programmierkenntnisse ÷ Aufwand)
+
+Quellen: Valve Developer Community (Compile Errors, Leak, Node graph, info_node, Func detail, VIS optimization, Move rope/Keyframe rope, Hammer++, Third Party Tools, Crowbar, VIDE, Bspzip), interlopers.net-Fehlerprüfer (in Foren empfohlen), Mapbase-Releases (ModDB v7.0/v7.3), MapCore-Thread zu Hammer++. developer.valvesoftware.com war aus der Cloud-Umgebung nicht abrufbar; die Punkte stützen sich auf Suchergebnisse dieser Seiten.
+
+Erledigt (Branch `research`): häufige Kompilierfehler erklärt; Spielerstart im Brush (Fix), Entities im Nichts, extreme Lightmap-Scales (Fix), NPCs ohne `info_node` (Fix: Knoten setzen); Make rope (mit hängender Vorschau, wie Hammer++); Make ladder.
+
+1. **Play from here**: Karte mit dem Spieler an der Kameraposition starten (temporärer `info_player_start` mit Master-Flag in einer Kopie der VMF, schnelles Kompilieren). Hoher Nutzen, mittlerer Aufwand.
+2. **Nodegraph sichtbar machen**: Verbindungen der `info_node`s (Sichtlinie + Bodenabstand wie `ai_show_connect`) im Viewport, unverbundene Knoten rot; Knoten-Malwerkzeug (Klick setzt Knoten im Raster). Hoch / mittel.
+3. **Visleaf-/Portal-Ansicht** aus der `.prt` (wie Hammer „Load portal file“), mit Hinweisen zu `func_detail`/Hint. Mittel / mittel.
+4. **Areaportal-Prüfung vor dem Kompilieren**: Areaportal muss die Öffnung ganz füllen und Welt-Brushes berühren (nicht `func_detail`). Mittel / mittel.
+5. **Logik-Debugger**: I/O-Kette einer Entity simulieren („wenn der Trigger feuert, passiert …“), Zeitleiste mit Delays. Hoch / hoch.
+6. **Modell dekompilieren** (wie Crowbar): QC/SMD aus `.mdl` für Anpassungen (Skins, Hitbox, Kollision), gleich wieder bauen. Mittel / hoch.
+7. **Inhalte packen und prüfen** (wie VIDE/Pakrat): fehlende Custom-Dateien einer Karte finden und in die BSP packen; Ship-Panel erweitert. Mittel / mittel.
+8. **3D-Skybox-Vorschau**: `sky_camera`-Bereich im Maßstab um die Karte zeichnen, „Send to skybox“ (Kopie mit Faktor 1/16). Mittel / mittel.
+9. **Displacements im Vertex-Werkzeug** und Nähen über verschiedene Power (alter Punkt 2). Mittel / mittel.
+10. **Overlay-Ecken im Viewport ziehen**, Decals über Ecken (alter Punkt 3). Mittel / mittel.
+11. **Leitern/Seile weiter**: Seil-Werkzeug mit Shift-Ziehen für neue Keyframes (wie Hammer), Leiter-Modelle mit `info_ladder_dismount`-Vorschau. Niedrig / niedrig.
+12. **Prop-Prüfung mit `prop_data`** (nur-statisch/nur-dynamisch, Masse) und Budget-Grenzen weiterer Spiele (Black Mesa, Strata) mit Quelle (alter Punkt 1). Mittel / niedrig.
+13. **Instanzen bearbeiten** direkt in der Karte (öffnen, ändern, zurückschreiben). Mittel / mittel.
+14. **Mesh-Modus (Variante B)**: freie Meshes → konvex zerlegen bzw. als Static Prop + Nodraw-Hülle (alter Punkt 4). Hoch / hoch.
+15. **Echte Physik-Simulation, VRAD-Schnellvorschau** (alter Punkt 5). Mittel / hoch.
+
+### Älterer Fahrplan
 
 1. Quick wins aus der Hammer-Schmerzpunkt-Recherche erledigt (Prop-Klasse, Map Budget, Make water, Sound-Schleifen, robuste VMF, Lightmap density, benutzte Modelle, sky_camera). Offen: Budget-Grenzen weiterer Spiele (Black Mesa, Strata) mit Quelle ergänzen; Prop-Prüfung mit `prop_data` (nur-statisch/nur-dynamisch).
 1. Rückmeldung von echten Installationen (Probe-Bericht, `sme-probe model`), Fehler beheben.

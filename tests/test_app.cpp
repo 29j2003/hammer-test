@@ -74,6 +74,7 @@
 #include <sme/brush.h>
 #include <sme/displacement.h>
 #include <sme/doors.h>
+#include <sme/map_helpers.h>
 #include <sme/entity_search.h>
 #include <sme/text.h>
 #include <sme/fidelity_effects.h>
@@ -6024,6 +6025,119 @@ TEST_CASE("problems: shiny materials without env_cubemap get one, unbuilt cubema
 	}
 	std::filesystem::last_write_time(bsp, std::filesystem::last_write_time(toPath(vmf)) + std::chrono::minutes(5));
 	CHECK_FALSE(button("Build cubemaps"));
+}
+
+TEST_CASE("layout checks, ropes and ladders: player start in the floor, NPCs without nodes, a rope and a ladder from the menu") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+
+	// A floor and a wall; the player start sunk into the floor, an NPC without nodes.
+	{
+		Transaction t(editor.doc(), "Room");
+		Solid floor = makeBlock(editor.doc(), box({-512, -512, -16}, {512, 512, 0}), "DEMO/CONCRETE");
+		Solid wall = makeBlock(editor.doc(), box({-64, -128, 0}, {0, 128, 128}), "DEMO/CONCRETE");
+		t.touchSolid({0, floor.id});
+		t.touchSolid({0, wall.id});
+		editor.doc().world.solids.push_back(floor);
+		editor.doc().world.solids.push_back(wall);
+		editor.commit(t.finish());
+	}
+	auto [startMade, startId] = edit::placeEntity(editor.doc(), "info_player_start", {256, 0, -10}, editor.entities()->find("info_player_start"));
+	editor.commit(std::move(startMade));
+	auto [npcMade, npcId] = edit::placeEntity(editor.doc(), "npc_citizen", {200, 200, 0}, editor.entities()->find("npc_citizen"));
+	editor.commit(std::move(npcMade));
+	(void)npcId;
+
+	const auto clickFix = [&](const QString& label) {
+		window.raiseDock("Problems");
+		window.problems()->runChecks();
+		settle();
+		QPushButton* fix = nullptr;
+		for (auto* button : window.problems()->findChildren<QPushButton*>()) {
+			if (button->text() == label) fix = button;
+		}
+		REQUIRE_MESSAGE(fix, label.toStdString());
+		QTest::mouseClick(fix, Qt::LeftButton);
+		settle();
+	};
+	clickFix("Move onto the floor");
+	CHECK(editor.doc().findEntity(startId)->origin().z == doctest::Approx(1));
+	const auto nodesBefore = std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "info_node"; });
+	CHECK(nodesBefore == 0);
+	clickFix("Place nodes around the NPCs");
+	const auto nodes = std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "info_node"; });
+	CHECK(nodes >= 4);
+	editor.undo();   // one undo step for all of them
+	settle();
+	CHECK(std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "info_node"; }) == 0);
+
+	const auto menuAction = [&](const char* name) -> QAction* {
+		for (auto* action : window.findChildren<QAction*>()) {
+			if (action->objectName() == name) return action;
+		}
+		return nullptr;
+	};
+	// A rope between two entities: a move_rope chain, selected afterwards.
+	auto [aMade, aId] = edit::placeEntity(editor.doc(), "info_target", {-200, 0, 200}, nullptr);
+	editor.commit(std::move(aMade));
+	auto [bMade, bId] = edit::placeEntity(editor.doc(), "info_target", {200, 0, 200}, nullptr);
+	editor.commit(std::move(bMade));
+	Selection pair;
+	pair.entities = {aId, bId};
+	editor.setSelection(pair);
+	auto* rope = menuAction("brushesMakeRope");
+	REQUIRE(rope);
+	rope->trigger();
+	settle();
+	REQUIRE(editor.selection().entities.size() == 2);
+	const auto* moveRope = editor.doc().findEntity(editor.selection().entities[0]);
+	CHECK(moveRope->classname() == "move_rope");
+	CHECK(moveRope->get("NextKey") == editor.doc().findEntity(editor.selection().entities[1])->get("targetname"));
+	CHECK(ropeCurves(editor.doc()).size() == 1);
+	window.view3D()->requestFrame();
+	settle();
+
+	// A ladder against the wall: the brush selected, then Make ladder.
+	Solid ladderBrush = makeBlock(editor.doc(), box({0, -16, 0}, {8, 16, 128}), "DEMO/CONCRETE");
+	{
+		Transaction t(editor.doc(), "Ladder brush");
+		t.touchSolid({0, ladderBrush.id});
+		editor.doc().world.solids.push_back(ladderBrush);
+		editor.commit(t.finish());
+	}
+	Selection ladderSel;
+	ladderSel.solids.push_back({0, ladderBrush.id});
+	editor.setSelection(ladderSel);
+	auto* ladder = menuAction("brushesMakeLadder");
+	REQUIRE(ladder);
+	ladder->trigger();
+	settle();
+	REQUIRE(editor.selection().entities.size() == 3);
+	const auto* useable = editor.doc().findEntity(editor.selection().entities[0]);
+	CHECK(useable->classname() == "func_useableladder");
+	CHECK(useable->get("point1") == "26 0 128");
+	// Nothing selected: a message instead of a ladder.
+	editor.clearSelection();
+	const auto count = editor.doc().entities.size();
+	ladder->trigger();
+	CHECK(editor.doc().entities.size() == count);
 }
 
 namespace {

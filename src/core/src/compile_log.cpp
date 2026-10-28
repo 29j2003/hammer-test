@@ -35,6 +35,32 @@ constexpr std::array KNOWN = {
 	KnownMessage{"could not locate 'gamedata'", CompileMessage::Severity::Info,
 	             "gameinfo.txt names no FGD for Hammer. Harmless for compiling (the editor finds FGDs itself)."},
 	KnownMessage{"run buildcubemaps", CompileMessage::Severity::Info, "Type buildcubemaps in the game console once to bake reflections."},
+	// Common errors, explained (wording of VBSP/VVIS/VRAD; the Valve wiki's "Compile Errors" page).
+	KnownMessage{"duplication of '", CompileMessage::Severity::Warning,
+	             "A VRAD lights file has a line it cannot read (older fidelity_lights.rad had comment lines). Harmless; Install features "
+	             "again (Project > Features) to write the file anew."},
+	KnownMessage{"texture axis perpendicular to face", CompileMessage::Severity::Error,
+	             "A face's texture lies edge-on to it (its texture axes run into the face), so it cannot be drawn. Select the face (Face mode), "
+	             "then Justify > Fit or reset its alignment."},
+	KnownMessage{"bad surface extents", CompileMessage::Severity::Error,
+	             "A face is too large for its lightmap scale (or its texture scale is tiny). Raise the face's lightmap scale, or cut the face "
+	             "into smaller pieces; Problems lists extreme scales."},
+	KnownMessage{"max_points_on_winding", CompileMessage::Severity::Error,
+	             "A brush is broken or very far from the grid (a side with too many corners). Snap it to the grid (Ctrl+B) or rebuild it."},
+	KnownMessage{"doesn't touch two areas", CompileMessage::Severity::Error,
+	             "A func_areaportal does not close an opening between two sealed areas. It must fill the doorway completely and touch "
+	             "world brushes (not func_detail) all around; the areas on both sides must be sealed from each other."},
+	KnownMessage{"areaportal", CompileMessage::Severity::Warning,
+	             "An areaportal problem: an areaportal must fill its opening completely, and the spaces on its two sides must be sealed "
+	             "from each other by world brushes."},
+	KnownMessage{"too many light styles", CompileMessage::Severity::Error,
+	             "More than 4 switchable lights (lights with a name, or with a style) shine on one face. Give fewer lights a name, or cut "
+	             "the face into smaller pieces."},
+	KnownMessage{"sided brush face", CompileMessage::Severity::Error,
+	             "A displacement sits on a face that does not have exactly 4 corners. Displacements need 4-sided faces: make it flat "
+	             "again (Displacement tool) and cut the brush so the face has 4 corners."},
+	KnownMessage{"loadportals", CompileMessage::Severity::Error,
+	             "VVIS needs the .prt file VBSP writes only for a sealed map. Fix the leak first (Problems shows it), then compile again."},
 	KnownMessage{"couldn't open", CompileMessage::Severity::Error,
 	             "A file could not be opened. For VVIS/VRAD this usually means VBSP failed or the map leaked (no .prt file)."},
 	KnownMessage{"max_map_", CompileMessage::Severity::Error,

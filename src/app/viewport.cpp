@@ -130,12 +130,14 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	connect(editor, &Editor::displaceSettingsChanged, this, &Viewport::requestFrame);   // brush circle size
 	connect(editor, &Editor::documentChanged, this, [this] {
 		m_needsRebuild = true;
+		m_ropesDirty = true;
 		m_selectionDirty = true;
 		requestFrame();
 	});
 	connect(editor, &Editor::documentReplaced, this, [this] {
 		m_needsRebuild = true;
 		m_leak.clear();
+		m_ropesDirty = true;
 		QTimer::singleShot(0, this, [this] {
 			if (m_glReady) {
 				makeCurrent();
@@ -581,6 +583,7 @@ void Viewport::paintGL() {
 			line(lines, m_leak[i], m_leak[i + 1], {1, 0.1f, 0.1f, 1});
 		}
 	}
+	drawRopes(lines);   // hidden behind walls like the rope in the game
 	m_renderer.drawLines(lines, viewProj, false, 2.f);
 	lines.clear();
 	drawToolLines(lines);
