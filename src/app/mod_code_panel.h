@@ -13,6 +13,7 @@
 
 #include <QElapsedTimer>
 #include <QPointer>
+#include <QProcess>
 #include <QWidget>
 
 #include <filesystem>
@@ -33,6 +34,9 @@ class QPushButton;
 namespace sme::app {
 
 class Editor;
+
+/// How "Make report" works, for the tooltips of its buttons (Map menu, Compile, Problems).
+[[nodiscard]] QString reportHowTo();
 
 /// The Mod code tab of the Project page (see the file comment).
 class ModCodePanel : public QWidget {
@@ -58,6 +62,10 @@ public:
 	/// Stops the running script (and what it started, e.g. the build).
 	void cancel();
 	[[nodiscard]] bool running() const { return m_process != nullptr; }
+	/// What the last run was.
+	[[nodiscard]] ModCodeAction lastAction() const { return m_action; }
+	/// Whether `action` can start now, else why not (in plain words).
+	[[nodiscard]] bool canRun(ModCodeAction action, QString* why = nullptr) const;
 	/// The last run: what it was and how it went.
 	[[nodiscard]] const ScriptRun& lastRun() const { return m_run; }
 
@@ -93,7 +101,6 @@ private:
 	void updateBanner();
 	void updateButtons();
 	void log(const QString& text, const QString& color = {});
-	[[nodiscard]] bool canRun(ModCodeAction action, QString* why = nullptr) const;
 	[[nodiscard]] QString settingsKey(const QString& name) const;
 	[[nodiscard]] bool option(const QString& name) const;
 	void setOption(const QString& name, bool on);

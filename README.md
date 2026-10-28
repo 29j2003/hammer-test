@@ -166,7 +166,7 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   into a view.
 - **Side bar**: on the far left *Map*, *Materials*, *Models*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
-  has the tabs *Overview*, *Maps*, *Menu*, *Texts*, *Source control*, *Mod code* and *Ship* (below). *Overview* shows the chosen game or
+  has the tabs *Overview*, *Features*, *Maps*, *Menu*, *Texts*, *Source control*, *Mod code* and *Ship* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
   was found, and the entity definitions (FGDs); **New mod ...** is there and in the File menu.
 - **Maps** (Project page): every map of the game or mod in one list, with when it was changed, whether its BSP is *up to date*,
@@ -201,6 +201,13 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Mod code** (Project page): if your mod is built from its own source (Mapbase with mapbase-fidelity), *Update mod*
   builds and installs it from inside Mapsmith – what `update.bat` does, with steps, progress and a clear summary, no
   console window; optionally after every Pull or when Mapsmith starts. Building needs Windows with Visual Studio 2022.
+  *Make report* packs what `fidelity_report` wrote in the game into a zip to send – also in the Map menu and the
+  Compile and Problems panels.
+- **Features** (Project page): one checklist of what mapbase-fidelity does in your mod – ambient occlusion, light
+  shafts, the sound mixer, liquid in bottles and more, all on; untick what the mod should not have (the game uses it
+  from its next start). Offered once when a mod with the add-on is first opened, and in *New mod ...*. *Fresh install
+  ...* lists what `deploy.bat` and Mapsmith made in the mod (never your own files), removes it, writes the features
+  again and installs anew.
 - **Material editor**: the *Materials* page (right-click a material > *Edit material*, *Edit* next to a selected
   face, or *View > Material Editor*). On the left: every material of the game with search, filters and pictures (click one to edit it) and the ones you edited lately. In the
   middle the parameters in groups; a group with a switch in its header is a feature (*Normal map*, *Relief*,

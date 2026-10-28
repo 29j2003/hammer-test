@@ -3,6 +3,7 @@
 #include "compile_window.h"
 
 #include "compile.h"
+#include "mod_code_panel.h"
 
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -48,10 +49,15 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	m_again = new QPushButton(tr("Compile again (F9)"));
 	m_leakButton = new QPushButton(tr("Show leak"));
 	m_leakButton->setVisible(false);
+	m_reportButton = new QPushButton(tr("Make report"));
+	m_reportButton->setObjectName("compileMakeReport");
+	m_reportButton->setToolTip(reportHowTo());
+	m_reportButton->setVisible(false);
 	header->addWidget(m_title, 1);
 	header->addWidget(m_time);
 	header->addWidget(m_total);
 	header->addWidget(m_leakButton);
+	header->addWidget(m_reportButton);
 	header->addWidget(m_cancel);
 	header->addWidget(m_again);
 	v->addLayout(header);
@@ -100,6 +106,7 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	connect(m_cancel, &QPushButton::clicked, runner, &CompileRunner::cancel);
 	connect(m_again, &QPushButton::clicked, this, &CompileWindow::compileAgain);
 	connect(m_leakButton, &QPushButton::clicked, this, &CompileWindow::showLeak);
+	connect(m_reportButton, &QPushButton::clicked, this, &CompileWindow::reportRequested);
 
 	connect(runner, &CompileRunner::started, this, [this](const QString& vmfPath, const QStringList& steps) {
 		m_mapName = QFileInfo(vmfPath).fileName();
@@ -226,6 +233,7 @@ void CompileWindow::finish(bool ok) {
 	updateTimes();
 	m_cancel->setEnabled(false);
 	m_again->setEnabled(true);
+	m_reportButton->setVisible(true);
 	if (ok) {
 		m_total->setValue(100);
 	}

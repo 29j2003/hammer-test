@@ -22,6 +22,7 @@ add_library(smeapp STATIC
 	menu_editor.cpp
 	texts_panel.cpp
 	mod_code_panel.cpp
+	features_panel.cpp
 	mod_page.cpp
 	new_mod_dialog.cpp
 	icons.cpp

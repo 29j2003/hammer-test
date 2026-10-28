@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "mod_code_panel.h"
 
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -128,9 +129,16 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	m_summary = new QLabel(tr("Not checked yet"));
 	auto* check = new QPushButton(tr("Check map"));
 	check->setToolTip(tr("Look for problems now (also runs before every compile)"));
+	// Problems that only show in the game (a wall looks wrong, an effect is missing) go into a
+	// report: the button is here because this is where one looks after testing.
+	auto* report = new QPushButton(tr("Make report"));
+	report->setObjectName("problemsMakeReport");
+	report->setToolTip(reportHowTo());
 	top->addWidget(m_summary, 1);
+	top->addWidget(report);
 	top->addWidget(check);
 	layout->addLayout(top);
+	connect(report, &QPushButton::clicked, this, &ProblemsPanel::reportRequested);
 	m_list = new QListWidget;
 	m_list->setWordWrap(true);
 	m_list->setSelectionMode(QAbstractItemView::NoSelection);

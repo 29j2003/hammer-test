@@ -67,6 +67,8 @@ signals:
 	/// "Show leak line" was pressed / a problem's objects were selected and should be framed.
 	void showLeak(const std::vector<Vec3>& line);
 	void frameRequested();
+	/// "Make report" was pressed (something looked wrong in the game).
+	void reportRequested();
 
 private:
 	void showProblems();

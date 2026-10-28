@@ -3,9 +3,11 @@
 #include "new_mod_dialog.h"
 
 #include "editor.h"
+#include "features_panel.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QHBoxLayout>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -17,12 +19,15 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <sme/fidelity_effects.h>
 #include <sme/game.h>
+#include <sme/mod_features.h>
 #include <sme/text.h>
 
 namespace sme::app {
 
-QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QStringList& maps, QString* error) {
+QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QStringList& maps, QString* error,
+                           const std::optional<std::set<std::string>>& featuresOff) {
 	const auto& steam = editor->discovery().steam;
 	if (steam.sourceModsDir().empty()) {
 		if (error) *error = QObject::tr("Steam's sourcemods folder was not found.");
@@ -34,6 +39,11 @@ QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QString
 	if (!created.error.empty()) {
 		if (error) *error = QString::fromStdString(created.error);
 		return {};
+	}
+	// The features chosen up front: kept in the mod (autoexec runs them once the add-on is there).
+	if (featuresOff) {
+		saveFeatureChoice(created.folder, *featuresOff, false);
+		saveEnhancementSettings(created.folder, withFeatureEffects({}, *featuresOff));
 	}
 	// Find it like every other mod and open it.
 	editor->discover(fromPath(steam.root()));
@@ -50,7 +60,7 @@ bool runNewModDialog(Editor* editor, QWidget* parent) {
 	NewModDialog dialog(editor, parent);
 	if (dialog.exec() != QDialog::Accepted) return false;
 	QString error;
-	const QString key = createModAndSwitch(editor, dialog.modTemplate(), dialog.mapsToCopy(), &error);
+	const QString key = createModAndSwitch(editor, dialog.modTemplate(), dialog.mapsToCopy(), &error, dialog.featuresOff());
 	if (key.isEmpty()) {
 		QMessageBox::warning(parent, QObject::tr("New mod"), error);
 		return false;
@@ -120,6 +130,29 @@ NewModDialog::NewModDialog(Editor* editor, QWidget* parent) : QDialog(parent), m
 	}
 	v->addWidget(m_maps, 1);
 
+	// mapbase-fidelity's features, chosen right away (all on); folded away until wanted.
+	auto* featureRow = new QHBoxLayout;
+	auto* featureNote = new QLabel(tr("Features of mapbase-fidelity: all on. They are used once the add-on is installed in the mod "
+	                                  "(Project > Mod code); change them any time under Project > Features."));
+	featureNote->setProperty("role", "description");
+	featureNote->setWordWrap(true);
+	auto* featureToggle = new QPushButton(tr("Choose features ..."));
+	featureToggle->setObjectName("newModChooseFeatures");
+	featureToggle->setCheckable(true);
+	featureRow->addWidget(featureNote, 1);
+	featureRow->addWidget(featureToggle);
+	v->addLayout(featureRow);
+	m_features = new FeatureChecklist(true);
+	m_features->setObjectName("newModFeatures");
+	m_features->setVisible(false);
+	v->addWidget(m_features);
+	connect(featureToggle, &QPushButton::toggled, m_features, &QWidget::setVisible);
+	connect(m_features, &FeatureChecklist::toggled, this, [this, featureNote] {
+		const auto off = m_features->off();
+		featureNote->setText(off.empty() ? tr("Features of mapbase-fidelity: all on.")
+		                                 : tr("Features of mapbase-fidelity: %n switched off.", nullptr, int(off.size())));
+	});
+
 	m_where = new QLabel;
 	m_where->setProperty("role", "description");
 	m_where->setWordWrap(true);
@@ -157,6 +190,10 @@ ModTemplate NewModDialog::modTemplate() const {
 	mod.base = static_cast<ModBase>(m_base->currentData().toInt());
 	if (mod.base == ModBase::Mapbase) mod.extraMounts = mapbaseMounts(m_editor->discovery().steam.sourceModsDir());
 	return mod;
+}
+
+std::set<std::string> NewModDialog::featuresOff() const {
+	return m_features->off();
 }
 
 QStringList NewModDialog::mapsToCopy() const {

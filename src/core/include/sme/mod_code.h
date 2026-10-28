@@ -43,6 +43,7 @@ enum class ModCodeAction {
 	UpdateNoVrad,    ///< update.ps1 -NoVrad
 	Deploy,          ///< deploy.ps1: only the game files (no build)
 	Report,          ///< report.ps1: packs fidelity_report into fidelity_report.zip
+	RemoveGameFiles, ///< deploy.ps1 -Remove: takes out what deploy.ps1 put into the mod (fresh install)
 };
 
 /// Building the DLLs needs Windows with Visual Studio 2022; deploy and report also run with pwsh.
