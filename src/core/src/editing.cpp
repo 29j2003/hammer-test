@@ -206,6 +206,12 @@ std::string entityModelKey(const Entity& entity, const EntityCatalog* catalog) {
 	return modelVariantKey(variant);
 }
 
+bool isSeeThroughHelper(const Entity& entity) {
+	if (!entity.solids.empty() || !entity.get("model").empty()) return false;
+	const std::string& name = entity.classname();
+	return startsWithI(name, "scripted_") || startsWithI(name, "aiscripted_");
+}
+
 Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog) {
 	Bounds box;
 	for (const auto& ref : selection.solids) {

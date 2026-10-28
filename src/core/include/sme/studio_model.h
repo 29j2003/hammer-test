@@ -30,6 +30,13 @@ struct ModelVertex {
 	float uv[2];
 };
 
+/// Which bones move a vertex and how much (the .vvd's mstudioboneweight_t; up to three).
+struct ModelVertexWeights {
+	float weight[3] = {1, 0, 0};
+	std::uint8_t bone[3] = {0, 0, 0};
+	std::uint8_t count = 0;   ///< 0: the vertex follows no bone
+};
+
 /// Triangles of one material.
 struct ModelMesh {
 	std::string material;          ///< Material name for the cache ("models/props/crate01"), resolved through $cdmaterials
@@ -40,6 +47,7 @@ struct ModelMesh {
 /// A model's triangles (LOD 0) ready for drawing, with its bounds.
 struct ModelGeometry {
 	std::vector<ModelVertex> vertices;
+	std::vector<ModelVertexWeights> weights;   ///< One per vertex (skinning for animation previews)
 	std::vector<std::uint32_t> indices;   ///< Triangle list
 	std::vector<ModelMesh> meshes;
 	Bounds bounds;

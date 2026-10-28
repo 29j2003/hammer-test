@@ -181,6 +181,16 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 		return fail("vertex file (.vvd) out of range");
 	}
 	ModelGeometry geometry;
+	const auto readWeights = [&](long long index) {
+		const long long base = vertexStart + index * static_cast<long long>(VVD_VERTEX_SIZE);
+		ModelVertexWeights w;
+		w.count = std::min<std::uint8_t>(vvd.get<std::uint8_t>(base + 15), 3);
+		for (int k = 0; k < 3; ++k) {
+			w.weight[k] = vvd.get<float>(base + k * 4);
+			w.bone[k] = vvd.get<std::uint8_t>(base + 12 + k);
+		}
+		return w;
+	};
 	const auto readVertex = [&](long long index) {
 		const long long base = vertexStart + index * static_cast<long long>(VVD_VERTEX_SIZE);
 		ModelVertex v{};
@@ -196,6 +206,7 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 		geometry.vertices.reserve(static_cast<std::size_t>(lodVerts));
 		for (int i = 0; i < lodVerts; ++i) {
 			geometry.vertices.push_back(readVertex(i));
+			geometry.weights.push_back(readWeights(i));
 		}
 	} else {
 		for (int f = 0; f < numFixups; ++f) {
@@ -207,6 +218,7 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 			}
 			for (int i = 0; i < n; ++i) {
 				geometry.vertices.push_back(readVertex(source + i));
+				geometry.weights.push_back(readWeights(source + i));
 			}
 		}
 	}

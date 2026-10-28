@@ -573,6 +573,18 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 		if (isSound) attachAssetMenu(combo->lineEdit(), AssetKind::Sound);
 		if (isModel) attachAssetMenu(combo->lineEdit(), AssetKind::Model);
 		if (isParticle) attachAssetMenu(combo->lineEdit(), AssetKind::Particle);
+		if (isSequence && ids.size() == 1) {
+			// ▶: the animation plays on the Animations page (the model this entity animates).
+			auto* play = new QToolButton;
+			play->setObjectName("previewSequence");
+			play->setText(QStringLiteral("▶"));
+			play->setToolTip(tr("Watch this animation on the Animations page"));
+			const int entityId = ids.front();
+			connect(play, &QToolButton::clicked, this, [this, combo, entityId] {
+				if (const auto* entity = m_editor->doc().findEntity(entityId)) emit animationPreviewRequested(modelFor(*entity), combo->currentText().trimmed());
+			});
+			after = play;
+		}
 		if (isMaterial) {
 			attachAssetMenu(combo->lineEdit(), AssetKind::Material);
 			auto* use = new QToolButton;

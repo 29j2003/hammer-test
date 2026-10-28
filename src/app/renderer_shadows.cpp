@@ -135,6 +135,7 @@ void SceneRenderer::drawDepth(const QMatrix4x4& viewProjection) {
 		glDrawArrays(GL_TRIANGLES, batch.first, batch.count);
 	}
 	for (const auto& instance : m_modelInstances) {
+		if (instance.opacity < 1.f) continue;   // see-through helpers cast no shadow
 		if (auto* model = gpuModel(instance.path)) {
 			m_depthProgram->setUniformValue("u_model", instance.transform);
 			glBindVertexArray(model->vao);

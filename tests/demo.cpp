@@ -9,6 +9,7 @@
 #include <sme/editing.h>
 #include <sme/map.h>
 #include <sme/mod_menu.h>
+#include <sme/studio_anim.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -539,12 +540,52 @@ void createDemo(Fixture& f) {
 	// Model with animations (sequences shared through an include model, like HL2's citizens).
 	// A stand-in person made of boxes (real .mdl/.vvd/.vtx files, so the viewport and the
 	// model browser show it like any model of the game).
-	writeStudioModel(f.mod / "models/humans/group01/male_07.mdl",
-	                 makeStudioModel({{-7, -10, 0, 7, -2, 34}, {-7, 2, 0, 7, 10, 34},     // legs
-	                                  {-8, -12, 34, 8, 12, 60}, {-6, -18, 36, 6, -12, 58}, {-6, 12, 36, 6, 18, 58},   // body, arms
-	                                  {-5, -5, 60, 6, 5, 72}},                            // head
-	                                 {"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"}, "models/humans/male_shared.mdl", "male_sheet",
-	                                 "models/humans/"));
+	// It has a skeleton like HL2's (ValveBiped bones) and animations of its own; the walk cycles
+	// come from the shared model, as in the game.
+	const std::vector<StudioModelSpec::Bone> skeleton = {
+		{"ValveBiped.Bip01_Pelvis", -1, {0, 0, 34}, {0, 0, 0}},     {"ValveBiped.Bip01_Spine", 0, {0, 0, 0}, {0, 0, 0}},
+		{"ValveBiped.Bip01_Head1", 1, {0, 0, 26}, {0, 0, 0}},       {"ValveBiped.Bip01_L_UpperArm", 1, {0, 15, 24}, {0, 0, 0}},
+		{"ValveBiped.Bip01_R_UpperArm", 1, {0, -15, 24}, {0, 0, 0}}, {"ValveBiped.Bip01_L_Thigh", 0, {0, 6, 0}, {0, 0, 0}},
+		{"ValveBiped.Bip01_R_Thigh", 0, {0, -6, 0}, {0, 0, 0}}};
+	// One frame: every bone at rest, some turned (bone index -> pitch about the side axis, roll).
+	const auto pose = [&skeleton](std::initializer_list<std::tuple<int, float, float>> turns, float drop = 0) {
+		std::vector<std::array<float, 6>> frame;
+		for (const auto& bone : skeleton) frame.push_back({bone.pos[0], bone.pos[1], bone.pos[2], 0, 0, 0});
+		frame[0][2] -= drop;
+		for (const auto& [bone, pitch, roll] : turns) {
+			frame[std::size_t(bone)][3] = roll;
+			frame[std::size_t(bone)][4] = pitch;
+		}
+		return frame;
+	};
+	const auto cycle = [&pose](int frames, float legs, float arms, float drop = 0) {
+		std::vector<std::vector<std::array<float, 6>>> out;
+		for (int i = 0; i < frames; ++i) {
+			const float s = std::sin(float(i) / float(frames - 1) * 2.f * float(std::numbers::pi));
+			out.push_back(pose({{5, legs * s, 0}, {6, -legs * s, 0}, {3, -arms * s, 0}, {4, arms * s, 0}}, drop * std::abs(s)));
+		}
+		return out;
+	};
+	{
+		StudioModelSpec citizen;
+		citizen.groups.push_back({"body", {{"male_07",
+		                                    {{-7, -10, 0, 7, -2, 34}, {-7, 2, 0, 7, 10, 34},                                          // legs
+		                                     {-8, -12, 34, 8, 12, 60}, {-6, -18, 36, 6, -12, 58}, {-6, 12, 36, 6, 18, 58},   // body, arms
+		                                     {-5, -5, 60, 6, 5, 72}}}}});                                                     // head
+		citizen.boxBones = {6, 5, 1, 4, 3, 2};
+		citizen.bones = skeleton;
+		citizen.textures = {"male_sheet"};
+		citizen.cdmaterials = "models/humans/";
+		citizen.include = "models/humans/male_shared.mdl";
+		citizen.animations = {
+			{"idle_subtle", "ACT_IDLE", 15, true, {pose({}), pose({{1, 0.05f, 0}, {2, -0.08f, 0}}), pose({})}},
+			{"lineidle01", "ACT_IDLE", 15, true, {pose({}), pose({{2, 0.3f, 0}}), pose({})}},
+			{"lineidle02", "", 15, true, {pose({}), pose({{3, -0.4f, 0}, {4, -0.4f, 0}}), pose({})}},
+			{"cower", "ACT_COWER", 10, false, {pose({}), pose({{1, 0.6f, 0}, {3, -2.2f, 0}, {4, -2.2f, 0}, {5, -1.2f, 0}, {6, -1.2f, 0}}, 14)}},
+			{"cower_idle", "ACT_COWER", 10, true, {pose({{1, 0.6f, 0}, {3, -2.2f, 0}, {4, -2.2f, 0}, {5, -1.2f, 0}, {6, -1.2f, 0}}, 14)}},
+		};
+		writeStudioModel(f.mod / "models/humans/group01/male_07.mdl", makeStudioModel(citizen));
+	}
 	// Hammer's green player start figure (info_player_start: studio("models/editor/playerstart.mdl")).
 	writeBytes(mat / "models/editor/playerstart.vtf", makeTexture(32, [](double u, double v) {
 		return Rgba{0.15, 0.75 - v * 0.2, 0.2 + u * 0.05};
@@ -580,8 +621,24 @@ void createDemo(Fixture& f) {
 	          vmt("VertexLitGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glassbottle\"\n"));
 	writeStudioModel(f.sdkBase / "hl2/models/props_junk/glassbottle01a.mdl",
 	                 makeStudioModel({{-3, -3, 0, 3, 3, 8}, {-1.5f, -1.5f, 8, 1.5f, 1.5f, 13}}, {"idle"}, "", "glassbottle01a", "models/props_junk/"));
-	writeBytes(f.mod / "models/humans/male_shared.mdl",
-	           makeModelFile({"walk_all", "run_all", "sitchair1", "sit_ground", "lean_wall", "leanwall_idle", "Idle_Relaxed_SMG1_1", "crouch_idle"}, ""));
+	{
+		// The shared animations: a skeleton without triangles (like HL2's male_shared.mdl).
+		StudioModelSpec shared;
+		shared.bones = skeleton;
+		shared.textures = {"combine_soldier_sheet"};
+		shared.cdmaterials = "models/combine_soldier/";
+		shared.animations = {
+			{"walk_all", "ACT_WALK", 30, true, cycle(17, 0.5f, 0.35f)},
+			{"run_all", "ACT_RUN", 30, true, cycle(13, 0.9f, 0.7f, 2)},
+			{"sitchair1", "ACT_BUSY_SIT_CHAIR", 10, true, {pose({{5, -1.5f, 0}, {6, -1.5f, 0}}, 16)}},
+			{"sit_ground", "ACT_BUSY_SIT_GROUND", 10, true, {pose({{5, -1.5f, 0}, {6, -1.5f, 0}}, 30)}},
+			{"lean_wall", "", 10, false, {pose({}), pose({{1, -0.2f, 0}})}},
+			{"leanwall_idle", "", 10, true, {pose({{1, -0.2f, 0}}), pose({{1, -0.22f, 0}})}},
+			{"Idle_Relaxed_SMG1_1", "ACT_IDLE_RELAXED", 15, true, {pose({{3, -0.5f, 0}}), pose({{3, -0.55f, 0}})}},
+			{"crouch_idle", "ACT_CROUCHIDLE", 10, true, {pose({{5, -1.0f, 0}, {6, -1.0f, 0}}, 12)}},
+		};
+		writeStudioModel(f.mod / "models/humans/male_shared.mdl", makeStudioModel(shared));
+	}
 
 	// Sounds.
 	writeText(f.mod / "scripts/game_sounds_manifest.txt", "game_sounds_manifest\n{\n\t\"precache_file\" \"scripts/game_sounds_demo.txt\"\n}\n");
@@ -1021,6 +1078,80 @@ StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes,
 	return makeStudioModel(spec);
 }
 
+namespace {
+
+std::uint16_t floatToHalf(float value) {
+	std::uint32_t bits;
+	std::memcpy(&bits, &value, 4);
+	const std::uint32_t sign = (bits >> 16) & 0x8000;
+	const int exponent = int((bits >> 23) & 0xff) - 127 + 15;
+	const std::uint32_t mantissa = bits & 0x7fffff;
+	if (exponent <= 0) return std::uint16_t(sign);
+	if (exponent >= 31) return std::uint16_t(sign | 0x7bff);
+	return std::uint16_t(sign | (std::uint32_t(exponent) << 10) | (mantissa >> 13));
+}
+
+constexpr float ROT_SCALE = 3.14159265f / 32768.f;   // radians per step of the stored angle values
+constexpr float POS_SCALE = 1.f / 64.f;              // units per step of the stored positions
+
+/// The mstudioanim_t chain of frames [first, last] of an animation (every bone, frame values relative
+/// to the first frame of the run), as the reader's ExtractAnimValue expects it.
+std::vector<std::byte> encodeAnimation(const StudioModelSpec& spec, const StudioModelSpec::Animation& anim, int first, int last) {
+	std::vector<std::byte> out;
+	const auto put16 = [&](std::size_t at, std::int16_t v) { std::memcpy(out.data() + at, &v, 2); };
+	const auto valueOf = [&](int frame, std::size_t bone, int k) -> float {
+		const auto& rest = spec.bones[bone];
+		if (frame < int(anim.frames.size()) && bone < anim.frames[std::size_t(frame)].size()) return anim.frames[std::size_t(frame)][bone][std::size_t(k)];
+		return k < 3 ? rest.pos[std::size_t(k)] : rest.rot[std::size_t(k - 3)];
+	};
+	const int n = last - first + 1;
+	for (std::size_t bone = 0; bone < spec.bones.size(); ++bone) {
+		const std::size_t entry = out.size();
+		const bool raw = anim.rawFirstBone && bone == 0;
+		if (raw) {
+			out.resize(entry + 4 + 6 + 6, std::byte{0});
+			out[entry] = std::byte(bone);
+			out[entry + 1] = std::byte(0x02 | 0x01);   // RAWROT | RAWPOS
+			const sme::AnimQuat q = sme::angleQuaternion({valueOf(first, bone, 3), valueOf(first, bone, 4), valueOf(first, bone, 5)});
+			const auto x = std::uint16_t(std::clamp(int(std::lround(q.x * 32768.f)) + 32768, 0, 65535));
+			const auto y = std::uint16_t(std::clamp(int(std::lround(q.y * 32768.f)) + 32768, 0, 65535));
+			const auto z = std::uint16_t(std::clamp(int(std::lround(q.z * 16384.f)) + 16384, 0, 32767) | (q.w < 0 ? 0x8000 : 0));
+			std::memcpy(out.data() + entry + 4, &x, 2);
+			std::memcpy(out.data() + entry + 6, &y, 2);
+			std::memcpy(out.data() + entry + 8, &z, 2);
+			for (int k = 0; k < 3; ++k) {
+				const std::uint16_t h = floatToHalf(valueOf(first, bone, k));
+				std::memcpy(out.data() + entry + 10 + k * 2, &h, 2);
+			}
+		} else {
+			// Header, rotation offsets, position offsets, then six streams of one run each.
+			const std::size_t streamBytes = 2 + 2 * std::size_t(n);
+			out.resize(entry + 4 + 12 + 6 * streamBytes, std::byte{0});
+			out[entry] = std::byte(bone);
+			out[entry + 1] = std::byte(0x08 | 0x04);   // ANIMROT | ANIMPOS
+			const auto& rest = spec.bones[bone];
+			for (int k = 0; k < 6; ++k) {
+				const std::size_t stream = entry + 16 + std::size_t(k) * streamBytes;
+				const std::size_t pointer = entry + 4 + std::size_t(k) * 2;          // rot x y z, then pos x y z
+				const std::size_t base = k < 3 ? entry + 4 : entry + 10;             // offsets count from their own pointer block
+				put16(pointer, std::int16_t(stream - base));
+				out[stream] = std::byte(n);       // valid
+				out[stream + 1] = std::byte(n);   // total
+				for (int f = 0; f < n; ++f) {
+					const float v = k < 3 ? (valueOf(first + f, bone, k + 3) - rest.rot[std::size_t(k)]) / ROT_SCALE
+					                      : (valueOf(first + f, bone, k - 3) - rest.pos[std::size_t(k - 3)]) / POS_SCALE;
+					put16(stream + 2 + std::size_t(f) * 2, std::int16_t(std::clamp(std::lround(v), -32767L, 32767L)));
+				}
+			}
+		}
+		const auto next = std::int16_t(bone + 1 < spec.bones.size() ? out.size() - entry : 0);
+		std::memcpy(out.data() + entry + 2, &next, 2);
+	}
+	return out;
+}
+
+} // namespace
+
 StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
 	StudioModelFiles out;
 	const auto put32 = [](std::vector<std::byte>& data, std::size_t offset, std::int32_t value) { std::memcpy(data.data() + offset, &value, 4); };
@@ -1046,7 +1177,12 @@ StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
 
 	// .mdl: header (sequences, textures), flags, mass, $keyvalues, skin table, body parts.
 	auto& mdl = out.mdl;
-	mdl = modelHeader(spec.sequences, spec.include, spec.textures, spec.cdmaterials);
+	std::vector<std::string> sequenceNames = spec.sequences;
+	if (!spec.animations.empty()) {
+		sequenceNames.clear();
+		for (const auto& anim : spec.animations) sequenceNames.push_back(anim.name);
+	}
+	mdl = modelHeader(sequenceNames, spec.include, spec.textures, spec.cdmaterials);
 	float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
 	for (const auto& list : meshes) {
 		for (const auto& mesh : list) {
@@ -1111,6 +1247,103 @@ StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
 		}
 	}
 
+	// Skeleton: mstudiobone_t (216 bytes) with the matrix from model space at rest into the bone.
+	if (!spec.bones.empty()) {
+		const std::size_t bones = grow(mdl, 216 * spec.bones.size());
+		put32(mdl, 156, static_cast<std::int32_t>(spec.bones.size()));
+		put32(mdl, 160, static_cast<std::int32_t>(bones));
+		std::vector<sme::BoneMatrix> world;
+		for (std::size_t i = 0; i < spec.bones.size(); ++i) {
+			const auto& bone = spec.bones[i];
+			const std::size_t at = bones + 216 * i;
+			put32(mdl, at, static_cast<std::int32_t>(putString(mdl, bone.name) - at));
+			put32(mdl, at + 4, bone.parent);
+			const sme::AnimQuat q = sme::angleQuaternion({bone.rot[0], bone.rot[1], bone.rot[2]});
+			const float quat[4] = {q.x, q.y, q.z, q.w};
+			for (int k = 0; k < 3; ++k) {
+				putFloat(mdl, at + 32 + k * 4, bone.pos[std::size_t(k)]);
+				putFloat(mdl, at + 60 + k * 4, bone.rot[std::size_t(k)]);
+				putFloat(mdl, at + 72 + k * 4, POS_SCALE);
+				putFloat(mdl, at + 84 + k * 4, ROT_SCALE);
+			}
+			for (int k = 0; k < 4; ++k) putFloat(mdl, at + 44 + k * 4, quat[k]);
+			const sme::BoneMatrix local = sme::quaternionMatrix(q, {bone.pos[0], bone.pos[1], bone.pos[2]});
+			world.push_back(bone.parent >= 0 ? sme::concat(world[std::size_t(bone.parent)], local) : local);
+			const sme::BoneMatrix poseToBone = sme::invertRigid(world.back());
+			for (int r = 0; r < 3; ++r) {
+				for (int c = 0; c < 4; ++c) putFloat(mdl, at + 96 + std::size_t(r * 4 + c) * 4, poseToBone.m[r][c]);
+			}
+		}
+	}
+	// Animations: mstudioanimdesc_t (100 bytes) per sequence, the sequences pointing at them.
+	if (!spec.animations.empty() && !spec.bones.empty()) {
+		const std::size_t seqIndex = static_cast<std::size_t>([&] { std::int32_t v; std::memcpy(&v, mdl.data() + 192, 4); return v; }());
+		const std::size_t descs = grow(mdl, 100 * spec.animations.size());
+		put32(mdl, 180, static_cast<std::int32_t>(spec.animations.size()));
+		put32(mdl, 184, static_cast<std::int32_t>(descs));
+		std::vector<std::byte>& ani = out.ani;
+		bool usesAni = false;
+		for (std::size_t i = 0; i < spec.animations.size(); ++i) {
+			const auto& anim = spec.animations[i];
+			const std::size_t desc = descs + 100 * i;
+			const std::size_t seq = seqIndex + 212 * i;
+			const int frames = std::max<int>(1, static_cast<int>(anim.frames.size()));
+			put32(mdl, desc + 4, static_cast<std::int32_t>(putString(mdl, "@" + anim.name) - desc));
+			putFloat(mdl, desc + 8, anim.fps);
+			put32(mdl, desc + 16, frames);
+			// The sequence: flags, activity, one blend that is this animation.
+			put32(mdl, seq + 12, anim.loop ? 1 : 0);
+			put32(mdl, seq + 8, static_cast<std::int32_t>(putString(mdl, anim.activity) - seq));
+			const std::size_t blend = grow(mdl, 4);
+			const auto index = static_cast<std::int16_t>(i);
+			std::memcpy(mdl.data() + blend, &index, 2);
+			put32(mdl, seq + 60, static_cast<std::int32_t>(blend - seq));
+			put32(mdl, seq + 68, 1);
+			put32(mdl, seq + 72, 1);
+			// Where a run of frames goes: into the .mdl (block 0, from the desc) or the .ani (block 1).
+			const auto store = [&](int first, int last) -> std::pair<std::int32_t, std::int32_t> {
+				const auto bytes = encodeAnimation(spec, anim, first, last);
+				if (anim.inAni) {
+					usesAni = true;
+					const std::size_t at = ani.size();
+					ani.insert(ani.end(), bytes.begin(), bytes.end());
+					return {1, static_cast<std::int32_t>(at)};
+				}
+				const std::size_t at = grow(mdl, bytes.size());
+				std::memcpy(mdl.data() + at, bytes.data(), bytes.size());
+				return {0, static_cast<std::int32_t>(at - desc)};
+			};
+			if (anim.sectionFrames > 0 && frames > anim.sectionFrames) {
+				// Sections of sectionFrames + 1 frames each, and the last frame on its own.
+				const int count = frames / anim.sectionFrames + 2;
+				const std::size_t sections = grow(mdl, 8 * static_cast<std::size_t>(count));
+				put32(mdl, desc + 80, static_cast<std::int32_t>(sections - desc));
+				put32(mdl, desc + 84, anim.sectionFrames);
+				for (int section = 0; section < count; ++section) {
+					const bool lastOnly = section == count - 1;
+					const int first = lastOnly ? frames - 1 : std::min(section * anim.sectionFrames, frames - 1);
+					const int last = lastOnly ? frames - 1 : std::min(first + anim.sectionFrames, frames - 1);
+					const auto [block, at] = store(first, last);
+					put32(mdl, sections + 8 * static_cast<std::size_t>(section), block);
+					put32(mdl, sections + 8 * static_cast<std::size_t>(section) + 4, at);
+				}
+			} else {
+				const auto [block, at] = store(0, frames - 1);
+				put32(mdl, desc + 52, block);
+				put32(mdl, desc + 56, at);
+			}
+		}
+		if (usesAni) {
+			// Block 0 is the .mdl itself; block 1 is the whole .ani.
+			const std::size_t blocks = grow(mdl, 16);
+			put32(mdl, blocks + 8, 0);
+			put32(mdl, blocks + 12, static_cast<std::int32_t>(ani.size()));
+			put32(mdl, 348, static_cast<std::int32_t>(putString(mdl, spec.aniName)));
+			put32(mdl, 352, 2);
+			put32(mdl, 356, static_cast<std::int32_t>(blocks));
+		}
+	}
+
 	// .vvd: header, vertices (48 bytes), tangents (16 bytes).
 	auto& vvd = out.vvd;
 	const auto total = static_cast<std::size_t>(vertexStart);
@@ -1123,11 +1356,16 @@ StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
 	put32(vvd, 56, 64);
 	put32(vvd, 60, static_cast<std::int32_t>(64 + total * 48));
 	std::size_t written = 0;
+	std::size_t boxesBefore = 0;   // boxes of the options written so far (24 vertices per box)
 	for (const auto& list : meshes) {
 		for (const auto& mesh : list) {
-			for (const auto& v : mesh.verts) {
+			for (std::size_t vi = 0; vi < mesh.verts.size(); ++vi) {
+				const auto& v = mesh.verts[vi];
 				const auto at = 64 + written * 48;
-				putFloat(vvd, at, 1.f);   // weight of bone 0
+				const std::size_t box = boxesBefore + vi / 24;
+				const int bone = box < spec.boxBones.size() ? spec.boxBones[box] : 0;
+				putFloat(vvd, at, 1.f);   // the whole weight on one bone
+				vvd[at + 12] = std::byte(bone);
 				vvd[at + 15] = std::byte{1};
 				for (int k = 0; k < 3; ++k) {
 					putFloat(vvd, at + 16 + k * 4, v.p[k]);
@@ -1137,6 +1375,7 @@ StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
 				putFloat(vvd, at + 44, v.uv[1]);
 				++written;
 			}
+			boxesBefore += mesh.verts.size() / 24;
 		}
 	}
 
@@ -1199,6 +1438,7 @@ void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFil
 	writeBytes(mdlPath, files.mdl);
 	writeBytes(stem.string() + ".vvd", files.vvd);
 	writeBytes(stem.string() + ".dx90.vtx", files.vtx);
+	if (!files.ani.empty()) writeBytes(stem.string() + ".ani", files.ani);
 }
 
 namespace {

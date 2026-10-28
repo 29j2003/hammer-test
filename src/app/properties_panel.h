@@ -79,6 +79,8 @@ signals:
 	void editMaterialRequested(const QString& name);
 	/// "Edit soundscape" on a soundscape entity: the soundscape's name (open it on the Sounds page).
 	void editSoundscapeRequested(const QString& name);
+	/// ▶ next to an animation field: show `sequence` of `model` on the Animations page.
+	void animationPreviewRequested(const QString& model, const QString& sequence);
 
 protected:
 	/// Sends wheel turns over unfocused boxes to the scroll area (see rebuild()).

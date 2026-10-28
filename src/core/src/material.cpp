@@ -76,8 +76,15 @@ std::string Material::param(std::string_view key) const {
 }
 
 bool Material::flag(std::string_view key) const {
-	const auto value = trim(param(key));
+	const std::string raw = param(key);   // trim() views into it: keep it alive
+	const auto value = trim(raw);
 	return !value.empty() && value != "0";
+}
+
+bool Material::reflectsWhenDry() const {
+	const std::string raw = param("$envmap");
+	const auto envmap = trim(raw);
+	return !envmap.empty() && envmap != "0" && !flag("$envmapwetonly");
 }
 
 std::string Material::previewTexture() const {

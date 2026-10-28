@@ -74,8 +74,8 @@ void parseTint(const std::string& text, float out[3]) {
 /// $envmap and what shapes it: tint, mask (own texture, the base or the normal map's alpha) and
 /// the fresnel term, as LightmappedGeneric / VertexLitGeneric / Water read them.
 void readEnvmap(const GameFileSystem& fs, const Material& material, MaterialInfo& info) {
-	const auto envmap = material.param("$envmap");
-	if (envmap.empty() || envmap == "0") return;
+	// The views show the dry surface: walls that only reflect in the rain ($envmapwetonly) stay matt.
+	if (!material.reflectsWhenDry()) return;
 	info.envmap = true;
 	if (const auto tint = material.param("$envmaptint"); !tint.empty()) parseTint(tint, info.envmapTint);
 	const QString shader = QString::fromStdString(material.shader).toLower();

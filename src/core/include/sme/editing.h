@@ -59,6 +59,10 @@ namespace edit {
 /// "skin" and "body" keys, and a prop_door_rotating's "hardware" as body group 1 (lever, push
 /// bar, keypad - the engine's SetBodygroup in CBasePropDoor::Spawn). Empty if it shows none.
 [[nodiscard]] std::string entityModelKey(const Entity& entity, const EntityCatalog* catalog);
+/// Whether the views draw the entity's model see-through: helpers that only stand for an NPC
+/// in the editor (scripted_sequence, scripted_target, aiscripted_schedule ... showing the FGD's
+/// model, no "model" key of their own) - so they are not mistaken for a real NPC.
+[[nodiscard]] bool isSeeThroughHelper(const Entity& entity);
 /// Box around everything selected (objects, or the faces' brushes in face mode).
 [[nodiscard]] Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog);
 

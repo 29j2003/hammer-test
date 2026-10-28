@@ -892,6 +892,18 @@ TEST_CASE("sound script entries: write, replace, manifest") {
 	CHECK(parseKeyValues(addToSoundManifest("", "scripts/a.txt")).children.front().key == "game_sounds_manifest");
 }
 
+TEST_CASE("reflections of a dry surface: $envmapwetonly walls stay matt in the views") {
+	const auto relief = parseMaterial("\"Fidelity_Parallax\"\n{\n\t\"$basetexture\" \"brick/floor\"\n\t\"$envmap\" \"env_cubemap\"\n\t\"$envmapwetonly\" \"1\"\n}\n", "brick/floor");
+	REQUIRE(relief);
+	CHECK_FALSE(relief->reflectsWhenDry());   // Fidelity_Parallax: the cubemap only where rain wets it
+	const auto shiny = parseMaterial("\"LightmappedGeneric\"\n{\n\t\"$envmap\" \"env_cubemap\"\n}\n", "tile/shiny");
+	REQUIRE(shiny);
+	CHECK(shiny->reflectsWhenDry());
+	const auto off = parseMaterial("\"LightmappedGeneric\"\n{\n\t\"$envmap\" \"0\"\n\t\"$envmapwetonly\" \"0\"\n}\n", "tile/off");
+	REQUIRE(off);
+	CHECK_FALSE(off->reflectsWhenDry());
+}
+
 TEST_CASE("material editing keeps the rest of the VMT") {
 	const std::string vmt = "// a comment\n\"LightmappedGeneric\"\n{\n\t\"$BaseTexture\" \"brick/wall\"\n\t\"$surfaceprop\" \"brick\"\n"
 	                        "\t\"$envmap\" \"env_cubemap\" [$WIN32]\n"
@@ -1201,6 +1213,15 @@ TEST_CASE("loop detection, prop class and sound loop checks with autofix") {
 		CHECK(edit::entityModelKey(prop, nullptr) == "models/props/box.mdl#s=1");
 		prop.keyValues = {{"classname", "info_target"}};
 		CHECK(edit::entityModelKey(prop, nullptr).empty());
+		// Helpers that stand for an NPC are drawn see-through; real NPCs and props are not.
+		prop.keyValues = {{"classname", "scripted_sequence"}};
+		CHECK(edit::isSeeThroughHelper(prop));
+		prop.keyValues = {{"classname", "aiscripted_schedule"}};
+		CHECK(edit::isSeeThroughHelper(prop));
+		prop.keyValues = {{"classname", "npc_alyx"}};
+		CHECK_FALSE(edit::isSeeThroughHelper(prop));
+		prop.keyValues = {{"classname", "scripted_sequence"}, {"model", "models/alyx.mdl"}};
+		CHECK_FALSE(edit::isSeeThroughHelper(prop));
 	}
 
 	const auto dir = std::filesystem::temp_directory_path() / "sme_prop_sound_checks";

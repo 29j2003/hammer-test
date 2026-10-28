@@ -36,6 +36,8 @@ public:
 	/// Loading failed (missing or broken files).
 	[[nodiscard]] bool failed(const QString& path) const;
 	[[nodiscard]] QString error(const QString& path) const;
+	/// Drops a model and its variants (its files changed - e.g. just built): the next get() reads them again.
+	void forget(const QString& path);
 
 signals:
 	/// A model finished loading or failed (see failed()); on the GUI thread.

@@ -167,7 +167,11 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   and prop settings (static prop, collision model, mass). **Place in map** arms the entity tool with it as
   `prop_static`, `prop_physics` or `prop_dynamic` (picked to suit the model); or drag it onto the *Map* button and on
   into a view.
-- **Side bar**: on the far left *Map*, *Materials*, *Models*, *Sounds*, *Particles* and *Project* each fill
+- **Animations**: play any model's animations in 3D (its own and borrowed ones, with activities) - play, pause,
+  scrub, speed, loop - see which entities of the map use them and put one on the selected prop, NPC or
+  `scripted_sequence`. **Add animation ...** brings an `.smd` onto the model's skeleton and builds it into the mod
+  with the game's `studiomdl`.
+- **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
   has the tabs *Overview*, *Features*, *Maps*, *Menu*, *Texts*, *Source control*, *Ship* and *Build from source* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what

@@ -1456,7 +1456,8 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 		m_shape->setCurrentIndex(int(MaterialPreview::Shape::Plane));   // a water surface
 	}
 	s.ssbump = value("$ssbump") == "1";
-	s.envmap = !value("$envmap").isEmpty() && k != Kind::Water;
+	// Like the game: a wall that reflects only in the rain ($envmapwetonly) is shown dry.
+	s.envmap = !value("$envmap").isEmpty() && value("$envmap") != "0" && value("$envmapwetonly") != "1" && k != Kind::Water;
 	s.maskMode = value("$basealphaenvmapmask") == "1" ? 2 : value("$normalmapalphaenvmapmask") == "1" ? 3 : !value("$envmapmask").isEmpty() ? 1 : 0;
 	s.alphaMode = value("$translucent") == "1" ? 1 : value("$alphatest") == "1" ? 2 : value("$additive") == "1" ? 3 : 0;
 	s.selfillum = value("$selfillum") == "1";

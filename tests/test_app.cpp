@@ -63,6 +63,7 @@
 #include <QToolButton>
 #include <QWheelEvent>
 
+#include <sme/studio_anim.h>
 #include <sme/audio.h>
 #include <sme/asset_refs.h>
 #include <sme/brush.h>
@@ -107,6 +108,7 @@
 #include "mod_code_panel.h"
 #include "mod_page.h"
 #include "model_viewer.h"
+#include "animations_page.h"
 #include "models_page.h"
 #include "map_look_panel.h"
 #include "material_preview.h"
@@ -5334,6 +5336,338 @@ TEST_CASE("features from Mapsmith: offered on the Overview, installed by one cli
 	CHECK(editor.hasFidelity());
 	qunsetenv("SME_FEATURES_DIR");
 }
+
+TEST_CASE("animations page: a model's sequences played in 3D, where the map uses them, put on an entity") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const QString citizenModel = "models/humans/group01/male_07.mdl";
+	int citizen = 0;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01") citizen = e.id;
+	}
+	REQUIRE(citizen != 0);
+	// A prop playing one of the citizen's animations and a script for the citizen.
+	auto [placeProp, propId] = edit::placeEntity(editor.doc(), "prop_dynamic", {200, 0, 0}, editor.entities()->find("prop_dynamic"),
+	                                             {{"model", citizenModel.toStdString()}, {"DefaultAnim", "lineidle01"}});
+	editor.commit(std::move(placeProp));
+	auto [placeScript, scriptId] = edit::placeEntity(editor.doc(), "scripted_sequence", {-100, 40, 0}, editor.entities()->find("scripted_sequence"),
+	                                                 {{"m_iszEntity", "citizen_01"}, {"m_iszPlay", "cower"}});
+	editor.commit(std::move(placeScript));
+
+	// The side bar has the page next to Models.
+	QAction* pageAction = nullptr;
+	for (auto* a : window.findChildren<QAction*>()) {
+		if (a->objectName() == "page:Animations") pageAction = a;
+	}
+	REQUIRE(pageAction);
+	pageAction->trigger();
+	settle();
+	auto* page = window.animationsPage();
+	REQUIRE(page);
+	CHECK(page->isVisible());
+	// The map's animated models come first.
+	REQUIRE(page->modelList()->count() > 1);
+	CHECK_FALSE(page->modelList()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "In this map"
+	CHECK(page->modelList()->item(1)->data(Qt::UserRole).toString() == citizenModel);
+
+	QSignalSpy loaded(page, &AnimationsPage::modelLoaded);
+	page->modelList()->setCurrentRow(1);
+	REQUIRE((loaded.count() > 0 || loaded.wait(10000)));
+	REQUIRE(page->animated());
+	// Its own sequences and those of the shared model, with activity and origin.
+	auto* list = page->sequenceList();
+	REQUIRE(list->topLevelItemCount() == 13);
+	QStringList names;
+	for (int i = 0; i < list->topLevelItemCount(); ++i) names << list->topLevelItem(i)->text(0);
+	CHECK(names.mid(0, 5) == QStringList{"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"});
+	CHECK(names.contains("walk_all"));
+	CHECK(page->currentSequence() == "idle_subtle");   // the idle is shown first
+	REQUIRE(page->selectSequence("walk_all"));
+	CHECK(list->currentItem()->text(1) == "ACT_WALK");
+	CHECK(list->currentItem()->text(3) == "male_shared.mdl");
+	CHECK(list->currentItem()->text(0) == "walk_all");
+
+	// The pose moves the vertices: a quarter into the walk the legs swing (the right leg forward).
+	for (int i = 0; i < 20 && !page->viewer()->model(); ++i) QTest::qWait(50);
+	const auto rest = page->viewer()->model();
+	REQUIRE(rest);
+	const int uploads = page->viewer()->posesUploaded();
+	page->setCycle(0.25f);
+	settle();
+	CHECK(page->viewer()->posesUploaded() > uploads);
+	std::vector<ModelVertex> posed;
+	skinVertices(*rest, page->animated()->skinning(page->animated()->findSequence("walk_all"), 0.25f), posed);
+	float moved = 0;
+	for (std::size_t i = 0; i < posed.size(); ++i) moved = std::max(moved, std::abs(posed[i].position[0] - rest->vertices[i].position[0]));
+	CHECK(moved > 5.f);
+	// Play runs on its own; pause stops it; without Loop it stops on the last frame.
+	page->setCycle(0);
+	page->setPlaying(true);
+	QTest::qWait(300);
+	CHECK(page->cycle() > 0.1f);
+	page->setPlaying(false);
+	const float paused = page->cycle();
+	QTest::qWait(150);
+	CHECK(page->cycle() == paused);
+	page->setLooping(false);
+	page->setSpeed(2);
+	page->setCycle(0.95f);
+	page->setPlaying(true);
+	QTest::qWait(400);
+	CHECK(page->cycle() == 1.f);
+	CHECK_FALSE(page->playing());
+	page->setLooping(true);
+
+	// Where the map uses the model's animations: the prop and the script (through its NPC).
+	QStringList uses;
+	for (int i = 0; i < page->usesList()->count(); ++i) uses << page->usesList()->item(i)->text();
+	CHECK(uses.join(QStringLiteral("\n")).contains("Default animation: lineidle01"));
+	CHECK(uses.join('\n').contains("citizen_01"));
+	CHECK(uses.join('\n').contains("Action: cower"));
+
+	// Use on selected entity: the prop's DefaultAnim, the NPC's pose helper, a script's field.
+	CHECK_FALSE(page->useButton()->isEnabled());   // nothing selected
+	Selection one;
+	one.entities.push_back(propId);
+	editor.setSelection(one);
+	settle();
+	CHECK(page->useButton()->isEnabled());
+	REQUIRE(page->useOnSelection());
+	CHECK(editor.doc().findEntity(propId)->get("DefaultAnim") == "walk_all");
+	one.entities = {citizen};
+	editor.setSelection(one);
+	REQUIRE(page->selectSequence("cower_idle"));
+	REQUIRE(page->useOnSelection());
+	const Entity* helper = nullptr;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01_pose") helper = &e;
+	}
+	REQUIRE(helper);
+	CHECK(helper->get("m_iszIdle") == "cower_idle");
+	CHECK(helper->get("m_iszEntity") == "citizen_01");
+	one.entities = {scriptId};
+	editor.setSelection(one);
+	REQUIRE(page->selectSequence("lean_wall"));
+	REQUIRE(page->useOnSelection("m_iszEntry"));
+	CHECK(editor.doc().findEntity(scriptId)->get("m_iszEntry") == "lean_wall");
+	editor.undo();
+	CHECK(editor.doc().findEntity(scriptId)->get("m_iszEntry").empty());
+
+	// Double-click in "Used in this map": the entity is selected in the map.
+	settle();
+	QListWidgetItem* propUse = nullptr;
+	for (int i = 0; i < page->usesList()->count(); ++i) {
+		if (page->usesList()->item(i)->data(Qt::UserRole).toInt() == propId) propUse = page->usesList()->item(i);
+	}
+	REQUIRE(propUse);
+	emit page->usesList()->itemDoubleClicked(propUse);
+	settle();
+	CHECK(window.currentPage() == MainWindow::Page::Map);
+	REQUIRE(editor.selection().entities.size() == 1);
+	CHECK(editor.selection().entities.front() == propId);
+
+	// ▶ next to an animation field in Object Properties opens the page on that animation, playing.
+	one.entities = {scriptId};
+	editor.setSelection(one);
+	settle();
+	QToolButton* preview = nullptr;
+	for (auto* button : window.properties()->findChildren<QToolButton*>("previewSequence")) {
+		const auto* box = button->parentWidget()->findChild<QComboBox*>();
+		if (box && box->currentText() == "cower") preview = button;   // the Action field
+	}
+	REQUIRE(preview);
+	page->selectModel("models/props_demo/crate01.mdl");   // another model first
+	preview->click();
+	settle();
+	CHECK(window.currentPage() == MainWindow::Page::Animations);
+	CHECK(page->currentModel() == citizenModel);
+	for (int i = 0; i < 100 && page->currentSequence().isEmpty(); ++i) QTest::qWait(50);
+	for (int i = 0; i < 100 && !page->playing(); ++i) QTest::qWait(50);
+	CHECK(page->playing());
+	if (const auto shot = qEnvironmentVariable("SME_ANIMATION_SHOT"); !shot.isEmpty()) {
+		page->selectSequence("walk_all");
+		page->setPlaying(false);
+		page->setCycle(0.25f);
+		settle();
+		window.grab().save(shot);
+	}
+	page->setPlaying(false);
+}
+
+#ifndef _WIN32
+TEST_CASE("animations page: add an animation (.smd), preview it and build it into the mod (studiomdl faked)") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const QString citizenModel = "models/humans/group01/male_07.mdl";
+	window.showPage(MainWindow::Page::Animations);
+	auto* page = window.animationsPage();
+	QSignalSpy loaded(page, &AnimationsPage::modelLoaded);
+	page->selectModel(citizenModel);
+	REQUIRE((loaded.count() > 0 || loaded.wait(10000)));
+	REQUIRE(page->animated());
+	const int before = page->sequenceList()->topLevelItemCount();
+
+	// A wave made for the same skeleton (one extra bone the model lacks is left out).
+	const QString smd = home.filePath("Wave Hello.smd");
+	{
+		QFile file(smd);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		QByteArray text = "version 1\nnodes\n0 \"ValveBiped.Bip01_Pelvis\" -1\n1 \"ValveBiped.Bip01_Spine\" 0\n"
+		                  "2 \"ValveBiped.Bip01_R_UpperArm\" 1\n3 \"ValveBiped.Bip01_R_Finger0\" 2\nend\nskeleton\n";
+		for (int frame = 0; frame < 10; ++frame) {
+			text += "time " + QByteArray::number(frame) + "\n0 0 0 34 0 0 -1.570796\n1 0 0 0 0 0 0\n";
+			text += "2 0 -15 24 " + QByteArray::number(-1.2 * std::sin(frame * 0.6), 'f', 4) + " 0 0\n3 0 0 -10 0 0 0\n";
+		}
+		file.write(text + "end\n");
+	}
+	ImportedAnimation options;
+	options.name = "wave_hello";
+	options.fps = 20;
+	options.loop = true;
+	options.activity = "ACT_SIGNAL1";
+	REQUIRE(page->importAnimation(smd, options, &error));
+	// It plays at once, marked as not built; the bar offers to build it.
+	CHECK(page->sequenceList()->topLevelItemCount() == before + 1);
+	CHECK(page->currentSequence() == "wave_hello");
+	CHECK(page->playing());
+	CHECK(page->sequenceList()->currentItem()->text(1) == "ACT_SIGNAL1");
+	CHECK(page->sequenceList()->currentItem()->text(3).contains("not built"));
+	CHECK(page->pendingImports() == 1);
+	auto* compile = page->findChild<QPushButton*>("animationCompile");
+	REQUIRE(compile);
+	CHECK(compile->isVisible());
+	if (const auto shot = qEnvironmentVariable("SME_ANIMATION_IMPORT_SHOT"); !shot.isEmpty()) {
+		page->setPlaying(false);
+		page->setCycle(0.3f);
+		settle();
+		window.grab().save(shot);
+	}
+	// A file of another skeleton is refused.
+	const QString other = home.filePath("dog.smd");
+	{
+		QFile file(other);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write("version 1\nnodes\n0 \"Dog.Root\" -1\nend\nskeleton\ntime 0\n0 0 0 0 0 0 0\nend\n");
+	}
+	CHECK_FALSE(page->importAnimation(other, {}, &error));
+	CHECK(error.contains("None of"));
+	CHECK(page->pendingImports() == 1);
+
+	// No studiomdl: a clear message, nothing runs.
+	page->setStudiomdlProgram(home.filePath("missing/studiomdl"));
+	CHECK_FALSE(page->compileImports());
+	CHECK(page->compileLog().contains("studiomdl was not found"));
+	CHECK(page->pendingImports() == 1);
+
+	// A failing studiomdl: the log keeps its lines, the animation stays pending.
+	const auto script = [&](const QString& name, const QString& body) {
+		const QString path = home.filePath(name);
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(("#!/bin/sh\n" + body + "\n").toUtf8());
+		file.close();
+		file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+		return path;
+	};
+	QSignalSpy finished(page, &AnimationsPage::compileFinished);
+	page->setStudiomdlProgram(script("studiomdl_bad", "echo 'ERROR: bone ValveBiped.Bip01_R_Finger0 not found'; exit 1"));
+	REQUIRE(page->compileImports());
+	REQUIRE(finished.wait(10000));
+	CHECK_FALSE(finished.takeFirst().at(0).toBool());
+	CHECK(page->compileLog().contains("bone ValveBiped"));
+	CHECK(page->compileLog().contains("exit code 1"));
+	CHECK(page->pendingImports() == 1);
+
+	// The real run (faked): studiomdl gets -game <mod> and the .qc; it "builds" the model by
+	// copying the original's files to models/mapsmith/... and the page shows the new model.
+	const QString modDir = fromPath(f.mod);
+	const QString args = home.filePath("studiomdl_args.txt");
+	page->setStudiomdlProgram(script("studiomdl_ok",
+	                                 "echo \"$@\" > '" + args + "'\n"
+	                                 "echo 'Processing model.qc'\n"
+	                                 "m=\"$2/models/humans/group01/male_07\"; o=\"$2/models/mapsmith/humans/group01\"\n"
+	                                 "mkdir -p \"$o\" && for e in mdl vvd dx90.vtx; do cp \"$m.$e\" \"$o/male_07.$e\"; done"));
+	REQUIRE(page->compileImports());
+	REQUIRE(finished.wait(10000));
+	CHECK(finished.takeFirst().at(0).toBool());
+	CHECK(page->pendingImports() == 0);
+	const QDir sources(modDir + "/modelsrc/mapsmith/humans/group01/male_07");
+	for (const char* name : {"model.qc", "reference.smd", "wave_hello.smd", "animations.txt"}) {
+		INFO(name);
+		CHECK(sources.exists(name));
+	}
+	{
+		QFile qc(sources.filePath("model.qc"));
+		REQUIRE(qc.open(QIODevice::ReadOnly));
+		const QString text = QString::fromUtf8(qc.readAll());
+		CHECK(text.contains("$modelname \"mapsmith/humans/group01/male_07.mdl\""));
+		CHECK(text.contains("$includemodel \"humans/group01/male_07.mdl\""));
+		CHECK(text.contains("wave_hello"));
+		CHECK(text.contains("ACT_SIGNAL1"));
+		QFile argsFile(args);
+		REQUIRE(argsFile.open(QIODevice::ReadOnly));
+		const QString line = QString::fromUtf8(argsFile.readAll()).trimmed();
+		CHECK(line.startsWith("-game " + modDir));
+		CHECK(line.endsWith("model.qc"));
+	}
+	CHECK(page->currentModel() == "models/mapsmith/humans/group01/male_07.mdl");
+
+	// Use on an NPC: it switches to the new model in the same undo step.
+	int citizen = 0;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01") citizen = e.id;
+	}
+	REQUIRE(citizen != 0);
+	for (int i = 0; i < 200 && !page->animated(); ++i) QTest::qWait(50);
+	REQUIRE(page->animated());
+	Selection one;
+	one.entities = {citizen};
+	editor.setSelection(one);
+	settle();
+	REQUIRE(page->selectSequence("idle_subtle"));
+	REQUIRE(page->useOnSelection());
+	CHECK(editor.doc().findEntity(citizen)->get("model") == "models/mapsmith/humans/group01/male_07.mdl");
+	editor.undo();
+	CHECK(editor.doc().findEntity(citizen)->get("model") == citizenModel.toStdString());
+	page->setPlaying(false);
+}
+#endif
 
 namespace {
 

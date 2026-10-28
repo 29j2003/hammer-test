@@ -109,8 +109,17 @@ ModelViewer::~ModelViewer() {
 void ModelViewer::setModel(std::shared_ptr<const ModelGeometry> model, bool frame) {
 	m_model = std::move(model);
 	m_dirty = true;
+	m_pose.clear();
+	m_poseDirty = false;
 	if (m_model) m_message.clear();
 	if (frame) frameModel();
+	update();
+}
+
+void ModelViewer::setPose(std::vector<ModelVertex> vertices) {
+	if (!m_model || (!vertices.empty() && vertices.size() != m_model->vertices.size())) return;
+	m_pose = std::move(vertices);
+	m_poseDirty = true;
 	update();
 }
 
@@ -244,7 +253,19 @@ void ModelViewer::paintGL() {
 	glClearColor(0.16f, 0.17f, 0.19f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	if (!m_initialized) return;
-	if (m_dirty) upload();
+	if (m_dirty) {
+		upload();
+		m_poseDirty = !m_pose.empty();
+	}
+	if (m_poseDirty && m_vbo && m_model) {
+		// The posed vertices replace the rest pose in the buffer (same layout and count).
+		const auto& vertices = m_pose.empty() ? m_model->vertices : m_pose;
+		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, GLsizeiptr(vertices.size() * sizeof(ModelVertex)), vertices.data());
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		++m_posesUploaded;
+	}
+	m_poseDirty = false;
 
 	const qreal dpr = devicePixelRatioF();
 	glViewport(0, 0, int(width() * dpr), int(height() * dpr));

@@ -29,6 +29,11 @@ struct Material {
 
 	/// Tool materials (nodraw, clip, trigger, ...) - %compile* keys or the tools/ folder.
 	[[nodiscard]] bool isTool() const;
+
+	/// Whether a dry surface shows its $envmap reflection: $envmap is set and not "0", and the
+	/// material is not $envmapwetonly (mapbase-fidelity's relief walls and floors reflect only
+	/// where rain makes them wet - Fidelity_Parallax turns the cubemap off otherwise).
+	[[nodiscard]] bool reflectsWhenDry() const;
 };
 
 /// One change to a material parameter: a new value, or removed (nullopt).

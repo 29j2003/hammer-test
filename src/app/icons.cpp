@@ -108,6 +108,23 @@ void drawPageIcon(QPainter& p, const QString& name, const QColor& line, const QC
 		p.drawArc(QRectF(17, 32, 30, 12), 180 * 16, 180 * 16);
 		return;
 	}
+	if (name == "page:animations") {
+		// A figure in mid-stride with motion lines behind it.
+		p.setPen(pen(line, w));
+		p.drawEllipse(QPointF(36, 13), 5.5, 5.5);
+		p.drawLine(QPointF(34, 20), QPointF(30, 36));           // body
+		p.drawLine(QPointF(33, 24), QPointF(42, 30));           // front arm
+		p.drawLine(QPointF(33, 24), QPointF(24, 27));           // back arm
+		p.drawLine(QPointF(30, 36), QPointF(40, 44));           // front leg
+		p.drawLine(QPointF(40, 44), QPointF(38, 54));
+		p.drawLine(QPointF(30, 36), QPointF(24, 46));           // back leg
+		p.drawLine(QPointF(24, 46), QPointF(16, 50));
+		p.setPen(pen(accent, w));
+		p.drawLine(QPointF(8, 22), QPointF(18, 22));
+		p.drawLine(QPointF(5, 31), QPointF(19, 31));
+		p.drawLine(QPointF(8, 40), QPointF(17, 40));
+		return;
+	}
 	if (name == "page:sounds") {
 		// Waveform bars.
 		const double heights[] = {12, 26, 40, 22, 32, 14};
