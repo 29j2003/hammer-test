@@ -801,6 +801,7 @@ void MainWindow::createActions() {
 	toolAction("tool:clip", tr("Clip"), QKeySequence("Shift+X"), Editor::Tool::Clip);
 	toolAction("tool:vertex", tr("Vertex"), QKeySequence("Shift+V"), Editor::Tool::Vertex);
 	toolAction("tool:polygon", tr("Polygon"), QKeySequence("Shift+P"), Editor::Tool::Polygon);
+	toolAction("tool:displace", tr("Displacement"), QKeySequence("Shift+D"), Editor::Tool::Displace);
 	m_modeGroup = new QActionGroup(this);
 	const auto modeAction = [&](const QString& iconName, const QString& name, const QKeySequence& key, Editor::SelectMode mode) {
 		auto* a = new QAction(icon(iconName), name, this);

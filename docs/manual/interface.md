@@ -54,6 +54,7 @@ The narrow column of icons next to the side bar holds the tools. The small lette
 | Scissors | **Clip** | Shift+X | Cut brushes. |
 | Wire cube | **Vertex** | Shift+V | Move corners, pick edges. |
 | Pentagon | **Polygon** | Shift+P | Draw a brush from its outline. |
+| Hill | **Displacement** | Shift+D | Make terrain from faces, sculpt it and paint blends. |
 
 The [Building](building.html) page describes each tool.
 

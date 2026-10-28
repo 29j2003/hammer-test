@@ -41,7 +41,7 @@ class Editor : public QObject {
 	Q_OBJECT
 
 public:
-	enum class Tool { Select, Move, Rotate, Scale, Block, Entity, Clip, Vertex, Polygon };
+	enum class Tool { Select, Move, Rotate, Scale, Block, Entity, Clip, Vertex, Polygon, Displace };
 	enum class SelectMode { Object, Face };
 	enum class RenderMode { Lit, Unlit, Wireframe };
 
@@ -182,6 +182,26 @@ public:
 	[[nodiscard]] bool randomYaw() const { return m_randomYaw; }
 	void setRandomYaw(bool on);
 
+	// --- Displacement tool (sme/displacement.h) ----------------------------------
+	/// What a click or drag with the displacement tool does.
+	enum class DisplaceMode { Create, Raise, Smooth, Flatten, Noise, Alpha };
+	struct DisplaceSettings {
+		DisplaceMode mode = DisplaceMode::Raise;
+		double radius = 64;    ///< Brush radius in units
+		int strength = 25;     ///< 1..100 (% of the mode's biggest step)
+		int power = 3;         ///< New displacements: 2, 3 or 4
+	};
+	[[nodiscard]] const DisplaceSettings& displaceSettings() const { return m_displace; }
+	void setDisplaceSettings(const DisplaceSettings& settings);
+	/// Turns the faces into displacements with the current power (one undo step); false if none could.
+	bool createDisplacements(const std::vector<FaceRef>& faces);
+	/// Create button: the selected faces, else the upward faces of the selected brushes.
+	bool createDisplacementsOnSelection();
+	/// Flat faces again for the displacements of the selection.
+	void destroySelectedDisplacements();
+	/// Sews the displacements of the selection (nothing selected: all of the map).
+	void sewDisplacements();
+
 	// --- Shapes (block tool) --------------------------------------------------
 	[[nodiscard]] const ShapeOptions& shapeOptions() const { return m_shapeOptions; }
 	/// Changes the shape settings; the shape created last is rebuilt with them as long as
@@ -268,6 +288,8 @@ signals:
 	void viewFilterChanged();    ///< A kind of object was shown or hidden
 	/// Vertex tool: the chosen corners changed.
 	void vertexCornersChanged();
+	/// Displacement tool: mode, radius, strength or power changed.
+	void displaceSettingsChanged();
 	/// The list of recently used materials changed.
 	void recentMaterialsChanged();
 	/// A short message for the status bar and the log.
@@ -297,6 +319,7 @@ private:
 	bool m_shadows = true;
 	bool m_showGrid3D = true;
 	int m_maxFps = 144;
+	DisplaceSettings m_displace;
 	bool m_showEntityNames = true;
 	bool m_showConnections = true;
 	bool m_hasFidelity = false;

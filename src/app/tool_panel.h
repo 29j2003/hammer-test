@@ -107,6 +107,7 @@ private:
 	QWidget* m_hintPage;
 	QTableWidget* m_keys;
 	QWidget* m_edgeBox = nullptr;
+	QWidget* m_displaceBox = nullptr;   ///< Displacement tool: modes, brush, Make / Sew / Flat again
 	QWidget* m_selectionBox = nullptr;   ///< Select tool: Hollow, Carve, Merge, Tie ... (Source 2's tool properties)   ///< Vertex tool: wedge / bevel / round the picked edges
 	EntityPicker* m_entities;
 	QWidget* m_block = nullptr;

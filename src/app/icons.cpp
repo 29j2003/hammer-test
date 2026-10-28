@@ -265,6 +265,22 @@ void drawIcon(QPainter& p, const QString& name) {
 		for (const auto& q : penta) p.drawEllipse(q, 4.5, 4.5);
 		return;
 	}
+	if (name == "tool:displace") {
+		// A hill on a grid: terrain made from a face.
+		p.setPen(pen(LINE, 2.5));
+		for (int i = 0; i < 4; ++i) {
+			const double y = 40 + i * 6;
+			p.drawLine(QPointF(8 + i * 2, y), QPointF(56 - i * 2, y));
+		}
+		QPainterPath hill;
+		hill.moveTo(6, 44);
+		hill.cubicTo(18, 44, 22, 12, 34, 14);
+		hill.cubicTo(44, 16, 46, 38, 58, 40);
+		p.setPen(pen(ACCENT, 4.5));
+		p.setBrush(Qt::NoBrush);
+		p.drawPath(hill);
+		return;
+	}
 	if (name == "mode:objects") {
 		cube(p, {32, 33}, 22, QColor(236, 186, 110), QColor(200, 140, 60), QColor(160, 104, 40));
 		return;

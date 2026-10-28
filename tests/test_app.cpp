@@ -53,9 +53,11 @@
 #include <QOpenGLWidget>
 #include <QStandardPaths>
 #include <QToolButton>
+#include <QWheelEvent>
 
 #include <sme/audio.h>
 #include <sme/brush.h>
+#include <sme/displacement.h>
 #include <sme/entity_search.h>
 #include <sme/text.h>
 #include <sme/fidelity_look.h>
@@ -1919,6 +1921,156 @@ TEST_CASE("editing with the mouse in the real window") {
 	CHECK(editor.doc().world.solids.size() == 2);
 	CHECK(editor.doc().entities.size() == 1);
 	CHECK_FALSE(editor.modified());
+}
+
+TEST_CASE("displacement tool: make, sculpt with the mouse, undo, create by click, save and load") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+
+	auto [made, ref] = edit::createBlock(editor.doc(), box({0, 0, 0}, {256, 256, 16}), "DEV/DEV_MEASUREGENERIC01");
+	editor.commit(std::move(made));
+	Selection selection;
+	selection.solids.push_back(ref);
+	editor.setSelection(selection);
+	editor.setTool(Editor::Tool::Displace);
+	settle();
+	const auto topSide = [&]() -> const Side* {
+		const Solid* solid = editor.doc().findSolid(ref);
+		for (const auto& face : buildBrushGeometry(*solid).faces) {
+			if (face.normal.z > 0.9) return &solid->sides[static_cast<std::size_t>(face.sideIndex)];
+		}
+		return nullptr;
+	};
+	REQUIRE(topSide());
+	CHECK_FALSE(topSide()->dispInfo());
+
+	// Tool panel: power 3, Make turns the selected brush's top into a displacement.
+	auto* box3 = window.findChild<QWidget*>("displaceTools");
+	REQUIRE(box3);
+	CHECK(box3->isVisible());
+	auto* power = window.findChild<QComboBox*>("displacePower");
+	REQUIRE(power);
+	power->setCurrentIndex(power->findData(3));
+	CHECK(editor.displaceSettings().power == 3);
+	auto* make = window.findChild<QPushButton*>("displaceMake");
+	REQUIRE(make);
+	make->click();
+	settle();
+	REQUIRE(topSide()->dispInfo());
+	CHECK(topSide()->dispInfo()->get("power") == "3");
+	const std::string flatInfo = writeKeyValues([&] {
+		KvNode root;
+		root.children.push_back(*topSide()->dispInfo());
+		return root;
+	}());
+
+	// Raise: press on the middle, drag a little, let go - one undo step.
+	window.findChild<QPushButton*>(QStringLiteral("displace:%1").arg(int(Editor::DisplaceMode::Raise)))->click();
+	auto settings = editor.displaceSettings();
+	settings.radius = 96;
+	settings.strength = 100;
+	editor.setDisplaceSettings(settings);
+	CHECK(window.findChild<QSlider*>("displaceRadius")->value() == 96);
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(128, -260, 360);
+	view->camera().yaw = 90;
+	view->camera().pitch = -50;
+	view->update();
+	settle();
+	const std::size_t historyBefore = editor.history().size();
+	const QPoint middle = screen(view, {128, 128, 16});
+	QTest::mouseMove(view, middle);
+	settle();
+	QTest::mousePress(view, Qt::LeftButton, {}, middle);
+	for (int i = 1; i <= 6; ++i) {
+		QTest::mouseMove(view, middle + QPoint(i * 3, 0));
+		QApplication::processEvents();
+	}
+	QTest::mouseRelease(view, Qt::LeftButton, {}, middle + QPoint(18, 0));
+	settle();
+	CHECK(editor.history().size() == historyBefore + 1);
+	auto sculpted = readDisplacement(*topSide());
+	REQUIRE(sculpted);
+	const std::size_t center = 4 * 9 + 4;
+	CHECK(sculpted->vector(center).z > 0);
+	CHECK(sculpted->vector(0).z == doctest::Approx(0));   // the corner is outside the brush
+	editor.undo();
+	settle();
+	CHECK(readDisplacement(*topSide())->vector(center).z == doctest::Approx(0));
+	editor.redo();
+	settle();
+	CHECK(readDisplacement(*topSide())->vector(center).z > 0);
+
+	// Ctrl+wheel and ] size the brush.
+	QWheelEvent wheel(QPointF(middle), view->mapToGlobal(QPointF(middle)), {}, QPoint(0, 120), Qt::NoButton, Qt::ControlModifier,
+	                  Qt::NoScrollPhase, false);
+	QApplication::sendEvent(view, &wheel);
+	CHECK(editor.displaceSettings().radius > 96);
+	const double before = editor.displaceSettings().radius;
+	view->setFocus();
+	QTest::keyClick(view, Qt::Key_BracketRight);
+	CHECK(editor.displaceSettings().radius > before);
+
+	// Create mode: a click on a face makes it a displacement.
+	auto [second, ref2] = edit::createBlock(editor.doc(), box({-256, 0, 0}, {0, 256, 16}), "DEV/DEV_MEASUREGENERIC01");
+	editor.commit(std::move(second));
+	settle();
+	window.findChild<QPushButton*>(QStringLiteral("displace:%1").arg(int(Editor::DisplaceMode::Create)))->click();
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {-128, 128, 16}));
+	settle();
+	{
+		const Solid* solid = editor.doc().findSolid(ref2);
+		int displacements = 0;
+		for (const auto& side : solid->sides) displacements += side.dispInfo() ? 1 : 0;
+		CHECK(displacements == 1);
+	}
+
+	// Sew: the step between the raised and the new flat one is closed (nothing here is apart:
+	// both edges are flat, so nothing moves) - the button runs without a selection.
+	editor.clearSelection();
+	window.findChild<QPushButton*>("displaceSew")->click();
+	settle();
+
+	// Save and load: the same dispinfo; Flat again removes it.
+	const QString path = home.filePath("terrain.vmf");
+	QString error;
+	REQUIRE(editor.saveMap(path, &error));
+	const std::string savedInfo = writeKeyValues([&] {
+		KvNode root;
+		root.children.push_back(*topSide()->dispInfo());
+		return root;
+	}());
+	REQUIRE(editor.openMap(path, &error));
+	settle();
+	REQUIRE(topSide());
+	REQUIRE(topSide()->dispInfo());
+	const std::string loadedInfo = writeKeyValues([&] {
+		KvNode root;
+		root.children.push_back(*topSide()->dispInfo());
+		return root;
+	}());
+	CHECK(loadedInfo == savedInfo);
+	CHECK(loadedInfo != flatInfo);
+	editor.setSelection(selection);
+	window.findChild<QPushButton*>("displaceDestroy")->click();
+	settle();
+	CHECK_FALSE(topSide()->dispInfo());
 }
 
 TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page lists every material") {

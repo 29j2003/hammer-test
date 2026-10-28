@@ -17,6 +17,8 @@ class QToolButton;
 
 #include "camera.h"
 #include "editor.h"
+#include <sme/displacement.h>
+
 #include "renderer.h"
 
 namespace sme::app {
@@ -102,7 +104,7 @@ protected:
 private:
 	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner, RoomMinX, RoomMaxX, RoomMinY, RoomMaxY, RoomMinZ, RoomMaxZ,
 	                    RadiusMinX, RadiusMaxX, RadiusMinY, RadiusMaxY, RadiusMinZ, RadiusMaxZ };
-	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex };
+	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex, Sculpt };
 
 	[[nodiscard]] Ray rayAt(const QPointF& pos) const;
 	[[nodiscard]] double gizmoSize() const;
@@ -162,6 +164,26 @@ private:
 	bool toolMousePress(QMouseEvent* event);   ///< true if the clip/vertex/polygon tool used the click
 	void drawToolLines(std::vector<LineVertex>& lines) const;
 	bool toolKey(QKeyEvent* event);
+	// Displacement tool (viewport_displace.cpp): create on a click, sculpt and paint by dragging.
+	struct SculptFace {
+		FaceRef ref;
+		Side side;                 ///< Copy for texture coordinates while drawing
+		FaceGeometry face;
+		Displacement displacement; ///< Changed during the stroke, written into the map when it ends
+		bool changed = false;
+	};
+	bool displaceMousePress(QMouseEvent* event);   ///< true if the displacement tool used the click
+	void displaceMouseMove(const QPointF& pos);
+	/// Applies the brush once at `point` to every displacement of the stroke.
+	void sculptDab(const Vec3& point);
+	/// Ends the stroke: one undo step for everything it changed.
+	void finishSculpt();
+	/// The brush circle follows the displacement under the mouse.
+	void updateBrushCursor(const QPointF& pos);
+	void drawBrushCursor(std::vector<LineVertex>& lines) const;
+	/// Ctrl+wheel and [ ] change the brush radius; true if used.
+	bool displaceWheel(QWheelEvent* event);
+	bool displaceKey(QKeyEvent* event);
 	/// Mouse look (right mouse or fly mode). Runs alongside a tool drag, so the camera can
 	/// move while a block is being placed.
 	void beginLook(const QPointF& anchor);
@@ -209,6 +231,11 @@ private:
 		QMatrix4x4 transform;
 	};
 	std::optional<Ghost> m_ghost;
+	std::vector<SculptFace> m_sculptFaces;          ///< The displacements of the running stroke
+	std::optional<std::pair<Vec3, Vec3>> m_brushCursor;   ///< Center and surface normal under the mouse
+	Vec3 m_lastDab;
+	Vec3 m_flattenPoint;                           ///< Flatten: where the stroke began
+	unsigned m_sculptSeed = 1;
 	bool m_lookDirty = true;
 	Qt::KeyboardModifiers m_pressModifiers;
 	QSet<int> m_keys;

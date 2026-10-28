@@ -81,6 +81,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `entity_search` | Entities finden: Klasse, Name, `key=value` (Platzhalter `*`/`?`, `wildcardMatch`), Ausgangsziel, Modell, Sound; Abfrage-Syntax mit `class:`/`name:`/`target:`/`model:`/`sound:`, alle Begriffe müssen passen |
 | `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei) |
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
+| `displacement` | Displacements: `dispinfo` lesen/schreiben wie Hammer (normals, distances, offsets, offset_normals, alphas, triangle_tags, allowed_verts), anlegen (`makeDisplacement`, Power 2–4, Elevation in den Distanzen), Formen (`sculpt`: Raise/Smooth/Flatten/Noise/Alpha mit Kosinus-Abfall in der Flächenebene), Nähen (`sewDisplacements`), Undo-Schritte in `edit::` |
 | `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Keil/Fase an einer Kante (`cutEdge`), Vertex verschieben (bleibt konvex) |
 | `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
 | `editing`, `history` | Operationen als Undo-Schritte (`Transaction` merkt sich nur berührte Objekte) |
@@ -112,7 +113,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `editor` | `Editor`: Spiel, Karte, Undo, Auswahl, Werkzeug, Einstellungen; alle Änderungen über `commit()` |
 | `main_window` | Hauptfenster: Seitenleiste, Ansichten, Docks, Menüs, Werkzeugleisten, Statusleiste |
 | `camera` | Kamera einer Ansicht (Matrizen, Strahlen) |
-| `viewport`, `viewport_tools` | eine Ansicht: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools` |
+| `viewport`, `viewport_tools`, `viewport_displace` | eine Ansicht: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools`, Displacement-Werkzeug (Pinsel, Striche) in `viewport_displace` |
 | `renderer`, `renderer_shadows` | OpenGL 3.3: Brushes, Displacements, Entities, Modelle, Himmel, Licht-Vorschau; Schattenkarten |
 | `material_cache` | Materialien/Texturen im Hintergrund laden (auch Relief-Höhen) |
 | `model_cache`, `model_thumbnails` | Modelle im Hintergrund laden; Vorschaubilder per CPU-Rasterizer |
@@ -522,7 +523,7 @@ mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo un
 ## Fahrplan
 
 1. Rückmeldung von echten Installationen (Probe-Bericht, `sme-probe model`), Fehler beheben.
-2. Displacements mit dem Vertex-Werkzeug bearbeiten (Reddit-Wunsch), Displacement-Malen.
+2. ~~Displacement-Malen~~ (Werkzeug Displacement, Shift+D); offen: einzelne Displacement-Punkte mit dem Vertex-Werkzeug ziehen, Nähen über verschiedene Power (T-Stellen).
 3. Overlays/Decals im Viewport zeichnen.
 4. Mesh-Modus (Variante B): freie Meshes → beim Kompilieren konvex zerlegen bzw. als Static Prop + Nodraw-Hülle.
 5. Echte Physik-Simulation, VRAD-Schnellvorschau.

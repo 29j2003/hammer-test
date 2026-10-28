@@ -16,6 +16,7 @@
 #include <sme/brush.h>
 #include <sme/autosave.h>
 #include <sme/csg.h>
+#include <sme/displacement.h>
 #include <sme/visgroups.h>
 #include <sme/sky_presets.h>
 #include <sme/text.h>
@@ -47,6 +48,10 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_shadows = settings.value("editor/shadows", true).toBool();
 	m_showGrid3D = settings.value("view/grid3D", true).toBool();
 	m_maxFps = std::max(0, settings.value("view/maxFps", 144).toInt());
+	m_displace.mode = static_cast<DisplaceMode>(std::clamp(settings.value("displace/mode", int(DisplaceMode::Raise)).toInt(), 0, int(DisplaceMode::Alpha)));
+	m_displace.radius = std::clamp(settings.value("displace/radius", 64.0).toDouble(), 4.0, 1024.0);
+	m_displace.strength = std::clamp(settings.value("displace/strength", 25).toInt(), 1, 100);
+	m_displace.power = std::clamp(settings.value("displace/power", 3).toInt(), 2, 4);
 	m_showEntityNames = settings.value("view/entityNames", true).toBool();
 	m_showConnections = settings.value("view/connections", true).toBool();
 	m_hiddenKinds = settings.value("view/hiddenKinds", 0u).toUInt() & ALL_OBJECT_KINDS;
@@ -1040,6 +1045,86 @@ bool Editor::shapeSelectedEdges(edit::EdgeShape shape, double size, int segments
 	commit(std::move(*change));
 	setVertexCorners({});   // the corners moved
 	return true;
+}
+
+void Editor::setDisplaceSettings(const DisplaceSettings& settings) {
+	DisplaceSettings next = settings;
+	next.radius = std::clamp(next.radius, 4.0, 1024.0);
+	next.strength = std::clamp(next.strength, 1, 100);
+	next.power = std::clamp(next.power, 2, 4);
+	if (next.mode == m_displace.mode && next.radius == m_displace.radius && next.strength == m_displace.strength && next.power == m_displace.power) {
+		return;
+	}
+	m_displace = next;
+	QSettings settingsFile;
+	settingsFile.setValue("displace/mode", int(next.mode));
+	settingsFile.setValue("displace/radius", next.radius);
+	settingsFile.setValue("displace/strength", next.strength);
+	settingsFile.setValue("displace/power", next.power);
+	emit displaceSettingsChanged();
+}
+
+bool Editor::createDisplacements(const std::vector<FaceRef>& faces) {
+	int skipped = 0;
+	auto change = edit::createDisplacements(m_doc, faces, m_displace.power, 0, &skipped);
+	if (change.empty()) {
+		emit message(faces.empty() ? tr("Select faces (or brushes) first, or click a face with the displacement tool's Create mode")
+		                           : tr("Only faces with four corners that are not displacements yet can become one"));
+		return false;
+	}
+	commit(std::move(change));
+	if (skipped > 0) emit message(tr("%n face(s) skipped: not four corners, or already a displacement", nullptr, skipped));
+	return true;
+}
+
+bool Editor::createDisplacementsOnSelection() {
+	std::vector<FaceRef> faces = m_selection.faces;
+	if (faces.empty()) {
+		// Whole brushes: their faces that point up (the ground), like Hammer's usual first step.
+		const auto addSolid = [&](const SolidRef& ref) {
+			const Solid* solid = m_doc.findSolid(ref);
+			if (!solid) return;
+			for (const auto& face : buildBrushGeometry(*solid).faces) {
+				if (face.normal.z > 0.7) faces.push_back({ref, solid->sides[static_cast<std::size_t>(face.sideIndex)].id});
+			}
+		};
+		for (const auto& ref : m_selection.solids) addSolid(ref);
+		for (const int id : m_selection.entities) {
+			if (const Entity* entity = m_doc.findEntity(id)) {
+				for (const auto& solid : entity->solids) addSolid({id, solid.id});
+			}
+		}
+	}
+	return createDisplacements(faces);
+}
+
+void Editor::destroySelectedDisplacements() {
+	auto change = edit::destroyDisplacements(m_doc, edit::displacementFaces(m_doc, m_selection));
+	if (change.empty()) {
+		emit message(tr("Select the displacements (their brushes or faces) first"));
+		return;
+	}
+	commit(std::move(change));
+}
+
+void Editor::sewDisplacements() {
+	std::vector<FaceRef> faces = edit::displacementFaces(m_doc, m_selection);
+	if (m_selection.empty()) {
+		Selection all;
+		for (const auto& solid : m_doc.world.solids) all.solids.push_back({0, solid.id});
+		for (const auto& entity : m_doc.entities) {
+			if (!entity.solids.empty()) all.entities.push_back(entity.id);
+		}
+		faces = edit::displacementFaces(m_doc, all);
+	}
+	int moved = 0;
+	auto change = edit::sewDisplacements(m_doc, faces, &moved);
+	if (change.empty()) {
+		emit message(tr("Nothing to sew: no neighbouring displacements with different edges"));
+		return;
+	}
+	commit(std::move(change));
+	emit message(tr("Sewed %n vertex/vertices", nullptr, moved));
 }
 
 void Editor::clipSelection(const Plane& plane, edit::ClipKeep keep) {

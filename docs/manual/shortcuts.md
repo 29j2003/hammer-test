@@ -35,6 +35,7 @@ The Tool tab's key tables follow your own shortcuts.
 | Shift+X | Clip |
 | Shift+V | Vertex |
 | Shift+P | Polygon |
+| Shift+D | Displacement (Ctrl+wheel or [ ] sizes the brush) |
 | 3 | Faces mode |
 | 5 or 4 | Objects mode |
 

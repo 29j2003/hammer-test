@@ -8,6 +8,9 @@
 #include "model_thumbnails.h"
 
 #include <QAction>
+#include <QSlider>
+#include <QGridLayout>
+#include <QButtonGroup>
 #include <QTableWidget>
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -717,6 +720,99 @@ QWidget* makeSelectionBox(Editor* editor) {
 	return box;
 }
 
+/// Displacement tool: what a drag does, the brush, and the actions on the selection.
+QWidget* makeDisplaceBox(Editor* editor) {
+	auto* box = new QGroupBox(QObject::tr("Displacement"));
+	box->setObjectName("displaceTools");
+	auto* v = new QVBoxLayout(box);
+	using Mode = Editor::DisplaceMode;
+	const std::pair<Mode, std::pair<QString, QString>> modes[] = {
+		{Mode::Create, {QObject::tr("Create"), QObject::tr("Click a face: it becomes a displacement with the power below")}},
+		{Mode::Raise, {QObject::tr("Raise"), QObject::tr("Drag raises the ground under the brush, Shift+drag lowers it")}},
+		{Mode::Smooth, {QObject::tr("Smooth"), QObject::tr("Drag evens out bumps and edges")}},
+		{Mode::Flatten, {QObject::tr("Flatten"), QObject::tr("Drag pulls everything to the height where the stroke began")}},
+		{Mode::Noise, {QObject::tr("Noise"), QObject::tr("Drag adds random bumps (rocks, rough ground)")}},
+		{Mode::Alpha, {QObject::tr("Paint blend"), QObject::tr("Drag paints the second material of a blend material (WorldVertexTransition), Shift+drag erases")}},
+	};
+	auto* grid = new QGridLayout;
+	grid->setSpacing(4);
+	auto* group = new QButtonGroup(box);
+	int index = 0;
+	for (const auto& [mode, text] : modes) {
+		auto* b = new QPushButton(text.first);
+		b->setObjectName(QStringLiteral("displace:%1").arg(int(mode)));
+		b->setToolTip(text.second);
+		b->setCheckable(true);
+		group->addButton(b, int(mode));
+		grid->addWidget(b, index / 3, index % 3);
+		++index;
+	}
+	v->addLayout(grid);
+	auto* form = new QFormLayout;
+	auto* radius = new QSlider(Qt::Horizontal);
+	radius->setObjectName("displaceRadius");
+	radius->setRange(4, 512);
+	radius->setToolTip(QObject::tr("Brush radius in units (Ctrl+wheel or [ ] in the view)"));
+	auto* radiusText = new QLabel;
+	auto* radiusRow = new QHBoxLayout;
+	radiusRow->addWidget(radius, 1);
+	radiusRow->addWidget(radiusText);
+	auto* strength = new QSlider(Qt::Horizontal);
+	strength->setObjectName("displaceStrength");
+	strength->setRange(1, 100);
+	strength->setToolTip(QObject::tr("How much one dab changes: Raise and Noise up to 16 units, Smooth and Flatten up to all the way, Paint blend up to full"));
+	auto* strengthText = new QLabel;
+	auto* strengthRow = new QHBoxLayout;
+	strengthRow->addWidget(strength, 1);
+	strengthRow->addWidget(strengthText);
+	auto* power = new QComboBox;
+	power->setObjectName("displacePower");
+	power->addItem(QObject::tr("2 - 4 x 4 cells"), 2);
+	power->addItem(QObject::tr("3 - 8 x 8 cells"), 3);
+	power->addItem(QObject::tr("4 - 16 x 16 cells"), 4);
+	power->setToolTip(QObject::tr("Detail of new displacements: more cells follow the brush more finely but cost more"));
+	form->addRow(QObject::tr("Radius"), radiusRow);
+	form->addRow(QObject::tr("Strength"), strengthRow);
+	form->addRow(QObject::tr("Power"), power);
+	v->addLayout(form);
+	auto* actions = new QHBoxLayout;
+	const auto action = [&](const QString& text, const QString& name, const QString& tip, std::function<void()> run) {
+		auto* b = new QPushButton(text);
+		b->setObjectName(name);
+		b->setToolTip(tip);
+		QObject::connect(b, &QPushButton::clicked, box, std::move(run));
+		actions->addWidget(b);
+	};
+	action(QObject::tr("Make"), "displaceMake", QObject::tr("The selected faces (or the upward faces of the selected brushes) become displacements"),
+	       [editor] { editor->createDisplacementsOnSelection(); });
+	action(QObject::tr("Sew"), "displaceSew", QObject::tr("Close the cracks between neighbouring displacements (selected, or all)"), [editor] { editor->sewDisplacements(); });
+	action(QObject::tr("Flat again"), "displaceDestroy", QObject::tr("The selected displacements become flat faces again"), [editor] { editor->destroySelectedDisplacements(); });
+	v->addLayout(actions);
+
+	const auto sync = [editor, group, radius, radiusText, strength, strengthText, power] {
+		const auto& settings = editor->displaceSettings();
+		const QSignalBlocker b1(group), b2(radius), b3(strength), b4(power);
+		if (auto* button = group->button(int(settings.mode))) button->setChecked(true);
+		radius->setValue(int(settings.radius));
+		radiusText->setText(QObject::tr("%1 units").arg(int(settings.radius)));
+		strength->setValue(settings.strength);
+		strengthText->setText(QStringLiteral("%1 %").arg(settings.strength));
+		power->setCurrentIndex(power->findData(settings.power));
+	};
+	const auto change = [editor](auto&& set) {
+		auto settings = editor->displaceSettings();
+		set(settings);
+		editor->setDisplaceSettings(settings);
+	};
+	QObject::connect(group, &QButtonGroup::idClicked, box, [change](int id) { change([id](auto& s) { s.mode = Editor::DisplaceMode(id); }); });
+	QObject::connect(radius, &QSlider::valueChanged, box, [change](int value) { change([value](auto& s) { s.radius = value; }); });
+	QObject::connect(strength, &QSlider::valueChanged, box, [change](int value) { change([value](auto& s) { s.strength = value; }); });
+	QObject::connect(power, &QComboBox::currentIndexChanged, box, [change, power](int) { change([power](auto& s) { s.power = power->currentData().toInt(); }); });
+	QObject::connect(editor, &Editor::displaceSettingsChanged, box, sync);
+	sync();
+	return box;
+}
+
 /// Vertex tool: what to make of the picked edges (Source 2's Bevel; Hammer++ has none of it).
 QWidget* makeEdgeBox(Editor* editor) {
 	auto* box = new QGroupBox(QObject::tr("Edge"));
@@ -795,6 +891,8 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	hintLayout->addWidget(m_hint);
 	m_edgeBox = makeEdgeBox(editor);
 	hintLayout->addWidget(m_edgeBox);
+	m_displaceBox = makeDisplaceBox(editor);
+	hintLayout->addWidget(m_displaceBox);
 	m_selectionBox = makeSelectionBox(editor);
 	hintLayout->addWidget(m_selectionBox);
 	m_keys = new QTableWidget(0, 2);
@@ -861,6 +959,7 @@ void ToolPanel::showKeys(const std::vector<std::pair<QString, QString>>& rows) {
 
 void ToolPanel::refresh() {
 	m_edgeBox->setVisible(m_editor->tool() == Editor::Tool::Vertex && m_editor->selectMode() != Editor::SelectMode::Face);
+	m_displaceBox->setVisible(m_editor->tool() == Editor::Tool::Displace && m_editor->selectMode() != Editor::SelectMode::Face);
 	if (m_editor->selectMode() == Editor::SelectMode::Face) {
 		m_hint->setText(tr("<b>Faces</b><br>Click a face to select it, Ctrl+click adds, double-click selects the whole wall.<br>"
 		                   "Drag a material onto a face, Shift+T applies the current material, Ctrl+right mouse paints.<br>"
@@ -954,6 +1053,16 @@ void ToolPanel::refresh() {
 			m_hint->setText(tr("<b>Polygon</b><br>Click the corners of the base (on the floor in 3D, or in a 2D view). Enter or double-click "
 			                   "makes a brush as high as the last block. Backspace removes the last corner."));
 			showKeys({{tr("Enter"), tr("Make the brush")}, {tr("Backspace"), tr("Remove the last corner")}, {tr("Esc"), tr("Cancel")}});
+			break;
+		case Editor::Tool::Displace:
+			m_hint->setText(tr("<b>Displacement</b><br>Terrain from brush faces. Create: click a face (or Make for the selection). "
+			                   "Then drag over it: Raise, Smooth, Flatten, Noise, or paint the blend of a two-material ground.<br>"
+			                   "Shift inverts (lower, erase). Sew closes cracks between neighbours."));
+			showKeys({{tr("Drag"), tr("Sculpt or paint under the brush")},
+			          {tr("Shift+Drag"), tr("Lower / erase the blend")},
+			          {tr("Ctrl+Wheel"), tr("Brush radius")},
+			          {tr("[  ]"), tr("Brush smaller / bigger")},
+			          {"action:Undo", tr("Undo the last stroke")}});
 			break;
 	}
 	styleHint();

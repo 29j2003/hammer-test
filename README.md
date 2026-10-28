@@ -69,6 +69,9 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Edges** (like Source 2): with the vertex tool click the middle of an edge to pick it (Ctrl+click for more), then
   **Wedge** (a block becomes a ramp), **Bevel** (one slanted face, *Size* in from the edge) or **Round** (radius *Size*,
   2–32 segments) in the Tool panel's *Edge* box or the right-click menu. All picked edges change in one undo step.
+- **Displacements** (Shift+D): click a face (or **Make** for the selection) to turn it into terrain, then drag to
+  **Raise** (Shift lowers), **Smooth**, **Flatten**, add **Noise** or **Paint blend** for two-material ground. Ctrl+wheel or
+  [ ] sizes the brush; **Sew** closes cracks between neighbours, **Flat again** removes a displacement. One undo step per stroke.
 - **VisGroups**: the *VisGroups* panel lists the map's groups (nested, each with its colour). Select objects and press
   **New from selection**; **Add selection** / **Remove selection** change a group, double-click (or **Select members**)
   selects what is in it, F2 or **Rename** renames it, **Color ...** and **Delete** (members stay) too - every change is
@@ -286,6 +289,7 @@ whether a model loads.
 | F | Frame selection | Shift+Alt+Z | One view / four views |
 | Q / T / R / E | Select / Move / Rotate / Scale | Shift+B / Shift+E | Block (shapes) / Entity tool |
 | Shift+X / Shift+V / Shift+P | Clip / Vertex / Polygon tool | Right click | Menu for the clicked object |
+| Shift+D | Displacement tool | Ctrl+wheel, [ / ] (displacement tool) | Brush radius |
 | 3 / 5 | Face mode / Object mode | Shift+T | Apply current material |
 | Ctrl + right mouse drag | Paint material on faces | Double-click (face mode) | Select the whole wall |
 | Shift + right click, Ctrl+M | Pick material | [ / ] | Grid smaller / bigger |
@@ -319,7 +323,7 @@ any game installed:
 ## Status
 
 Early version. Tested with generated test data and automated UI tests on Linux, and built on Windows by the CI; it still
-needs testing with real games. Not there yet: editing displacements with the vertex tool, a mesh mode, particles
+needs testing with real games. Not there yet: moving single displacement vertices with the vertex tool, a mesh mode, particles
 in the 3D view, and a full physics simulation (Drop to floor only lets objects fall straight down).
 
 ## License
