@@ -11,6 +11,7 @@
 #include <QFutureWatcher>
 #include <QGroupBox>
 #include <QStringList>
+#include <QTimer>
 
 #include <filesystem>
 #include <map>
@@ -62,11 +63,23 @@ public:
 	[[nodiscard]] const QStringList& keptOwn() const { return m_keptOwn; }
 	/// One line about the last run ("Up to date ...", "Writing materials ...").
 	[[nodiscard]] QString status() const;
+	/// Walls of the mod's maps that have Mapsmith's relief from their texture's pattern.
+	[[nodiscard]] int patternReliefCount() const { return m_patternRelief; }
+	/// The mod has its shader DLL (bin/game_shader_dx6.dll); without it the effects that need it
+	/// are held back (heldBackCount materials) - the game would draw them as wireframes.
+	[[nodiscard]] bool shaderDll() const { return m_shaderDll; }
+	[[nodiscard]] int heldBackCount() const { return m_heldBack; }
+	/// The mapper's own materials with the mod's shaders while the DLL is missing.
+	[[nodiscard]] const QStringList& brokenOwn() const { return m_brokenOwn; }
 
 	/// Brings the mod's materials in line with the settings (in the background).
 	void sync();
+	/// Asks for the mod's features (and so its shader DLL) to be installed: Project › Features.
+	void requestInstallFeatures() { emit installFeaturesRequested(); }
 
 signals:
+	/// Someone pressed "Install features" (the main window installs them).
+	void installFeaturesRequested();
 	/// Settings, counts or status changed.
 	void changed();
 	/// These materials were written (the views read them again).
@@ -81,6 +94,8 @@ private:
 		EnhancementPlan plan;
 		QStringList written;
 		QStringList failed;
+		QStringList brokenOwn;
+		bool shaderDll = true;
 	};
 	void gameChanged();
 	void finished();
@@ -98,6 +113,12 @@ private:
 	QStringList m_keptOwn;
 	QStringList m_failed;
 	int m_lastWritten = 0;
+	int m_patternRelief = 0;
+	int m_heldBack = 0;
+	bool m_shaderDll = true;
+	QStringList m_brokenOwn;
+	std::set<std::string> m_openMapMaterials;   ///< Last seen on the open map
+	QTimer m_mapCheck;
 	bool m_ready = false;
 	bool m_again = false;
 	bool m_running = false;
@@ -142,6 +163,8 @@ private:
 	QTreeWidget* m_excluded;
 	QPushButton* m_remove;
 	QLabel* m_status;
+	QWidget* m_dllBox;       ///< The shader DLL is missing: what that means, Install features
+	QLabel* m_dllText;
 };
 
 } // namespace sme::app

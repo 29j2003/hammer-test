@@ -230,6 +230,9 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
     *Paint zones ...* to mark places that stay flat (blue) or are turned upside down (orange) - a whole brick at a click.
     The map views show every change at once, before you save. Saving writes `<material>_relief.vtf` next to the
     material. Windows, signs, grates, metal sheets and plaster get no relief (also in the game, through Game enhancements).
+    The walls of your maps get the relief from their pattern in the game too, by themselves (Game enhancements).
+    Relief, water and liquid need the mod's shaders (**Project › Features**); without them the editor warns instead of
+    saving - the game would show a see-through wireframe.
   - *Water*: *Sun glint and foam at the shore* makes it `Water_Fidelity`, with sliders for glint and foam.
   - *Liquid inside*: for glass props (`Fidelity_Liquid`): liquid and glass colour, fill level (fixed or different in
     every prop), how it sways and how thick it is, splashing and pouring out.

@@ -492,9 +492,11 @@ void createDemo(Fixture& f) {
 	                       "\t\"$fogcolor\" \"{30 50 50}\"\n\t\"$fogstart\" \"0\"\n\t\"$fogend\" \"300\"\n\t\"$surfaceprop\" \"water\"\n"));
 	writeText(mat / "models/props_demo/bottle001.vmt",
 	          vmt("VertexLitGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glassbottle\"\n"));
-	// mapbase-fidelity's shaders are installed (deploy.bat copies their .vcs files into the mod);
-	// a stand-in file, enough for the editor to offer relief, water and liquid.
+	// mapbase-fidelity's shaders are installed (their .vcs files and the shader DLL in the mod's
+	// bin folder); stand-in files, enough for the editor to offer relief, water and liquid. (The
+	// game knows the shaders only from the DLL: without it they would be wireframes.)
 	writeText(f.mod / "shaders/fxc/fidelity_parallax_ps30.vcs", "stand-in for the test\n");
+	writeText(f.mod / "bin/game_shader_dx6.dll", "stand-in for the test\n");
 	writeText(mat / "demo/glass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glass\"\n"));
 	// A decal: a yellow arrow on transparent ground (128 x 128 texture, $decalscale 0.5 = 64 units).
 	writeBytes(mat / "decals/demo_arrow.vtf", makeTexture(128, [](double u, double v) {

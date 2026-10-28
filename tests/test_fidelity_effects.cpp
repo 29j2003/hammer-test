@@ -8,7 +8,12 @@
 
 #include <sme/fidelity_effects.h>
 #include <sme/filesystem.h>
+#include <sme/heightmap.h>
+#include <sme/texture.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -35,6 +40,61 @@ std::string readAll(const std::filesystem::path& file) {
 }
 
 const std::string DEPLOY(DEPLOY_MARKER);
+
+template <typename T>
+void put(std::vector<std::byte>& out, std::size_t at, T value) {
+	std::memcpy(out.data() + at, &value, sizeof value);
+}
+
+/// An uncompressed RGB888 .vtf (7.2, one mip level) of a brick wall: courses of bricks in a running
+/// bond, each brick its own shade (some darker than the light mortar), with grain.
+std::vector<std::byte> brickVtf(unsigned size, bool bricks = true) {
+	std::vector<std::byte> out(80 + std::size_t(size) * size * 3, std::byte(0));
+	std::memcpy(out.data(), "VTF", 4);
+	put<std::int32_t>(out, 4, 7);
+	put<std::int32_t>(out, 8, 2);
+	put<std::int32_t>(out, 12, 80);
+	put<std::uint16_t>(out, 16, std::uint16_t(size));
+	put<std::uint16_t>(out, 18, std::uint16_t(size));
+	put<std::uint16_t>(out, 24, 1);
+	put<float>(out, 48, 1.f);
+	put<std::int32_t>(out, 52, 2);   // IMAGE_FORMAT_RGB888
+	out[56] = std::byte(1);
+	put<std::int32_t>(out, 57, -1);
+	put<std::uint16_t>(out, 63, 1);
+	std::uint32_t seed = 11;
+	const auto random = [&seed] {
+		seed = seed * 1664525u + 1013904223u;
+		return double(seed >> 8) / double(1u << 24);
+	};
+	std::vector<double> tones(64);
+	for (auto& tone : tones) tone = 0.25 + 0.45 * random();
+	const double course = size / 8.0, unit = size / 4.0;
+	for (unsigned y = 0; y < size; ++y) {
+		for (unsigned x = 0; x < size; ++x) {
+			double tone = 0.5 + (random() - 0.5) * 0.5;   // without bricks: only grain
+			if (bricks) {
+				const int row = int(y / course);
+				const double offset = row % 2 ? unit * 0.5 : 0.0;
+				const double u = std::fmod(x + 0.5 + offset, unit), v = std::fmod(y + 0.5, course);
+				const bool joint = v < 1.5 || v > course - 1.5 || u < 1.5 || u > unit - 1.5;
+				const int brick = row * 4 + int(std::fmod(x + offset, double(size)) / unit);
+				tone = (joint ? 0.82 : tones[std::size_t(brick) % tones.size()]) + (random() - 0.5) * 0.12;
+			}
+			const auto byte = [](double c) { return std::byte(static_cast<unsigned char>(std::clamp(c, 0.0, 1.0) * 255)); };
+			auto* p = out.data() + 80 + (std::size_t(y) * size + x) * 3;
+			p[0] = byte(tone * 1.15);
+			p[1] = byte(tone * 0.8);
+			p[2] = byte(tone * 0.7);
+		}
+	}
+	return out;
+}
+
+void writeBytes(const std::filesystem::path& file, const std::vector<std::byte>& bytes) {
+	std::filesystem::create_directories(file.parent_path());
+	std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+}
 
 } // namespace
 
@@ -337,4 +397,208 @@ TEST_CASE("game enhancements: the settings file") {
 	REQUIRE(saveEnhancementSettings(mod, settings));
 	CHECK(std::filesystem::exists(mod / "cfg/mapsmith_enhancements.txt"));
 	CHECK(loadEnhancementSettings(mod) == settings);
+}
+
+TEST_CASE("relief height maps: byte for byte as deploy.ps1's height_map.cs writes them (WriteI8)") {
+	HeightMap map;
+	map.width = 4;
+	map.height = 2;
+	map.values = {0.f, 1.f, 0.5f, 0.25f, 1.f, 1.f, 0.f, 0.75f};
+	const auto vtf = encodeHeightVtf(map);
+	// 7.2, 80-byte header, levels 4x2, 2x1, 1x1 (smallest first), I8.
+	REQUIRE(vtf.size() == 80 + 1 + 2 + 8);
+	const auto i32 = [&vtf](std::size_t at) {
+		std::int32_t v;
+		std::memcpy(&v, vtf.data() + at, 4);
+		return v;
+	};
+	const auto f32 = [&vtf](std::size_t at) {
+		float v;
+		std::memcpy(&v, vtf.data() + at, 4);
+		return v;
+	};
+	CHECK(std::memcmp(vtf.data(), "VTF\0", 4) == 0);
+	CHECK(i32(4) == 7);
+	CHECK(i32(8) == 2);
+	CHECK(i32(12) == 80);
+	CHECK(i32(20) == 0);              // no flags (no sRGB, no clamping: it tiles like the wall)
+	CHECK(f32(32) == doctest::Approx(0.5));
+	CHECK(f32(48) == doctest::Approx(1.0));
+	CHECK(i32(52) == 5);              // IMAGE_FORMAT_I8: the shader reads .r
+	CHECK(int(vtf[56]) == 3);         // every mip level
+	CHECK(i32(57) == -1);             // no thumbnail
+	const auto byte = [&vtf](std::size_t at) { return int(vtf[at]); };
+	// Level 0 at the end, rounded like height_map.cs (t * 255 + 0.5).
+	CHECK(byte(83) == 0);
+	CHECK(byte(84) == 255);
+	CHECK(byte(85) == 128);
+	CHECK(byte(86) == 64);
+	// Level 1: box filter of 2 x 2 with +2 rounding, as WriteI8.
+	CHECK(byte(81) == (0 + 255 + 255 + 255 + 2) / 4);
+	CHECK(byte(82) == (128 + 64 + 0 + 191 + 2) / 4);
+	CHECK(byte(80) == (byte(81) + byte(82) + byte(81) + byte(82) + 2) / 4);
+	map.width = 3;
+	CHECK(encodeHeightVtf(map).empty());   // not a power of two: refused, as the game cannot tile it
+}
+
+TEST_CASE("game enhancements: only with the mod's shader DLL - without it the game draws them as wireframes") {
+	CHECK(shaderNeedsModDll("Fidelity_Parallax"));
+	CHECK(shaderNeedsModDll("fidelity_liquid"));
+	CHECK(shaderNeedsModDll("Water_Fidelity"));
+	CHECK_FALSE(shaderNeedsModDll("LightmappedGeneric"));
+	CHECK_FALSE(shaderNeedsModDll("Water"));
+	CHECK(effectNeedsShaderDll(GameEffect::Relief));
+	CHECK(effectNeedsShaderDll(GameEffect::Liquid));
+	CHECK(effectNeedsShaderDll(GameEffect::Water));
+	CHECK_FALSE(effectNeedsShaderDll(GameEffect::Wind));   // Mapbase's own $treesway
+
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "dll/hl2";
+	const auto mod = f.root / "dll/mymod";
+	test::writeText(game / "materials/models/props_junk/glassbottle01a.vmt",
+	                "\"VertexLitGeneric\"\n{\n\t\"$basetexture\" \"models/props_junk/glassbottle01a\"\n\t\"$translucent\" 1\n}\n");
+	test::writeText(game / "materials/brick/brickwall001a.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"brick/brickwall001a\"\n}\n");
+	// What deploy.bat made while the DLL was there, and the mapper's own relief floor (the
+	// material editor's) - Julius' see-through floor.
+	test::writeText(mod / "materials/models/props_junk/glassbottle01a.vmt", DEPLOY + " (liquid) from x\r\n\"Fidelity_Liquid\"\n{\n}\n");
+	test::writeText(mod / "materials/concrete/floor01.vmt", "\"Fidelity_Parallax\"\n{\n\t\"$basetexture\" \"concrete/floor01\"\n\t\"$parallaxmap\" \"concrete/floor01_relief\"\n}\n");
+	test::writeText(mod / "materials/concrete/floor02.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"concrete/floor02\"\n}\n");
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+	CHECK_FALSE(modHasShaderDll(mod));
+	CHECK(ownMaterialsNeedingShaderDll(mod) == std::vector<std::string>{"concrete/floor01"});
+
+	EffectCandidates only{{GameEffect::Liquid, {"models/props_junk/glassbottle01a"}}, {GameEffect::Relief, {"brick/brickwall001a"}}};
+	EnhancementOptions options;
+	options.shaderDll = false;
+	auto plan = planEnhancements(fs, mod, {}, {}, &only, options);
+	// Nothing gets a shader the game does not know; deploy's bottle goes; the mapper's floor stays (reported above).
+	CHECK(plan.heldBack == 2);
+	CHECK(plan.activeCount() == 0);
+	REQUIRE(plan.changes.size() == 1);
+	CHECK(plan.changes[0].remove);
+	CHECK(plan.changes[0].material == "models/props_junk/glassbottle01a");
+	// With the DLL the bottle gets its liquid again.
+	test::writeText(mod / "bin/game_shader_dx6.dll", "dll");
+	CHECK(modHasShaderDll(mod));
+	CHECK(ownMaterialsNeedingShaderDll(mod).size() == 1);   // (the list is only shown while the DLL is missing)
+	std::filesystem::remove(mod / "materials/models/props_junk/glassbottle01a.vmt");
+	fs.noteRemovedFile(mod / "materials/models/props_junk/glassbottle01a.vmt");
+	plan = planEnhancements(fs, mod, {}, {}, &only, {});
+	CHECK(plan.heldBack == 0);
+	CHECK(plan.active[GameEffect::Liquid] == 1);
+}
+
+TEST_CASE("game enhancements: walls of the mod's maps get their relief from the texture's pattern") {
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "pattern/hl2";
+	const auto mod = f.root / "pattern/mymod";
+	const auto wall = [&](const std::string& name, const std::string& texture, const std::string& extra = {}) {
+		test::writeText(game / "materials" / (name + ".vmt"), "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"" + texture + "\"\n" + extra + "}\n");
+	};
+	wall("brick/brickwall001a", "brick/brickwall001a");                                    // a deploy candidate (brick)
+	wall("concrete/concretefloor001a", "concrete/concretefloor001a");                      // not deploy's, but laid in courses
+	wall("concrete/plain", "concrete/plain");                                               // no pattern
+	wall("brick/shiny", "brick/brickwall001a", "\t\"$envmap\" \"env_cubemap\"\n");           // has its own reflection
+	writeBytes(game / "materials/brick/brickwall001a.vtf", brickVtf(128));
+	writeBytes(game / "materials/concrete/concretefloor001a.vtf", brickVtf(128));
+	writeBytes(game / "materials/concrete/plain.vtf", brickVtf(128, false));
+	std::filesystem::create_directories(mod / "materials");
+	test::writeText(mod / "bin/game_shader_dx6.dll", "dll");
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+
+	// The maps: one .vmf in the map folder uses three of the walls.
+	test::writeText(f.root / "pattern/mapsrc/a.vmf",
+	                "world\n{\n\tsolid\n\t{\n\t\tside\n\t\t{\n\t\t\t\"material\" \"BRICK/BRICKWALL001A\"\n\t\t}\n\t\tside\n\t\t{\n"
+	                "\t\t\t\"material\" \"concrete/concretefloor001a\"\n\t\t}\n\t\tside\n\t\t{\n\t\t\t\"material\" \"concrete/plain\"\n"
+	                "\t\t}\n\t\tside\n\t\t{\n\t\t\t\"material\" \"brick/shiny\"\n\t\t}\n\t}\n}\n");
+	const auto mapMaterials = vmfMaterialNames({f.root / "pattern/mapsrc/a.vmf", f.root / "pattern/mapsrc/missing.vmf"});
+	CHECK(mapMaterials == std::set<std::string>{"brick/brickwall001a", "brick/shiny", "concrete/concretefloor001a", "concrete/plain"});
+
+	const auto apply = [&](const EnhancementPlan& plan) {
+		for (const auto& change : plan.changes) {
+			if (change.remove) {
+				std::filesystem::remove(change.file);
+				fs.noteRemovedFile(change.file);
+			} else {
+				std::filesystem::create_directories(change.file.parent_path());
+				test::writeText(change.file, change.text);
+				fs.noteWrittenFile(change.file);
+			}
+			if (!change.heightFile.empty()) {
+				if (!change.heightVtf.empty() && !change.remove) {
+					writeBytes(change.heightFile, change.heightVtf);
+					fs.noteWrittenFile(change.heightFile);
+				} else {
+					std::filesystem::remove(change.heightFile);
+					fs.noteRemovedFile(change.heightFile);
+				}
+			}
+		}
+	};
+	EffectCandidates only{{GameEffect::Relief, effectCandidates(fs, mod, GameEffect::Relief)}};
+	CHECK(only[GameEffect::Relief] == std::vector<std::string>{"brick/brickwall001a", "brick/shiny"});
+	EnhancementOptions options;
+	options.mapMaterials = &mapMaterials;
+	EnhancementSettings settings;
+	auto plan = planEnhancements(fs, mod, settings, {}, &only, options);
+	CHECK(plan.patternRelief == 3);   // both brick walls and the floor in courses; the plain one keeps deploy's (none)
+	apply(plan);
+	const auto text = readAll(mod / "materials/brick/brickwall001a.vmt");
+	CHECK(text.starts_with(std::string(PATTERN_RELIEF_MARKER) + " (relief) from materials/brick/brickwall001a.vmt hash "));
+	CHECK(isGeneratedMaterial(text));   // and so not deploy.bat's to overwrite: it leaves the mod's own alone
+	CHECK(effectIsOn(GameEffect::Relief, text));
+	// deploy's form (New-ParallaxMaterial): the shader, the relief keys first, the course depth,
+	// the wet-only cubemap of a wall without its own reflection, the rest as it was.
+	CHECK(text.find("\r\n\"Fidelity_Parallax\"\n{\r\n\t\"$parallaxmap\" \"brick/brickwall001a_mapsmith_relief\"\r\n\t\"$parallaxdepth\" \"0.01\"\r\n"
+	                "\t\"$envmap\" \"env_cubemap\"\r\n\t\"$envmapwetonly\" \"1\"\n\t\"$basetexture\" \"brick/brickwall001a\"") != std::string::npos);
+	const auto shiny = readAll(mod / "materials/brick/shiny.vmt");
+	CHECK(shiny.find("$envmapwetonly") == std::string::npos);   // its own reflection stays as it is
+	CHECK(std::count(shiny.begin(), shiny.end(), '$') == 4);   // parallaxmap, parallaxdepth, basetexture, envmap
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/plain.vmt"));
+	// The height map: bricks up, joints down, readable by the game (I8) and by Mapsmith.
+	const auto height = loadTexture(fs, "brick/brickwall001a_mapsmith_relief");
+	REQUIRE(height);
+	CHECK(height->width == 128);
+	const auto at = [&](unsigned x, unsigned y) { return int(height->pixels[(std::size_t(y) * height->width + x) * 4]); };
+	CHECK(at(16, 8) > at(16, 0) + 60);   // middle of a brick above the bed joint
+	// Again: nothing to do (the hash in the first line says it is made from this texture).
+	plan = planEnhancements(fs, mod, settings, {}, &only, options);
+	CHECK(plan.changes.empty());
+	CHECK(plan.patternRelief == 3);
+	// Another texture: made again.
+	writeBytes(game / "materials/concrete/concretefloor001a.vtf", brickVtf(64));
+	plan = planEnhancements(fs, mod, settings, {}, &only, options);
+	REQUIRE(plan.changes.size() == 1);
+	CHECK(plan.changes[0].material == "concrete/concretefloor001a");
+	apply(plan);
+	// Relief off for one wall and for the mod: Mapsmith's copies and their height maps go
+	// (the deploy candidate gets the copy that keeps it off).
+	settings.setExcluded(GameEffect::Relief, "concrete/concretefloor001a", true);
+	plan = planEnhancements(fs, mod, settings, {}, &only, options);
+	apply(plan);
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a.vmt"));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a_mapsmith_relief.vtf"));
+	settings.off.insert(GameEffect::Relief);
+	plan = planEnhancements(fs, mod, settings, {}, &only, options);
+	apply(plan);
+	CHECK(readAll(mod / "materials/brick/brickwall001a.vmt").starts_with(std::string(MAPSMITH_MARKER) + " off (relief)"));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a_mapsmith_relief.vtf"));
+	CHECK(readAll(mod / "materials/brick/shiny.vmt").starts_with(std::string(MAPSMITH_MARKER) + " off (relief)"));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/shiny_mapsmith_relief.vtf"));
+	// Without the shader DLL nothing of it stays (the game would draw wireframes).
+	settings.off.clear();
+	settings.setExcluded(GameEffect::Relief, "concrete/concretefloor001a", false);
+	apply(planEnhancements(fs, mod, settings, {}, &only, options));
+	CHECK(std::filesystem::exists(mod / "materials/concrete/concretefloor001a_mapsmith_relief.vtf"));
+	options.shaderDll = false;
+	apply(planEnhancements(fs, mod, settings, {}, &only, options));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a.vmt"));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a_mapsmith_relief.vtf"));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a_mapsmith_relief.vtf"));
 }

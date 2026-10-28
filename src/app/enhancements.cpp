@@ -12,12 +12,14 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
+#include <QDirIterator>
 #include <QSaveFile>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <sme/game.h>
+#include <sme/map.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -37,7 +39,41 @@ QLabel* noteLabel(const QString& text = {}) {
 
 // --- GameEnhancements ---------------------------------------------------------------------
 
+namespace {
+
+/// The materials on the open map's brushes (lower case).
+std::set<std::string> openMapMaterials(const MapDocument& doc) {
+	std::set<std::string> out;
+	const auto add = [&out](const std::vector<Solid>& solids) {
+		for (const auto& solid : solids) {
+			for (const auto& side : solid.sides) {
+				std::string name = toLower(side.material);
+				std::replace(name.begin(), name.end(), '\\', '/');
+				if (!name.empty()) out.insert(std::move(name));
+			}
+		}
+	};
+	add(doc.world.solids);
+	for (const auto& entity : doc.entities) add(entity.solids);
+	return out;
+}
+
+} // namespace
+
 GameEnhancements::GameEnhancements(Editor* editor) : m_editor(editor) {
+	// New materials on the open map's walls get the pattern relief: checked a moment after the
+	// changes stop (reading every side on each step would slow editing down).
+	m_mapCheck.setSingleShot(true);
+	m_mapCheck.setInterval(2000);
+	connect(&m_mapCheck, &QTimer::timeout, this, [this] {
+		if (!available()) return;
+		auto materials = openMapMaterials(m_editor->doc());
+		if (materials == m_openMapMaterials) return;
+		m_openMapMaterials = std::move(materials);
+		sync();
+	});
+	connect(editor, &Editor::documentChanged, this, [this] { m_mapCheck.start(); });
+	connect(editor, &Editor::documentReplaced, this, [this] { m_mapCheck.start(); });
 	connect(editor, &Editor::gameAboutToChange, this, [this] {
 		m_again = false;
 		m_running = false;
@@ -68,8 +104,13 @@ void GameEnhancements::gameChanged() {
 	m_lastWritten = 0;
 	m_settings = {};
 	m_modDir.clear();
+	m_patternRelief = 0;
+	m_heldBack = 0;
+	m_brokenOwn.clear();
+	m_openMapMaterials.clear();
 	if (available()) {
 		m_modDir = m_editor->gameEntry()->gameDir;
+		m_openMapMaterials = openMapMaterials(m_editor->doc());
 		m_settings = loadEnhancementSettings(m_modDir);
 		sync();
 	}
@@ -85,13 +126,30 @@ void GameEnhancements::sync() {
 	GameFileSystem* fs = &m_editor->game()->files;
 	const bool scan = !m_ready;
 	m_running = true;
-	m_watcher.setFuture(QtConcurrent::run([fs, scan, generation = m_generation, modDir = m_modDir, settings = m_settings, candidates = m_candidates] {
+	const QString mapDir = m_editor->gameSettings().mapDir;
+	m_watcher.setFuture(QtConcurrent::run([fs, scan, generation = m_generation, modDir = m_modDir, settings = m_settings, candidates = m_candidates,
+	                                       mapDir, openMap = m_openMapMaterials] {
 		Result result;
 		result.generation = generation;
 		result.scanned = scan;
 		result.candidates = scan ? findEffectCandidates(*fs, modDir) : candidates;
 		result.excluded = excludedMaterials(*fs, settings);
-		result.plan = planEnhancements(*fs, modDir, settings, result.excluded, &result.candidates);
+		// The walls of the mod's maps (its map folder and the open map) get the pattern relief.
+		std::vector<std::filesystem::path> vmfs;
+		if (!mapDir.isEmpty() && QFileInfo(mapDir).isDir()) {
+			QDirIterator it(mapDir, {QStringLiteral("*.vmf")}, QDir::Files, QDirIterator::Subdirectories);
+			while (it.hasNext()) {
+				const QString path = it.next();
+				if (!path.endsWith(QLatin1String("_cordon.vmf"))) vmfs.push_back(toPath(path));
+			}
+		}
+		std::set<std::string> mapMaterials = vmfMaterialNames(vmfs);
+		mapMaterials.insert(openMap.begin(), openMap.end());
+		EnhancementOptions options;
+		options.shaderDll = modHasShaderDll(modDir);
+		options.mapMaterials = &mapMaterials;
+		result.shaderDll = options.shaderDll;
+		result.plan = planEnhancements(*fs, modDir, settings, result.excluded, &result.candidates, options);
 		for (const auto& change : result.plan.changes) {
 			const QString name = QString::fromStdString(change.material);
 			const QString path = fromPath(change.file);
@@ -106,7 +164,25 @@ void GameEnhancements::sync() {
 				     file.commit();
 				if (ok) fs->noteWrittenFile(change.file);
 			}
+			// A pattern relief's height map goes with its material.
+			if (ok && !change.heightFile.empty()) {
+				const QString height = fromPath(change.heightFile);
+				if (!change.heightVtf.empty() && !change.remove) {
+					QSaveFile file(height);
+					ok = file.open(QIODevice::WriteOnly) &&
+					     file.write(reinterpret_cast<const char*>(change.heightVtf.data()), qint64(change.heightVtf.size())) == qint64(change.heightVtf.size()) &&
+					     file.commit();
+					if (ok) fs->noteWrittenFile(change.heightFile);
+				} else if (QFileInfo::exists(height)) {
+					ok = QFile::remove(height);
+					if (ok) fs->noteRemovedFile(change.heightFile);
+				}
+			}
 			(ok ? result.written : result.failed) << name;
+		}
+		// The mapper's own materials with the mod's shaders: broken in the game without the DLL.
+		if (!options.shaderDll) {
+			for (const auto& material : ownMaterialsNeedingShaderDll(modDir)) result.brokenOwn << QString::fromStdString(material);
 		}
 		return result;
 	}));
@@ -125,6 +201,10 @@ void GameEnhancements::finished() {
 	}
 	m_excluded = std::move(result.excluded);
 	m_active = result.plan.active;
+	m_patternRelief = result.plan.patternRelief;
+	m_heldBack = result.plan.heldBack;
+	m_shaderDll = result.shaderDll;
+	m_brokenOwn = result.brokenOwn;
 	m_keptOwn.clear();
 	for (const auto& material : result.plan.keptOwn) m_keptOwn << QString::fromStdString(material);
 	m_failed = result.failed;
@@ -209,6 +289,7 @@ QString GameEnhancements::status() const {
 	int total = 0;
 	for (const auto& [effect, count] : m_active) total += count;
 	QStringList parts{tr("Up to date: %n material(s) with an effect", nullptr, total)};
+	if (m_patternRelief > 0) parts << tr("%n wall(s) of your maps with relief from their pattern", nullptr, m_patternRelief);
 	if (!m_keptOwn.isEmpty()) parts << tr("%n kept (your own material)", nullptr, int(m_keptOwn.size()));
 	if (!m_failed.isEmpty()) parts << tr("%n could not be written", nullptr, int(m_failed.size()));
 	return parts.join(QStringLiteral(" · "));
@@ -342,6 +423,21 @@ EnhancementsSection::EnhancementsSection(GameEnhancements* enhancements, QWidget
 	m_status = noteLabel();
 	m_status->setObjectName("enhancementStatus");
 	v->addWidget(m_status);
+	// Without the mod's shader DLL these effects would be wireframes in the game.
+	m_dllBox = new QWidget;
+	m_dllBox->setObjectName("enhancementDllMissing");
+	auto* dll = new QHBoxLayout(m_dllBox);
+	dll->setContentsMargins(0, 0, 0, 0);
+	m_dllText = noteLabel();
+	m_dllText->setStyleSheet(QStringLiteral("color: #ffc070;"));
+	dll->addWidget(m_dllText, 1);
+	auto* install = new QPushButton(tr("Install features"));
+	install->setObjectName("enhancementInstallFeatures");
+	install->setProperty("accent", true);
+	install->setToolTip(tr("Puts the mod's shaders and the rest of the features into the mod (Project › Features)"));
+	connect(install, &QPushButton::clicked, enhancements, &GameEnhancements::requestInstallFeatures);
+	dll->addWidget(install, 0, Qt::AlignTop);
+	v->addWidget(m_dllBox);
 
 	connect(m_excluded, &QTreeWidget::itemSelectionChanged, this, [this] { m_remove->setEnabled(!m_excluded->selectedItems().isEmpty()); });
 	connect(m_remove, &QPushButton::clicked, this, [this] {
@@ -357,6 +453,7 @@ void EnhancementsSection::refresh() {
 	const bool available = m_enhancements->available();
 	m_body->setVisible(available);
 	m_status->setVisible(available);
+	m_dllBox->setVisible(false);
 	m_intro->setText(available ? tr("The extra effects of mapbase-fidelity, on for everything they are made for. Mapsmith writes the "
 	                                "materials into the mod (as deploy.bat does) and keeps your own materials as they are. Switch an "
 	                                "effect off here, or for one model in its properties.")
@@ -391,6 +488,20 @@ void EnhancementsSection::refresh() {
 	}
 	m_remove->setEnabled(!m_excluded->selectedItems().isEmpty());
 	m_status->setText(m_enhancements->status());
+	const bool dllMissing = available && m_enhancements->ready() && !m_enhancements->shaderDll();
+	m_dllBox->setVisible(dllMissing);
+	if (dllMissing) {
+		QString text = tr("The mod's shaders are not installed (bin\\game_shader_dx6.dll). Without them the game draws relief, liquids and "
+		                  "the new water as wireframes - a floor turns see-through and shows the sky, bottles vanish. So Mapsmith holds "
+		                  "these effects back (%n material(s)) until the features are installed.",
+		                  nullptr, m_enhancements->heldBackCount());
+		const auto& own = m_enhancements->brokenOwn();
+		if (!own.isEmpty()) {
+			text += QStringLiteral(" ") + tr("Your own materials with these shaders are broken in the game until then: %1.")
+			                                  .arg(QStringList(own.mid(0, 6)).join(QStringLiteral(", ")) + (own.size() > 6 ? QStringLiteral(" ...") : QString()));
+		}
+		m_dllText->setText(text);
+	}
 	m_status->setToolTip(m_enhancements->keptOwn().isEmpty() ? QString()
 	                                                          : tr("Kept (your own material):\n%1").arg(m_enhancements->keptOwn().join('\n')));
 }

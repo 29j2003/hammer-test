@@ -12,6 +12,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -51,6 +52,45 @@ inline constexpr std::string_view MAPSMITH_MARKER = "// mapsmith: game enhanceme
 
 /// The material text was written by deploy.ps1 or by this module (not by hand).
 [[nodiscard]] bool isGeneratedMaterial(std::string_view vmt);
+
+/// The mod's shader DLL (Fidelity_Parallax, Fidelity_Liquid, Water_Fidelity ...), relative to the
+/// mod folder. The engine loads it once at start and only from the mod's own bin folder.
+inline constexpr std::string_view MOD_SHADER_DLL = "bin/game_shader_dx6.dll";
+/// Whether the mod has its shader DLL.
+[[nodiscard]] bool modHasShaderDll(const std::filesystem::path& modDir);
+/// Shaders that only the mod's shader DLL has (Fidelity_*, Water_Fidelity). Without the DLL the
+/// engine draws a material with such a shader as Wireframe_DX8 (materialsystem/cmaterial.cpp,
+/// MissingShaderName; the shader sets MATERIAL_VAR_WIREFRAME): only the triangles' edges - a
+/// floor turns see-through (the sky below shows through), a bottle's model is refused ("does not
+/// support vertex format used by the mesh").
+[[nodiscard]] bool shaderNeedsModDll(std::string_view shader);
+/// Effects whose materials use such a shader (Liquid, Water, Relief; Wind is Mapbase's own $treesway).
+[[nodiscard]] bool effectNeedsShaderDll(GameEffect effect);
+/// The mod's own materials (no generated marker, under <mod>/materials) whose shader needs the
+/// mod's shader DLL ("concrete/floor01"): broken in the game while the DLL is missing.
+[[nodiscard]] std::vector<std::string> ownMaterialsNeedingShaderDll(const std::filesystem::path& modDir);
+
+/// First line of the relief Mapsmith makes from a texture's pattern (followed by " (relief) from
+/// <path> hash <hex> ..."). It is a MAPSMITH_MARKER line, so deploy.bat leaves the file alone.
+inline constexpr std::string_view PATTERN_RELIEF_MARKER = "// mapsmith: game enhancement pattern relief";
+/// Suffix of its height map ("<material>_mapsmith_relief.vtf", next to the material in the mod).
+inline constexpr std::string_view PATTERN_RELIEF_SUFFIX = "_mapsmith_relief";
+/// The relief of a wall from its texture's pattern (bricks, tiles, boards found with
+/// detectReliefLayout, confidence at least 0.5): the material text in deploy's form (Fidelity_Parallax,
+/// $parallaxmap, the course depth 0.01, the wet-only cubemap when it has no reflection) and the
+/// height map as an I8 .vtf. `hash` identifies texture, material and rules (in the first line).
+struct PatternRelief {
+	std::string text;
+	std::vector<std::byte> heightVtf;
+	std::string heightName;   ///< "brick/wall01_mapsmith_relief" (without materials/ and .vtf)
+	std::string hash;
+};
+/// The hash a pattern relief of this material would carry (empty: it gets none - not a plain wall,
+/// texture missing). Cheap: reads the texture's bytes, decodes nothing.
+[[nodiscard]] std::string patternReliefHash(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt);
+/// The pattern relief (nullopt: no clear pattern, or not a plain wall: blends, scaled or moved
+/// textures and other shaders keep deploy's relief).
+[[nodiscard]] std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt);
 
 /// Whether the effect can be used on this material ("materials/models/x/y.vmt", its text).
 [[nodiscard]] bool effectApplies(GameEffect effect, std::string_view path, std::string_view vmt);
@@ -118,6 +158,10 @@ struct EffectChange {
 	std::filesystem::path file;   ///< <mod>/materials/<material>.vmt
 	bool remove = false;          ///< Delete the file (else write `text`)
 	std::string text;
+	/// A pattern relief's height map: written with the material (`heightVtf` not empty) or removed
+	/// with it (`heightVtf` empty).
+	std::filesystem::path heightFile;
+	std::vector<std::byte> heightVtf;
 };
 /// What bringing the mod's materials in line with the settings changes. Hand-written materials
 /// of the mod (no generated marker) are never touched; they are listed in `keptOwn`.
@@ -125,15 +169,26 @@ struct EnhancementPlan {
 	std::vector<EffectChange> changes;
 	std::vector<std::string> keptOwn;   ///< Materials the mod has its own version of
 	std::map<GameEffect, int> active;   ///< Materials that have the effect after the changes
+	int patternRelief = 0;              ///< Walls of the mod's maps with Mapsmith's pattern relief
+	int heldBack = 0;                   ///< Materials that would get an effect but the shader DLL is missing
 
 	[[nodiscard]] int activeCount() const;
+};
+/// What else decides the plan.
+struct EnhancementOptions {
+	/// The mod has its shader DLL (modHasShaderDll). Without it nothing gets an effect that needs
+	/// it, and the generated materials that use one are removed (as deploy.ps1 does).
+	bool shaderDll = true;
+	/// Brush materials used in the mod's maps: those that fit get Mapsmith's pattern relief
+	/// (makePatternRelief) instead of deploy's. Null: none.
+	const std::set<std::string>* mapMaterials = nullptr;
 };
 /// `excludedMaterials`: materials of the excluded models (modelMaterialNames), per effect - a
 /// material shared with a model that is not excluded is left out too (exclusion wins).
 /// `candidates`: from findEffectCandidates (null: found now, for the automatic effects).
 [[nodiscard]] EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem::path& modDir, const EnhancementSettings& settings,
                                                const std::map<GameEffect, std::set<std::string>>& excludedMaterials = {},
-                                               const EffectCandidates* candidates = nullptr);
+                                               const EffectCandidates* candidates = nullptr, const EnhancementOptions& options = {});
 /// The materials to leave out per effect: those of the excluded models plus excluded materials.
 [[nodiscard]] std::map<GameEffect, std::set<std::string>> excludedMaterials(const GameFileSystem& fs, const EnhancementSettings& settings);
 
@@ -149,5 +204,9 @@ struct EffectCount {
 /// Every material a model can use ("models/props_junk/glassbottle01a"), all skins, each
 /// resolved through the model's $cdmaterials folders like the engine does.
 [[nodiscard]] std::vector<std::string> modelMaterialNames(const GameFileSystem& fs, std::string_view modelPath);
+
+/// Every material on a brush side of these .vmf files ("brick/wall01", lower case), read quickly
+/// line by line (the files are not parsed as maps). Unreadable files are skipped.
+[[nodiscard]] std::set<std::string> vmfMaterialNames(const std::vector<std::filesystem::path>& vmfFiles);
 
 } // namespace sme
