@@ -193,10 +193,14 @@ void ProblemsPanel::showProblems() {
 	for (const auto& p : m_problems) all.push_back(&p);
 	std::stable_sort(all.begin(), all.end(), [](const Problem* a, const Problem* b) { return a->severity < b->severity; });
 
-	int errors = 0, warnings = 0;
+	// A row is a widget with labels and buttons: thousands of them (a big map with many problems)
+	// froze the editor for half a minute. The worst come first; the rest are counted, not listed.
+	constexpr int MAX_ROWS = 150;
+	int errors = 0, warnings = 0, rows = 0;
 	for (const Problem* problem : all) {
 		errors += problem->severity == Problem::Severity::Error ? 1 : 0;
 		warnings += problem->severity == Problem::Severity::Warning ? 1 : 0;
+		if (++rows > MAX_ROWS) continue;
 		auto* widget = new QWidget;
 		auto* v = new QVBoxLayout(widget);
 		v->setContentsMargins(6, 4, 6, 4);
@@ -248,6 +252,12 @@ void ProblemsPanel::showProblems() {
 		auto* item = new QListWidgetItem(m_list);
 		item->setSizeHint(widget->sizeHint());
 		m_list->setItemWidget(item, widget);
+	}
+	if (rows > MAX_ROWS) {
+		auto* more = new QListWidgetItem(tr("... and %n more not listed here - fix the ones above, then check again.", nullptr,
+		                                    rows - MAX_ROWS),
+		                                 m_list);
+		more->setForeground(QColor(170, 170, 170));
 	}
 	if (all.empty()) {
 		m_summary->setText(tr("✔ No problems found"));
