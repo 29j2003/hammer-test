@@ -52,6 +52,9 @@ public:
 
 	/// Reads the mod's menu files again (also done when the game changes).
 	void reload();
+	/// Takes the chapter titles from the localization file again (after the Texts tab saved it),
+	/// keeping every other edit.
+	void refreshTitles();
 	/// Writes everything into the mod (with one-time .bak copies of files it replaces).
 	/// Returns false and fills `error` when something could not be written.
 	bool save(QString* error = nullptr);

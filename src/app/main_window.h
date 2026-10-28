@@ -81,6 +81,8 @@ public:
 	[[nodiscard]] ModPage* modPage() const { return m_modPage; }
 	[[nodiscard]] ModelsPage* modelsPage() const { return m_modelsPage; }
 	[[nodiscard]] QTabWidget* projectTabs() const { return m_projectPage; }
+	/// Project › Texts (the mod's localization and caption files).
+	[[nodiscard]] class TextsPanel* textsPanel() const { return m_textsPanel; }
 	[[nodiscard]] MapsPanel* mapsPanel() const { return m_mapsPanel; }
 	/// Shows a dock by its title (on the Map page); "Map", "Materials", "Material Editor", "Models" and "Mod" show that page.
 	void raiseDock(const QString& name);
@@ -127,7 +129,8 @@ private:
 	QActionGroup* m_pageGroup = nullptr;
 	ModPage* m_modPage = nullptr;           ///< Project page, tab "Overview"
 	ModelsPage* m_modelsPage = nullptr;     ///< Models page: browser and 3D view of the game's models
-	QTabWidget* m_projectPage = nullptr;     ///< Overview, Maps, Menu, Source control, Ship
+	QTabWidget* m_projectPage = nullptr;     ///< Overview, Maps, Menu, Texts, Source control, Ship
+	class TextsPanel* m_textsPanel = nullptr;
 	MapsPanel* m_mapsPanel = nullptr;
 	QWidget* m_soundsPage = nullptr;         ///< Holds the Sounds browser while its page is shown
 	QWidget* m_particlesPage = nullptr;

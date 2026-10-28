@@ -9,6 +9,7 @@
 #include "models_page.h"
 #include "maps_panel.h"
 #include "menu_editor.h"
+#include "texts_panel.h"
 #include "new_mod_dialog.h"
 #include "source_control_panel.h"
 #include "ship_panel.h"
@@ -329,7 +330,14 @@ void MainWindow::createDocks() {
 	m_projectPage->setDocumentMode(true);
 	m_projectPage->addTab(m_modPage, tr("Overview"));
 	m_projectPage->addTab(m_mapsPanel, tr("Maps"));
-	m_projectPage->addTab(new MenuEditor(m_editor), tr("Menu"));
+	auto* menuEditor = new MenuEditor(m_editor);
+	m_projectPage->addTab(menuEditor, tr("Menu"));
+	// Texts: the mod's localization and captions. Chapter titles live in the same file as the
+	// menu's: each tab picks up what the other saved.
+	m_textsPanel = new TextsPanel(m_editor, m_assets);
+	m_projectPage->addTab(m_textsPanel, tr("Texts"));
+	connect(m_textsPanel, &TextsPanel::saved, menuEditor, [menuEditor] { menuEditor->refreshTitles(); });
+	connect(menuEditor, &MenuEditor::saved, m_textsPanel, [this] { m_textsPanel->reloadIfUnchanged(); });
 	m_projectPage->addTab(new SourceControlPanel(m_editor), tr("Source control"));
 	m_projectPage->addTab(new ShipPanel(m_editor), tr("Ship"));
 	connect(m_modPage, &ModPage::compileSettingsRequested, this, [this] {

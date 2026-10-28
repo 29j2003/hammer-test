@@ -343,6 +343,17 @@ void MenuEditor::reload() {
 	updatePreview();
 }
 
+void MenuEditor::refreshTitles() {
+	const auto* entry = m_editor->gameEntry();
+	if (!entry) return;
+	const ModMenu fresh = loadModMenu(entry->gameDir);
+	m_menu.localization = fresh.localization;
+	const std::string folder = entry->gameDir.filename().string();
+	for (auto& chapter : m_menu.chapters) chapter.title = m_menu.localization.get(chapterTitleToken(folder, chapter.number));
+	rebuildChapters();
+	updatePreview();
+}
+
 void MenuEditor::addChapter() {
 	ChapterInfo chapter;
 	chapter.number = static_cast<int>(m_menu.chapters.size()) + 1;

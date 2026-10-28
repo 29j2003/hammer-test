@@ -99,6 +99,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `git_status` | Git-Ausgaben lesen (`status`, `log` ohne E-Mail), Remote → Web-Adresse |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
+| `localization` | Texte der Mod: Lokalisierungsdateien verlustfrei (Kommentare, `[$X360]`-Bedingungen, Reihenfolge), Dateisätze `<name>_<sprache>.txt`, Caption-Tags, Captions → `.dat` (VCCD) |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
 
@@ -129,6 +130,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `mod_page` | Project › Overview: Spiel/Mod, Ordner, Karten, Suchpfade, FGDs |
 | `maps_panel` | Project › Maps: alle Karten, Stapel-Kompilieren, Dateiaktionen |
 | `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
+| `texts_panel` | Project › Texts: Lokalisierung und Captions der Mod (Tabelle Token × Sprache, Caption-Vorschau, Speichern, Captions kompilieren) |
 | `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf) |
 | `ship_panel` | Project › Ship: Abhängigkeiten, bspzip, ZIPs, Workshop |
 | `new_mod_dialog` | „New mod …“: neue Mod aus Karten |
@@ -285,6 +287,22 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   einmal `<datei>.bak` an und lässt unveränderte Dateien unberührt. UI: `MenuEditor` (`menu_editor.cpp`, eigenständiges
   Widget für die Project-Seite) mit `MenuPreview` (QPainter-Attrappe im Stil von Source 2013, Hintergrund aus
   `materials/console/<bg>_widescreen.vtf`).
+- Texte der Mod: Kern `localization` (ohne Qt). `parseLocalizationFile`/`writeLocalizationFile` halten eine Datei
+  so, wie sie war: `//`-Kommentare hängen am Token darunter (`LocalizedToken::comments`), Bedingungen wie `[$X360]`
+  bleiben am Token, andere Einträge des `lang`-Blocks bleiben als Text (`extra`), die Reihenfolge bleibt; Escapes
+  `\"`, `\\`, `\n` werden aufgelöst und beim Schreiben wieder gesetzt. `loadLocalizationFile` liest jede Kodierung
+  (`decodeTextFile`), `saveLocalizationFile` schreibt UTF-16 LE mit BOM (einmal `.bak`). `findLocalizationSets` gruppiert
+  `resource/<name>_<sprache>.txt` nach Name (Sprachen aus `sourceLanguages()`), Captions (`closecaption`, `subtitles`)
+  zuletzt. `compileCaptions` ersetzt Valves captioncompiler: Kopf `VCCD`, Version 1, Blockanzahl, Blockgröße 8192,
+  Verzeichnisgröße, Datenoffset (auf 512 aufgerundet); Verzeichnis nach CRC32 des kleingeschriebenen Tokens sortiert
+  (das Spiel sucht binär) mit Block, Byte-Offset und Länge in Bytes inkl. Null; Daten als volle 8-KiB-Blöcke mit
+  UTF-16-Strings. Zu lange Texte und doppelte Tokens stehen in `skipped`. `saveModMenu` schreibt die Kapiteltitel
+  auf die Datei, wie sie gerade auf der Platte liegt (nur diese Tokens ändern sich), damit Menu- und Texts-Tab sich
+  nichts überschreiben; nach dem Speichern liest der jeweils andere Tab nach (`MenuEditor::refreshTitles`,
+  `TextsPanel::reloadIfUnchanged`). UI: `TextsPanel` (`texts_panel.cpp`): Tabelle Token × Sprache (fehlende
+  Übersetzungen markiert, „Used by“ aus `menuUseOfToken`), Feld darunter mit Knöpfen für Caption-Tags und
+  Vorschau (`parseCaption` → Rich Text), „+ Caption for a sound …“ aus den Soundscript-Namen des Asset Browsers.
+  Geschrieben wird nur in den Mod-Ordner (`localizationPath`).
 - Quellcode-Verwaltung: `SourceControlPanel` (`source_control_panel.cpp`, eigenständiges Widget für die
   Project-Seite) ruft das System-`git` per `QProcess` auf, nacheinander aus einer Warteschlange (`run` → `startNext`),
   nie blockierend; `GIT_TERMINAL_PROMPT=0`, damit nichts auf ein Passwort in einer unsichtbaren Konsole wartet.

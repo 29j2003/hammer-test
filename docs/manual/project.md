@@ -7,7 +7,7 @@ nav_order: 9
 {: .no_toc }
 
 The **Project** page in the side bar is about your mod as a whole: its maps, its main menu, its source code and how to
-share it. It has five tabs: **Overview**, **Maps**, **Menu**, **Source control** and **Ship**.
+share it. It has six tabs: **Overview**, **Maps**, **Menu**, **Texts**, **Source control** and **Ship**.
 
 ![The Project page](images/project.png)
 
@@ -115,6 +115,35 @@ The entries of the menu (`resource/GameMenu.res`). **+ Entry** adds one. Each en
 If the mod has no `GameMenu.res` yet, the game's menu is shown, and saving gives the mod its own.
 
 **Save to the mod** writes all changed files; **Reload** reads them again and drops what was not saved.
+
+## Texts
+
+The **Texts** tab edits the text files of your mod in `resource/`: its own texts (`<mod>_english.txt`: hints, signs,
+entity messages, chapter titles) and its captions (`closecaption_english.txt`). Pick the file at the top; every
+language the mod has (`<mod>_german.txt` and so on) is a column.
+
+- **+ Token** adds a text. In the game you use it as `#Token` (menus, `env_message`, `game_text`, scripts).
+  **Rename** and **Delete** act on every language at once.
+- Click a cell to edit it in the table or in the field below. **+ Language ...** adds a translation; empty
+  translations are marked red, **Only missing translations** shows just those rows.
+- **Used by** tells which tokens the menu uses: chapter titles (`<MOD>_Chapter1_Title` ...) are the same ones the
+  **Menu** tab edits, so a change in either tab shows in the other after saving.
+- **+ File ...** starts a text or caption file if the mod has none yet.
+
+### Captions
+
+Captions are shown when a sound plays (subtitles with `cc_subtitles 1`, full captions with `closecaption 1`). The
+token is the sound script entry (`NPC_Citizen.Hello`); **+ Caption for a sound ...** picks one from the game's sound
+list. The buttons above the field insert the caption tags: **Colour ...** (`<clr:255,200,120>`), **Bold** (`<B>`),
+**Italic** (`<I>`), **Line break** (`<cr>`), **Sound effect** (`<sfx>`: only shown with full captions) and
+**Length ...** (`<len:3>`: seconds on screen). The dark box below shows how the line looks.
+
+**Compile captions** saves and then writes `closecaption_<language>.dat` next to each `.txt` - the file the game
+actually reads. You do not need Valve's captioncompiler.
+
+**Save** writes the files as UTF-16, the way the game expects them; the first time a file is replaced, a copy
+`<file>.bak` is kept. Comments and console-only lines (`[$X360]`) in the files stay as they were. Mapsmith only
+writes into your mod's folder, never into the game's files.
 
 ## Source control
 

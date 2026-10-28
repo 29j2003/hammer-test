@@ -7,6 +7,7 @@
 #include <sme/brush.h>
 #include <sme/editing.h>
 #include <sme/map.h>
+#include <sme/mod_menu.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -489,6 +490,25 @@ void createDemo(Fixture& f) {
 	writeText(f.mod / "scripts/soundscapes_demo.txt",
 	          "\"demo.outside\"\n{\n\t\"dsp\" \"0\"\n\t\"playlooping\" { \"volume\" \"0.4\" \"wave\" \"ambient/wind1.wav\" }\n"
 	          "\t\"playrandom\" { \"time\" \"5,10\" \"rndwave\" { \"wave\" \"ambient/alarm1.wav\" } }\n}\n");
+
+	// Texts: the mod's localization (English, a German file with a missing translation) and
+	// captions, UTF-16 with BOM like the game's own files.
+	writeBytes(f.mod / "resource/mymod_english.txt",
+	           encodeUtf16Le("\"lang\"\n{\n\t\"Language\"\t\"English\"\n\t\"Tokens\"\n\t{\n"
+	                         "\t\t// Hints\n"
+	                         "\t\t\"MyMod_Hint_Flashlight\"\t\"Press F for the flashlight\"\n"
+	                         "\t\t\"MyMod_Sign_Welcome\"\t\"Welcome to the demo\"\n"
+	                         "\t\t\"MyMod_Hint_Pad\"\t\"Press A\"\t[$X360]\n"
+	                         "\t}\n}\n"));
+	writeBytes(f.mod / "resource/mymod_german.txt",
+	           encodeUtf16Le("\"lang\"\n{\n\t\"Language\"\t\"German\"\n\t\"Tokens\"\n\t{\n"
+	                         "\t\t\"MyMod_Hint_Flashlight\"\t\"Drücke F für die Taschenlampe\"\n"
+	                         "\t}\n}\n"));
+	writeBytes(f.mod / "resource/closecaption_english.txt",
+	           encodeUtf16Le("\"lang\"\n{\n\t\"Language\"\t\"English\"\n\t\"Tokens\"\n\t{\n"
+	                         "\t\t\"Demo.Alarm\"\t\"<sfx><clr:255,90,80>[Alarm blares]\"\n"
+	                         "\t\t\"NPC_Citizen.Hello\"\t\"<clr:200,220,255>Hello there! <I>Stay close.<I>\"\n"
+	                         "\t}\n}\n"));
 
 	// Particles (info_particle_system effect names).
 	writeBytes(f.mod / "particles/demo_fire.pcf", makeDemoFirePcf());
