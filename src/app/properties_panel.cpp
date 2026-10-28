@@ -54,6 +54,7 @@
 
 #include <sme/assets.h>
 #include <sme/brush.h>
+#include <sme/doors.h>
 #include <sme/game.h>
 #include <sme/history.h>
 #include <sme/map_tools.h>
@@ -212,6 +213,12 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 		scheduleRebuild();
 	});
 	connect(editor, &Editor::toolChanged, this, &PropertiesPanel::scheduleRebuild);
+	// A clicked connection line (or a new connection): the Outputs tab with that output's card.
+	connect(editor, &Editor::connectionFocusRequested, this, [this](int, int index) {
+		m_tab = 1;
+		m_focusConnection = index;
+		scheduleRebuild();
+	});
 	scheduleRebuild();
 }
 
@@ -375,6 +382,17 @@ void PropertiesPanel::rebuild() {
 	}
 	m_scroll->setWidget(content);   // deletes the previous content
 	m_content = content;
+	if (m_focusConnection >= 0) {
+		if (auto* card = content->findChild<QWidget*>(QStringLiteral("outputCard:%1").arg(m_focusConnection))) {
+			QPointer<QWidget> target(card);
+			QTimer::singleShot(0, this, [this, target] {
+				if (!target) return;
+				m_scroll->ensureWidgetVisible(target, 0, 40);
+				if (auto* first = target->findChild<QComboBox*>()) first->setFocus();
+			});
+		}
+		m_focusConnection = -1;
+	}
 	m_help->setText(m_defaultHelp);
 	m_help->setVisible(!m_defaultHelp.isEmpty());
 }
@@ -723,6 +741,9 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	}
 	if (entityIds.size() == 1 && isSoundscapeEntity(*first)) {
 		buildSoundscapeArea(layout, *first);
+	}
+	if (entityIds.size() == 1 && isDoor(*first)) {
+		buildDoorBox(layout, *first);
 	}
 
 	// Tabs: Keyvalues / Outputs / Inputs with their counts (outputs and inputs for one entity).
@@ -1545,8 +1566,10 @@ void PropertiesPanel::buildOutputs(QVBoxLayout* layout, int entityId) {
 	for (std::size_t index = 0; index < connections->size(); ++index) {
 		const auto& c = (*connections)[index];
 		auto* card = new QFrame;
+		card->setObjectName(QStringLiteral("outputCard:%1").arg(index));
 		card->setFrameShape(QFrame::StyledPanel);
 		card->setProperty("role", "card");
+		if (int(index) == m_focusConnection) card->setProperty("highlight", true);
 		auto* grid = new QGridLayout(card);
 		grid->setContentsMargins(6, 6, 6, 6);
 		grid->setHorizontalSpacing(4);
@@ -1625,6 +1648,11 @@ void PropertiesPanel::buildOutputs(QVBoxLayout* layout, int entityId) {
 		});
 	}
 
+	auto* addRow = new QHBoxLayout;
+	auto* pick = new QPushButton(tr("Connect to ... (click it in the view)"));
+	pick->setObjectName("connectPick");
+	pick->setToolTip(tr("Click the entity this one should trigger: the likely output and input are suggested, the target gets a name if it has none"));
+	connect(pick, &QPushButton::clicked, this, [this, entityId] { m_editor->beginConnect(entityId); });
 	auto* add = new QPushButton(tr("+ Add output"));
 	connect(add, &QPushButton::clicked, this, [connections, definition, commit] {
 		Connection c;
@@ -1632,7 +1660,9 @@ void PropertiesPanel::buildOutputs(QVBoxLayout* layout, int entityId) {
 		connections->push_back(c);
 		commit();
 	});
-	v->addWidget(add);
+	addRow->addWidget(pick, 1);
+	addRow->addWidget(add);
+	v->addLayout(addRow);
 }
 
 int PropertiesPanel::incomingCount(const Entity& entity) const {

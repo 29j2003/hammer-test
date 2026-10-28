@@ -79,6 +79,8 @@ public:
 	void requestFrame();
 	/// How many frames this view has drawn so far (for the frame limit).
 	[[nodiscard]] quint64 framesDrawn() const { return m_framesDrawn; }
+	/// The door whose "Test open" is playing (0: none).
+	[[nodiscard]] int doorTestId() const { return m_doorTest.id; }
 	/// Line from a compile leak (.lin pointfile); empty clears it.
 	void setLeakLine(const std::vector<Vec3>& points);
 
@@ -220,6 +222,17 @@ private:
 	void drawSoundscapeSphere(std::vector<LineVertex>& lines) const;
 	/// Lines between the selected entities and the entities their outputs name (and back).
 	void drawConnections(std::vector<LineVertex>& lines) const;
+	/// The drawn connection line near `pos` (5 pixels): the entity whose output it is and the
+	/// output's index; nullopt if none.
+	[[nodiscard]] std::optional<std::pair<int, int>> connectionAt(const QPointF& pos) const;
+	/// Connect mode: a line from the source entity to the cursor.
+	void drawConnectLine(std::vector<LineVertex>& lines) const;
+	// Doors (viewport_doors.cpp): how the selected doors move, and the "Test open" animation.
+	[[nodiscard]] std::optional<DoorMotion> doorMotionOf(const Entity& door) const;
+	void drawDoorPreview(std::vector<LineVertex>& lines) const;
+	void startDoorTest(int doorId);
+	/// After a frame: keeps the animation going while it runs.
+	void advanceDoorTest();
 	void drawOverlay();
 	void paintOverlayImage();
 	void updateViewButton();
@@ -320,6 +333,13 @@ private:
 	double m_polygonPlane = 0;
 
 	std::vector<Vec3> m_leak;
+
+	/// "Test open" of a door: which door, since when, how long its opening takes.
+	struct DoorTest {
+		int id = 0;
+		QElapsedTimer clock;
+		double seconds = 1;
+	} m_doorTest;
 
 	// Stats
 	QElapsedTimer m_frameClock;

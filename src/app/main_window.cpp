@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "compile_window.h"
+#include "connect_popup.h"
 #include "map_look_panel.h"
 #include "mod_page.h"
 #include "models_page.h"
@@ -51,6 +52,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QCursor>
+#include <QScreen>
 #include <QToolButton>
 #include <QWidgetAction>
 #include <QMenuBar>
@@ -389,7 +392,22 @@ void MainWindow::createDocks() {
 		return dock;
 	};
 	m_assets = new AssetBrowser(m_editor);
+	// Make door picks door models and sounds from the browser's lists.
+	m_editor->setAssetNames([assets = m_assets] { return assets->modelNames(); }, [assets = m_assets] { return assets->soundNames(); });
 	m_properties = new PropertiesPanel(m_editor, m_assets, m_materials);
+	// Connect: source and target picked - ask for the output and input next to the cursor.
+	connect(m_editor, &Editor::connectRequested, this, [this](int sourceId, int targetId) {
+		auto* popup = new ConnectPopup(m_editor, sourceId, targetId, this);
+		popup->adjustSize();
+		QPoint at = QCursor::pos() + QPoint(16, 16);
+		if (const QScreen* screen = QGuiApplication::screenAt(QCursor::pos())) {
+			const QRect area = screen->availableGeometry();
+			at.setX(std::min(at.x(), area.right() - popup->width()));
+			at.setY(std::min(at.y(), area.bottom() - popup->height()));
+		}
+		popup->move(at);
+		popup->show();
+	});
 	m_outliner = new Outliner(m_editor);
 	m_problems = new ProblemsPanel(m_editor, m_assets);
 	m_log = new LogPanel;
@@ -814,6 +832,10 @@ void MainWindow::createActions() {
 	brushes->addAction(mergeAction);
 	brushes->addAction(round);
 	brushes->addSeparator();
+	m_doorMenu = brushes->addMenu(tr("Make door"));
+	m_doorMenu->setObjectName("brushesMakeDoor");
+	m_doorMenu->setToolTip(tr("The selected block becomes a working door"));
+	fillMakeDoorMenu(m_doorMenu, m_editor);
 	brushes->addSeparator();
 	auto* flip = brushes->addMenu(tr("Flip"));
 	flip->addAction(action(tr("Flip left/right (X)"), QKeySequence("Ctrl+L"), [this] { m_editor->flipSelection(0); }));
@@ -1674,6 +1696,16 @@ QMenu* MainWindow::buildContextMenu() {
 			} else {
 				menu.addSeparator();
 			}
+		}
+		// Doors from world brushes; connecting one entity to another.
+		if (!selection.solids.empty() && selection.entities.empty() && selection.faces.empty()) {
+			menu.addSeparator();
+			menu.addMenu(m_doorMenu);
+		}
+		if (selection.entities.size() == 1 && selection.solids.empty() && selection.entities.front() != 0) {
+			menu.addSeparator();
+			const int id = selection.entities.front();
+			menu.addAction(tr("Connect to ... (then click the target)"), this, [this, id] { m_editor->beginConnect(id); })->setObjectName("contextConnect");
 		}
 		menu.addSeparator();
 		menu.addAction(tr("Frame selection (F)"), this, [this] { activeView()->frameSelection(); });

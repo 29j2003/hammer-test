@@ -5,6 +5,7 @@
 #include "fixture.h"
 
 #include <sme/brush.h>
+#include <sme/doors.h>
 #include <sme/editing.h>
 #include <sme/map.h>
 #include <sme/mod_menu.h>
@@ -269,12 +270,115 @@ constexpr std::string_view DEMO_FGD = R"FGD(
 	pitch(angle_negative_pitch) : "Pitch" : "-90" : "Pitch of the light: -90 points straight down."
 ]
 
-@SolidClass base(Targetname) = func_door : "A brush that moves between two positions, like a door."
+@BaseClass base(Targetname) = Door
 [
 	speed(integer) : "Speed" : 100 : "How fast the door moves."
+	wait(integer) : "Delay Before Reset (-1 stay)" : 4 : "Seconds until the door closes again; -1 stays open."
+	lip(integer) : "Lip" : 0 : "Units the door keeps sticking out when open."
+	noise1(sound) : "Start Sound" : "" : "Sound while it starts to move."
+	noise2(sound) : "Stop Sound" : "" : "Sound when it stops."
+	startclosesound(sound) : "Start Close Sound" : "" : "Sound while it starts to close."
+	closesound(sound) : "Stop Close Sound" : "" : "Sound when it is fully closed."
+	locked_sound(sound) : "Locked Sound" : "" : "Sound when a locked door is used."
+	spawnflags(flags) =
+	[
+		32 : "Toggle" : 0
+		256 : "Use Opens" : 1
+		1024 : "Touch Opens" : 1
+		2048 : "Starts locked" : 0
+	]
 	input Open(void) : "Open the door."
 	input Close(void) : "Close the door."
+	input Toggle(void) : "Open if closed, close if open."
+	input Lock(void) : "Lock the door."
+	input Unlock(void) : "Unlock the door."
+	output OnOpen(void) : "Fired when the door starts to open."
 	output OnFullyOpen(void) : "Fired when the door is fully open."
+	output OnClose(void) : "Fired when the door starts to close."
+	output OnFullyClosed(void) : "Fired when the door is fully closed."
+]
+
+@SolidClass base(Door) = func_door : "A brush that moves between two positions, like a door."
+[
+	movedir(angle) : "Move Direction (Pitch Yaw Roll)" : "0 0 0" : "The direction the door moves when it opens."
+]
+
+@SolidClass base(Door) = func_door_rotating : "A brush door that turns around its origin (the hinge)."
+[
+	distance(integer) : "Distance" : 90 : "Degrees the door turns."
+	spawnflags(flags) =
+	[
+		2 : "Reverse Dir" : 0
+		16 : "One-way" : 0
+	]
+]
+
+@SolidClass base(Targetname) = func_button : "A brush the player can press."
+[
+	speed(integer) : "Speed" : 5 : "How fast the button moves in."
+	wait(integer) : "Delay Before Reset (-1 stay)" : 3 : "Seconds until it can be pressed again."
+	spawnflags(flags) =
+	[
+		1 : "Don't move" : 0
+		1024 : "Use Activates" : 1
+	]
+	input Lock(void) : "Lock the button."
+	input Unlock(void) : "Unlock the button."
+	input Press(void) : "Press the button."
+	output OnPressed(void) : "Fired when the button is pressed."
+	output OnUseLocked(void) : "Fired when the button is used while locked."
+]
+
+@PointClass base(Targetname, Angles) studioprop() = prop_door_rotating : "A door model that turns around its hinge (the model's origin)."
+[
+	model(studio) : "World Model" : "models/props_demo/door01_left.mdl"
+	slavename(target_destination) : "Slave name" : "" : "Doors that open and close with this one."
+	hardware(choices) : "Hardware Type" : 1 =
+	[
+		0 : "<None>"
+		1 : "Lever"
+		2 : "Push bar"
+		3 : "Keypad"
+	]
+	distance(float) : "Rotation Distance (deg)" : 90
+	speed(integer) : "Speed" : 200
+	returndelay(integer) : "Delay Before close (-1 stay open)" : -1
+	opendir(choices) : "Open Direction" : 0 =
+	[
+		0 : "Both directions"
+		1 : "Forward only"
+		2 : "Backward only"
+	]
+	soundopenoverride(sound) : "Fully Open Sound"
+	soundcloseoverride(sound) : "Fully Closed Sound"
+	soundmoveoverride(sound) : "Moving Sound"
+	soundlockedoverride(sound) : "Locked Sound"
+	spawnflags(flags) =
+	[
+		2048 : "Starts locked" : 0
+		8192 : "Use closes" : 1
+	]
+	input Open(void) : "Open the door."
+	input Close(void) : "Close the door."
+	input Toggle(void) : "Open if closed, close if open."
+	input Lock(void) : "Lock the door."
+	input Unlock(void) : "Unlock the door."
+	output OnOpen(void) : "Fired when the door starts to open."
+	output OnFullyOpen(void) : "Fired when the door is fully open."
+	output OnFullyClosed(void) : "Fired when the door is fully closed."
+]
+
+@SolidClass base(Targetname) = func_areaportal : "A portal between two areas: closed, the engine does not draw what is behind it."
+[
+	target(target_destination) : "Name of Linked Door" : "" : "The door that opens and closes this portal."
+	StartOpen(choices) : "Initial State" : 1 =
+	[
+		0 : "Closed"
+		1 : "Open"
+	]
+	input Open(void) : "Open the portal."
+	input Close(void) : "Close the portal."
+	input Toggle(void) : "Toggle the portal."
 ]
 )FGD";
 
@@ -450,6 +554,9 @@ void createDemo(Fixture& f) {
 	                                 {"idle"}, "", "playerstart", "models/editor/"));
 	writeStudioModel(f.mod / "models/props_demo/crate01.mdl",
 	                 makeStudioModel({{-24, -24, 0, 24, 24, 48}}, {"idle"}, "", "wood001", "demo/"));
+	// A door model like HL2's: the origin is the hinge, the door runs along +Y from it.
+	writeStudioModel(f.mod / "models/props_demo/door01_left.mdl",
+	                 makeStudioModel({{-1, 0, 0, 1, 54, 104}, {1, 44, 46, 4, 50, 50}}, {"idle"}, "", "wood001", "demo/"));
 	writeStudioModel(f.mod / "models/props_demo/barrel01.mdl",
 	                 makeStudioModel({{-14, -14, 0, 14, 14, 44}, {-15, -15, 6, 15, 15, 10}, {-15, -15, 34, 15, 15, 38}}, {"idle"}, "", "metal001", "demo/"));
 	{
@@ -474,7 +581,9 @@ void createDemo(Fixture& f) {
 	          "\"Demo.Wind\" { \"channel\" \"CHAN_STATIC\" \"wave\" \"ambient/wind1.wav\" }\n"
 	          "\"Demo.Alarm\" { \"wave\" \"ambient/alarm1.wav\" }\n\"NPC_Citizen.Hello\" { \"wave\" \"vo/hello.wav\" }\n"
 	          "\"Weapon_Pistol.Single\" { \"channel\" \"CHAN_WEAPON\" \"soundlevel\" \"SNDLVL_GUNFIRE\" \"wave\" \")weapons/pistol/pistol_fire2.wav\" }\n"
-	          "\"Doors.Squeak\" { \"wave\" \"doors/door_squeak1.wav\" }\n");
+	          "\"Doors.Squeak\" { \"wave\" \"doors/door_squeak1.wav\" }\n"
+	          "\"Doors.Move1\" { \"wave\" \"doors/door_move1.wav\" }\n\"Doors.FullClose1\" { \"wave\" \"doors/door_close1.wav\" }\n"
+	          "\"Doors.Locked1\" { \"wave\" \"doors/door_locked1.wav\" }\n");
 	// Real WAV files (16-bit mono): a wind loop with a cue point and a short alarm beep.
 	const auto writeWav = [](const std::filesystem::path& path, const std::vector<std::int16_t>& samples, std::optional<std::uint32_t> loop) {
 		std::vector<std::byte> out;
@@ -539,6 +648,9 @@ void createDemo(Fixture& f) {
 		}
 		writeWav(f.mod / "sound/weapons/pistol/pistol_fire2.wav", shot, std::nullopt);
 		writeWav(f.mod / "sound/doors/door_squeak1.wav", squeak, std::nullopt);
+		writeWav(f.mod / "sound/doors/door_move1.wav", squeak, std::nullopt);
+		writeWav(f.mod / "sound/doors/door_close1.wav", impact, std::nullopt);
+		writeWav(f.mod / "sound/doors/door_locked1.wav", impact, std::nullopt);
 		writeWav(f.mod / "sound/physics/metal/metal_box_impact_hard1.wav", impact, std::nullopt);
 		writeWav(f.mod / "sound/vo/hello.wav", voice, std::nullopt);
 	}
@@ -722,9 +834,12 @@ void createDemo(Fixture& f) {
 		auto door = solid({-64, -520, 0}, {64, -512, 128}, "DEMO/WOOD001");
 		Selection doorSel;
 		doorSel.solids.push_back(door);
-		auto [c, doorId] = edit::tieToEntity(doc, doorSel, "func_door", nullptr);
-		doc.findEntity(doorId)->set("targetname", "door_01");
-		doc.findEntity(doorId)->set("speed", "100");
+		// A swinging door with its hinge on the left, opened by the trigger in front of it.
+		DoorSettings doorSettings;
+		doorSettings.type = DoorType::Swinging;
+		doorSettings.sounds = {"Doors.Move1", "", "Doors.FullClose1", "Doors.Locked1"};
+		auto [c, doorIds] = edit::makeDoor(doc, doorSel, doorSettings);
+		doc.findEntity(doorIds.at(0))->set("targetname", "door_01");
 		auto trig = solid({-96, -480, 0}, {96, -400, 128}, "TOOLS/TOOLSTRIGGER");
 		Selection trigSel;
 		trigSel.solids.push_back(trig);

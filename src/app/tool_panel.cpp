@@ -26,6 +26,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
+#include <QMenu>
 #include <QMimeData>
 #include <QSettings>
 #include <QStackedWidget>
@@ -37,6 +38,7 @@
 #include <functional>
 #include <memory>
 
+#include <sme/doors.h>
 #include <sme/editing.h>
 #include <sme/entity_catalog.h>
 #include <sme/shapes.h>
@@ -656,6 +658,24 @@ QWidget* makeShapePage(Editor* editor) {
 
 /// Select tool: what can be done with the selection, as a list of buttons (Source 2's Tool
 /// Properties). Shown while something is selected.
+} // namespace
+
+void fillMakeDoorMenu(QMenu* menu, Editor* editor) {
+	const auto add = [&](const QString& text, const char* name, const QString& tip, DoorType type, bool doubleDoor) {
+		auto* action = menu->addAction(text, editor, [editor, type, doubleDoor] { editor->makeDoor(type, doubleDoor); });
+		action->setObjectName(QString::fromLatin1(name));
+		action->setToolTip(tip);
+	};
+	add(QObject::tr("Swinging door"), "makeDoorSwinging", QObject::tr("func_door_rotating with its hinge on an edge - no origin brush needed"), DoorType::Swinging, false);
+	add(QObject::tr("Sliding door"), "makeDoorSliding", QObject::tr("func_door that slides up (change it in Object Properties > Door)"), DoorType::Sliding, false);
+	add(QObject::tr("Double door (swinging)"), "makeDoorDouble", QObject::tr("Cut in the middle: two halves that open together"), DoorType::Swinging, true);
+	add(QObject::tr("Double door (sliding)"), "makeDoorDoubleSliding", QObject::tr("Two halves that slide apart"), DoorType::Sliding, true);
+	add(QObject::tr("Door model (prop_door_rotating)"), "makeDoorProp", QObject::tr("A door model of the game stands where the block is, with a handle and its own sounds"),
+	    DoorType::Prop, false);
+}
+
+namespace {
+
 QWidget* makeSelectionBox(Editor* editor) {
 	auto* box = new QGroupBox(QObject::tr("Selection"));
 	box->setObjectName("selectionTools");
@@ -693,6 +713,20 @@ QWidget* makeSelectionBox(Editor* editor) {
 	tieRow->addWidget(tieClass, 1);
 	v->addLayout(tieRow);
 	auto* toWorld = add(v->layout(), QObject::tr("Move to world"), "actionToWorld", QObject::tr("Brush entities become world brushes again"), [editor] { editor->moveSelectionToWorld(); });
+	// Doors from a block, and connecting an entity to another one.
+	auto* door = new QPushButton(QObject::tr("Make door"));
+	door->setObjectName("actionMakeDoor");
+	door->setToolTip(QObject::tr("The block becomes a working door: hinge, direction, speed and sounds are set"));
+	door->setProperty("role", "action");
+	auto* doorMenu = new QMenu(door);
+	doorMenu->setObjectName("makeDoorMenu");
+	fillMakeDoorMenu(doorMenu, editor);
+	door->setMenu(doorMenu);
+	v->addWidget(door);
+	auto* connectTo = add(v->layout(), QObject::tr("Connect to ..."), "actionConnect",
+	                      QObject::tr("Then click the entity this one should trigger (output -> input in one step)"), [editor] {
+		                      if (editor->selection().entities.size() == 1) editor->beginConnect(editor->selection().entities.front());
+	                      });
 	auto* flipRow = new QHBoxLayout;
 	add(flipRow, QObject::tr("Flip X"), "actionFlipX", QObject::tr("Mirror left/right"), [editor] { editor->flipSelection(0); });
 	add(flipRow, QObject::tr("Flip Y"), "actionFlipY", QObject::tr("Mirror front/back"), [editor] { editor->flipSelection(1); });
@@ -702,7 +736,7 @@ QWidget* makeSelectionBox(Editor* editor) {
 	add(v->layout(), QObject::tr("Drop to floor"), "actionDrop", QObject::tr("Let the selection fall onto what is below it"), [editor] { editor->dropSelectionToFloor(); });
 	add(v->layout(), QObject::tr("Select similar"), "actionSimilar", QObject::tr("Same class, model or main material"), [editor] { editor->selectSimilar(); });
 	add(v->layout(), QObject::tr("Hide"), "actionHide", QObject::tr("Hide the selection (Show all brings it back)"), [editor] { editor->hideSelection(); });
-	const auto update = [editor, box, merge, hollow, thickness, carve, tie, tieClass, toWorld] {
+	const auto update = [editor, box, merge, hollow, thickness, carve, tie, tieClass, toWorld, door, connectTo] {
 		const auto& selection = editor->selection();
 		box->setVisible(selection.hasObjects() && editor->tool() == Editor::Tool::Select && editor->selectMode() == Editor::SelectMode::Object);
 		// Brush work only where brushes are selected (world brushes or brush entities).
@@ -713,6 +747,8 @@ QWidget* makeSelectionBox(Editor* editor) {
 		for (QWidget* w : std::initializer_list<QWidget*>{hollow, thickness, carve, merge, tie, tieClass}) w->setVisible(brushes);
 		toWorld->setVisible(!selection.entities.empty() && brushes);
 		merge->setEnabled(selection.solids.size() >= 2);
+		door->setVisible(!selection.solids.empty() && selection.entities.empty());
+		connectTo->setVisible(selection.entities.size() == 1 && selection.solids.empty());
 	};
 	QObject::connect(editor, &Editor::selectionChanged, box, update);
 	QObject::connect(editor, &Editor::toolChanged, box, update);

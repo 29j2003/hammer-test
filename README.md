@@ -93,6 +93,13 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   "global light", A–Z or in groups). The class you pick is *armed*: the next click places it on the surface under the
   cursor (a preview of it follows the mouse); a brush entity (trigger, door, …) is built from the next box you drag.
   **Random yaw** turns every new prop differently.
+- **Doors in one click**: select a block and choose **Make door** (swinging, sliding, double, or a door model). It works
+  right away - hinge, direction, speed and door sounds are set. While selected, the views show how it opens (hinge,
+  arc, ghost of the open door); the **Door** box in Object Properties changes it in plain words, plays its sounds,
+  plays the opening (**Test open**) and links the areaportal in its doorway.
+- **Connect entities in one step**: **Connect to ...**, click the target, press Enter - the likely output and input
+  (button *OnPressed* → door *Open*) are chosen and the target gets a name if it has none. Click a connection line to
+  jump to its output.
 - **Smart properties for every entity**: the class at the top (pick another class to change it, the keys stay), then
   the tabs **Keyvalues**, **Outputs** and **Inputs** with their counts. Keys are grouped by where the FGD defines them
   (Targetname, Angles, the entity's own class, Flags, Placement); click a group's title to fold it away. Each key has

@@ -95,6 +95,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`) |
 | `soundscape_area` | Wo ein Soundscape-Entity zu hören ist: Kugel (`radius`, −1 = überall; `soundscapeRadius`) oder Block (`trigger_soundscape`, dessen Key `soundscape` den Namen trägt; `soundscapeTrigger`). `setSoundscapeRadius`, `makeSoundscapeBlock` (macht `env_soundscape` zu `env_soundscape_triggerable`, vergibt einen Namen, legt den Trigger an oder ändert seine Größe), `removeSoundscapeBlock` (zurück zur Kugel) – je ein Undo-Schritt |
 | `checks` | Prüfungen mit Autofix, Leak aus `.lin` |
+| `doors` | Türen: `DoorSettings` ↔ Keys (`readDoor`, `edit::setDoor`), Rahmen aus der Brush-Box (`doorFrame`: dünne Seite = vorn, rechts = rechte Hand, wenn man auf die Vorderseite schaut), Scharnier-Origin (`hingePoint`), `movedir` ↔ Richtung, Schiebeweg wie `CBaseDoor::Spawn` (Größe − 2 − Lip), Vorschau-Bewegung (`doorMotion`: Scharnier, Drehungen gegen den Uhrzeigersinn, bei „away from player“ beide; Prop-Türen: vorwärts = −distance wie `CPropDoorRotating`), `edit::makeDoor` (Brush-Türen behalten die Brushes, Doppeltür per `splitSolid` in der Mitte, gleiche `targetname`; Prop-Tür ersetzt den Block, Gierwinkel aus der Modell-Box, ohne Box HL2-Konvention Blatt entlang +Y), Tür-Sounds/-Modelle, `uniqueTargetName`, Areaportal finden/verknüpfen |
+| `io_links` | Verbinden in einem Schritt: `rankedOutputs`/`rankedInputs` (kleine Vorzugstabellen je Klasse/Familie `trigger_` + FGD-Reihenfolge), `suggestConnections`, `edit::connect` (benennt das Ziel, falls nötig, im selben Undo-Schritt) |
 | `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
 | `heightmap` | Höhenkarten fürs Relief: aus der Normal-Map (Frankot-Chellappa) oder der Helligkeit, Zonen, VTF schreiben, `fidelityReliefSource` (Regeln von `deploy.ps1`) |
@@ -117,7 +119,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `editor` | `Editor`: Spiel, Karte, Undo, Auswahl, Werkzeug, Einstellungen; alle Änderungen über `commit()` |
 | `main_window` | Hauptfenster: Seitenleiste, Ansichten, Docks, Menüs, Werkzeugleisten, Statusleiste |
 | `camera` | Kamera einer Ansicht (Matrizen, Strahlen) |
-| `viewport`, `viewport_tools`, `viewport_displace` | eine Ansicht: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools`, Displacement-Werkzeug (Pinsel, Striche) in `viewport_displace` |
+| `viewport`, `viewport_tools`, `viewport_displace`, `viewport_doors` | eine Ansicht: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools`, Displacement-Werkzeug (Pinsel, Striche) in `viewport_displace`, Tür-Vorschau (Scharnier, Bogen, Geist, „Test open“) in `viewport_doors`; Verbinden-Modus und anklickbare Verbindungslinien (`connectionAt`) in `viewport` |
 | `renderer`, `renderer_shadows`, `renderer_cubemaps` | OpenGL 3.3: Brushes, Displacements, Entities, Modelle, Himmel, Licht-Vorschau; Schattenkarten; Cubemap-Reflexionen |
 | `material_cache` | Materialien/Texturen im Hintergrund laden (auch Relief-Höhen) |
 | `model_cache`, `model_thumbnails` | Modelle im Hintergrund laden; Vorschaubilder per CPU-Rasterizer |
@@ -127,7 +129,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `sound_browser`, `sound_player`, `soundscape_editor` | Seite/Dock Sounds: Kategorien, Baum, Wiedergabe (QAudioSink, optional), Sound bearbeiten und als WAV speichern, Soundscript- und Soundscape-Editor |
 | `particle_browser` | Seite/Dock Particles: Liste, Vorschau (`ParticlePreview`), Teile als Karten |
 | `tool_panel` | Dock Tool: Optionen des Werkzeugs, Formen, Entity-Liste (`EntityPicker`) |
-| `properties_panel`, `properties_instance` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose, Justify; func_instance-Kasten |
+| `properties_panel`, `properties_instance`, `properties_door` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose, Justify; func_instance-Kasten; Door-Kasten (Öffnen, Richtung, Tempo, Schließen, Sounds mit ▶, Test open, Areaportal) |
+| `connect_popup` | Popup nach Quelle + Ziel: vorgeschlagene Output→Input-Paare, Listen, Delay; Enter verbindet (`Editor::beginConnect`/`finishConnect` → Signal `connectRequested`) |
 | `panels` | Docks Outliner, Problems, Log |
 | `visgroups_panel` | Dock VisGroups |
 | `map_look_panel` | Dock Map Look (mapbase-fidelity-Look der Karte) |
