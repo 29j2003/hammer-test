@@ -18,7 +18,9 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <regex>
+#include <set>
 #include <sstream>
 
 namespace sme {
@@ -128,8 +130,8 @@ std::optional<std::string> liquidMaterial(std::string_view path, std::string_vie
 	std::vector<std::string> lines = {headLine(marker, GameEffect::Liquid, path), "\"Fidelity_Liquid\"", "{"};
 	if (!texture.empty()) lines.push_back(param("$basetexture", texture));
 	// Only see-through originals have meaningful alpha (glass vs. label).
-	const bool seeThrough = std::regex_search(c, std::regex(R"re("?\$translucent"?\s+"?1)re", ICASE)) ||
-	                        std::regex_search(c, std::regex(R"re("?\$alpha"?\s+"?0?\.\d)re", ICASE));
+	static const std::regex translucent(R"re("?\$translucent"?\s+"?1)re", ICASE), alpha(R"re("?\$alpha"?\s+"?0?\.\d)re", ICASE);
+	const bool seeThrough = std::regex_search(c, translucent) || std::regex_search(c, alpha);
 	if (!seeThrough) lines.push_back(param("$labelthreshold", "2"));
 	lines.push_back(param("$liquidplane", "[0 0 1 -100000]"));   // set per prop by the proxy
 	if (const auto color = liquidColor(path); !color.empty()) lines.push_back(param("$liquidcolor", color));
@@ -149,7 +151,8 @@ std::optional<std::string> liquidMaterial(std::string_view path, std::string_vie
 	}
 	if (kind != ContainerKind::Medical) {
 		// the open green bottle: a rest, and it pours out when tipped over
-		if (std::regex_search(std::string(path), std::regex("glassbottle01", ICASE))) {
+		static const std::regex openBottle("glassbottle01", ICASE);
+		if (std::regex_search(std::string(path), openBottle)) {
 			for (const auto& l : {param("$fillmin", "0.02"), param("$fillmax", "0.25"), param("$spill", "1")}) lines.push_back(l);
 		} else {
 			for (const auto& l : {param("$fillmin", "0.45"), param("$fillmax", "0.95")}) lines.push_back(l);
@@ -167,8 +170,9 @@ const std::vector<std::string> TREE_SWAY = {"1", "100000", "0.0005", "250", "0",
 
 /// The see-through leaves, needles and twigs of a tree (not its bark).
 bool leafMaterial(std::string_view path, const std::string& cleanText) {
-	if (std::regex_search(std::string(path), std::regex("(bark|trunk|stump|log)", ICASE))) return false;
-	return std::regex_search(cleanText, std::regex(R"re("?\$(alphatest|translucent)"?\s+"?1)re", ICASE));
+	static const std::regex wood("(bark|trunk|stump|log)", ICASE), seeThrough(R"re("?\$(alphatest|translucent)"?\s+"?1)re", ICASE);
+	if (std::regex_search(std::string(path), wood)) return false;
+	return std::regex_search(cleanText, seeThrough);
 }
 
 /// New-WindMaterial's text for a VertexLitGeneric material with these sway values.
@@ -190,7 +194,8 @@ std::optional<std::string> waterMaterial(std::string_view path, std::string_view
 	static const std::regex head(R"re(^\s*"?(?:SDK_)?Water"?(\s*\{))re", ICASE);
 	std::smatch m;
 	if (!std::regex_search(c, m, head)) return std::nullopt;
-	if (!std::regex_search(c, std::regex(R"re("?\$abovewater"?\s+"?1)re", ICASE))) return std::nullopt;
+	static const std::regex aboveWater(R"re("?\$abovewater"?\s+"?1)re", ICASE);
+	if (!std::regex_search(c, aboveWater)) return std::nullopt;
 	std::string body = c.substr(std::size_t(m.position(0) + m.length(0)));
 	static const std::regex hdr(R"re([ \t]*"?(?:SDK_)?Water_DX9_HDR"?\s*\{((?:"[^"]*"|[^{}"])*)\}[ \t]*\r?\n?)re", ICASE);
 	std::vector<std::string> params;
@@ -298,11 +303,15 @@ bool effectApplies(GameEffect effect, std::string_view path, std::string_view vm
 		static const std::regex vlg("^(SDK_)?VertexLitGeneric$", ICASE);
 		return model && std::regex_match(shader, vlg);
 	}
-	case GameEffect::Water:
-		return iequals(shader, "Water_Fidelity") ||
-		       (std::regex_match(shader, std::regex("^(SDK_)?Water$", ICASE)) && std::regex_search(clean(vmt), std::regex(R"re("?\$abovewater"?\s+"?1)re", ICASE)));
-	case GameEffect::Relief:
-		return !model && (std::regex_match(shader, std::regex("^(SDK_)?(LightmappedGeneric|WorldVertexTransition)$", ICASE)) || effectIsOn(GameEffect::Relief, vmt));
+	// (Called for every material of the game: the patterns are built once.)
+	case GameEffect::Water: {
+		static const std::regex water("^(SDK_)?Water$", ICASE), aboveWater(R"re("?\$abovewater"?\s+"?1)re", ICASE);
+		return iequals(shader, "Water_Fidelity") || (std::regex_match(shader, water) && std::regex_search(clean(vmt), aboveWater));
+	}
+	case GameEffect::Relief: {
+		static const std::regex wall("^(SDK_)?(LightmappedGeneric|WorldVertexTransition)$", ICASE);
+		return !model && (std::regex_match(shader, wall) || effectIsOn(GameEffect::Relief, vmt));
+	}
 	}
 	return false;
 }
@@ -444,11 +453,25 @@ std::string patternReliefHash(const GameFileSystem& fs, std::string_view materia
 std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt) {
 	const std::string hash = patternReliefHash(fs, material, originalVmt);
 	if (hash.empty()) return std::nullopt;
+	// Textures without a clear pattern are remembered by their hash (texture, material text and
+	// rules): the open map's walls are checked again after every edit, and decoding and analysing
+	// a 512 px texture each time for nothing made those checks slow.
+	static std::mutex mutex;
+	static std::set<std::string> without;
+	{
+		std::lock_guard lock(mutex);
+		if (without.count(hash)) return std::nullopt;
+	}
+	const auto noPattern = [&hash] {
+		std::lock_guard lock(mutex);
+		without.insert(hash);
+		return std::nullopt;
+	};
 	const auto image = loadTexture(fs, patternWallTexture(material, originalVmt), 512);
-	if (!image) return std::nullopt;
+	if (!image) return noPattern();
 	ReliefLayout layout;
 	auto heights = heightFromTexture(*image, &layout);
-	if (!heights || !layout.found() || layout.confidence < 0.5) return std::nullopt;   // deploy's relief stays
+	if (!heights || !layout.found() || layout.confidence < 0.5) return noPattern();   // deploy's relief stays
 	PatternRelief out;
 	out.hash = hash;
 	out.heightName = toLower(material) + std::string(PATTERN_RELIEF_SUFFIX);
@@ -525,7 +548,8 @@ std::optional<std::string> makeEffectMaterial(GameEffect effect, std::string_vie
 		if (p.starts_with("materials/models/props_foliage")) return std::nullopt;
 		return liquidMaterial(p, vmt, kind, marker);
 	case GameEffect::Wind: {
-		if (std::regex_search(clean(vmt), std::regex(R"re(\$treesway\b)re", ICASE))) return std::nullopt;   // already swaying
+		static const std::regex sway(R"re(\$treesway\b)re", ICASE);
+		if (std::regex_search(clean(vmt), sway)) return std::nullopt;   // already swaying
 		// Trees (foliage that is no bush): only the see-through leaves; anything else sways whole, like a bush.
 		const bool tree = p.starts_with("materials/models/props_foliage") && !std::regex_search(p, BUSH_NAMES);
 		if (tree && !leafMaterial(p, clean(vmt))) return std::nullopt;
