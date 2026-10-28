@@ -80,6 +80,11 @@ bool Material::flag(std::string_view key) const {
 	return !value.empty() && value != "0";
 }
 
+bool Material::reflectsWhenDry() const {
+	const auto envmap = trim(param("$envmap"));
+	return !envmap.empty() && envmap != "0" && !flag("$envmapwetonly");
+}
+
 std::string Material::previewTexture() const {
 	for (const char* key : {"%tooltexture", "$basetexture", "$basetexture2", "$normalmap", "$bumpmap", "$envmapmask"}) {
 		if (auto value = param(key); !value.empty()) {

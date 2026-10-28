@@ -198,6 +198,7 @@ private:
 		QString path;
 		QMatrix4x4 transform;
 		int face = 0;          ///< Flag slot (selection, hiding)
+		float opacity = 1.f;   ///< < 1: drawn see-through after the solid ones, casts no shadow
 	};
 	struct GpuModel {
 		struct Mesh {

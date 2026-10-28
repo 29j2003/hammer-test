@@ -59,7 +59,7 @@ add_library(smecore STATIC
 	src/scene_export.cpp
 	src/shapes.cpp
 	src/steam.cpp
-	src/studio_model.cpp
+	src/studio_model.cpp src/studio_anim.cpp
 	src/text.cpp
 	src/texture.cpp
 	src/version.cpp)

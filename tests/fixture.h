@@ -54,6 +54,7 @@ void createDemo(Fixture& fixture);
 /// A complete model (.mdl + .vvd + .dx90.vtx) made of boxes {min x y z, max x y z}, one material.
 struct StudioModelFiles {
 	std::vector<std::byte> mdl, vvd, vtx;
+	std::vector<std::byte> ani;   ///< Animation blocks (only for animations stored in the .ani)
 };
 /// Builds the model files (see StudioModelFiles).
 [[nodiscard]] StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes, const std::vector<std::string>& sequences,
@@ -74,6 +75,30 @@ struct StudioModelSpec {
 	bool staticProp = false;                      ///< $staticprop
 	float mass = 0;                               ///< $collisionmodel mass
 	std::string keyValues;                        ///< $keyvalues text
+
+	/// A bone of the skeleton: rest position and Euler rotation (radians: roll, pitch, yaw) relative to its parent.
+	struct Bone {
+		std::string name;
+		int parent = -1;
+		std::array<float, 3> pos{};
+		std::array<float, 3> rot{};
+	};
+	std::vector<Bone> bones;                      ///< Skeleton (empty: none, every vertex on "bone 0")
+	std::vector<int> boxBones;                    ///< The bone of every box, in file order (missing: bone 0)
+	/// An animation and its sequence. frames[f][b] = position and rotation of bone b (as Bone::pos/rot); bones
+	/// without a key keep their rest pose.
+	struct Animation {
+		std::string name;
+		std::string activity;
+		float fps = 30;
+		bool loop = true;
+		std::vector<std::vector<std::array<float, 6>>> frames;
+		int sectionFrames = 0;     ///< Cut into sections of this many frames (long animations)
+		bool inAni = false;        ///< Data in the .ani file (animation block 1) instead of the .mdl
+		bool rawFirstBone = false; ///< Bone 0 stored raw (Quaternion48 + Vector48, the first frame's values)
+	};
+	std::vector<Animation> animations;            ///< With these the sequences are the animations' (sequences is ignored)
+	std::string aniName = "models/test_anim.ani"; ///< Name of the .ani in the header
 };
 [[nodiscard]] StudioModelFiles makeStudioModel(const StudioModelSpec& spec);
 /// Writes the three files next to each other ("models/x.mdl" -> x.mdl, x.vvd, x.dx90.vtx).

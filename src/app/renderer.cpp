@@ -1072,6 +1072,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			instance.transform = QMatrix4x4(float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2]), float(o.x), float(r.m[1][0]), float(r.m[1][1]),
 			                                float(r.m[1][2]), float(o.y), float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2]), float(o.z), 0, 0, 0, 1);
 			instance.face = faceIndex++;
+			if (edit::isSeeThroughHelper(entity)) instance.opacity = 0.4f;   // stands for an NPC, is none
 			noteFace(instance.face, 0, o);
 			m_entityFaces[entity.id].push_back(instance.face);
 			m_faceToSide.emplace_back(SolidRef{entity.id, 0}, 0);
@@ -2105,29 +2106,44 @@ void SceneRenderer::drawModels(QOpenGLShaderProgram& program, bool flat, const Q
 	if (flat) {
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 	}
-	for (const auto& instance : m_modelInstances) {
-		if (preview && !(m_flags[static_cast<std::size_t>(instance.face)] & FLAG_SELECTED)) {
-			continue;
+	// Solid models first, then the see-through ones blended over them (no depth writes).
+	for (const bool seeThrough : {false, true}) {
+		if (seeThrough && !flat) {
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDepthMask(GL_FALSE);
 		}
-		auto* model = gpuModel(instance.path);
-		if (!model) {
-			continue;
-		}
-		program.setUniformValue("u_model", preview ? *preview * instance.transform : instance.transform);
-		program.setUniformValue("u_faceOverride", instance.face);
-		glBindVertexArray(model->vao);
-		for (const auto& mesh : model->meshes) {
-			if (!flat) {
-				auto& tex = texture(mesh.material);
-				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
-				program.setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
-				bindEnvmap(program, tex, m_modelReflections);
+		for (const auto& instance : m_modelInstances) {
+			if ((instance.opacity < 1.f) != seeThrough) continue;
+			if (preview && !(m_flags[static_cast<std::size_t>(instance.face)] & FLAG_SELECTED)) {
+				continue;
 			}
-			glDrawElements(GL_TRIANGLES, mesh.count, GL_UNSIGNED_INT, reinterpret_cast<void*>(static_cast<std::uintptr_t>(mesh.first) * sizeof(std::uint32_t)));
-			++m_drawCalls;
+			auto* model = gpuModel(instance.path);
+			if (!model) {
+				continue;
+			}
+			program.setUniformValue("u_model", preview ? *preview * instance.transform : instance.transform);
+			program.setUniformValue("u_faceOverride", instance.face);
+			program.setUniformValue("u_opacity", flat ? 1.f : instance.opacity);
+			glBindVertexArray(model->vao);
+			for (const auto& mesh : model->meshes) {
+				if (!flat) {
+					auto& tex = texture(mesh.material);
+					glActiveTexture(GL_TEXTURE0);
+					glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
+					program.setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
+					bindEnvmap(program, tex, m_modelReflections);
+				}
+				glDrawElements(GL_TRIANGLES, mesh.count, GL_UNSIGNED_INT, reinterpret_cast<void*>(static_cast<std::uintptr_t>(mesh.first) * sizeof(std::uint32_t)));
+				++m_drawCalls;
+			}
+		}
+		if (seeThrough && !flat) {
+			glDepthMask(GL_TRUE);
+			glDisable(GL_BLEND);
 		}
 	}
+	program.setUniformValue("u_opacity", 1.f);
 	if (flat) {
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	}
