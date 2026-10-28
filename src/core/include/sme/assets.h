@@ -32,6 +32,12 @@ struct MaterialCategory {
 /// Sorts a material into the browser's categories (brush, blend, model, tool, see-through, water, decal, sky).
 [[nodiscard]] MaterialCategory classifyMaterial(const Material& material);
 
+/// Whether the material is water (Water shader or %compilewater).
+[[nodiscard]] bool isWaterMaterial(const GameFileSystem& fs, std::string_view name);
+/// The material "Make water" uses: `current` if it is water, else the first water material of
+/// `names` (names with "water" in them are tried first). Empty if there is none.
+[[nodiscard]] std::string pickWaterMaterial(const GameFileSystem& fs, std::string_view current, const std::vector<std::string>& names);
+
 /// What the editor needs from a .mdl file.
 struct ModelInfo {
 	std::string name;                       ///< Name stored in the model

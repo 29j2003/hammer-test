@@ -1,16 +1,19 @@
-// panels.cpp - Outliner, Problems and Log docks (see panels.h).
+// panels.cpp - Outliner, Problems, Map Budget and Log docks (see panels.h).
 
 #include "panels.h"
 
 #include "asset_browser.h"
 #include "editor.h"
 
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QStyle>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -233,6 +236,89 @@ void ProblemsPanel::showProblems() {
 	} else {
 		m_summary->setText(tr("%1 errors, %2 warnings, %3 hints").arg(errors).arg(warnings).arg(static_cast<int>(all.size()) - errors - warnings));
 	}
+}
+
+// --- Map Budget -------------------------------------------------------------------------
+
+BudgetPanel::BudgetPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
+	auto* layout = new QVBoxLayout(this);
+	m_summary = new QLabel;
+	m_summary->setObjectName("budgetSummary");
+	m_summary->setWordWrap(true);
+	layout->addWidget(m_summary);
+	m_grid = new QGridLayout;
+	m_grid->setColumnStretch(2, 1);
+	layout->addLayout(m_grid);
+	layout->addStretch(1);
+	connect(editor, &Editor::documentChanged, this, &BudgetPanel::scheduleRefresh);
+	connect(editor, &Editor::gameChanged, this, &BudgetPanel::scheduleRefresh);
+}
+
+void BudgetPanel::scheduleRefresh() {
+	m_dirty = true;
+	// Hidden docks count when they are shown; visible ones a moment after the last change
+	// (a drag sends many changes).
+	if (!isVisible() || m_scheduled) return;
+	m_scheduled = true;
+	QTimer::singleShot(250, this, [this] {
+		m_scheduled = false;
+		if (m_dirty && isVisible()) refresh();
+	});
+}
+
+void BudgetPanel::showEvent(QShowEvent* event) {
+	QWidget::showEvent(event);
+	if (m_dirty) refresh();
+}
+
+void BudgetPanel::refresh() {
+	m_dirty = false;
+	const auto* game = m_editor->game();
+	const std::uint32_t app = game ? (game->entry.ownerAppId != 0 ? game->entry.ownerAppId : game->entry.baseAppId) : 0;
+	m_items = mapBudget(m_editor->doc(), budgetLimitsForApp(app));
+	// Rows are made once and then only updated.
+	if (m_grid->count() == 0) {
+		for (int row = 0; row < static_cast<int>(m_items.size()); ++row) {
+			const QString name = QString::fromStdString(m_items[std::size_t(row)].name);
+			auto* label = new QLabel(name);
+			auto* count = new QLabel;
+			count->setObjectName("budgetCount:" + name);
+			count->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			auto* bar = new QProgressBar;
+			bar->setObjectName("budgetBar:" + name);
+			bar->setRange(0, 1000);
+			bar->setTextVisible(false);
+			bar->setMaximumHeight(8);
+			m_grid->addWidget(label, row, 0);
+			m_grid->addWidget(count, row, 1);
+			m_grid->addWidget(bar, row, 2);
+		}
+	}
+	int over = 0, close = 0;
+	for (int row = 0; row < static_cast<int>(m_items.size()); ++row) {
+		const auto& item = m_items[std::size_t(row)];
+		auto* label = qobject_cast<QLabel*>(m_grid->itemAtPosition(row, 0)->widget());
+		auto* count = qobject_cast<QLabel*>(m_grid->itemAtPosition(row, 1)->widget());
+		auto* bar = qobject_cast<QProgressBar*>(m_grid->itemAtPosition(row, 2)->widget());
+		const QString prefix = item.estimate ? QStringLiteral("~") : QString();
+		count->setText(item.limit ? QStringLiteral("%1%2 / %3").arg(prefix).arg(item.count).arg(item.limit) : prefix + QString::number(item.count));
+		const QString tip = QString::fromStdString(item.note) + (item.estimate ? tr("\n~ = estimate before compiling.") : QString());
+		label->setToolTip(tip);
+		count->setToolTip(tip);
+		bar->setToolTip(tip);
+		bar->setVisible(item.limit != 0);
+		bar->setValue(static_cast<int>(std::min(1.0, item.fraction()) * 1000));
+		// Warn from 80 % on: the compile adds some (bevels, split faces, instances).
+		const char* role = item.fraction() >= 0.8 ? "warning" : "";
+		count->setProperty("role", role);
+		count->style()->unpolish(count);
+		count->style()->polish(count);
+		over += item.over() ? 1 : 0;
+		close += !item.over() && item.fraction() >= 0.8 ? 1 : 0;
+	}
+	m_summary->setText(over > 0     ? tr("⛔ %1 limits exceeded - the map will not compile or run.").arg(over)
+	                   : close > 0  ? tr("⚠ %1 limits above 80%.").arg(close)
+	                                : tr("✔ Well within the engine limits."));
 }
 
 // --- Log ----------------------------------------------------------------------------------

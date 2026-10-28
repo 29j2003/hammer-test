@@ -381,6 +381,90 @@ Change dropToFloor(MapDocument& doc, const Selection& selection, const EntityCat
 	return t.finish();
 }
 
+WaterResult makeWater(MapDocument& doc, const Selection& selection, const std::string& waterMaterial, const EntityCatalog* catalog,
+                      double cubemapRange) {
+	WaterResult result;
+	// The brushes: selected world brushes, brushes of selected brush entities and of selected faces.
+	std::vector<SolidRef> refs = selection.solids;
+	for (const int id : selection.entities) {
+		if (const auto* entity = doc.findEntity(id)) {
+			for (const auto& solid : entity->solids) refs.push_back({id, solid.id});
+		}
+	}
+	for (const auto& face : selection.faces) refs.push_back(face.solid);
+	std::sort(refs.begin(), refs.end(), [](const SolidRef& a, const SolidRef& b) {
+		return std::pair(a.entityId, a.solidId) < std::pair(b.entityId, b.solidId);
+	});
+	refs.erase(std::unique(refs.begin(), refs.end()), refs.end());
+
+	Transaction t(doc, "Make water");
+	Bounds surface;
+	std::string waterSides;
+	for (const auto& ref : refs) {
+		Solid* solid = doc.findSolid(ref);
+		if (!solid) continue;
+		// The face pointing up the most is the surface.
+		const auto geometry = buildBrushGeometry(*solid);
+		const FaceGeometry* top = nullptr;
+		for (const auto& face : geometry.faces) {
+			if (face.normal.z > 0.7 && (!top || face.normal.z > top->normal.z)) top = &face;
+		}
+		if (!geometry.valid || !top) continue;
+		t.touchSolid(ref);
+		for (std::size_t i = 0; i < solid->sides.size(); ++i) {
+			solid->sides[i].material = int(i) == top->sideIndex ? waterMaterial : "TOOLS/TOOLSNODRAW";
+		}
+		for (const auto& v : top->vertices) surface.add(v);
+		waterSides += (waterSides.empty() ? "" : " ") + std::to_string(solid->sides[std::size_t(top->sideIndex)].id);
+		++result.brushes;
+	}
+	if (result.brushes == 0) {
+		result.change = t.finish();
+		return result;
+	}
+
+	const auto newEntity = [&](const std::string& classname, const Vec3& origin) -> Entity& {
+		Entity entity;
+		entity.id = doc.newEntityId();
+		t.touchEntity(entity.id);
+		entity.set("classname", classname);
+		if (const auto* definition = catalog ? catalog->find(classname) : nullptr) {
+			for (const auto& property : definition->properties) {
+				if (property.kind != EntityProperty::Kind::Flags && !property.defaultValue.empty() && !iequals(property.name, "origin")) {
+					entity.set(property.name, property.defaultValue);
+				}
+			}
+		}
+		entity.setOrigin(snap(origin, 1));
+		auto editor = KvNode::makeBlock("editor");
+		editor.set("color", "220 30 220");
+		editor.set("visgroupshown", "1");
+		editor.set("visgroupautoshown", "1");
+		entity.extra.push_back(std::move(editor));
+		doc.entities.push_back(std::move(entity));
+		return doc.entities.back();
+	};
+	const Vec3 middle = surface.center();
+	const bool hasLod = std::any_of(doc.entities.begin(), doc.entities.end(), [](const Entity& e) { return iequals(e.classname(), "water_lod_control"); });
+	if (!hasLod) {
+		auto& lod = newEntity("water_lod_control", middle + Vec3{0, 0, 32});
+		if (lod.get("cheapwaterstartdistance").empty()) lod.set("cheapwaterstartdistance", "1000");
+		if (lod.get("cheapwaterenddistance").empty()) lod.set("cheapwaterenddistance", "2000");
+		result.lodControlId = lod.id;
+	}
+	const Vec3 probe = middle + Vec3{0, 0, 64};
+	const bool cubemapNear = std::any_of(doc.entities.begin(), doc.entities.end(), [&](const Entity& e) {
+		return iequals(e.classname(), "env_cubemap") && length(e.origin() - probe) <= cubemapRange;
+	});
+	if (!cubemapNear) {
+		auto& cubemap = newEntity("env_cubemap", probe);
+		cubemap.set("sides", waterSides);
+		result.cubemapId = cubemap.id;
+	}
+	result.change = t.finish();
+	return result;
+}
+
 } // namespace edit
 
 } // namespace sme

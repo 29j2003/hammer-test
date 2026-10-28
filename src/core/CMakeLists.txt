@@ -44,6 +44,7 @@ add_library(smecore STATIC
 	src/history.cpp
 	src/keyvalues.cpp
 	src/map.cpp
+	src/map_budget.cpp
 	src/map_tools.cpp
 	src/soundscape_area.cpp
 	src/particles.cpp

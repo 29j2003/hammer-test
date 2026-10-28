@@ -42,6 +42,7 @@ class MaterialCache;
 class Outliner;
 class ParticleBrowser;
 class ProblemsPanel;
+class BudgetPanel;
 class PropertiesPanel;
 class SoundBrowser;
 class ToolPanel;
@@ -66,6 +67,7 @@ public:
 	[[nodiscard]] Viewport* view3D() const { return m_views[0]; }
 	[[nodiscard]] Viewport* view(int index) const { return m_views[static_cast<std::size_t>(index)]; }
 	[[nodiscard]] ProblemsPanel* problems() const { return m_problems; }
+	[[nodiscard]] BudgetPanel* budget() const { return m_budget; }
 	[[nodiscard]] AssetBrowser* assets() const { return m_assets; }
 	[[nodiscard]] QMenu* gameMenu() const { return m_gameMenu; }
 	[[nodiscard]] ToolPanel* toolPanel() const { return m_toolPanel; }
@@ -171,6 +173,7 @@ private:
 	std::vector<Vec3> m_lastLeak;
 	Outliner* m_outliner = nullptr;
 	ProblemsPanel* m_problems = nullptr;
+	BudgetPanel* m_budget = nullptr;
 	LogPanel* m_log = nullptr;
 	QList<QDockWidget*> m_docks;
 

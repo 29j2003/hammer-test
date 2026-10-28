@@ -13,6 +13,7 @@
 
 #include <algorithm>
 
+#include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/autosave.h>
 #include <sme/csg.h>
@@ -1282,6 +1283,31 @@ void Editor::dropSelectionToFloor() {
 		return;
 	}
 	commit(std::move(change));
+}
+
+void Editor::makeWaterFromSelection(const std::vector<std::string>& materialNames) {
+	if (!m_selection.hasObjects() && m_selection.faces.empty()) {
+		emit message(tr("Select the brushes that should become water first"));
+		return;
+	}
+	const std::string material = m_game ? pickWaterMaterial(m_game->files, m_currentMaterial.toStdString(), materialNames) : std::string();
+	if (material.empty()) {
+		emit message(tr("No water material found: pick one in the Asset Browser (category Water) and try again"));
+		return;
+	}
+	auto result = edit::makeWater(m_doc, m_selection, material, entities());
+	if (result.brushes == 0) {
+		emit message(tr("Nothing to make into water: the selection has no brush with a top face"));
+		return;
+	}
+	commit(std::move(result.change));
+	QStringList added;
+	if (result.lodControlId) added << QStringLiteral("water_lod_control");
+	if (result.cubemapId) added << QStringLiteral("env_cubemap");
+	emit message(tr("Made %1 brushes into water (%2)%3")
+	                 .arg(result.brushes)
+	                 .arg(QString::fromStdString(material))
+	                 .arg(added.isEmpty() ? QString() : tr(", added %1").arg(added.join(", "))));
 }
 
 void Editor::selectTrackChain() {

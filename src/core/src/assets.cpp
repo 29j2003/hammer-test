@@ -134,6 +134,28 @@ MaterialCategory classifyMaterial(const Material& m) {
 	return c;
 }
 
+bool isWaterMaterial(const GameFileSystem& fs, std::string_view name) {
+	const auto material = loadMaterial(fs, name);
+	// VBSP treats every shader whose name starts with "Water" as water (Water, Water_DX60, mod shaders).
+	return material && (classifyMaterial(*material).water || startsWithI(material->shader, "water"));
+}
+
+std::string pickWaterMaterial(const GameFileSystem& fs, std::string_view current, const std::vector<std::string>& names) {
+	if (!current.empty() && isWaterMaterial(fs, current)) {
+		return std::string(current);
+	}
+	// Names with "water" first; then the others, but not every material of a big game (each is a file read).
+	std::size_t budget = 2000;
+	for (const bool named : {true, false}) {
+		for (const auto& name : names) {
+			if ((toLower(name).find("water") != std::string::npos) != named) continue;
+			if (!named && budget-- == 0) return {};
+			if (isWaterMaterial(fs, name)) return name;
+		}
+	}
+	return {};
+}
+
 std::optional<ModelInfo> readModelInfo(std::span<const std::byte> data, std::string* error) {
 	const Reader r(data);
 	const auto fail = [&](const char* message) -> std::optional<ModelInfo> {
