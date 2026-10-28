@@ -76,6 +76,11 @@
 #include <limits>
 #include <map>
 
+#include <QEnterEvent>
+#include <QMouseEvent>
+#include <QLayout>
+#include <QPainter>
+
 #include <sme/checks.h>
 #include <sme/game.h>
 #include <sme/scene_export.h>
@@ -103,6 +108,95 @@ public:
 
 private:
 	std::function<void()> m_open;
+};
+
+/// Corner handle where the map views meet the bottom panels and a side panel: dragging it
+/// moves both edges at once (the bottom panels' height and the side panels' width), so the
+/// views grow or shrink in both directions with one drag.
+class CornerGrip : public QWidget {
+public:
+	CornerGrip(QMainWindow* window, Qt::DockWidgetArea side) : QWidget(window), m_window(window), m_side(side) {
+		setObjectName(side == Qt::LeftDockWidgetArea ? "cornerGripLeft" : "cornerGripRight");
+		setFixedSize(14, 14);
+		setCursor(side == Qt::LeftDockWidgetArea ? Qt::SizeBDiagCursor : Qt::SizeFDiagCursor);
+		setToolTip(QObject::tr("Drag: resize the bottom and side panels together"));
+	}
+
+	/// Puts the handle on its corner of the map views; hidden when there is no panel to resize.
+	void place(const QRect& views) {
+		const bool any = !docks(Qt::BottomDockWidgetArea).isEmpty() && !docks(m_side).isEmpty();
+		setVisible(any && views.isValid());
+		if (!any) return;
+		const QPoint corner = m_side == Qt::LeftDockWidgetArea ? views.bottomLeft() : views.bottomRight();
+		move(corner - QPoint(width() / 2, height() / 2));
+		raise();
+	}
+
+	/// Drags like the user would (for tests): `delta` in window pixels.
+	void dragBy(const QPoint& delta) {
+		begin();
+		apply(delta);
+	}
+
+protected:
+	void paintEvent(QPaintEvent*) override {
+		QPainter p(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setPen(Qt::NoPen);
+		p.setBrush(QColor(240, 160, 40, underMouse() || m_dragging ? 230 : 110));
+		p.drawEllipse(QRectF(rect()).adjusted(3, 3, -3, -3));
+	}
+	void enterEvent(QEnterEvent*) override { update(); }
+	void leaveEvent(QEvent*) override { update(); }
+	void mousePressEvent(QMouseEvent* event) override {
+		if (event->button() != Qt::LeftButton) return;
+		m_dragging = true;
+		m_start = event->globalPosition().toPoint();
+		begin();
+	}
+	void mouseMoveEvent(QMouseEvent* event) override {
+		if (m_dragging) apply(event->globalPosition().toPoint() - m_start);
+	}
+	void mouseReleaseEvent(QMouseEvent*) override {
+		m_dragging = false;
+		update();
+	}
+
+private:
+	/// The panels of an area that are on screen (of tabbed ones only the one in front).
+	QList<QDockWidget*> docks(Qt::DockWidgetArea area) const {
+		QList<QDockWidget*> out;
+		for (auto* dock : m_window->findChildren<QDockWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+			if (dock->isVisible() && !dock->isFloating() && m_window->dockWidgetArea(dock) == area) out << dock;
+		}
+		return out;
+	}
+	void begin() {
+		m_bottom = docks(Qt::BottomDockWidgetArea);
+		m_sides = docks(m_side);
+		m_bottomHeight = m_bottom.isEmpty() ? 0 : m_bottom.front()->height();
+		m_sideWidth = m_sides.isEmpty() ? 0 : m_sides.front()->width();
+	}
+	void apply(const QPoint& delta) {
+		if (!m_bottom.isEmpty()) {
+			QList<int> heights;
+			for (int i = 0; i < m_bottom.size(); ++i) heights << std::max(40, m_bottomHeight - delta.y());
+			m_window->resizeDocks(m_bottom, heights, Qt::Vertical);
+		}
+		if (!m_sides.isEmpty()) {
+			const int dx = m_side == Qt::LeftDockWidgetArea ? delta.x() : -delta.x();
+			QList<int> widths;
+			for (int i = 0; i < m_sides.size(); ++i) widths << std::max(40, m_sideWidth + dx);
+			m_window->resizeDocks(m_sides, widths, Qt::Horizontal);
+		}
+	}
+
+	QMainWindow* m_window;
+	Qt::DockWidgetArea m_side;
+	bool m_dragging = false;
+	QPoint m_start;
+	QList<QDockWidget*> m_bottom, m_sides;
+	int m_bottomHeight = 0, m_sideWidth = 0;
 };
 
 const char* SHORTCUT_HELP = R"(<h3>Camera</h3>
@@ -267,6 +361,9 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 
 	refreshGames();
 	setQuadLayout(QSettings().value("window/quad", false).toBool());
+	// The layout's minimum must be current first: a stale one from while the panels were being
+	// built (before their minimum sizes were set) would make the window wider than asked.
+	if (layout()) layout()->activate();
 	resize(1600, 960);
 	restoreGeometry(QSettings().value("window/geometry").toByteArray());
 	updateTitle();
@@ -429,6 +526,19 @@ void MainWindow::createDocks() {
 		raiseDock("Problems");
 	});
 	assets->raise();
+	// Every panel may get small: a big minimum of one tab (a sound editor, the compile steps)
+	// would hold the whole bottom row up. What does not fit gets cut, the panels scroll or
+	// switch to a compact form (the Sounds panel does below 420 pixels).
+	for (auto* dock : std::as_const(m_docks)) {
+		const auto area = dockWidgetArea(dock);
+		if (area == Qt::BottomDockWidgetArea) dock->widget()->setMinimumHeight(90);
+		if (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea) dock->widget()->setMinimumWidth(200);
+		connect(dock, &QDockWidget::visibilityChanged, this, [this] { QTimer::singleShot(0, this, &MainWindow::placeCornerGrips); });
+	}
+	// Corner handles: the views' lower corners move the bottom and a side panel together.
+	m_gripLeft = new CornerGrip(this, Qt::LeftDockWidgetArea);
+	m_gripRight = new CornerGrip(this, Qt::RightDockWidgetArea);
+	m_pages->installEventFilter(this);
 	resizeDocks({properties, tool}, {380, 300}, Qt::Horizontal);
 	resizeDocks({assets}, {210}, Qt::Vertical);
 	// Again once the window has its size: the map views get the most room.
@@ -473,6 +583,7 @@ void MainWindow::showPage(Page page) {
 		                      widget == target ? QSizePolicy::Preferred : QSizePolicy::Ignored);
 	}
 	m_assets->setPageMode(page == Page::Materials);
+	QTimer::singleShot(0, this, &MainWindow::placeCornerGrips);   // after the docks are back or gone
 	// The page never starts empty: without an open material it shows the browser's current one.
 	if (page == Page::Materials && m_materialEditor->materialName().isEmpty() && !m_assets->shownMaterial().isEmpty()) {
 		m_materialEditor->openMaterial(m_assets->shownMaterial());
@@ -481,6 +592,20 @@ void MainWindow::showPage(Page page) {
 	if (m_pageGroup) {
 		const auto actions = m_pageGroup->actions();
 		if (int(page) < actions.size()) actions[int(page)]->setChecked(true);
+	}
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+	if (watched == m_pages && (event->type() == QEvent::Resize || event->type() == QEvent::Move)) {
+		placeCornerGrips();
+	}
+	return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::placeCornerGrips() {
+	const QRect views = currentPage() == Page::Map ? m_pages->geometry() : QRect();
+	for (auto* grip : {m_gripLeft, m_gripRight}) {
+		if (grip) static_cast<CornerGrip*>(grip)->place(views);
 	}
 }
 

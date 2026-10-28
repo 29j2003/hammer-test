@@ -78,6 +78,10 @@ From left to right:
 - **Run map** (orange, F9): compile and start the game.
 - The three **panel buttons** at the far right show or hide the left, bottom and right panels.
 
+Every panel can be made as small as you like by dragging its edge. The small orange **corner handles** at the lower
+left and lower right corners of the views move two edges at once: drag one to make the views bigger (or smaller) in
+both directions, together with the bottom panels and the side panel next to it.
+
 ### View switches
 
 **Hide tools** (Ctrl+Alt+T) hides triggers, clips and every other tool brush with one click, so you can build

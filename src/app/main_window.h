@@ -86,6 +86,8 @@ public:
 	[[nodiscard]] MapsPanel* mapsPanel() const { return m_mapsPanel; }
 	/// Shows a dock by its title (on the Map page); "Map", "Materials", "Material Editor", "Models" and "Mod" show that page.
 	void raiseDock(const QString& name);
+	/// Puts the corner handles where the map views meet the panels (hidden on other pages).
+	void placeCornerGrips();
 	/// Shows the Materials page.
 	void showMaterialEditor();
 	/// Update check against the GitHub releases. `manual` also reports "up to date" and errors.
@@ -94,6 +96,8 @@ public:
 
 protected:
 	void closeEvent(QCloseEvent* event) override;
+	/// Keeps the corner handles on the views' corners when the views change size.
+	bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
 	void createActions();
@@ -135,6 +139,8 @@ private:
 	QWidget* m_soundsPage = nullptr;         ///< Holds the Sounds browser while its page is shown
 	QWidget* m_particlesPage = nullptr;
 	QDockWidget* m_assetsDock = nullptr;
+	QWidget* m_gripLeft = nullptr;    ///< Corner handles (CornerGrip in main_window.cpp)
+	QWidget* m_gripRight = nullptr;
 	QDockWidget* m_soundsDock = nullptr;
 	QDockWidget* m_particlesDock = nullptr;
 	QList<QPointer<QWidget>> m_hiddenForTab;    ///< Docks and tool bars put away for another tab

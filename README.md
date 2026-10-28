@@ -26,6 +26,8 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   brush entities, triggers, tool brushes and faces (clip, nodraw, hint …), sky brushes, models, NPCs, lights, cubemaps
   and other entities. The view's button says how many kinds are hidden. **Hide tools** (Ctrl+Alt+T) in the top bar
   hides triggers, clips and other tool brushes with one click.
+- **Resizable panels**: every panel can be dragged small; the orange corner handles of the views resize the bottom
+  and a side panel in one drag.
 - **Frame rate limit** (View menu, 30–240 fps or none, default 144): the views draw only when something changes, and
   never faster than this.
 - **Snap to corners**: the move tool shows small squares on the corners of the selection; drag one onto a corner of

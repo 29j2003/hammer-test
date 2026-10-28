@@ -27,6 +27,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QMimeData>
 #include <QLineEdit>
 #include <QListView>
@@ -2171,6 +2172,8 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 	REQUIRE((indexed.count() > 0 || indexed.wait(10000)));
 	settle();
 
+	CHECK(window.width() <= 1400);   // opens at the size asked for, not wider
+
 	// Frame limit: default 144, chosen in View > Frame rate limit, remembered.
 	CHECK(editor.maxFps() == 144);
 	auto* fpsMenu = window.findChild<QMenu*>("fpsMenu");
@@ -2265,6 +2268,52 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		window.raiseDock(dock);
 		settle();
 		CHECK(tooWide(dock) <= 1366);
+	}
+	// Every panel can be made small: the bottom ones low, the side ones narrow (dragging the
+	// splitter must not stop at a big minimum, whichever tab is in front).
+	for (auto* dock : window.findChildren<QDockWidget*>()) {
+		if (!dock->widget()) continue;
+		// What the dock layout uses: an explicit minimum wins over the widget's own wish.
+		const QWidget* content = dock->widget();
+		const QSize minimum(content->minimumWidth() > 0 ? content->minimumWidth() : content->minimumSizeHint().width(),
+		                    content->minimumHeight() > 0 ? content->minimumHeight() : content->minimumSizeHint().height());
+		const auto area = window.dockWidgetArea(dock);
+		INFO(dock->objectName().toStdString() << " " << minimum.width() << "x" << minimum.height());
+		if (area == Qt::BottomDockWidgetArea) CHECK(minimum.height() <= 140);
+		if (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea) CHECK(minimum.width() <= 260);
+	}
+	{
+		// Corner handle: one drag makes the bottom panels lower and the right panel narrower.
+		window.raiseDock("Asset Browser");
+		settle();
+		auto* grip = window.findChild<QWidget*>("cornerGripRight");
+		REQUIRE(grip);
+		CHECK(grip->isVisible());
+		auto* bottom = window.findChild<QDockWidget*>("Asset Browser");
+		auto* right = window.findChild<QDockWidget*>("Object Properties");
+		REQUIRE(bottom);
+		REQUIRE(right);
+		const int bottomBefore = bottom->height(), rightBefore = right->width();
+		const QPoint start = grip->mapToGlobal(grip->rect().center());
+		const auto send = [&](QEvent::Type type, const QPoint& global, Qt::MouseButtons buttons) {
+			QMouseEvent event(type, grip->mapFromGlobal(global), global, Qt::LeftButton, buttons, Qt::NoModifier);
+			QApplication::sendEvent(grip, &event);
+		};
+		send(QEvent::MouseButtonPress, start, Qt::LeftButton);
+		send(QEvent::MouseMove, start + QPoint(40, 50), Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, start + QPoint(40, 50), Qt::NoButton);
+		settle();
+		CHECK(bottom->height() < bottomBefore - 30);
+		CHECK(right->width() < rightBefore - 20);
+		// Still on the views' corner afterwards.
+		const QRect views = window.pages()->geometry();
+		CHECK((grip->geometry().center() - views.bottomRight()).manhattanLength() <= 4);
+		window.showPage(MainWindow::Page::Materials);
+		settle();
+		CHECK_FALSE(grip->isVisible());
+		window.showPage(MainWindow::Page::Map);
+		settle();
+		CHECK(grip->isVisible());
 	}
 }
 
