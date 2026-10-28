@@ -70,6 +70,8 @@ public:
 	[[nodiscard]] std::optional<Vec3> pasteCenter(const Bounds& box) const;
 	/// Asks for a frame, at most as often as Editor::maxFps() allows (use instead of update()).
 	void requestFrame();
+	/// How many frames this view has drawn so far (for the frame limit).
+	[[nodiscard]] quint64 framesDrawn() const { return m_framesDrawn; }
 	/// Line from a compile leak (.lin pointfile); empty clears it.
 	void setLeakLine(const std::vector<Vec3>& points);
 
@@ -305,6 +307,7 @@ private:
 	int m_frames = 0;
 	QElapsedTimer m_fpsClock;
 	QElapsedTimer m_lastFrame;            ///< When the last frame was drawn (frame limit)
+	quint64 m_framesDrawn = 0;
 	double m_fps = 0;
 };
 

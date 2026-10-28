@@ -2113,8 +2113,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 	{
 		// Many requests in a row draw only a few frames.
 		Viewport* view = window.view3D();
-		int frames = 0;
-		const auto counting = QObject::connect(view, &QOpenGLWidget::frameSwapped, view, [&frames] { ++frames; });
+		const quint64 before = view->framesDrawn();
 		QElapsedTimer clock;
 		clock.start();
 		while (clock.elapsed() < 500) {
@@ -2122,8 +2121,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 			view->requestFrame();
 			QApplication::processEvents();
 		}
-		settle();
-		QObject::disconnect(counting);   // `frames` ends with this block
+		const quint64 frames = view->framesDrawn() - before;
 		CHECK(frames <= 40);   // 60 fps for half a second, with some slack
 		CHECK(frames >= 3);
 	}

@@ -445,6 +445,7 @@ void Viewport::setLeakLine(const std::vector<Vec3>& points) {
 void Viewport::paintGL() {
 	m_frameClock.start();
 	m_lastFrame.start();
+	++m_framesDrawn;
 	auto* gl = QOpenGLContext::currentContext()->functions();
 	const QColor bg = m_camera.is2D() ? QColor(24, 25, 28) : QColor(54, 58, 66);
 	gl->glClearColor(bg.redF(), bg.greenF(), bg.blueF(), 1);
