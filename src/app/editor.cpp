@@ -46,6 +46,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_currentMaterial = settings.value("editor/material", m_currentMaterial).toString();
 	m_snapping = settings.value("editor/snapping", true).toBool();
 	m_shadows = settings.value("editor/shadows", true).toBool();
+	m_reflections = settings.value("editor/reflections", true).toBool();
 	m_showGrid3D = settings.value("view/grid3D", true).toBool();
 	m_maxFps = std::max(0, settings.value("view/maxFps", 144).toInt());
 	m_displace.mode = static_cast<DisplaceMode>(std::clamp(settings.value("displace/mode", int(DisplaceMode::Raise)).toInt(), 0, int(DisplaceMode::Alpha)));
@@ -618,6 +619,14 @@ void Editor::setSelectMode(SelectMode mode) {
 	m_selection = std::move(converted);
 	emit toolChanged();
 	emit selectionChanged();
+}
+
+void Editor::setReflections(bool on) {
+	if (m_reflections != on) {
+		m_reflections = on;
+		QSettings().setValue("editor/reflections", on);
+		emit settingsChanged();
+	}
 }
 
 void Editor::setShadows(bool on) {

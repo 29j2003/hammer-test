@@ -131,6 +131,9 @@ public:
 	/// Real-time shadows in the lighting preview.
 	[[nodiscard]] bool shadows() const { return m_shadows; }
 	void setShadows(bool on);
+	/// Cubemap reflections on $envmap materials in the lighting preview.
+	[[nodiscard]] bool reflections() const { return m_reflections; }
+	void setReflections(bool on);
 	/// View options (tool bar "View"): grid in the 3D view, names of entities in the 2D views,
 	/// lines from the selected entities to the entities their outputs fire at (and back).
 	[[nodiscard]] bool showGrid3D() const { return m_showGrid3D; }
@@ -317,6 +320,7 @@ private:
 	SelectMode m_selectMode = SelectMode::Object;
 	RenderMode m_renderMode = RenderMode::Lit;
 	bool m_shadows = true;
+	bool m_reflections = true;
 	bool m_showGrid3D = true;
 	int m_maxFps = 144;
 	DisplaceSettings m_displace;

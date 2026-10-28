@@ -8,6 +8,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 
+#include <algorithm>
 #include <map>
 
 #include <sme/filesystem.h>
@@ -56,6 +57,63 @@ QImage reliefHeights(const GameFileSystem& fs, const ReliefSource& source) {
 	return result;
 }
 
+/// "[0.5 0.5 0.5]", "{128 128 128}" (0..255) or one number for all three.
+void parseTint(const std::string& text, float out[3]) {
+	QString value = QString::fromStdString(text).trimmed();
+	const bool bytes = value.startsWith('{');
+	value.remove('[').remove(']').remove('{').remove('}');
+	const auto parts = value.split(' ', Qt::SkipEmptyParts);
+	for (int i = 0; i < 3 && !parts.isEmpty(); ++i) {
+		bool ok = false;
+		const float v = parts.value(std::min<int>(i, int(parts.size()) - 1)).toFloat(&ok);
+		if (ok) out[i] = std::max(0.f, bytes ? v / 255.f : v);
+	}
+}
+
+/// $envmap and what shapes it: tint, mask (own texture, the base or the normal map's alpha) and
+/// the fresnel term, as LightmappedGeneric / VertexLitGeneric / Water read them.
+void readEnvmap(const GameFileSystem& fs, const Material& material, MaterialInfo& info) {
+	const auto envmap = material.param("$envmap");
+	if (envmap.empty() || envmap == "0") return;
+	info.envmap = true;
+	if (const auto tint = material.param("$envmaptint"); !tint.empty()) parseTint(tint, info.envmapTint);
+	const QString shader = QString::fromStdString(material.shader).toLower();
+	const bool water = shader == "water";
+	// Water reflects mostly at grazing angles; the other shaders the same at every angle.
+	info.fresnel = water ? 0.f : 1.f;
+	if (const auto fresnel = material.param("$fresnelreflection"); !fresnel.empty()) {
+		bool ok = false;
+		const float value = QString::fromStdString(fresnel).toFloat(&ok);
+		if (ok) info.fresnel = std::clamp(value, 0.f, 1.f);
+	}
+	const auto maskImage = [&](const std::string& texture, bool alpha) {
+		const auto image = loadTexture(fs, texture, 256);
+		if (!image) return QImage();
+		QImage rgba = toQImage(*image).convertToFormat(QImage::Format_RGBA8888);
+		if (alpha) {
+			// The alpha channel becomes the mask in all three colours.
+			for (int y = 0; y < rgba.height(); ++y) {
+				auto* p = rgba.scanLine(y);
+				for (int x = 0; x < rgba.width(); ++x, p += 4) p[0] = p[1] = p[2] = p[3];
+			}
+		}
+		return rgba;
+	};
+	if (const auto mask = material.param("$envmapmask"); !mask.empty()) {
+		info.envmapMaskImage = maskImage(mask, false);
+		if (!info.envmapMaskImage.isNull()) info.envmapMask = MaterialInfo::EnvmapMask::Texture;
+	} else if (material.flag("$normalmapalphaenvmapmask")) {
+		if (const auto bump = material.param("$bumpmap"); !bump.empty()) {
+			info.envmapMaskImage = maskImage(bump, true);
+			if (!info.envmapMaskImage.isNull()) info.envmapMask = MaterialInfo::EnvmapMask::Texture;
+		}
+	} else if (material.flag("$basealphaenvmapmask")) {
+		// Brush shaders mask with the inverse of the base alpha, model shaders with the alpha itself.
+		const bool brush = shader.contains("lightmappedgeneric") || shader.contains("worldvertextransition");
+		info.envmapMask = brush ? MaterialInfo::EnvmapMask::InvertedBaseAlpha : MaterialInfo::EnvmapMask::BaseAlpha;
+	}
+}
+
 std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& name, unsigned maxSize, bool relief) {
 	auto info = std::make_shared<MaterialInfo>();
 	info->name = name;
@@ -97,6 +155,9 @@ std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& 
 		if (const auto image = loadTexture(fs, second, maxSize)) {
 			info->image2 = toQImage(*image);
 		}
+	}
+	if (maxSize > 128) {
+		readEnvmap(fs, *material, *info);
 	}
 	if (relief) {
 		if (const auto source = fidelityReliefSource(name.toStdString(), *material)) {

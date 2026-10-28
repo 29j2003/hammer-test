@@ -36,6 +36,13 @@ struct MaterialInfo {
 	QImage height;             ///< Relief heights (mapbase-fidelity, see setRelief), null without
 	float parallaxDepth = 0;   ///< Relief depth in texture units
 	float decalScale = 1;      ///< $decalscale: an infodecal is texture size x this (units)
+	/// Reflections ($envmap): the views show the nearest env_cubemap (or the sky) on these.
+	enum class EnvmapMask { None, Texture, BaseAlpha, InvertedBaseAlpha };
+	bool envmap = false;
+	float envmapTint[3] = {1, 1, 1};   ///< $envmaptint
+	float fresnel = 1;                 ///< $fresnelreflection: 1 = the same at every angle, 0 = only at grazing angles
+	EnvmapMask envmapMask = EnvmapMask::None;
+	QImage envmapMaskImage;            ///< $envmapmask, or the normal map's alpha ($normalmapalphaenvmapmask), in rgb
 	QString error;
 };
 

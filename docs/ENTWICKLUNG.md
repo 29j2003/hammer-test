@@ -83,6 +83,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei) |
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
 | `displacement` | Displacements: `dispinfo` lesen/schreiben wie Hammer (normals, distances, offsets, offset_normals, alphas, triangle_tags, allowed_verts), anlegen (`makeDisplacement`, Power 2–4, Elevation in den Distanzen), Formen (`sculpt`: Raise/Smooth/Flatten/Noise/Alpha mit Kosinus-Abfall in der Flächenebene), Nähen (`sewDisplacements`), Undo-Schritte in `edit::` |
+| `cubemaps` | env_cubemap-Sonden für die Reflexions-Vorschau: alle Cubemaps mit Raum-Box (`collectCubemaps`, Box aus dem parallax_obb), welche Sonde eine Fläche spiegelt wie VBSP (`probeForFace`: erst `sides`, sonst die nächste), Box-Projektion (`boxProjectedDirection`), Lage der sechs Würfelseiten (`cubeFaceForward`/`cubeFaceUp`/`cubeFaceCoordinates`, der Shader nutzt dieselbe) |
 | `decals` | Infodecals und info_overlay auf den Brushes: Flächen der Karte (`collectSurfaceFaces`), Decal-Achsen wie die Engine (Boden: S entlang +X, Wand: S waagerecht, T nach unten; aufrecht, nicht gespiegelt), Decal auf der nächsten Fläche und Flächen derselben Ebene (`decalPatches`, Größe = Textur × `$decalscale`, `decalSize` liest VMT + VTF-Kopf), Overlay aus Basis + uv0..uv3 mit VBSPs Eckreihenfolge der Texturkoordinaten, entlang der Normalen auf jede Fläche in `sides` projiziert und an ihr beschnitten (`overlayPatches`, `clipToPolygon`), Keys für ein neues Overlay auf einer Fläche (`overlayKeysOnFace`) |
 | `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Keil/Fase an einer Kante (`cutEdge`), Vertex verschieben (bleibt konvex) |
 | `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
@@ -117,7 +118,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `main_window` | Hauptfenster: Seitenleiste, Ansichten, Docks, Menüs, Werkzeugleisten, Statusleiste |
 | `camera` | Kamera einer Ansicht (Matrizen, Strahlen) |
 | `viewport`, `viewport_tools`, `viewport_displace` | eine Ansicht: Kamera, Picking, Gizmos, Werkzeuge; Clip/Vertex/Polygon in `viewport_tools`, Displacement-Werkzeug (Pinsel, Striche) in `viewport_displace` |
-| `renderer`, `renderer_shadows` | OpenGL 3.3: Brushes, Displacements, Entities, Modelle, Himmel, Licht-Vorschau; Schattenkarten |
+| `renderer`, `renderer_shadows`, `renderer_cubemaps` | OpenGL 3.3: Brushes, Displacements, Entities, Modelle, Himmel, Licht-Vorschau; Schattenkarten; Cubemap-Reflexionen |
 | `material_cache` | Materialien/Texturen im Hintergrund laden (auch Relief-Höhen) |
 | `model_cache`, `model_thumbnails` | Modelle im Hintergrund laden; Vorschaubilder per CPU-Rasterizer |
 | `asset_browser` | Dock Asset Browser: Materialien und Modelle, Indizierung im Hintergrund |
@@ -392,6 +393,15 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Kacheln (4 Spot-Lichter je 1, 2 Punkt-Lichter je 6 Würfelseiten). Neu gezeichnet nur bei Geometrie-/Licht-Änderung oder
   wenn sich die nächsten Lichter ändern. Shader: `u_lightShadow[i]` (erste Kachel, Punktlicht ja/nein), PCF 2x2.
   Schatten-Sampler liegen fest auf Einheit 3 und 4 (zwei Sampler-Typen auf einer Einheit wären ein GL-Fehler).
+- Cubemap-Reflexionen (`renderer_cubemaps.cpp`): jede env_cubemap wird vom Ursprung aus in sechs 128er-Bilder gezeichnet
+  (90°-Kamera je Seite, Lage aus `sme/cubemaps.h`), alle in einem Atlas (8 Cubemaps je Zeile, je 6 Seiten, höchstens 256
+  Cubemaps). Erst 300 ms nach der letzten Änderung, dann 6 Seiten pro Bild (`buildProbeFaces`, die Ansicht fordert per
+  `m_cubemapTimer` weitere Bilder an); Map > Build cubemaps sofort. Gezeichnet wird mit `drawSurfaces(params, true)`:
+  ohne Entity-Kästen, Sprites, Auswahlfarbe, Schatten, Farbkorrektur und Reflexionen; Tool-Texturen unsichtbar außer dem
+  Himmel. Shader: je Fläche die Sonde aus einer R16UI-Textur (Einheit 15, wie die Flags), Sondendaten (Ursprung, Box) in
+  einer RGBA32F-Textur (Einheit 14), Atlas auf 13, `$envmapmask` auf 12. Die Spiegelung kommt wie in der Engine oben
+  drauf (`hdr +=`), mit `$envmaptint`, Maske und Fresnel (`$fresnelreflection`, Water 0). Ohne env_cubemap: der Himmel.
+  Ausgewählte env_cubemaps zeigen eine Spiegelkugel (`drawProbeSpheres`, `u_probeSphere`).
 - Kompilieren: `CompileRunner::plan` setzt die Programme der Spiel-Einstellungen in die Befehle aus `compileCommands`
   ein und meldet strukturiert (`stepStarted`, `stepProgress`, `problem` …) an das `CompileWindow`. Cubemaps: das Spiel
   mit `+map <karte> -buildcubemaps` (`+mat_hdr_level 0/2`, bei „Both“ zwei Läufe), wartet bis es sich beendet; braucht

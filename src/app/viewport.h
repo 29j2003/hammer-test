@@ -73,6 +73,8 @@ public:
 	[[nodiscard]] std::optional<Vec3> pasteCenter(const Bounds& box) const;
 	/// The view's renderer (numbers about what it draws, for tests and the status bar).
 	[[nodiscard]] const SceneRenderer& renderer() const { return m_renderer; }
+	/// Map > Build cubemaps: draws every env_cubemap again now.
+	void buildCubemaps();
 	/// Asks for a frame, at most as often as Editor::maxFps() allows (use instead of update()).
 	void requestFrame();
 	/// How many frames this view has drawn so far (for the frame limit).
@@ -263,6 +265,7 @@ private:
 	void applyFrameLimit();
 	QTimer m_moveTimer;
 	QTimer m_frameTimer;                  ///< A frame that waits for the frame limit
+	QTimer m_cubemapTimer;                ///< The next frame that draws cubemaps
 	QElapsedTimer m_moveClock;
 	float m_flySpeed = 600.f;
 	Vec3 m_orbitPivot;

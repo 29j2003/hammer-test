@@ -121,6 +121,8 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	m_frameTimer.setSingleShot(true);
 	m_frameTimer.setTimerType(Qt::PreciseTimer);
 	connect(&m_frameTimer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
+	m_cubemapTimer.setSingleShot(true);
+	connect(&m_cubemapTimer, &QTimer::timeout, this, &Viewport::requestFrame);
 	applyFrameLimit();
 	connect(editor, &Editor::settingsChanged, this, &Viewport::applyFrameLimit);
 	connect(editor, &Editor::displaceSettingsChanged, this, &Viewport::requestFrame);   // brush circle size
@@ -256,6 +258,13 @@ void Viewport::fillViewMenu(QMenu* menu) {
 	shadows->setEnabled(m_editor->renderMode() == Editor::RenderMode::Lit);
 	shadows->setToolTip(tr("Sun, nearest spot and point lights cast shadows in the lighting preview"));
 	connect(shadows, &QAction::toggled, m_editor, &Editor::setShadows);
+	auto* reflections = menu->addAction(tr("Cubemap reflections"));
+	reflections->setObjectName("cubemapReflections");
+	reflections->setCheckable(true);
+	reflections->setChecked(m_editor->reflections());
+	reflections->setEnabled(m_editor->renderMode() == Editor::RenderMode::Lit);
+	reflections->setToolTip(tr("Materials with $envmap reflect the nearest env_cubemap (or the sky), as after buildcubemaps in the game"));
+	connect(reflections, &QAction::toggled, m_editor, &Editor::setReflections);
 	auto* look = menu->addAction(tr("mapbase-fidelity look (clouds, colour grading)"));
 	look->setCheckable(true);
 	look->setChecked(m_editor->fidelityLook());
@@ -479,6 +488,7 @@ void Viewport::paintGL() {
 	params.projection = m_camera.projection(width(), height());
 	params.cameraPosition = m_camera.position;
 	params.shadows = m_editor->shadows();
+	params.reflections = m_editor->reflections();
 	if (m_camera.is2D()) {
 		params.mode = SceneRenderer::Mode::Flat2D;
 	} else {
@@ -502,6 +512,10 @@ void Viewport::paintGL() {
 	const bool toolPreview = m_drag == Drag::Vertex || (m_editor->tool() == Editor::Tool::Clip && clipPlane());
 	m_renderer.setHideSelected(dragging || toolPreview);
 	m_renderer.render(params);
+	// Cubemaps wait to be drawn (a moment after the map changed, then a few faces per frame).
+	if (params.mode == SceneRenderer::Mode::Lit && params.reflections && m_renderer.cubemapWorkPending() && !m_cubemapTimer.isActive()) {
+		m_cubemapTimer.start(m_renderer.cubemapDelayMs());
+	}
 	if (toolPreview) {
 		m_renderer.drawPreviewSolids(params);
 	}
@@ -1003,6 +1017,15 @@ void Viewport::paintOverlayImage() {
 		painter.setPen(item.color);
 		painter.drawText(item.rect, item.flags, item.text);
 	}
+}
+
+void Viewport::buildCubemaps() {
+	if (m_glReady) {
+		makeCurrent();
+		m_renderer.buildCubemaps();
+		doneCurrent();
+	}
+	requestFrame();
 }
 
 // --- Frame limit -----------------------------------------------------------------
