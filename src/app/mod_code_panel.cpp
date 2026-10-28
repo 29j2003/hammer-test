@@ -96,6 +96,7 @@ QString actionName(ModCodeAction action) {
 		case ModCodeAction::UpdateNoVrad: return ModCodePanel::tr("Update mod");
 		case ModCodeAction::Deploy: return ModCodePanel::tr("Install game files");
 		case ModCodeAction::Report: return ModCodePanel::tr("Make report");
+		case ModCodeAction::RemoveGameFiles: return ModCodePanel::tr("Remove game files");
 	}
 	return {};
 }
@@ -106,6 +107,13 @@ QString duration(qint64 ms) {
 }
 
 } // namespace
+
+QString reportHowTo() {
+	return ModCodePanel::tr("Something looks wrong in the game (a wall, an effect, a sound)?\n"
+	                        "1. In the game, stand where it happens, open the console and type: fidelity_report\n"
+	                        "2. Close the game and press Make report: Mapsmith packs what it wrote into fidelity_report.zip\n"
+	                        "   and opens its folder - send that zip.");
+}
 
 ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
 	setObjectName("modCode");
@@ -144,8 +152,7 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	                  tr("Build the code with Visual Studio 2022 and install everything into the mod: DLLs, VRAD with baked AO, game files"));
 	m_update->setProperty("accent", true);
 	m_deploy = button(tr("Install game files only"), "modCodeDeploy", tr("Copy shaders, cfg and generated materials into the mod (no build)"));
-	m_report = button(tr("Make report"), "modCodeReport",
-	                  tr("Pack what fidelity_report wrote in the game into fidelity_report.zip and open its folder"));
+	m_report = button(tr("Make report"), "modCodeReport", reportHowTo());
 	m_cancel = button(tr("Cancel"), "modCodeCancel", tr("Stop the running script and the build it started"));
 	for (auto* b : {m_update, m_deploy, m_report}) actions->addWidget(b);
 	actions->addStretch(1);
@@ -437,7 +444,8 @@ bool ModCodePanel::canRun(ModCodeAction action, QString* why) const {
 	if (!m_editor->gameEntry()) return fail(tr("Open the mod first."));
 	const auto scripts = modCodeScripts(toPath(m_root));
 	if (!scripts) return fail(tr("Choose the mod's source code first (Project > Mod code)."));
-	if ((action == ModCodeAction::Deploy && scripts->deploy.empty()) || (action == ModCodeAction::Report && scripts->report.empty())) {
+	if (((action == ModCodeAction::Deploy || action == ModCodeAction::RemoveGameFiles) && scripts->deploy.empty()) ||
+	    (action == ModCodeAction::Report && scripts->report.empty())) {
 		return fail(tr("This source code has no script for that."));
 	}
 	if (m_factory) return true;
@@ -642,7 +650,7 @@ void ModCodePanel::processEnded(int exitCode) {
 	showRun();
 	showRepository();
 	emit finished(ok);
-	if (ok && m_action != ModCodeAction::Report) emit modUpdated();
+	if (ok && (isUpdate || m_action == ModCodeAction::Deploy)) emit modUpdated();
 	if (m_updateQueued) {
 		m_updateQueued = false;
 		start(ModCodeAction::Update);
@@ -707,6 +715,9 @@ void ModCodePanel::showRun() {
 				           .arg(duration(m_clock.elapsed()));
 				break;
 			case ModCodeAction::Deploy: html = tr("<span style='color:#8fdc9a'><b>✓ Game files installed into the mod.</b></span>"); break;
+			case ModCodeAction::RemoveGameFiles:
+				html = tr("<span style='color:#8fdc9a'><b>✓ The game files deploy.bat made are gone.</b></span>");
+				break;
 			case ModCodeAction::Report: {
 				QStringList zips;
 				for (const auto& zip : m_run.outputs()) zips << QDir::toNativeSeparators(QString::fromStdString(zip)).toHtmlEscaped();

@@ -108,6 +108,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
 | `git_status` | Git-Ausgaben lesen (`status`, `log` ohne E-Mail), Remote → Web-Adresse |
 | `mod_code` | Quellcode der Mod (Mapbase-Checkout mit mapbase-fidelity): `modCodeScripts` (erkannt an `fidelity/update.ps1` + `sp/src` oder `update.bat`), `findModCode` (Suchwurzeln selbst, dann Unterordner – der Name der Mod zuerst, max. 300 je Wurzel), `modCodeSearchRoots` (GitHub Desktop, Visual Studio, Laufwerks-Ordner), `modCodeCommand` (PowerShell mit `-NoProfile -NonInteractive -File … -GamePath <mod>`, Windows mit `-ExecutionPolicy Bypass`, sonst `pwsh`; nie `pause`, nie `Read-Host`), `classifyScriptLine` (Statuswörter von `update.ps1`/`deploy.ps1`/`report.ps1` → Schritt + Art), `ScriptRun` (Schritt nur vorwärts, Fehlerzeilen ohne Dopplung, Zips des Berichts, `advice()` über `updateFailureAdvice`) |
+| `mod_features` | Funktionen von mapbase-fidelity als eine Liste (`modFeatures`: Id, Gruppe Graphics/Effects/Sound/Materials, Titel, eine Zeile, die Ein/Aus-ConVars (`FCVAR_ARCHIVE`) und/oder der Material-Effekt der Game enhancements); `writeFeaturesCfg`/`parseFeaturesCfg` (`cfg/mapsmith_features.cfg`: jeder Schalter 1/0), `saveFeatureChoice`/`hookFeatureChoice` (Zeile `exec mapsmith_features // mapsmith` in `autoexec.cfg`, nur mit Add-on), `withFeatureEffects`/`featuresOffBySettings` (Material-Funktionen ↔ `EnhancementSettings`), `generatedModFiles` (was deploy.ps1 und Mapsmith in der Mod gemacht haben: Marker in der ersten Zeile, Manifeste, Shader/DLL/cfg des Add-ons), `removeEditorFiles` |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
 | `localization` | Texte der Mod: Lokalisierungsdateien verlustfrei (Kommentare, `[$X360]`-Bedingungen, Reihenfolge), Dateisätze `<name>_<sprache>.txt`, Caption-Tags, Captions → `.dat` (VCCD) |
@@ -146,7 +147,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
 | `texts_panel` | Project › Texts: Lokalisierung und Captions der Mod (Tabelle Token × Sprache, Caption-Vorschau, Speichern, Captions kompilieren) |
 | `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf); meldet `pulled(root, changed)` und „Update mod“ (`updateModRequested`) an Mod code |
-| `mod_code_panel` | Project › Mod code: `update.ps1`/`deploy.ps1`/`report.ps1` per `QProcess` ohne Konsole (Schritte, Fortschritt, Log, Zusammenfassung mit Rat, Cancel beendet den ganzen Prozessbaum), Checkout finden/wählen je Mod, Optionen je Mod (nach Pull aktualisieren, beim Start `git fetch` bzw. Pull & Update), Zeile auf dem Overview (`banner()`); nach Erfolg `modUpdated` → `MainWindow` öffnet das Spiel neu (Caches, Game enhancements) |
+| `mod_code_panel` | Project › Mod code: `update.ps1`/`deploy.ps1`/`report.ps1` per `QProcess` ohne Konsole (Schritte, Fortschritt, Log, Zusammenfassung mit Rat, Cancel beendet den ganzen Prozessbaum), Checkout finden/wählen je Mod, Optionen je Mod (nach Pull aktualisieren, beim Start `git fetch` bzw. Pull & Update), Zeile auf dem Overview (`banner()`); nach Erfolg `modUpdated` → `MainWindow` öffnet das Spiel neu (Caches, Game enhancements); `reportHowTo()` = Tooltip aller „Make report“-Knöpfe (Map-Menü, Compile, Problems → `MainWindow::makeReport`) |
+| `features_panel` | Project › Features: `FeatureChecklist` (auch im New-mod-Dialog, kompakt), `FeaturesPanel` (Haken sofort gespeichert: Schalter → `cfg/mapsmith_features.cfg`, Material-Funktionen → Game enhancements), Angebot einmal auf dem Overview (`offer()`), Fresh install inline bestätigt (Liste aus `generatedModFiles`) → `ModCodeAction::RemoveGameFiles` → Funktionen schreiben → Update mod bzw. Deploy |
 | `ship_panel` | Project › Ship: Abhängigkeiten, bspzip, ZIPs, Workshop |
 | `new_mod_dialog` | „New mod …“: neue Mod aus Karten |
 | `find_dialog`, `replace_materials_dialog` | Entities finden + Entity-Bericht; Materialien ersetzen |
@@ -359,6 +361,21 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   `modUpdated` → `MainWindow::selectGame(gleiches Spiel)`: Dateisystem, Material-/Modell-Caches und Game enhancements
   neu, die offene Karte bleibt. Der Bau selbst (VS 2022, MSBuild) ist nur unter Windows prüfbar; der UI-Test
   („mod code“) setzt mit `setCommandFactory` ein Shell-Kommando ein, das die Zeilen der „Skripte“ ausgibt.
+- Features (`FeaturesPanel`, `features_panel.cpp`; Kern `mod_features`): Julius wählt die Funktionen von
+  mapbase-fidelity per Haken statt per Konsole. Die Ein/Aus-Schalter des Add-ons sind `FCVAR_ARCHIVE` und stehen mit
+  Absicht nicht in `fidelity.cfg` (Spieler-Config); Mapsmith schreibt sie alle (1/0) nach `cfg/mapsmith_features.cfg`
+  und hängt `exec mapsmith_features\t// mapsmith` an `autoexec.cfg` (läuft nach `config.cfg`, also gewinnt die Wahl
+  der Mod bei jedem Start). deploy.ps1 schreibt/entfernt nur Zeilen mit `// mapbase-fidelity` und rührt Datei und Zeile
+  nicht an. Ohne Add-on (neue Mod) wird nur die Datei geschrieben; `hookFeatureChoice` ergänzt die Zeile, sobald das
+  Spiel mit Add-on geöffnet wird (sonst „unknown command“ je Schalter). Nur Ein/Aus-Schalter, nie Look-/Mix-Werte
+  (Regel der Mod: die sind `FCVAR_SERVER_CAN_EXECUTE`, Karten setzen sie). Neue ConVar im Add-on → `modFeatures()` und
+  `test_mod_features.cpp` ergänzen. Die Material-Funktionen sind die Game-enhancements-Schalter
+  (`setEffectEnabled`); ohne laufende Game enhancements direkt in `mapsmith_enhancements.txt`. Das Angebot auf dem
+  Overview erscheint, solange die Mod mit Add-on noch keine `mapsmith_features.cfg` hat. Fresh install: Liste aus
+  `generatedModFiles` (inline bestätigen, kein Dialog), dann Mapsmiths eigene Dateien (`MAPSMITH_MARKER`) löschen,
+  `deploy.ps1 -Remove` (`ModCodeAction::RemoveGameFiles`, löst kein `modUpdated` aus), Funktionen neu schreiben,
+  Update mod bzw. Install game files (`finished` von `ModCodePanel`, nächster Schritt per `QTimer::singleShot(0)`).
+  UI-Test „features“ mit `setCommandFactory` wie bei Mod code.
 - Material-Editor (`MaterialEditor` + `MaterialPreview`): Felder für die häufigen Parameter, Tabelle für den Rest,
   Vorschau (Wand/Würfel/Kugel, Sonne/Lampe/Nacht/unbeleuchtet; ssbump über die drei Basisvektoren). Speichern schreibt
   nach `<mod>/materials/<name>.vmt` (VPK-Material → Kopie in der Mod) und meldet `materialSaved` → `MaterialCache::reload`.

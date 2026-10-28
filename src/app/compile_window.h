@@ -39,6 +39,8 @@ signals:
 	/// The buttons "compile again" and "show leak" were pressed.
 	void compileAgain();
 	void showLeak();
+	/// "Make report" was pressed (after testing in the game).
+	void reportRequested();
 
 private:
 	void setState(int index, StepState state, const QString& detail = {});
@@ -52,6 +54,7 @@ private:
 	QPushButton* m_cancel;
 	QPushButton* m_again;
 	QPushButton* m_leakButton;
+	QPushButton* m_reportButton;   ///< Shown once a run is done: one tests in the game next
 	QTreeWidget* m_steps;
 	QTreeWidget* m_problems;
 	QLabel* m_summary;

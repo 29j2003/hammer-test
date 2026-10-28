@@ -147,6 +147,10 @@ std::optional<ScriptCommand> modCodeCommand(const ModCodeScripts& scripts, ModCo
 			break;
 		case ModCodeAction::Deploy: script = scripts.deploy; break;
 		case ModCodeAction::Report: script = scripts.report; break;
+		case ModCodeAction::RemoveGameFiles:
+			script = scripts.deploy;
+			extra.emplace_back("-Remove");
+			break;
 	}
 	if (script.empty() || modDir.empty()) return std::nullopt;
 	ScriptCommand command;

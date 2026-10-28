@@ -70,6 +70,7 @@
 #include <sme/fidelity_effects.h>
 #include <sme/fidelity_look.h>
 #include <sme/heightmap.h>
+#include <sme/mod_features.h>
 #include <sme/soundscape.h>
 #include <sme/material.h>
 #include <sme/texture.h>
@@ -97,6 +98,7 @@
 #include "copy_paste.h"
 #include "editor.h"
 #include "enhancements.h"
+#include "features_panel.h"
 #include "main_window.h"
 #include "mod_code_panel.h"
 #include "mod_page.h"
@@ -4634,6 +4636,206 @@ TEST_CASE("mod code: update the mod from the editor - steps, failure advice, can
 		CHECK(panel->running());
 		REQUIRE(waitDone());
 		CHECK(finished.last().at(0).toBool());
+	}
+}
+
+TEST_CASE("features: the mod's features as one checklist, offered once, fresh install, Make report where one tests") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	// A fake checkout of the mod's source code; its "scripts" print what the real ones print.
+	QTemporaryDir repo;
+	const auto root = toPath(repo.path());
+	test::writeText(root / "update.bat", "@echo off\r\n");
+	test::writeText(root / "sp" / "src" / "readme.txt", "source\n");
+	test::writeText(root / "fidelity" / "update.ps1", "mapbase-fidelity update -> mymod\nAll set. Start the mod, or compile a map - nothing else to do.\n");
+	test::writeText(root / "fidelity" / "deploy.ps1", "mapbase-fidelity game files -> mymod\n  copied   shaders\nDone. Start the mod\n");
+	test::writeText(root / "fidelity" / "remove.txt", "mapbase-fidelity game files -> mymod\nDone. The fidelity game files are gone.\n");
+	test::writeText(root / "fidelity" / "report.ps1", "mapbase-fidelity report -> mymod\n");
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);   // mapbase-fidelity installed
+	std::vector<ModCodeAction> ran;
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	REQUIRE(editor.hasFidelity());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	auto* enhancements = editor.enhancements();
+	const auto waitIdle = [&] {
+		for (int i = 0; i < 400 && (enhancements->busy() || !enhancements->ready()); ++i) QTest::qWait(25);
+		settle();
+	};
+	waitIdle();
+	auto* features = window.featuresPanel();
+	auto* modCode = window.modCodePanel();
+	REQUIRE(features);
+	REQUIRE(modCode);
+	CHECK(window.projectTabs()->indexOf(features) == 1);   // right after the Overview
+	modCode->setCommandFactory([&](ModCodeAction action, const ModCodeScripts& scripts, const std::filesystem::path&) {
+		ran.push_back(action);
+		const auto script = action == ModCodeAction::RemoveGameFiles ? scripts.root / "fidelity" / "remove.txt"
+		                    : action == ModCodeAction::Deploy       ? scripts.deploy
+		                    : action == ModCodeAction::Report       ? scripts.report
+		                                                            : scripts.update;
+		ScriptCommand command;
+		command.workingDir = scripts.root;
+#ifdef Q_OS_WIN
+		command.program = "cmd.exe";
+		command.args = {"/c", "type", fromPath(script).replace('/', '\\').toStdString()};
+#else
+		command.program = "sh";
+		command.args = {"-c", "cat \"$1\"", "sh", fromPath(script).toStdString()};
+#endif
+		return std::optional<ScriptCommand>(command);
+	});
+	const auto cfg = f.mod / "cfg" / "mapsmith_features.cfg";
+	const auto cfgText = [&] { return QString::fromStdString(readFileText(cfg).value_or("")); };
+
+	// First time with the add-on: the Overview offers the checklist once; nothing written yet.
+	auto* offer = features->offer();
+	REQUIRE(offer);
+	CHECK_FALSE(offer->isHidden());
+	CHECK_FALSE(features->chosen());
+	CHECK_FALSE(std::filesystem::exists(cfg));
+	for (const auto& feature : modFeatures()) CHECK(features->isOn(QString::fromUtf8(feature.id)));
+	auto* choose = offer->findChild<QPushButton*>("featuresOfferChoose");
+	REQUIRE(choose);
+	window.showPage(MainWindow::Page::Project);
+	window.projectTabs()->setCurrentIndex(0);
+	settle();
+	CHECK(offer->isVisible());
+	QTest::mouseClick(choose, Qt::LeftButton);
+	CHECK(window.projectTabs()->currentWidget() == features);
+	CHECK(offer->isHidden());
+	CHECK(features->chosen());
+	CHECK(cfgText().contains("r_fidelity_ssao 1"));
+	CHECK(runsFeatures(readFileText(f.mod / "cfg" / "autoexec.cfg").value_or("")));
+
+	// A tick is saved at once: the switch in the cfg, a material effect in the Game enhancements.
+	auto* ssao = features->checklist()->box("ssao");
+	REQUIRE(ssao);
+	settle();
+	CHECK(ssao->isVisible());
+	QTest::mouseClick(ssao, Qt::LeftButton, {}, QPoint(8, ssao->height() / 2));
+	CHECK_FALSE(features->isOn("ssao"));
+	CHECK(cfgText().contains("r_fidelity_ssao 0"));
+	CHECK(cfgText().contains("r_fidelity_godrays 1"));
+	features->setOn("liquid", false);
+	waitIdle();
+	CHECK_FALSE(enhancements->settings().enabled(GameEffect::Liquid));
+	features->setOn("liquid", true);
+	waitIdle();
+	CHECK(enhancements->settings().enabled(GameEffect::Liquid));
+	// Read back when the mod is opened again; never offered again.
+	window.selectGame("sourcemods/mymod");
+	settle();
+	CHECK_FALSE(features->isOn("ssao"));
+	CHECK_FALSE(features->checklist()->box("ssao")->isChecked());
+	CHECK(offer->isHidden());
+	waitIdle();
+
+	// Fresh install: the confirmation lists only generated files, then remove -> features -> install.
+	const auto own = f.mod / "materials" / "mine" / "wall.vmt";
+	const auto editorMade = f.mod / "materials" / "models" / "mapsmith_test.vmt";
+	test::writeText(own, "\"LightmappedGeneric\"\n{\n}\n");
+	test::writeText(editorMade, std::string(MAPSMITH_MARKER) + " off (liquid) from test\n\"VertexLitGeneric\"\n{\n}\n");
+	test::writeText(f.mod / "materials" / "brick" / "generated.vmt", std::string(DEPLOY_MARKER) + " (parallax) from test\n\"Fidelity_Parallax\"\n{\n}\n");
+	auto* freshButton = features->findChild<QPushButton*>("freshInstall");
+	auto* confirm = features->findChild<QWidget*>("freshInstallConfirm");
+	auto* go = features->findChild<QPushButton*>("freshInstallGo");
+	auto* build = features->findChild<QCheckBox*>("freshInstallBuild");
+	REQUIRE(freshButton);
+	REQUIRE(confirm);
+	REQUIRE(go);
+	REQUIRE(build);
+	// Without the source code it says what is missing and cannot go.
+	QTest::mouseClick(freshButton, Qt::LeftButton);
+	CHECK(confirm->isVisible());
+	CHECK_FALSE(go->isEnabled());
+	modCode->setRepository(repo.path());
+	QTest::mouseClick(freshButton, Qt::LeftButton);
+	REQUIRE(go->isEnabled());
+	QStringList listed;
+	for (int i = 0; i < features->freshList()->count(); ++i) listed << features->freshList()->item(i)->data(Qt::UserRole).toString();
+	CHECK(listed.contains("materials/models/mapsmith_test.vmt"));
+	CHECK(listed.contains("materials/brick/generated.vmt"));
+	CHECK_FALSE(listed.contains("materials/mine/wall.vmt"));
+	CHECK(std::filesystem::exists(editorMade));   // nothing happens before the confirmation
+	build->setChecked(false);
+	QSignalSpy done(features, &FeaturesPanel::freshInstallFinished);
+	QTest::mouseClick(go, Qt::LeftButton);
+	CHECK_FALSE(confirm->isVisible());
+	for (int i = 0; i < 500 && done.isEmpty(); ++i) QTest::qWait(20);
+	REQUIRE(done.count() == 1);
+	CHECK(done.last().at(0).toBool());
+	CHECK(features->freshStep() == FeaturesPanel::FreshStep::Done);
+	CHECK(ran == std::vector<ModCodeAction>{ModCodeAction::RemoveGameFiles, ModCodeAction::Deploy});
+	CHECK_FALSE(std::filesystem::exists(editorMade));
+	CHECK(std::filesystem::exists(own));
+	CHECK(cfgText().contains("r_fidelity_ssao 0"));   // the choice was written again
+	auto* steps = features->findChild<QLabel*>("freshInstallSteps");
+	REQUIRE(steps);
+	CHECK(steps->text().contains("Fresh install done"));
+	settle();
+
+	// Make report: from the Map menu, the Compile dock and the Problems dock, each explaining how.
+	ran.clear();
+	window.showPage(MainWindow::Page::Map);
+	auto* menuReport = window.findChild<QAction*>("makeReport");
+	REQUIRE(menuReport);
+	CHECK(menuReport->toolTip().contains("fidelity_report"));
+	menuReport->trigger();
+	CHECK(window.projectTabs()->currentWidget() == modCode);
+	for (int i = 0; i < 500 && modCode->running(); ++i) QTest::qWait(20);
+	settle();
+	CHECK(ran == std::vector<ModCodeAction>{ModCodeAction::Report});
+	auto* problemsReport = window.findChild<QPushButton*>("problemsMakeReport");
+	auto* compileReport = window.compileWindow()->findChild<QPushButton*>("compileMakeReport");
+	REQUIRE(problemsReport);
+	REQUIRE(compileReport);
+	CHECK(problemsReport->toolTip().contains("fidelity_report"));
+	CHECK(compileReport->toolTip().contains("fidelity_report"));
+	window.showPage(MainWindow::Page::Map);
+	problemsReport->click();
+	for (int i = 0; i < 500 && modCode->running(); ++i) QTest::qWait(20);
+	settle();
+	CHECK(ran.size() == 2);
+	CHECK(ran.back() == ModCodeAction::Report);
+
+	// New mod: the features can be chosen up front; they wait in the mod for the add-on.
+	{
+		NewModDialog dialog(&editor);
+		REQUIRE(dialog.features());
+		CHECK(dialog.features()->isHidden());
+		auto* toggle = dialog.findChild<QPushButton*>("newModChooseFeatures");
+		REQUIRE(toggle);
+		toggle->click();
+		CHECK_FALSE(dialog.features()->isHidden());
+		dialog.features()->box("godrays")->click();
+		dialog.features()->box("water")->click();
+		CHECK(dialog.featuresOff() == std::set<std::string>{"godrays", "water"});
+		ModTemplate mod;
+		mod.title = "Feature Mod";
+		mod.folder = "featuremod";
+		QString error;
+		REQUIRE_FALSE(createModAndSwitch(&editor, mod, {}, &error, dialog.featuresOff()).isEmpty());
+		const auto made = f.steam / "steamapps" / "sourcemods" / "featuremod";
+		CHECK(loadFeatureChoice(made) == std::set<std::string>{"godrays"});   // water is a material effect: not a switch
+		CHECK_FALSE(loadEnhancementSettings(made).enabled(GameEffect::Water));
+		CHECK_FALSE(runsFeatures(readFileText(made / "cfg" / "autoexec.cfg").value_or("")));   // no add-on there yet
+		settle();
+		CHECK_FALSE(features->isOn("godrays"));
+		CHECK_FALSE(features->isOn("water"));
+		CHECK(features->isOn("ssao"));
+		CHECK(offer->isHidden());
 	}
 }
 

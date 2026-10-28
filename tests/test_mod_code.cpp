@@ -106,6 +106,16 @@ TEST_CASE("mod code: command lines never wait for input") {
 	CHECK(modCodeNeedsWindows(ModCodeAction::Update));
 	CHECK_FALSE(modCodeNeedsWindows(ModCodeAction::Deploy));
 	CHECK_FALSE(modCodeNeedsWindows(ModCodeAction::Report));
+	CHECK_FALSE(modCodeNeedsWindows(ModCodeAction::RemoveGameFiles));
+
+	// Fresh install: deploy.ps1 -Remove takes out what it put into the mod.
+	CHECK_FALSE(modCodeCommand(scripts, ModCodeAction::RemoveGameFiles, mod, true));   // no deploy.ps1
+	scripts.deploy = fs::path("repo") / "fidelity" / "deploy.ps1";
+	const auto remove = modCodeCommand(scripts, ModCodeAction::RemoveGameFiles, mod, true);
+	REQUIRE(remove);
+	CHECK(remove->args.back() == "-Remove");
+	CHECK(remove->args[remove->args.size() - 4] == text(scripts.deploy));
+	CHECK(classifyScriptLine("Done. The fidelity game files are gone.").kind == ScriptLine::Kind::Success);
 }
 
 TEST_CASE("mod code: update.ps1 lines become steps") {

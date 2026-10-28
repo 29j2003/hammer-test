@@ -7,6 +7,7 @@
 #include "connect_popup.h"
 #include "enhancements.h"
 #include "map_look_panel.h"
+#include "features_panel.h"
 #include "mod_code_panel.h"
 #include "mod_page.h"
 #include "models_page.h"
@@ -490,6 +491,20 @@ void MainWindow::createDocks() {
 		});
 	});
 	m_projectPage->addTab(new ShipPanel(m_editor), tr("Ship"));
+	// Features: which parts of mapbase-fidelity the mod has, offered once on the Overview; its
+	// fresh install runs through the Mod code tab.
+	m_features = new FeaturesPanel(m_editor, m_modCode);
+	m_projectPage->insertTab(1, m_features, tr("Features"));
+	m_modPage->addBanner(m_features->offer());
+	m_features->refreshOffer();
+	connect(m_features, &FeaturesPanel::showRequested, this, [this] {
+		showPage(Page::Project);
+		m_projectPage->setCurrentWidget(m_features);
+	});
+	connect(m_features, &FeaturesPanel::modCodeRequested, this, [this] {
+		showPage(Page::Project);
+		m_projectPage->setCurrentWidget(m_modCode);
+	});
 	connect(m_modPage, &ModPage::compileSettingsRequested, this, [this] {
 		showPage(Page::Map);
 		compile();
@@ -586,6 +601,8 @@ void MainWindow::createDocks() {
 	});
 	tabifyDockWidget(assets, log);
 	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
+	connect(m_compileWindow, &CompileWindow::reportRequested, this, &MainWindow::makeReport);
+	connect(m_problems, &ProblemsPanel::reportRequested, this, &MainWindow::makeReport);
 	connect(m_compileWindow, &CompileWindow::showLeak, this, [this] {
 		for (auto* view : m_views) {
 			view->setLeakLine(m_lastLeak);
@@ -1322,6 +1339,13 @@ void MainWindow::createActions() {
 	}));
 	map->addAction(check);
 	map->addAction(run);
+	// After testing the map in the game: something looked wrong there -> a report to send.
+	auto* report = action(tr("Make report from the game"), QKeySequence(), [this] { makeReport(); });
+	report->setObjectName("makeReport");
+	report->setToolTip(reportHowTo());
+	report->setStatusTip(tr("Pack what fidelity_report wrote in the game into fidelity_report.zip"));
+	map->addAction(report);
+	map->setToolTipsVisible(true);
 	map->addAction(action(tr("Load pointfile (.lin) ..."), QKeySequence(), [this] {
 		const QString path = QFileDialog::getOpenFileName(this, tr("Load pointfile"), QFileInfo(m_editor->filePath()).absolutePath(), tr("Pointfile (*.lin)"));
 		QFile file(path);
@@ -1585,6 +1609,13 @@ bool MainWindow::maybeSave() {
 		return save(false);
 	}
 	return answer == QMessageBox::Discard;
+}
+
+void MainWindow::makeReport() {
+	// The run, its progress and the result (or why it cannot run) show on the Mod code tab.
+	showPage(Page::Project);
+	m_projectPage->setCurrentWidget(m_modCode);
+	m_modCode->start(ModCodeAction::Report);
 }
 
 void MainWindow::compile() {
