@@ -23,6 +23,7 @@ target_link_libraries(sme-make-fixture PRIVATE sme_fixture)
 if(SME_BUILD_APP)
 	find_package(Qt6 REQUIRED COMPONENTS Test)
 	add_executable(sme_app_tests test_app.cpp)
+	set_target_properties(sme_app_tests PROPERTIES AUTOMOC ON)   # ExternalOpenTrap
 	target_link_libraries(sme_app_tests PRIVATE smeapp sme_fixture doctest::doctest Qt6::Test)
 	add_test(NAME sme_app_tests COMMAND sme_app_tests)
 	set_tests_properties(sme_app_tests PROPERTIES LABELS "ui")

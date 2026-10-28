@@ -13,6 +13,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QTableWidget>
+#include <QDesktopServices>
 #include <QTabBar>
 #include <QAbstractSpinBox>
 #include <QEnterEvent>
@@ -5172,6 +5173,18 @@ namespace {
 /// briefly its own top-level window (a tiny empty "Mapsmith" window in the user's video). Such a
 /// widget is shown without a parent and gets one right after; widgets the tests open on purpose
 /// as windows keep having none.
+/// Catches what the app opens outside itself (folders, web pages): the tests must not start a
+/// file manager or browser (on CI one kept the test run from ending).
+class ExternalOpenTrap : public QObject {
+	Q_OBJECT
+
+public:
+	QList<QUrl> opened;
+
+public slots:
+	void open(const QUrl& url) { opened << url; }
+};
+
 class StrayWindowWatch : public QObject {
 public:
 	QStringList strays;
@@ -5203,6 +5216,8 @@ int main(int argc, char** argv) {
 	QApplication::setApplicationName("Mapsmith Tests");
 	StrayWindowWatch strays;
 	app.installEventFilter(&strays);
+	ExternalOpenTrap external;
+	for (const char* scheme : {"file", "http", "https"}) QDesktopServices::setUrlHandler(QString::fromLatin1(scheme), &external, "open");
 	doctest::Context context(argc, argv);
 	const int result = context.run();
 	for (const auto& stray : strays.strays) {
@@ -5210,3 +5225,5 @@ int main(int argc, char** argv) {
 	}
 	return strays.strays.isEmpty() ? result : 1;
 }
+
+#include "test_app.moc"
