@@ -66,6 +66,7 @@
 #include <sme/studio_anim.h>
 #include <sme/audio.h>
 #include <sme/sound_edit.h>
+#include <sme/samples.h>
 #include <sme/model_import.h>
 #include <sme/asset_import.h>
 #include <sme/asset_refs.h>
@@ -94,6 +95,7 @@
 
 #include "asset_browser.h"
 #include "import_dialog.h"
+#include "samples_folder.h"
 #include "class_picker.h"
 #include "autosaver.h"
 #include "find_dialog.h"
@@ -5389,6 +5391,8 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 	auto* page = window.animationsPage();
 	REQUIRE(page);
 	CHECK(page->isVisible());
+	// "Add a sample ..." opens the shipped samples (build/samples next to the test program).
+	CHECK(page->findChild<QPushButton*>("animationSample")->isEnabled());
 	// The map's animated models come first.
 	REQUIRE(page->modelList()->count() > 1);
 	CHECK_FALSE(page->modelList()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "In this map"
@@ -5731,6 +5735,7 @@ TEST_CASE("import: own sounds, pictures, models and particle files come into the
 		write(source("Engine Hum.wav"), encodeWav(tone));
 		auto* dialog = dialogFor("importSounds");
 		CHECK(dialog->kind() == ImportDialog::Kind::Sound);
+		CHECK(dialog->findChild<QPushButton*>("importSample")->isEnabled());
 		auto* importButton = dialog->findChild<QPushButton*>("importNow");
 		CHECK_FALSE(importButton->isEnabled());   // nothing chosen yet
 		REQUIRE(dialog->setSourceFile(source("Engine Hum.wav")));
@@ -5970,3 +5975,24 @@ int main(int argc, char** argv) {
 }
 
 #include "test_app.moc"
+
+TEST_CASE("samples: \"Use a sample\" points to the shipped sample files") {
+	// The build writes the samples to build/samples; the test program in build/tests finds them
+	// like Mapsmith.exe finds the samples folder next to it.
+	const QString root = samplesFolder();
+	REQUIRE_FALSE(root.isEmpty());
+	CHECK(QFileInfo(QDir(root).filePath("README.txt")).isFile());
+	const std::pair<ImportDialog::Kind, const char*> expected[] = {
+		{ImportDialog::Kind::Sound, "hum_loop.wav"},
+		{ImportDialog::Kind::Material, "terracotta_tiles.png"},
+		{ImportDialog::Kind::Model, "crate/crate.obj"},
+		{ImportDialog::Kind::Particles, "mapsmith_samples.pcf"},
+	};
+	for (const auto& [kind, file] : expected) {
+		const QString folder = ImportDialog::sampleFolder(kind);
+		CAPTURE(folder.toStdString());
+		CHECK(QFileInfo(folder).isDir());
+		CHECK(QFileInfo(QDir(folder).filePath(file)).isFile());
+	}
+	CHECK(QFileInfo(QDir(samplesFolder(SAMPLE_ANIMATIONS)).filePath("hl2_human_wave.smd")).isFile());
+}

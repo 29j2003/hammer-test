@@ -12,6 +12,7 @@
 #include <sme/sound_edit.h>
 
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -118,7 +119,7 @@ TEST_CASE("samples: the sounds decode as the sound import reads them") {
 		const auto data = readFile(fs::path(SME_SAMPLE_MEDIA_DIR) / name);
 		REQUIRE_MESSAGE(!data.empty(), name);
 		const auto audio = decodeAudio(data, name, &error);
-		REQUIRE_MESSAGE(audio, std::string(name) + ": " + error);
+		REQUIRE_MESSAGE(audio, (std::string(name) + ": " + error));
 		CHECK(audio->seconds() > 0.2);
 		CHECK(peakLevel(*audio) > 0.1);
 	}
