@@ -26,6 +26,12 @@ constexpr std::uint8_t FLAG_SELECTED = 1;
 constexpr std::uint8_t FLAG_HIDDEN = 2;
 constexpr std::uint8_t FLAG_HOVER = 4;
 constexpr std::uint8_t FLAG_VOLUME = 8;   // helper volume (parallax_obb): faces only shown while selected
+constexpr int LIGHTMAP_UNIT = 16;         // texture unit of the per-face lightmap scales
+
+/// The shader's u_mode: 0 lighting, 1 textured, 2 lightmap density.
+int modeUniform(SceneRenderer::Mode mode) {
+	return mode == SceneRenderer::Mode::Lit ? 0 : (mode == SceneRenderer::Mode::LightmapDensity ? 2 : 1);
+}
 
 // Vertex: position(3) normal(3) uvw(3: u, v in texels + blend alpha, or rgb for colored geometry) face(1)
 constexpr int FLOATS_PER_VERTEX = 10;
@@ -45,17 +51,20 @@ uniform int u_hideSelected;
 uniform int u_onlySelected;
 uniform int u_faceOverride;    // models: one flag slot for the whole instance (-1: per vertex, -2: no flags)
 uniform usampler2D u_probeFaces;   // unit 15: the cubemap each face reflects (0 = none)
+uniform usampler2D u_lightmapScale;   // unit 16: lightmap scale of each face (0 = no lightmap)
 out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_uvw;
 flat out uint v_flag;
 flat out int v_probe;
+flat out float v_lightmap;
 void main() {
 	int id = u_faceOverride >= 0 ? u_faceOverride : int(a_face + 0.5);
 	uint f = u_faceOverride == -2 ? 0u : texelFetch(u_flags, ivec2(id % 4096, id / 4096), 0).r;
 	v_flag = f;
 	v_probe = u_faceOverride == -2 ? 0 : int(texelFetch(u_probeFaces, ivec2(id % 4096, id / 4096), 0).r);
+	v_lightmap = u_faceOverride == -2 ? 0.0 : float(texelFetch(u_lightmapScale, ivec2(id % 4096, id / 4096), 0).r);
 	vec4 world = u_model * vec4(a_pos, 1.0);
 	v_world = world.xyz;
 	v_normal = mat3(u_model) * a_normal;
@@ -75,11 +84,12 @@ in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_uvw;
 flat in uint v_flag;
+flat in float v_lightmap;
 uniform sampler2D u_tex;
 uniform sampler2D u_tex2;
 uniform int u_hasTex2;
 uniform int u_useColor;
-uniform int u_mode;            // 0 lit, 1 unlit
+uniform int u_mode;            // 0 lit, 1 unlit, 2 lightmap density
 uniform int u_fullbright;      // tool textures, sky
 uniform int u_alphaTest;
 uniform float u_opacity;
@@ -382,6 +392,29 @@ void main() {
 	}
 	vec3 n = normalize(v_normal);
 	vec3 color;
+	if (u_mode == 2 && u_useColor == 0) {
+		// Lightmap density: the colour says the lightmap scale (red = fine and costly, green = 16,
+		// blue = coarse), the checker shows one luxel. Faces without a lightmap stay grey.
+		float luma = dot(base.rgb, vec3(0.3, 0.59, 0.11));
+		if (v_lightmap <= 0.0 || u_skyFace == 1) {
+			color = vec3(0.22 + 0.18 * luma);
+		} else {
+			const vec3 stops[6] = vec3[6](vec3(0.95, 0.15, 0.15), vec3(1.0, 0.6, 0.1), vec3(0.3, 0.85, 0.3),
+			                              vec3(0.2, 0.8, 0.85), vec3(0.25, 0.4, 1.0), vec3(0.6, 0.3, 0.9));
+			float x = clamp(log2(v_lightmap) - 2.0, 0.0, 5.0);   // 4 -> 0, 8, 16, 32, 64, 128 -> 5
+			int i = min(int(x), 4);
+			color = mix(stops[i], stops[i + 1], x - float(i));
+			// Luxels lie on the face's plane: project onto the two axes it faces least.
+			vec3 a = abs(n);
+			vec2 p = a.z >= a.x && a.z >= a.y ? v_world.xy : (a.x >= a.y ? v_world.yz : v_world.xz);
+			vec2 cell = floor(p / v_lightmap);
+			float checker = mod(cell.x + cell.y, 2.0);
+			color *= (0.78 + 0.22 * checker) * (0.85 + 0.3 * luma);
+		}
+		if ((v_flag & 1u) != 0u) color = mix(color, vec3(1.0, 0.45, 0.1), 0.35);
+		fragColor = vec4(color, base.a * u_opacity);
+		return;
+	}
 	if (u_skyFace == 1 && u_hasSky == 1) {
 		// Sky faces show the map's sky (and the mod's clouds), seen through them as in the game.
 		vec3 dir = normalize(v_world - u_camPos);
@@ -797,6 +830,8 @@ bool SceneRenderer::initialize(MaterialCache* materials, QString* error) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
 	glGenTextures(1, &m_flagTexture);
+	glGenTextures(1, &m_lightmapTexture);
+	uploadLightmapScales();
 	m_flags.assign(FLAG_WIDTH, 0);
 	ensureFlagTexture();
 	m_initialized = true;
@@ -821,6 +856,7 @@ void SceneRenderer::release() {
 	}
 	m_gpuModels.clear();
 	glDeleteTextures(1, &m_flagTexture);
+	glDeleteTextures(1, &m_lightmapTexture);
 	glDeleteTextures(1, &m_whiteTexture);
 	glDeleteBuffers(1, &m_vbo);
 	glDeleteBuffers(1, &m_edgeVbo);
@@ -860,6 +896,17 @@ void SceneRenderer::ensureFlagTexture() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }
 
+void SceneRenderer::uploadLightmapScales() {
+	const int rows = std::max<int>(1, (static_cast<int>(m_faceLightmap.size()) + FLAG_WIDTH - 1) / FLAG_WIDTH);
+	m_faceLightmap.resize(static_cast<std::size_t>(rows) * FLAG_WIDTH, 0);
+	glBindTexture(GL_TEXTURE_2D, m_lightmapTexture);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, FLAG_WIDTH, rows, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, m_faceLightmap.data());
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+}
+
 void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog) {
 	m_skyName = QString::fromStdString(doc.world.get("skyname")).trimmed();
 	m_doc = &doc;
@@ -874,6 +921,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_instanceSolids.clear();
 	m_instanceBounds.clear();
 	m_faceToSide.clear();
+	m_faceLightmap.clear();
 	m_sceneBounds = {};
 	m_triangleCount = 0;
 	m_modelInstances.clear();
@@ -917,6 +965,11 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 				m_entityFaces[entityId].push_back(id);
 			}
 			m_faceToSide.emplace_back(ref, side.id);
+			// Lightmap scale for the density view; tool faces (nodraw, sky, clips ...) have no lightmap.
+			if (m_faceLightmap.size() <= static_cast<std::size_t>(id)) m_faceLightmap.resize(static_cast<std::size_t>(id) + 1, 0);
+			if (!material.startsWith(QLatin1String("tools/"), Qt::CaseInsensitive)) {
+				m_faceLightmap[static_cast<std::size_t>(id)] = static_cast<std::uint8_t>(std::clamp(side.lightmapScale, 1, 255));
+			}
 			faceVertexOffset.push_back(static_cast<int>(vertices.size() / FLOATS_PER_VERTEX));
 			faceMaterial.push_back(material);
 			facesByMaterial[material].push_back(id);
@@ -1293,6 +1346,8 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_faceCount = faceIndex;
 	m_flags.assign(static_cast<std::size_t>(std::max(faceIndex, 1)), 0);
 	ensureFlagTexture();
+	m_faceLightmap.resize(static_cast<std::size_t>(std::max(faceIndex, 1)), 0);
+	uploadLightmapScales();
 	faceSides.resize(static_cast<std::size_t>(faceIndex), {-1, Vec3{}});
 	updateProbes(doc, faceSides);
 }
@@ -1471,6 +1526,9 @@ void SceneRenderer::setCommonUniforms(QOpenGLShaderProgram& program, const Param
 		program.setUniformValue("u_envmap", 0);
 		program.setUniformValue("u_probeSphere", 0);
 		bindProbes(program);
+		program.setUniformValue("u_lightmapScale", LIGHTMAP_UNIT);
+		glActiveTexture(GL_TEXTURE0 + LIGHTMAP_UNIT);
+		glBindTexture(GL_TEXTURE_2D, m_lightmapTexture);
 	}
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, m_flagTexture);
@@ -1634,7 +1692,7 @@ void SceneRenderer::drawSurfaces(const Params& params, bool probePass) {
 	setCommonUniforms(*m_program, params, QMatrix4x4());
 	m_program->setUniformValue("u_tex", 0);
 	m_program->setUniformValue("u_tex2", 1);
-	m_program->setUniformValue("u_mode", params.mode == Mode::Lit ? 0 : 1);
+	m_program->setUniformValue("u_mode", modeUniform(params.mode));
 	m_program->setUniformValue("u_hideSelected", m_hideSelected && !probePass ? 1 : 0);
 	m_program->setUniformValue("u_onlySelected", 0);
 	m_program->setUniformValue("u_previewTint", 0);
@@ -1969,7 +2027,7 @@ void SceneRenderer::drawPreviewSolids(const Params& params) {
 		m_program->setUniformValue("u_alphaTest", 0);
 		m_program->setUniformValue("u_fullbright", 0);
 		m_program->setUniformValue("u_opacity", 1.f);
-		m_program->setUniformValue("u_mode", params.mode == Mode::Lit ? 0 : 1);
+		m_program->setUniformValue("u_mode", modeUniform(params.mode));
 		glBindVertexArray(m_previewVao);
 		for (const auto& batch : m_previewBatches) {
 			auto& tex = texture(batch.material);

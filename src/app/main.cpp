@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
 	parser.addOption({"select-class", "Select the first entity of a class.", "class"});
 	parser.addOption({"select-face", "Select the first face (face mode)."});
 	parser.addOption({"camera", "Camera \"x y z yaw pitch\".", "camera"});
-	parser.addOption({"render", "lit, unlit or wire.", "mode"});
+	parser.addOption({"render", "lit, unlit, wire or density (lightmap density).", "mode"});
 	parser.addOption({"dock", "Raise a dock.", "name"});
 	parser.addOption({"page", "Show a page of the side bar (map, materials, models, sounds, particles, mod).", "page"});
 	parser.addOption({"model", "Show this model on the Models page (models/x.mdl).", "path"});
@@ -146,7 +146,10 @@ int main(int argc, char** argv) {
 	}
 	if (parser.isSet("render")) {
 		const QString mode = parser.value("render");
-		editor.setRenderMode(mode == "unlit" ? Editor::RenderMode::Unlit : (mode == "wire" ? Editor::RenderMode::Wireframe : Editor::RenderMode::Lit));
+		editor.setRenderMode(mode == "unlit" ? Editor::RenderMode::Unlit
+		                     : mode == "wire" ? Editor::RenderMode::Wireframe
+		                     : mode == "density" ? Editor::RenderMode::LightmapDensity
+		                                         : Editor::RenderMode::Lit);
 	}
 
 	// Things that need the views to exist first.

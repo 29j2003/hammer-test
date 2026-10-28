@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,6 +36,9 @@ struct AssetRef {
 /// `limit` entries.
 [[nodiscard]] std::vector<AssetRef> selectionAssets(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog,
                                                     std::size_t limit = 12);
+/// How many entities use each model ("model" key ending in .mdl), by lower-case path
+/// ("models/props/crate01.mdl"): the "Used in this map" filter and counts of the model lists.
+[[nodiscard]] std::map<std::string, int> modelUsage(const MapDocument& doc);
 /// Everything that uses the asset: faces with the material (and decals/overlays naming it), or
 /// entities naming the model, sound, particle system or soundscape. Case-insensitive.
 [[nodiscard]] Selection objectsUsing(const MapDocument& doc, const AssetRef& asset, const EntityCatalog* catalog);

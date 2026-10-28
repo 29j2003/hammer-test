@@ -43,7 +43,7 @@ class Editor : public QObject {
 public:
 	enum class Tool { Select, Move, Rotate, Scale, Block, Entity, Clip, Vertex, Polygon, Displace };
 	enum class SelectMode { Object, Face };
-	enum class RenderMode { Lit, Unlit, Wireframe };
+	enum class RenderMode { Lit, Unlit, Wireframe, LightmapDensity };
 
 	explicit Editor(QObject* parent = nullptr);
 	~Editor() override;

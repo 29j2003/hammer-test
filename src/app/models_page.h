@@ -47,6 +47,8 @@ public:
 	using QSortFilterProxyModel::QSortFilterProxyModel;
 	/// "models/props_c17/" (empty: all) and the search text (words, any order).
 	void setFilter(const QString& folder, const QString& words);
+	/// Only models the open map uses (ModelListModel::UsageRole).
+	void setUsedOnly(bool usedOnly);
 	/// Leaves out models that hold only animations (once their preview found out).
 	void setThumbnails(const class ModelThumbnails* thumbnails) { m_thumbnails = thumbnails; }
 
@@ -56,6 +58,7 @@ protected:
 private:
 	QString m_folder;
 	QStringList m_words;
+	bool m_usedOnly = false;
 	const class ModelThumbnails* m_thumbnails = nullptr;
 };
 
@@ -77,6 +80,7 @@ public:
 	[[nodiscard]] std::vector<std::pair<std::string, std::string>> placeKeys() const;
 
 	[[nodiscard]] QLineEdit* search() const { return m_search; }
+	[[nodiscard]] QCheckBox* usedOnly() const { return m_usedOnly; }
 	[[nodiscard]] QTreeWidget* folders() const { return m_folders; }
 	[[nodiscard]] QListView* list() const { return m_list; }
 	[[nodiscard]] ModelViewer* viewer() const { return m_viewer; }
@@ -117,6 +121,7 @@ private:
 	AssetBrowser* m_assets;
 	MaterialCache* m_materials;
 	QLineEdit* m_search;
+	QCheckBox* m_usedOnly;
 	QTreeWidget* m_folders;
 	QListView* m_list;
 	ModelListModel* m_model;

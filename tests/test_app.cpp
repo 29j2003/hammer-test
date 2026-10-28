@@ -1529,7 +1529,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK(drop("application/x-sme-sound", "3:demo.outside").get("soundscape") == "demo.outside");
 		CHECK(drop("application/x-sme-sound", "1:Demo.Wind").get("message") == "Demo.Wind");
 		const auto prop = drop("application/x-sme-model", "models/humans/group01/male_07.mdl");
-		CHECK(prop.classname() == "prop_static");
+		CHECK(prop.classname() == "prop_dynamic");   // no $staticprop, no collision model
 		CHECK(prop.get("model") == "models/humans/group01/male_07.mdl");
 		const auto particle = drop("application/x-sme-particle", "demo_sparks");
 		CHECK(particle.classname() == "info_particle_system");
@@ -1596,7 +1596,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK_FALSE(view->ghostBox());
 		REQUIRE(editor.doc().entities.size() == before + 1);
 		const auto& placed = editor.doc().entities.back();
-		CHECK(placed.classname() == "prop_static");
+		CHECK(placed.classname() == "prop_dynamic");   // the class the model is made for (no $staticprop)
 		CHECK(placed.get("model") == farPiece.toStdString());
 		// Exactly where the preview stood.
 		CHECK(placed.origin().x == doctest::Approx(ghost.min.x - 936));
@@ -3715,6 +3715,223 @@ TEST_CASE("texts: the mod's localization and captions, edited, translated, saved
 	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
 		window.grab().save(QDir(shots).filePath("texts.png"));
 	}
+}
+
+TEST_CASE("quick wins: make water, map budget, lightmap density, loop and prop class fixes, used models") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	QSignalSpy indexed(window.assets(), &AssetBrowser::materialsIndexed);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	if (indexed.isEmpty()) {
+		REQUIRE(indexed.wait(20000));
+	}
+	settle();
+
+	// Make water: select a block, Brushes > Make water. The current material is not water, so the
+	// game's first water material is used; nodraw elsewhere, lod control and cubemap added.
+	auto [made, pool] = edit::createBlock(editor.doc(), box({0, 0, 0}, {256, 256, 64}), "DEMO/BRICKWALL001");
+	editor.commit(std::move(made));
+	Selection poolSel;
+	poolSel.solids.push_back(pool);
+	editor.setSelection(poolSel);
+	editor.setCurrentMaterial("DEMO/BRICKWALL001");
+	QAction* makeWater = nullptr;
+	for (auto* action : window.findChildren<QAction*>()) {
+		if (action->text() == "Make water") makeWater = action;
+	}
+	REQUIRE(makeWater);
+	const std::size_t entitiesBefore = editor.doc().entities.size();
+	makeWater->trigger();
+	settle();
+	int waterFaces = 0, nodrawFaces = 0;
+	for (const auto& side : editor.doc().findSolid(pool)->sides) {
+		waterFaces += iequals(side.material, "demo/water001") ? 1 : 0;
+		nodrawFaces += side.material == "TOOLS/TOOLSNODRAW" ? 1 : 0;
+	}
+	CHECK(waterFaces == 1);
+	CHECK(nodrawFaces == 5);
+	REQUIRE(editor.doc().entities.size() == entitiesBefore + 2);
+	CHECK(editor.doc().entities[entitiesBefore].classname() == "water_lod_control");
+	CHECK(editor.doc().entities[entitiesBefore + 1].classname() == "env_cubemap");
+	editor.undo();   // one step takes it all back
+	CHECK(editor.doc().entities.size() == entitiesBefore);
+	CHECK(editor.doc().findSolid(pool)->sides[0].material == "DEMO/BRICKWALL001");
+	editor.redo();
+	settle();
+
+	// Map budget: the dock counts the map against the engine limits.
+	window.raiseDock("Map Budget");
+	settle();
+	auto* budget = window.budget();
+	REQUIRE(budget);
+	const auto budgetItem = [&](const std::string& name) -> const BudgetItem* {
+		for (const auto& item : budget->items()) {
+			if (item.name == name) return &item;
+		}
+		return nullptr;
+	};
+	REQUIRE(budgetItem("Brushes"));
+	CHECK(budgetItem("Brushes")->count == 1);
+	CHECK(budgetItem("Brushes")->limit == 8192);
+	CHECK(budgetItem("Cubemaps")->count == 1);
+	auto* brushCount = budget->findChild<QLabel*>("budgetCount:Brushes");
+	REQUIRE(brushCount);
+	CHECK(brushCount->text() == "1 / 8192");
+	// A new brush shows up a moment later.
+	auto [second, secondRef] = edit::createBlock(editor.doc(), box({288, 0, 0}, {352, 64, 64}), "DEMO/BRICKWALL001");
+	editor.commit(std::move(second));
+	for (int i = 0; i < 20 && budgetItem("Brushes")->count != 2; ++i) QTest::qWait(50);
+	CHECK(budgetItem("Brushes")->count == 2);
+	CHECK(brushCount->text() == "2 / 8192");
+	CHECK(budget->findChild<QLabel*>("budgetSummary")->text().contains("within"));
+
+	// Lightmap density: the corner menu's look, the legend, and the faces coloured by their scale.
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(176, -350, 250);
+	view->camera().yaw = 90;
+	view->camera().pitch = -40;
+	editor.setSelection({});
+	editor.setRenderMode(Editor::RenderMode::Lit);
+	view->update();
+	settle();
+	auto* legend = view->findChild<QLabel*>("densityLegend");
+	REQUIRE(legend);
+	CHECK_FALSE(legend->isVisible());
+	const QPoint sidePoint = screen(view, {128, 0, 32});   // the pool's front face (nodraw: no lightmap)
+	const QPoint blockPoint = screen(view, {320, 0, 32});  // the second block's front face (scale 16)
+	QAction* densityAction = nullptr;
+	for (auto* action : window.findChildren<QAction*>()) {
+		if (action->text() == "Lightmap density") densityAction = action;
+	}
+	REQUIRE(densityAction);
+	densityAction->trigger();
+	CHECK(editor.renderMode() == Editor::RenderMode::LightmapDensity);
+	view->update();
+	settle();
+	CHECK(legend->isVisible());
+	CHECK(legend->text().contains("16"));
+	const QColor green = view->grabFramebuffer().pixelColor(blockPoint);
+	CHECK(green.green() > green.red());   // 16 = green
+	CHECK(green.green() > green.blue());
+	// A finer lightmap turns it red.
+	auto* secondSolid = editor.doc().findSolid(secondRef);
+	std::vector<FaceRef> faces;
+	for (const auto& side : secondSolid->sides) faces.push_back({secondRef, side.id});
+	editor.commit(edit::modifyFaces(editor.doc(), faces, "Lightmap scale", [](Side& side) { side.lightmapScale = 4; }));
+	view->update();
+	settle();
+	const QColor red = view->grabFramebuffer().pixelColor(blockPoint);
+	CHECK(red.red() > red.green());
+	const QColor grey = view->grabFramebuffer().pixelColor(sidePoint);
+	CHECK(std::abs(grey.red() - grey.green()) < 30);   // nodraw has no lightmap: grey
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		view->grabFramebuffer().save(QDir(shots).filePath("lightmap_density.png"));
+	}
+	editor.setRenderMode(Editor::RenderMode::Lit);
+	settle();
+	CHECK_FALSE(legend->isVisible());
+
+	// Looping sound: wind1.wav loops (cue point) but "Is NOT Looped" is on - Object Properties
+	// says so and fixes it; the Problems panel finds the opposite case and fixes that.
+	const auto* ambientClass = editor.entities()->find("ambient_generic");
+	auto [ambientMade, ambientId] = edit::placeEntity(editor.doc(), "ambient_generic", {64, 64, 128}, ambientClass,
+	                                                  {{"message", "ambient/wind1.wav"}, {"spawnflags", "33"}});
+	editor.commit(std::move(ambientMade));
+	auto [alarmMade, alarmId] = edit::placeEntity(editor.doc(), "ambient_generic", {96, 64, 128}, ambientClass,
+	                                              {{"message", "Demo.Alarm"}, {"spawnflags", "0"}});
+	editor.commit(std::move(alarmMade));
+	Selection ambientSel;
+	ambientSel.entities.push_back(ambientId);
+	editor.setSelection(ambientSel);
+	editor.setTool(Editor::Tool::Select);
+	window.raiseDock("Object Properties");
+	settle();
+	auto* loopBox = window.properties()->findChild<QGroupBox*>("soundLoop");
+	REQUIRE(loopBox);
+	CHECK(loopBox->findChild<QLabel*>("soundLoopState")->text().contains("loops"));
+	auto* loopFix = loopBox->findChild<QPushButton*>("soundLoopFix");
+	REQUIRE(loopFix);
+	loopFix->click();
+	settle();
+	CHECK(editor.doc().findEntity(ambientId)->get("spawnflags") == "1");
+	auto* fixedBox = window.properties()->findChild<QGroupBox*>("soundLoop");
+	REQUIRE(fixedBox);
+	CHECK_FALSE(fixedBox->findChild<QPushButton*>("soundLoopFix"));
+
+	const auto clickFix = [&](const QString& label) {
+		window.raiseDock("Problems");
+		window.problems()->runChecks();
+		settle();
+		QPushButton* fix = nullptr;
+		for (auto* button : window.problems()->findChildren<QPushButton*>()) {
+			if (button->text() == label) fix = button;
+		}
+		REQUIRE_MESSAGE(fix, label.toStdString());
+		QTest::mouseClick(fix, Qt::LeftButton);
+		settle();
+	};
+	clickFix("Turn \"Is NOT Looped\" on");
+	CHECK(editor.doc().findEntity(alarmId)->get("spawnflags") == "32");
+
+	// Prop class: a prop_physics without a collision model and a prop_static of a model that is
+	// not a static prop are fixed by their buttons; dropping a model picks the class itself.
+	auto [physicsMade, physicsId] = edit::placeEntity(editor.doc(), "prop_physics", {300, 300, 0}, nullptr,
+	                                                  {{"model", "models/props_demo/crate01.mdl"}});
+	editor.commit(std::move(physicsMade));
+	auto [staticMade, staticId] = edit::placeEntity(editor.doc(), "prop_static", {340, 300, 0}, nullptr,
+	                                                {{"model", "models/props_demo/barrel01.mdl"}});
+	editor.commit(std::move(staticMade));
+	auto [goodMade, goodId] = edit::placeEntity(editor.doc(), "prop_static", {380, 300, 0}, nullptr,
+	                                            {{"model", "models/props_demo/supply_crate.mdl"}});
+	editor.commit(std::move(goodMade));
+	clickFix("Make prop_dynamic");
+	clickFix("Make prop_dynamic");
+	CHECK(editor.doc().findEntity(physicsId)->classname() == "prop_dynamic");
+	CHECK(editor.doc().findEntity(staticId)->classname() == "prop_dynamic");
+	CHECK(editor.doc().findEntity(goodId)->classname() == "prop_static");
+	window.problems()->runChecks();
+	settle();
+	for (auto* button : window.problems()->findChildren<QPushButton*>()) {
+		CHECK_FALSE(button->text().startsWith("Make prop_"));
+	}
+
+	// Used in this map: the model tab lists only the three props, with how often each is used.
+	window.raiseDock("Asset Browser");
+	settle();
+	auto* usedOnly = window.assets()->modelsUsedOnly();
+	REQUIRE(usedOnly);
+	auto* models = window.assets()->modelView()->model();
+	const int all = models->rowCount();
+	usedOnly->setChecked(true);
+	settle();
+	CHECK(models->rowCount() == 3);
+	CHECK(all > 3);
+	bool counted = false;
+	for (int row = 0; row < models->rowCount(); ++row) {
+		const QModelIndex index = models->index(row, 0);
+		CHECK(index.data(ModelListModel::UsageRole).toInt() == 1);
+		counted |= index.data(Qt::DisplayRole).toString().endsWith(QStringLiteral("1×"));
+	}
+	CHECK(counted);
+	usedOnly->setChecked(false);
+	settle();
+	CHECK(models->rowCount() == all);
 }
 
 namespace {

@@ -41,7 +41,7 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   views the *Tool* panel (options and keys of the current tool; with the Select tool also *Hollow, Carve, Merge, Tie to,
   Flip, Snap to grid, Drop to floor, Select similar, Hide*), the *Outliner*, *VisGroups* and *Map Look*
   as tabs. Right only *Object
-  Properties*. Below: Asset Browser, Sounds, Particles, Compile, Problems, Log and History (every undo step; click one to go back
+  Properties*. Below: Asset Browser, Sounds, Particles, Compile, Problems, Map Budget, Log and History (every undo step; click one to go back
   or forward to it). The three buttons at the top right show
   or hide the left, bottom and right panels.
 - **View switches** in the tool bar: helper entities, models, lights, cubemaps, triggers, tool brushes, sky, entity
@@ -60,7 +60,15 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   Mapbase room box, without compiling; a selected cubemap shows a mirror sphere (Map > Build cubemaps redraws them).
   Entities show their editor icons (the sprites and models Hammer uses).
 - **Models**: props and NPCs are drawn with their real model and textures. The model browser shows a preview of every
-  model; drag one into the 3D view to place it as a prop_static.
+  model; drag one into the 3D view to place it as the prop class it is made for (prop_static for static prop models,
+  prop_physics with a collision model, else prop_dynamic). *Used in this map* lists only the models the map uses, each
+  with how often.
+- **Lightmap density** (view menu, Ctrl+F6): every face coloured by its lightmap scale (red = fine and costly, green = 16,
+  blue = coarse) with a checker of one luxel, and a colour key in the corner.
+- **Make water** (Brushes menu or right-click): the top face of the selected brushes gets a water material, the rest
+  nodraw; a `water_lod_control` and an `env_cubemap` above the water are added if missing – one undo step.
+- **Map Budget** (bottom panel): brushes, brush sides, planes, entities, edicts, overlays, displacements, cubemaps,
+  lights and static props counted live against the engine's limits.
 - **Shapes**: the block tool makes blocks, wedges, cylinders, spikes (pyramids, cones), spheres, arches (rings and
   spirals) and stairs. Change the settings in the **Tool** panel right after creating a shape and it is rebuilt.
   Click or press Enter to create a block and simply drag on for the next one.

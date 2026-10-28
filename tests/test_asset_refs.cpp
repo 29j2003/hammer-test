@@ -92,3 +92,17 @@ TEST_CASE("asset refs: what a selection uses and what uses an asset") {
 	CHECK(npcAssets == std::vector<AssetRef>{{AssetKind::Sound, "NPC_Test.Alert"}, {AssetKind::Particle, "glow_blue"}});
 	std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("model usage counts per model") {
+	MapDocument doc;
+	doc.entities.push_back(entity(doc, {{"classname", "prop_static"}, {"model", "models/props/Crate01.mdl"}}));
+	doc.entities.push_back(entity(doc, {{"classname", "prop_physics"}, {"model", "models\\props\\crate01.mdl"}}));
+	doc.entities.push_back(entity(doc, {{"classname", "prop_dynamic"}, {"model", "models/props/lamp.mdl"}}));
+	doc.entities.push_back(entity(doc, {{"classname", "func_brush"}, {"model", "*3"}}));   // brush models do not count
+	doc.entities.push_back(entity(doc, {{"classname", "env_sprite"}, {"model", "sprites/glow01.vmt"}}));
+	const auto usage = modelUsage(doc);
+	CHECK(usage.size() == 2);
+	CHECK(usage.at("models/props/crate01.mdl") == 2);
+	CHECK(usage.at("models/props/lamp.mdl") == 1);
+	CHECK(modelUsage(MapDocument{}).empty());
+}

@@ -1093,6 +1093,8 @@ void MainWindow::createActions() {
 	renderAction(tr("Lit"), QKeySequence("F6"), Editor::RenderMode::Lit, tr("Lighting preview from the light entities"))->setChecked(true);
 	renderAction(tr("Unlit"), QKeySequence("F5"), Editor::RenderMode::Unlit, tr("Textures without lighting"));
 	renderAction(tr("Wire"), QKeySequence("F8"), Editor::RenderMode::Wireframe, tr("Wireframe"));
+	renderAction(tr("Lightmap density"), QKeySequence("Ctrl+F6"), Editor::RenderMode::LightmapDensity,
+	             tr("Each face coloured by its lightmap scale, with a checker of the luxel size"));
 	auto* shadows = new QAction(tr("Shadows"), this);
 	addAction(shadows);
 	shadows->setObjectName("Shadows");

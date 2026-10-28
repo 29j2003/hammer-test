@@ -100,6 +100,15 @@ std::vector<AssetRef> selectionAssets(const MapDocument& doc, const Selection& s
 	return out;
 }
 
+std::map<std::string, int> modelUsage(const MapDocument& doc) {
+	std::map<std::string, int> usage;
+	for (const auto& entity : doc.entities) {
+		const auto model = entity.get("model");
+		if (endsWithI(model, ".mdl")) ++usage[normalizePath(model)];
+	}
+	return usage;
+}
+
 Selection objectsUsing(const MapDocument& doc, const AssetRef& asset, const EntityCatalog* catalog) {
 	Selection out;
 	if (asset.kind == AssetKind::Material) {

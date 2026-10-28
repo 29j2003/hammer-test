@@ -10,6 +10,7 @@
 #include "model_thumbnails.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDrag>
@@ -30,6 +31,7 @@
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <sme/asset_refs.h>
 #include <sme/filesystem.h>
 #include <sme/game.h>
 #include <sme/text.h>
@@ -233,6 +235,39 @@ void ModelListModel::setModels(const QStringList& models) {
 	endResetModel();
 }
 
+void ModelListModel::setUsage(QHash<QString, int> usage) {
+	if (usage == m_usage) return;   // most changes (moving, other keys) leave the counts alone
+	m_usage = std::move(usage);
+	if (!m_models.isEmpty()) emit dataChanged(index(0), index(static_cast<int>(m_models.size()) - 1), {Qt::DisplayRole, Qt::ToolTipRole, UsageRole});
+}
+
+QHash<QString, int> modelUsageOf(const MapDocument& doc) {
+	QHash<QString, int> out;
+	for (const auto& [path, count] : modelUsage(doc)) out.insert(QString::fromStdString(path), count);
+	return out;
+}
+
+void ModelSearchFilter::setWords(const QString& words) {
+	m_words = words.split(' ', Qt::SkipEmptyParts);
+	invalidateFilter();
+}
+
+void ModelSearchFilter::setUsedOnly(bool usedOnly) {
+	m_usedOnly = usedOnly;
+	invalidateFilter();
+}
+
+bool ModelSearchFilter::filterAcceptsRow(int row, const QModelIndex& parent) const {
+	const QModelIndex index = sourceModel()->index(row, 0, parent);
+	if (m_usedOnly && index.data(ModelListModel::UsageRole).toInt() == 0) return false;
+	// Every word must appear in the path.
+	const QString path = index.data(Qt::UserRole).toString();
+	for (const auto& word : m_words) {
+		if (!path.contains(word, Qt::CaseInsensitive)) return false;
+	}
+	return true;
+}
+
 int ModelListModel::rowCount(const QModelIndex& parent) const {
 	return parent.isValid() ? 0 : static_cast<int>(m_models.size());
 }
@@ -242,10 +277,13 @@ QVariant ModelListModel::data(const QModelIndex& index, int role) const {
 		return {};
 	}
 	const QString& path = m_models[index.row()];
+	const int used = m_usage.isEmpty() ? 0 : m_usage.value(path.toLower());
 	switch (role) {
-		case Qt::DisplayRole: return path.section('/', -1).chopped(4);   // "crate01"
-		case Qt::ToolTipRole: return path;
+		case Qt::DisplayRole:   // "crate01", with how often the map uses it: "crate01 · 3×"
+			return used > 0 ? QStringLiteral("%1 · %2×").arg(path.section('/', -1).chopped(4)).arg(used) : path.section('/', -1).chopped(4);
+		case Qt::ToolTipRole: return used > 0 ? tr("%1\nUsed %2 times in this map").arg(path).arg(used) : path;
 		case Qt::UserRole: return path;
+		case UsageRole: return used;
 		case Qt::DecorationRole: return m_thumbnails->get(path);   // rendered only for shown items
 		default: return {};
 	}
@@ -426,16 +464,22 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_modelSearch = new QLineEdit;
 		m_modelSearch->setPlaceholderText(tr("Search models (words: props_c17 bench) ..."));
 		m_modelSearch->setClearButtonEnabled(true);
-		v->addWidget(m_modelSearch);
+		m_modelsUsedOnly = new QCheckBox(tr("Used in this map"));
+		m_modelsUsedOnly->setObjectName("modelsUsedOnly");
+		m_modelsUsedOnly->setToolTip(tr("Only the models the open map uses (the number after a name says how often)"));
+		auto* searchRow = new QHBoxLayout;
+		searchRow->addWidget(m_modelSearch, 1);
+		searchRow->addWidget(m_modelsUsedOnly);
+		v->addLayout(searchRow);
 		m_modelThumbnails = new ModelThumbnails(editor->models(), m_thumbnails, THUMB, this);
 		m_modelModel = new ModelListModel(m_modelThumbnails, this);
-		auto* proxy = new QSortFilterProxyModel(this);
+		m_modelFilter = new ModelSearchFilter(this);
+		auto* proxy = m_modelFilter;
 		proxy->setSourceModel(m_modelModel);
-		proxy->setFilterRole(Qt::UserRole);
-		proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
 		m_modelView = makeIconView(page);
 		addCopyShortcut(m_modelView, Qt::UserRole);      // Ctrl+C: the model's path
 		m_modelView->setModel(proxy);
+		connect(m_modelsUsedOnly, &QCheckBox::toggled, proxy, &ModelSearchFilter::setUsedOnly);
 		v->addWidget(m_modelView, 1);
 		m_modelView->setContextMenuPolicy(Qt::CustomContextMenu);
 		connect(m_modelView, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
@@ -457,14 +501,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		v->addWidget(m_modelInfo);
 		m_tabs->addTab(page, tr("Models"));
 		connect(m_modelThumbnails, &ModelThumbnails::thumbnailReady, m_modelModel, &ModelListModel::thumbnailReady);
-		connect(m_modelSearch, &QLineEdit::textChanged, proxy, [proxy](const QString& text) {
-			// Every word must appear in the path.
-			QString pattern;
-			for (const auto& word : text.split(' ', Qt::SkipEmptyParts)) {
-				pattern += QStringLiteral("(?=.*%1)").arg(QRegularExpression::escape(word));
-			}
-			proxy->setFilterRegularExpression(QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption));
-		});
+		connect(m_modelSearch, &QLineEdit::textChanged, proxy, &ModelSearchFilter::setWords);
 		connect(m_modelView->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex& index) {
 			if (!index.isValid() || !m_editor->game()) {
 				return;
@@ -483,6 +520,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 			} else if (m_editor->models()->failed(path)) {
 				size = tr("cannot load: %1").arg(m_editor->models()->error(path));
 			}
+			if (const int used = m_modelModel->usage(path); used > 0) size += tr(" - used %1× in this map").arg(used);
 			m_modelInfo->setText(tr("<b>%1</b> - %2<br>%3 animations: %4%5<br><i>Drag into the 3D view to place it, double-click sets it on the selected entity</i>")
 			                         .arg(path, size)
 			                         .arg(sequences.size())
@@ -707,6 +745,7 @@ void AssetBrowser::updateUsedMaterials() {
 		add(entity);
 	}
 	m_materialFilter->setUsed(used);
+	m_modelModel->setUsage(modelUsageOf(m_editor->doc()));
 }
 
 void AssetBrowser::showMaterialInfo(const QModelIndex& index) {
