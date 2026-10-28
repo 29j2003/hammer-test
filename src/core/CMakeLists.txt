@@ -27,6 +27,7 @@ add_library(smecore STATIC
 	src/material_replace.cpp
 	src/soundscape.cpp
 	src/sound_categories.cpp
+	src/samples.cpp
 	src/sound_edit.cpp
 	src/shipping.cpp
 	src/visgroups.cpp

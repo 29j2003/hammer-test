@@ -56,6 +56,10 @@ void reverse(DecodedAudio& audio, FrameRange range = {});
 /// for) and a "smpl" loop from there to the end (what sound editors show).
 [[nodiscard]] std::vector<std::byte> encodeWav(const DecodedAudio& audio);
 
+/// A 16-bit FLAC of `audio` (uncompressed "verbatim" frames: simple, valid, about the size of a
+/// WAV). Source cannot play FLAC; it is for files that go through an import.
+[[nodiscard]] std::vector<std::byte> encodeFlac(const DecodedAudio& audio);
+
 /// Sample rates the Source engine plays without problems.
 [[nodiscard]] bool isSourceSampleRate(int sampleRate);
 

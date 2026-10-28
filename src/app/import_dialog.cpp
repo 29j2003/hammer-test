@@ -3,11 +3,13 @@
 #include "import_dialog.h"
 
 #include "editor.h"
+#include "samples_folder.h"
 #include "sound_player.h"
 
 #include <sme/assets.h>
 #include <sme/filesystem.h>
 #include <sme/game.h>
+#include <sme/samples.h>
 #include <sme/text.h>
 
 #include <QCheckBox>
@@ -128,6 +130,16 @@ ImportDialog::~ImportDialog() {
 	}
 }
 
+QString ImportDialog::sampleFolder(Kind kind) {
+	switch (kind) {
+		case Kind::Sound: return samplesFolder(SAMPLE_SOUNDS);
+		case Kind::Material: return samplesFolder(SAMPLE_PICTURES);
+		case Kind::Model: return samplesFolder(SAMPLE_MODELS);
+		case Kind::Particles: return samplesFolder(SAMPLE_PARTICLES);
+	}
+	return {};
+}
+
 QString ImportDialog::fileFilter(Kind kind) {
 	switch (kind) {
 		case Kind::Sound: return tr("Sounds (*.wav *.mp3 *.ogg *.flac)");
@@ -161,11 +173,22 @@ void ImportDialog::buildCommon() {
 	m_file->setTextInteractionFlags(Qt::TextSelectableByMouse);
 	auto* choose = new QPushButton(tr("Choose file ..."));
 	choose->setObjectName("importChoose");
+	// Files to try it with: the samples Mapsmith ships (samples/ next to the program).
+	auto* sample = new QPushButton(tr("Use a sample ..."));
+	sample->setObjectName("importSample");
+	const QString samples = sampleFolder(m_kind);
+	sample->setEnabled(!samples.isEmpty());
+	sample->setToolTip(samples.isEmpty() ? tr("No samples folder next to Mapsmith") : tr("Pick one of Mapsmith's sample files (%1) to try the import").arg(QDir::toNativeSeparators(samples)));
 	fileRow->addWidget(m_file, 1);
 	fileRow->addWidget(choose);
+	fileRow->addWidget(sample);
 	v->addLayout(fileRow);
 	connect(choose, &QPushButton::clicked, this, [this] {
 		const QString file = QFileDialog::getOpenFileName(this, windowTitle(), QString(), fileFilter(m_kind));
+		if (!file.isEmpty()) setSourceFile(file);
+	});
+	connect(sample, &QPushButton::clicked, this, [this, samples] {
+		const QString file = QFileDialog::getOpenFileName(this, tr("Sample to import"), samples, fileFilter(m_kind));
 		if (!file.isEmpty()) setSourceFile(file);
 	});
 

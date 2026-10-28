@@ -6,10 +6,12 @@
 #include "editor.h"
 #include "model_cache.h"
 #include "model_viewer.h"
+#include "samples_folder.h"
 
 #include <sme/animation_use.h>
 #include <sme/assets.h>
 #include <sme/filesystem.h>
+#include <sme/samples.h>
 #include <sme/text.h>
 
 #include <QCheckBox>
@@ -179,7 +181,17 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	m_add = new QPushButton(tr("Add animation ..."));
 	m_add->setObjectName("animationAdd");
 	m_add->setToolTip(tr("Bring an animation (.smd from Blender's Source Tools or a decompile) onto this model's skeleton"));
-	rv->addWidget(m_add);
+	m_addSample = new QPushButton(tr("Use a sample ..."));
+	m_addSample->setObjectName("animationSample");
+	m_addSample->setEnabled(!samplesFolder().isEmpty());
+	m_addSample->setToolTip(m_addSample->isEnabled() ? tr("Try it with Mapsmith's sample animations: a nod and a wave for Half-Life 2's people, a swing for "
+	                                                      "the sample hanging sign (samples/animations)")
+	                                                 : tr("No samples folder next to Mapsmith"));
+	auto* addRow = new QHBoxLayout;
+	addRow->setContentsMargins(0, 0, 0, 0);
+	addRow->addWidget(m_add, 1);
+	addRow->addWidget(m_addSample);
+	rv->addLayout(addRow);
 	// New animations wait here until they are built into the mod.
 	m_pendingBar = new QFrame;
 	m_pendingBar->setObjectName("animationPending");
@@ -269,7 +281,8 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 		}
 		useOnSelection();
 	});
-	connect(m_add, &QPushButton::clicked, this, &AnimationsPage::askImport);
+	connect(m_add, &QPushButton::clicked, this, [this] { askImport(); });
+	connect(m_addSample, &QPushButton::clicked, this, [this] { askImport(samplesFolder(SAMPLE_ANIMATIONS)); });
 	connect(m_compile, &QPushButton::clicked, this, &AnimationsPage::compileImports);
 
 	connect(editor->models(), &ModelCache::modelReady, this, [this](const QString& path) {
@@ -689,7 +702,7 @@ QString AnimationsPage::originalModel() const {
 	return m_model;
 }
 
-void AnimationsPage::askImport() {
+void AnimationsPage::askImport(const QString& startFolder) {
 	if (m_model.isEmpty() || !m_animated) {
 		emit m_editor->message(tr("Pick a model first - the animation goes onto its skeleton"));
 		return;
@@ -698,7 +711,7 @@ void AnimationsPage::askImport() {
 		emit m_editor->message(tr("%1 has no skeleton to animate").arg(m_model.section('/', -1)));
 		return;
 	}
-	const QString path = QFileDialog::getOpenFileName(this, tr("Add animation to %1").arg(m_model.section('/', -1)), QString(),
+	const QString path = QFileDialog::getOpenFileName(this, tr("Add animation to %1").arg(m_model.section('/', -1)), startFolder,
 	                                                  tr("Source animations (*.smd)"));
 	if (path.isEmpty()) return;
 	QFile file(path);
@@ -718,6 +731,7 @@ void AnimationsPage::askImport() {
 	dialog.setWindowTitle(tr("Add animation"));
 	auto* form = new QFormLayout(&dialog);
 	QString about = tr("%1 frames · %2 of %3 bones match %4").arg(smd->frames.size()).arg(match.matched()).arg(smd->nodes.size()).arg(m_model.section('/', -1));
+	if (smd->relative) about += tr("\nMoves only its own bones, on top of the model's rest pose - the others keep it.");
 	if (!match.notInModel.empty()) {
 		QStringList names;
 		for (const auto& n : match.notInModel) names << qs(n);
@@ -767,11 +781,18 @@ bool AnimationsPage::importAnimation(const QString& smdPath, ImportedAnimation o
 	if (!m_animated || m_animated->bones().empty()) return fail(tr("Pick a model with a skeleton first"));
 	QFile file(smdPath);
 	if (!file.open(QIODevice::ReadOnly)) return fail(tr("Cannot read %1").arg(smdPath));
-	const QString text = QString::fromUtf8(file.readAll());
+	QString text = QString::fromUtf8(file.readAll());
 	std::string parseError;
-	const auto smd = parseSmd(text.toStdString(), &parseError);
+	auto smd = parseSmd(text.toStdString(), &parseError);
 	if (!smd) return fail(tr("%1 is not a usable animation: %2").arg(QFileInfo(smdPath).fileName(), qs(parseError)));
 	if (matchSkeleton(*smd, m_animated->bones()).matched() == 0) return fail(tr("None of the animation's bones is in %1").arg(m_model.section('/', -1)));
+	// A file that moves only some bones (or holds changes to the rest pose, like the samples)
+	// becomes a whole animation of this model: what studiomdl builds is what the preview shows.
+	if (animationNeedsCompleting(*smd, m_animated->bones())) {
+		text = qs(completedAnimationSmd(*smd, m_animated->bones()));
+		smd = parseSmd(text.toStdString(), &parseError);
+		if (!smd) return fail(tr("%1 could not be completed for %2: %3").arg(QFileInfo(smdPath).fileName(), m_model.section('/', -1), qs(parseError)));
+	}
 	if (options.name.empty()) options.name = sequenceNameFromFile(smdPath.toStdString());
 	options.smdFile = options.name + ".smd";
 	if (originalModel().compare(m_importModel, Qt::CaseInsensitive) != 0) {
