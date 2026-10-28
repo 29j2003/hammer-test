@@ -9,7 +9,7 @@ add_library(sme_fixture STATIC demo.cpp fixture.cpp)
 target_include_directories(sme_fixture PUBLIC .)
 target_link_libraries(sme_fixture PUBLIC smecore PRIVATE sourcepp::vpkpp sourcepp::vtfpp)
 
-add_executable(sme_tests main.cpp test_assets.cpp test_studio_anim.cpp test_relief_pattern.cpp test_core.cpp test_editing.cpp
+add_executable(sme_tests main.cpp test_assets.cpp test_studio_anim.cpp test_animation_import.cpp test_relief_pattern.cpp test_core.cpp test_editing.cpp
 	test_csg.cpp test_asset_refs.cpp test_cubemaps.cpp test_fidelity_effects.cpp test_decals.cpp test_displacement.cpp test_map.cpp test_shipping.cpp test_mod_template.cpp ../src/probe/report.cpp test_probe.cpp test_git.cpp test_workflow.cpp test_groups.cpp test_mod_menu.cpp test_sound_edit.cpp test_localization.cpp test_doors.cpp test_map_tools.cpp test_mod_code.cpp test_mod_features.cpp test_mod_install.cpp)
 target_include_directories(sme_tests PRIVATE ../src/probe)
 target_link_libraries(sme_tests PRIVATE sme_fixture smecore doctest::doctest)

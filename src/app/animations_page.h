@@ -16,11 +16,16 @@
 #include <memory>
 #include <optional>
 
+#include <sme/animation_import.h>
 #include <sme/studio_anim.h>
 #include <sme/studio_model.h>
 
 class QCheckBox;
 class QComboBox;
+class QFrame;
+class QPlainTextEdit;
+class QProcess;
+class QProgressBar;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -74,13 +79,30 @@ public:
 
 	/// Puts the current sequence on the selected entity (`key`: which field of a
 	/// scripted_sequence; empty: its Pre Action Idle). False with a message if that is not possible.
+	/// For an animation only Mapsmith's new model has, the entity switches to that model too.
 	bool useOnSelection(const QString& key = {});
+
+	// --- Add animation (see animation_import.h) -------------------------------------------
+	/// Reads an .smd and adds it to the shown model as a new animation: it plays at once and is
+	/// built into the mod by compileImports(). False with `error` if the file does not fit.
+	bool importAnimation(const QString& smdPath, ImportedAnimation options, QString* error = nullptr);
+	/// New animations not built yet.
+	[[nodiscard]] int pendingImports() const { return int(m_imports.size()); }
+	/// Writes the new model's sources below the mod (modelsrc/mapsmith/...) and runs studiomdl
+	/// (compileFinished follows). False if it cannot start.
+	bool compileImports();
+	/// The studiomdl to run (default: studiomdl.exe next to the game's vbsp.exe).
+	void setStudiomdlProgram(const QString& program) { m_studiomdlOverride = program; }
+	[[nodiscard]] QString studiomdlProgram() const;
+	[[nodiscard]] QString compileLog() const;
 
 signals:
 	/// The model's animations were read (or could not be).
 	void modelLoaded();
 	/// An entity in "Used in this map" was double-clicked: select it in the map.
 	void entityRequested(int entityId);
+	/// studiomdl finished (ok: the new model is in the mod and shown).
+	void compileFinished(bool ok);
 
 protected:
 	void showEvent(QShowEvent* event) override;
@@ -97,6 +119,10 @@ private:
 	void applyPose();
 	void tick();
 	[[nodiscard]] int sequenceIndex() const;
+	void askImport();
+	void updatePendingBar();
+	/// The model the new animations belong to (the original, also when Mapsmith's copy is shown).
+	[[nodiscard]] QString originalModel() const;
 
 	Editor* m_editor;
 	AssetBrowser* m_assets;
@@ -131,6 +157,20 @@ private:
 	float m_cycle = 0;
 	float m_speedFactor = 1;
 	bool m_looping = true;
+	// Add animation.
+	struct PendingImport {
+		ImportedAnimation options;
+		QString smdText;
+	};
+	std::vector<PendingImport> m_imports;
+	QString m_importModel;            ///< The model the pending imports were made for
+	QFrame* m_pendingBar = nullptr;
+	QLabel* m_pendingLabel = nullptr;
+	QPushButton* m_compile = nullptr;
+	QProgressBar* m_progress = nullptr;
+	QPlainTextEdit* m_log = nullptr;
+	QPointer<QProcess> m_studiomdl;
+	QString m_studiomdlOverride;
 };
 
 } // namespace sme::app

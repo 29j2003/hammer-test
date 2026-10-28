@@ -356,6 +356,22 @@ std::optional<AnimatedModel> AnimatedModel::load(const GameFileSystem& fs, std::
 	return fromFiles(std::move(files), error);
 }
 
+int AnimatedModel::addKeyframedSequence(StudioSequence sequence, std::vector<std::vector<std::pair<AnimVec, AnimQuat>>> frames) {
+	sequence.model = -1;
+	sequence.animation = int(m_keyframed.size());
+	sequence.frames = std::max<int>(1, int(frames.size()));
+	m_keyframed.push_back(std::move(frames));
+	// A new name replaces an earlier preview of the same name.
+	for (std::size_t i = 0; i < m_sequences.size(); ++i) {
+		if (m_sequences[i].model < 0 && iequals(m_sequences[i].name, sequence.name)) {
+			m_sequences[i] = std::move(sequence);
+			return int(i);
+		}
+	}
+	m_sequences.push_back(std::move(sequence));
+	return int(m_sequences.size()) - 1;
+}
+
 int AnimatedModel::findSequence(std::string_view name) const {
 	for (std::size_t i = 0; i < m_sequences.size(); ++i) {
 		if (iequals(m_sequences[i].name, name)) return int(i);
@@ -475,6 +491,24 @@ void AnimatedModel::localPose(int sequence, float cycle, std::vector<AnimVec>& p
 	}
 	if (sequence < 0 || sequence >= int(m_sequences.size())) return;
 	const StudioSequence& seq = m_sequences[std::size_t(sequence)];
+	if (!std::isfinite(cycle)) cycle = 0;
+	if (seq.model < 0) {
+		// Plain frames (an import being previewed), blended like the compiled ones.
+		if (seq.animation < 0 || seq.animation >= int(m_keyframed.size())) return;
+		const auto& frames = m_keyframed[std::size_t(seq.animation)];
+		if (frames.empty()) return;
+		const float frameF = std::clamp(cycle, 0.f, 1.f) * float(frames.size() - 1);
+		const auto f0 = std::size_t(frameF);
+		const std::size_t f1 = std::min(f0 + 1, frames.size() - 1);
+		const float s = frameF - float(f0);
+		for (std::size_t i = 0; i < pos.size() && i < frames[f0].size() && i < frames[f1].size(); ++i) {
+			const auto& a = frames[f0][i];
+			const auto& b = frames[f1][i];
+			pos[i] = {a.first.x + (b.first.x - a.first.x) * s, a.first.y + (b.first.y - a.first.y) * s, a.first.z + (b.first.z - a.first.z) * s};
+			quat[i] = slerp(a.second, b.second, s);
+		}
+		return;
+	}
 	const File& file = m_files[std::size_t(seq.model)];
 	if (seq.animation < 0 || seq.animation >= int(file.anims.size())) return;
 	const AnimDesc& anim = file.anims[std::size_t(seq.animation)];
@@ -487,7 +521,6 @@ void AnimatedModel::localPose(int sequence, float cycle, std::vector<AnimVec>& p
 			quat[std::size_t(target)] = file.bones[b].quat;
 		}
 	}
-	if (!std::isfinite(cycle)) cycle = 0;
 	const float frameF = std::clamp(cycle, 0.f, 1.f) * float(anim.frames - 1);
 	const int frame = int(frameF);
 	const float s = frameF - float(frame);

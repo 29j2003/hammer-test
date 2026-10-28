@@ -8,10 +8,24 @@
 #include "model_viewer.h"
 
 #include <sme/animation_use.h>
+#include <sme/assets.h>
+#include <sme/filesystem.h>
 #include <sme/text.h>
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QDoubleSpinBox>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFormLayout>
+#include <QFrame>
+#include <QPlainTextEdit>
+#include <QProcess>
+#include <QProgressBar>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -29,6 +43,10 @@
 
 #include <algorithm>
 #include <map>
+
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 namespace sme::app {
 
@@ -160,8 +178,36 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	rv->addWidget(m_use);
 	m_add = new QPushButton(tr("Add animation ..."));
 	m_add->setObjectName("animationAdd");
-	m_add->setToolTip(tr("Bring an animation (.smd) onto this model's skeleton"));
+	m_add->setToolTip(tr("Bring an animation (.smd from Blender's Source Tools or a decompile) onto this model's skeleton"));
 	rv->addWidget(m_add);
+	// New animations wait here until they are built into the mod.
+	m_pendingBar = new QFrame;
+	m_pendingBar->setObjectName("animationPending");
+	m_pendingBar->setFrameShape(QFrame::StyledPanel);
+	auto* pv = new QVBoxLayout(m_pendingBar);
+	pv->setContentsMargins(8, 6, 8, 6);
+	m_pendingLabel = new QLabel;
+	m_pendingLabel->setWordWrap(true);
+	pv->addWidget(m_pendingLabel);
+	m_compile = new QPushButton(tr("Build into the mod"));
+	m_compile->setObjectName("animationCompile");
+	m_compile->setProperty("accent", true);
+	m_compile->setToolTip(tr("Makes models/mapsmith/... with the model and its new animations (studiomdl from the SDK)"));
+	pv->addWidget(m_compile);
+	m_progress = new QProgressBar;
+	m_progress->setRange(0, 0);   // studiomdl tells no progress: a busy bar
+	m_progress->setTextVisible(false);
+	m_progress->setMaximumHeight(8);
+	m_progress->hide();
+	pv->addWidget(m_progress);
+	m_log = new QPlainTextEdit;
+	m_log->setObjectName("animationCompileLog");
+	m_log->setReadOnly(true);   // selectable and copyable
+	m_log->setMaximumHeight(140);
+	m_log->hide();
+	pv->addWidget(m_log);
+	m_pendingBar->hide();
+	rv->addWidget(m_pendingBar);
 	rv->addWidget(hint(tr("Props play the animation as Default animation; a scripted_sequence gets it in the field you pick; "
 	                      "an NPC gets a pose helper (a scripted_sequence that keeps it in the animation).")));
 	split->addWidget(right);
@@ -223,9 +269,8 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 		}
 		useOnSelection();
 	});
-	connect(m_add, &QPushButton::clicked, this, [this] {
-		emit m_editor->message(tr("Adding animations needs a model first"));
-	});
+	connect(m_add, &QPushButton::clicked, this, &AnimationsPage::askImport);
+	connect(m_compile, &QPushButton::clicked, this, &AnimationsPage::compileImports);
 
 	connect(editor->models(), &ModelCache::modelReady, this, [this](const QString& path) {
 		if (path.compare(m_model, Qt::CaseInsensitive) != 0) return;
@@ -237,6 +282,12 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	connect(&m_loader, &QFutureWatcherBase::finished, this, [this] {
 		if (m_loader.property("generation").toInt() != m_generation) return;
 		m_animated = m_loader.result();
+		// New animations not built yet stay on their model.
+		if (m_animated && originalModel().compare(m_importModel, Qt::CaseInsensitive) == 0) {
+			for (const auto& pending : m_imports) {
+				if (const auto smd = parseSmd(pending.smdText.toStdString())) addPreviewSequence(*m_animated, *smd, pending.options);
+			}
+		}
 		showSequences();
 		if (!m_pendingSequence.isEmpty()) {
 			selectSequence(m_pendingSequence);
@@ -408,7 +459,10 @@ void AnimationsPage::showSequences() {
 		item->setText(1, activity);
 		item->setText(2, seq.frames > 1 ? tr("%1 s").arg(double(seq.duration()), 0, 'f', 2) : tr("pose"));
 		const QString from = seq.model >= 0 && seq.model < int(files.size()) ? qs(files[std::size_t(seq.model)]).section('/', -1) : QString();
-		item->setText(3, seq.model == 0 ? tr("own") : from);
+		item->setText(3, seq.model == 0 ? tr("own") : seq.model < 0 ? tr("new - not built") : from);
+		if (seq.model < 0) {
+			for (int c = 0; c < 4; ++c) item->setForeground(c, QColor(240, 160, 40));
+		}
 		item->setToolTip(0, tr("%1 frames at %2 fps%3%4").arg(seq.frames).arg(double(seq.fps)).arg(seq.looping ? tr(", loops") : QString(),
 		                                                                            seq.delta ? tr(", adds onto another pose") : QString()));
 		item->setData(0, Qt::UserRole, int(i));
@@ -581,8 +635,12 @@ void AnimationsPage::updateUseButton() {
 	const auto& selection = m_editor->selection();
 	const Entity* entity = selection.entities.size() == 1 ? m_editor->doc().findEntity(selection.entities.front()) : nullptr;
 	const bool takes = entity && (!sequenceKeys(entity->classname()).empty() || isNpcClass(entity->classname()));
-	m_use->setEnabled(takes && !currentSequence().isEmpty());
-	if (!entity) {
+	const int index = sequenceIndex();
+	const bool preview = m_animated && index >= 0 && m_animated->sequences()[std::size_t(index)].model < 0;
+	m_use->setEnabled(takes && !currentSequence().isEmpty() && !preview);
+	if (preview) {
+		m_use->setToolTip(tr("Build the new animation into the mod first"));
+	} else if (!entity) {
 		m_use->setToolTip(tr("Select one prop, NPC or scripted_sequence in the map first"));
 	} else if (!takes) {
 		m_use->setToolTip(tr("%1 does not play animations").arg(qs(entity->classname())));
@@ -603,7 +661,19 @@ bool AnimationsPage::useOnSelection(const QString& key) {
 		return false;
 	}
 	const int id = selection.entities.front();
-	Change change = edit::useSequence(m_editor->doc(), id, sequence.toStdString(), key.toStdString());
+	const int index = sequenceIndex();
+	if (m_animated && index >= 0 && m_animated->sequences()[std::size_t(index)].model < 0) {
+		emit m_editor->message(tr("Build the new animation into the mod first"));
+		return false;
+	}
+	// Animations only Mapsmith's model has: the entity switches to that model as well.
+	std::string model;
+	if (m_model.startsWith(QLatin1String("models/mapsmith/"), Qt::CaseInsensitive)) {
+		if (const Entity* entity = m_editor->doc().findEntity(id)) {
+			if (qs(animatedModel(m_editor->doc(), *entity, m_editor->entities())).compare(m_model, Qt::CaseInsensitive) != 0) model = m_model.toStdString();
+		}
+	}
+	Change change = edit::useSequence(m_editor->doc(), id, sequence.toStdString(), key.toStdString(), model);
 	if (change.empty()) {
 		emit m_editor->message(tr("This entity cannot play animations"));
 		return false;
@@ -611,6 +681,238 @@ bool AnimationsPage::useOnSelection(const QString& key) {
 	m_editor->commit(std::move(change));
 	emit m_editor->message(tr("The selected entity now plays \"%1\"").arg(sequence));
 	updateUses();
+	return true;
+}
+
+QString AnimationsPage::originalModel() const {
+	if (m_model.startsWith(QLatin1String("models/mapsmith/"), Qt::CaseInsensitive)) return QStringLiteral("models/") + m_model.mid(16);
+	return m_model;
+}
+
+void AnimationsPage::askImport() {
+	if (m_model.isEmpty() || !m_animated) {
+		emit m_editor->message(tr("Pick a model first - the animation goes onto its skeleton"));
+		return;
+	}
+	if (m_animated->bones().empty()) {
+		emit m_editor->message(tr("%1 has no skeleton to animate").arg(m_model.section('/', -1)));
+		return;
+	}
+	const QString path = QFileDialog::getOpenFileName(this, tr("Add animation to %1").arg(m_model.section('/', -1)), QString(),
+	                                                  tr("Source animations (*.smd)"));
+	if (path.isEmpty()) return;
+	QFile file(path);
+	if (!file.open(QIODevice::ReadOnly)) {
+		emit m_editor->message(tr("Cannot read %1").arg(path));
+		return;
+	}
+	std::string error;
+	const auto smd = parseSmd(file.readAll().toStdString(), &error);
+	if (!smd) {
+		emit m_editor->message(tr("%1 is not a usable animation: %2").arg(QFileInfo(path).fileName(), qs(error)));
+		return;
+	}
+	const SkeletonMatch match = matchSkeleton(*smd, m_animated->bones());
+	// The options: what the new animation is called and how it plays.
+	QDialog dialog(this);
+	dialog.setWindowTitle(tr("Add animation"));
+	auto* form = new QFormLayout(&dialog);
+	QString about = tr("%1 frames · %2 of %3 bones match %4").arg(smd->frames.size()).arg(match.matched()).arg(smd->nodes.size()).arg(m_model.section('/', -1));
+	if (!match.notInModel.empty()) {
+		QStringList names;
+		for (const auto& n : match.notInModel) names << qs(n);
+		about += tr("\nNot in the model (ignored): %1").arg(names.mid(0, 8).join(", ") + (names.size() > 8 ? QStringLiteral(" ...") : QString()));
+	}
+	auto* info = new QLabel(about);
+	info->setWordWrap(true);
+	form->addRow(info);
+	auto* name = new QLineEdit(qs(sequenceNameFromFile(path.toStdString())));
+	form->addRow(tr("Name"), name);
+	auto* fps = new QDoubleSpinBox;
+	fps->setRange(1, 240);
+	fps->setValue(30);
+	fps->setSuffix(tr(" fps"));
+	form->addRow(tr("Speed"), fps);
+	auto* loop = new QCheckBox(tr("Loops (idles, walks)"));
+	form->addRow(QString(), loop);
+	auto* activity = new QComboBox;
+	activity->setEditable(true);
+	activity->addItems({QString(), "ACT_IDLE", "ACT_WALK", "ACT_RUN", "ACT_SIGNAL1", "ACT_COWER", "ACT_BUSY_LEAN_BACK", "ACT_BUSY_SIT_CHAIR"});
+	activity->setToolTip(tr("Optional: an activity lets the AI pick the animation by itself"));
+	form->addRow(tr("Activity"), activity);
+	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	buttons->button(QDialogButtonBox::Ok)->setText(tr("Add and preview"));
+	form->addRow(buttons);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	if (match.matched() == 0) {
+		buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+		info->setText(info->text() + tr("\nNone of its bones is in this model - it was made for another skeleton."));
+	}
+	if (dialog.exec() != QDialog::Accepted) return;
+	ImportedAnimation options;
+	options.name = sequenceNameFromFile(name->text().toStdString());
+	options.fps = float(fps->value());
+	options.loop = loop->isChecked();
+	options.activity = activity->currentText().trimmed().toStdString();
+	QString importError;
+	if (!importAnimation(path, options, &importError)) emit m_editor->message(importError);
+}
+
+bool AnimationsPage::importAnimation(const QString& smdPath, ImportedAnimation options, QString* error) {
+	const auto fail = [&](const QString& message) {
+		if (error) *error = message;
+		return false;
+	};
+	if (!m_animated || m_animated->bones().empty()) return fail(tr("Pick a model with a skeleton first"));
+	QFile file(smdPath);
+	if (!file.open(QIODevice::ReadOnly)) return fail(tr("Cannot read %1").arg(smdPath));
+	const QString text = QString::fromUtf8(file.readAll());
+	std::string parseError;
+	const auto smd = parseSmd(text.toStdString(), &parseError);
+	if (!smd) return fail(tr("%1 is not a usable animation: %2").arg(QFileInfo(smdPath).fileName(), qs(parseError)));
+	if (matchSkeleton(*smd, m_animated->bones()).matched() == 0) return fail(tr("None of the animation's bones is in %1").arg(m_model.section('/', -1)));
+	if (options.name.empty()) options.name = sequenceNameFromFile(smdPath.toStdString());
+	options.smdFile = options.name + ".smd";
+	if (originalModel().compare(m_importModel, Qt::CaseInsensitive) != 0) {
+		m_imports.clear();   // they belonged to another model
+		m_importModel = originalModel();
+	}
+	std::erase_if(m_imports, [&options](const PendingImport& p) { return iequals(p.options.name, options.name); });
+	m_imports.push_back({options, text});
+	addPreviewSequence(*m_animated, *smd, options);
+	showSequences();
+	selectSequence(qs(options.name));
+	setPlaying(true);
+	updatePendingBar();
+	emit m_editor->message(tr("\"%1\" added to %2 - it plays now; Build into the mod makes it part of the game").arg(qs(options.name), m_model.section('/', -1)));
+	return true;
+}
+
+void AnimationsPage::updatePendingBar() {
+	const bool busy = m_studiomdl && m_studiomdl->state() != QProcess::NotRunning;
+	m_pendingBar->setVisible(!m_imports.empty() || busy || !m_log->toPlainText().isEmpty());
+	QStringList names;
+	for (const auto& p : m_imports) names << qs(p.options.name);
+	if (busy) {
+		m_pendingLabel->setText(tr("Building %1 with studiomdl ...").arg(qs(animationModelPath(m_importModel.toStdString()))));
+	} else if (!m_imports.empty()) {
+		m_pendingLabel->setText(tr("New, not built yet: %1.\nBuilding makes %2: the model with all its animations and the new ones - "
+		                           "entities switch to it when you use a new animation on them.")
+		                            .arg(names.join(", "), qs(animationModelPath(m_importModel.toStdString()))));
+	}
+	m_compile->setVisible(!m_imports.empty());
+	m_compile->setEnabled(!busy);
+	m_progress->setVisible(busy);
+	m_log->setVisible(!m_log->toPlainText().isEmpty());
+}
+
+QString AnimationsPage::studiomdlProgram() const {
+	if (!m_studiomdlOverride.isEmpty()) return m_studiomdlOverride;
+	const QString vbsp = m_editor->gameSettings().vbsp;
+	if (vbsp.isEmpty()) return {};
+	const QFileInfo info(vbsp);
+	return info.dir().filePath(info.suffix().isEmpty() ? QStringLiteral("studiomdl") : QStringLiteral("studiomdl.exe"));
+}
+
+QString AnimationsPage::compileLog() const {
+	return m_log->toPlainText();
+}
+
+bool AnimationsPage::compileImports() {
+	const auto fail = [this](const QString& message) {
+		m_log->setPlainText(message);
+		updatePendingBar();
+		emit m_editor->message(message);
+		return false;
+	};
+	if (m_imports.empty()) return fail(tr("No new animation to build"));
+	if (m_studiomdl && m_studiomdl->state() != QProcess::NotRunning) return false;
+	const auto* entry = m_editor->gameEntry();
+	const auto* game = m_editor->game();
+	if (!entry || !game || !m_animated || !m_geometry) return fail(tr("The model is not loaded yet"));
+	const QString program = studiomdlProgram();
+	if (program.isEmpty() || !QFileInfo::exists(program)) {
+		return fail(tr("studiomdl was not found (%1). It comes with the game's SDK tools, next to vbsp.exe - check the game's tools in Compile settings.")
+		                .arg(program.isEmpty() ? tr("no SDK tools set") : program));
+	}
+	const QString original = m_importModel;
+	const QString gameDir = QString::fromStdString(entry->gameDir.generic_string());
+	const QString folder = QDir(gameDir).filePath(qs(animationSourceFolder(original.toStdString())));
+	if (!QDir().mkpath(folder)) return fail(tr("Cannot create %1").arg(folder));
+	const auto write = [](const QString& path, const QString& text) {
+		QFile file(path);
+		return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(text.toUtf8()) == text.toUtf8().size();
+	};
+	// Every animation added so far (the list next to the sources) and the new ones.
+	std::vector<ImportedAnimation> list;
+	if (QFile listFile(QDir(folder).filePath("animations.txt")); listFile.open(QIODevice::ReadOnly)) {
+		list = readAnimationList(listFile.readAll().toStdString());
+	}
+	for (const auto& pending : m_imports) {
+		std::erase_if(list, [&pending](const ImportedAnimation& a) { return iequals(a.name, pending.options.name); });
+		list.push_back(pending.options);
+		if (!write(QDir(folder).filePath(qs(pending.options.smdFile)), pending.smdText)) return fail(tr("Cannot write into %1").arg(folder));
+	}
+	// The original's triangles, skeleton, attachments, surface and keyvalues.
+	const auto mdl = game->files.read(original.toStdString());
+	ModelInfo info;
+	std::vector<ModelAttachment> attachments;
+	if (mdl) {
+		if (auto read = readModelInfo(*mdl)) info = std::move(*read);
+		attachments = readAttachments(*mdl);
+	}
+	const QString qc = qs(animationModelQc(original.toStdString(), *m_geometry, info, attachments, list));
+	if (!write(QDir(folder).filePath("reference.smd"), qs(referenceSmd(*m_geometry, m_animated->bones()))) ||
+	    !write(QDir(folder).filePath("animations.txt"), qs(writeAnimationList(list))) || !write(QDir(folder).filePath("model.qc"), qc)) {
+		return fail(tr("Cannot write into %1").arg(folder));
+	}
+	// studiomdl writes models/mapsmith/... into the game folder.
+	m_log->clear();
+	auto* process = new QProcess(this);
+	m_studiomdl = process;
+	process->setProcessChannelMode(QProcess::MergedChannels);
+	process->setWorkingDirectory(folder);
+#ifdef Q_OS_WIN
+	process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* arguments) { arguments->flags |= CREATE_NO_WINDOW; });
+#endif
+	connect(process, &QProcess::readyRead, this, [this, process] {
+		m_log->appendPlainText(QString::fromLocal8Bit(process->readAll()).remove('\r').trimmed());
+	});
+	connect(process, &QProcess::finished, this, [this, process, gameDir, original](int code, QProcess::ExitStatus status) {
+		process->deleteLater();
+		const QString built = qs(animationModelPath(original.toStdString()));
+		const bool ok = status == QProcess::NormalExit && code == 0 && QFileInfo::exists(QDir(gameDir).filePath(built));
+		if (ok) {
+			// The game's file list and the model cache see the new files at once.
+			if (auto* game = m_editor->game()) {
+				for (const char* extension : {".mdl", ".vvd", ".dx90.vtx", ".dx80.vtx", ".sw.vtx", ".phy", ".ani"}) {
+					const QString file = QDir(gameDir).filePath(built.chopped(4) + extension);
+					if (QFileInfo::exists(file)) game->files.noteWrittenFile(toPath(file));
+				}
+			}
+			if (m_editor->models()) m_editor->models()->forget(built);
+			m_imports.clear();
+			m_log->appendPlainText(tr("Built %1.").arg(built));
+			emit m_editor->message(tr("Built %1 - its new animations are in the list; Use on selected entity switches an entity to it").arg(built));
+			m_model.clear();   // shown again from the new files
+			selectModel(built);
+		} else {
+			m_log->appendPlainText(tr("studiomdl failed (exit code %1) - the lines above say why.").arg(code));
+			emit m_editor->message(tr("Building the animations failed - see the log on the Animations page"));
+		}
+		updatePendingBar();
+		emit compileFinished(ok);
+	});
+	connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+		if (error != QProcess::FailedToStart) return;
+		m_log->appendPlainText(tr("Could not start studiomdl: %1").arg(process->errorString()));
+		process->deleteLater();
+		updatePendingBar();
+		emit compileFinished(false);
+	});
+	process->start(program, {"-game", gameDir, "-nop4", "-verbose", QDir(folder).filePath("model.qc")});
+	updatePendingBar();
 	return true;
 }
 

@@ -49,8 +49,10 @@ namespace edit {
 /// Plays `sequence` on an entity (one undo step "Use animation"): a prop gets DefaultAnim, a
 /// scripted_sequence the given key (default: the Pre Action Idle), an NPC a pose helper - a
 /// scripted_sequence "<name>_pose" at its feet that keeps it in the animation (an existing one is
-/// updated). Empty Change if the entity cannot take it.
-[[nodiscard]] Change useSequence(MapDocument& doc, int entityId, std::string_view sequence, std::string_view key = {});
+/// updated). With `model`, the entity that moves (the prop, the NPC - also the NPC of a script)
+/// switches to that model in the same step (animations only a new model has). Empty Change if
+/// the entity cannot take it.
+[[nodiscard]] Change useSequence(MapDocument& doc, int entityId, std::string_view sequence, std::string_view key = {}, std::string_view model = {});
 
 } // namespace edit
 

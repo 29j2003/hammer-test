@@ -27,6 +27,16 @@ void ModelCache::setFileSystem(const GameFileSystem* fs, const EntityCatalog* ca
 	m_entries.clear();
 }
 
+void ModelCache::forget(const QString& path) {
+	for (auto it = m_entries.begin(); it != m_entries.end();) {
+		if (!it->loading && (it.key().compare(path, Qt::CaseInsensitive) == 0 || it.key().startsWith(path + '#', Qt::CaseInsensitive))) {
+			it = m_entries.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
 std::shared_ptr<const ModelGeometry> ModelCache::get(const QString& path) {
 	if (!m_fs || path.isEmpty()) {
 		return nullptr;

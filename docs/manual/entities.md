@@ -199,6 +199,46 @@ The **Models** button in the side bar shows every model of the game and its mods
 - You can also **drag** a model onto the **Map** button of the side bar; the map opens and you drop the model into a
   view. **Copy path** puts `models/.../name.mdl` on the clipboard.
 
+## The Animations page
+
+The **Animations** button in the side bar (under *Models*) plays the animations of any model.
+
+- **Models** on the left: **In this map** first (the models the map's NPCs and props use, most used first), then
+  **All models**. The search box finds them by words in their path.
+- **Pick a model** to see its animations on the right: its own and those it borrows from other models
+  (`$includemodel`, e.g. the citizens' walks from `male_shared.mdl`), each with its **activity** (`ACT_WALK` ...),
+  length (*pose* for a single frame) and where it comes from. The search above the list finds names and activities.
+- **Pick an animation** to play it in 3D: **▶ / ❚❚** (or **Space**) plays and pauses, the slider scrubs through it,
+  the speed box plays it from 0.1× to 2×, **Loop** repeats it (off: it stops on the last frame). Turn the model like
+  on the Models page.
+- **Used in this map** lists the entities that play one of the model's animations: a prop's *Default animation*, the
+  fields of a `scripted_sequence` (with the NPC it moves) and NPC poses. Click one to show that animation;
+  double-click to select the entity in the map.
+- **Use on selected entity** puts the shown animation on the selected entity: a prop plays it as *Default animation*,
+  an NPC gets a pose helper (see below), a `scripted_sequence` asks which field (*Pre Action Idle*, *Entry*,
+  *Action*, *Post Action Idle*, *Custom Move*). One undo step.
+- **▶** next to an animation field in *Object Properties* opens this page on that animation, playing.
+
+### Adding an animation
+
+**Add animation ...** brings an animation made in a 3D program onto the shown model: export it as **.smd**
+(Source's animation format, e.g. with Blender Source Tools) on the model's skeleton - the bone names must be those of
+the model (`ValveBiped.Bip01_...` for HL2's people). The dialog shows how many bones match and asks for a name, the
+speed (fps), whether it loops and an optional activity (lets the AI pick it by itself). The animation plays at once,
+marked *new - not built*.
+
+**Build into the mod** makes it part of the game with the game's own `studiomdl` (next to `vbsp.exe` in the SDK
+tools). Mapsmith does not change the original model: it builds a new one, `models/mapsmith/<same path>.mdl` in your
+mod, that has the original's triangles, skeleton and attachments, includes the original (so it keeps all of its
+animations) and adds the new ones. The sources stay in `modelsrc/mapsmith/<same path>/` of the mod (`model.qc`,
+`reference.smd`, one `.smd` per animation, `animations.txt`), so more animations can be added later. studiomdl's
+output is shown under the button; if it fails, its lines say why.
+
+Using a new animation on an entity switches the entity (the prop, or the NPC of a `scripted_sequence`) to the new
+model in the same step. Limits: the new model has no facial expressions (flexes), no LODs, only the body group options
+shown, no own collision model (props that need physics keep the original) and hitboxes made by studiomdl; `.fbx` is not
+read - export `.smd`.
+
 ## NPCs and animated models
 
 Select an NPC or a `prop_dynamic`. The **Animation / pose** box (**Animation** for props) lists the model's

@@ -57,7 +57,7 @@ struct StudioSequence {
 	bool delta = false;     ///< Adds onto another pose (gestures, layers)
 	float fps = 30;
 	int frames = 1;
-	int model = 0;          ///< Which file of the AnimatedModel holds it (0 = the model itself)
+	int model = 0;          ///< Which file of the AnimatedModel holds it (0 = the model itself, -1 = added frames)
 	int animation = 0;      ///< Its (first) animation in that file
 	/// Seconds one pass takes (at least one frame).
 	[[nodiscard]] float duration() const { return frames > 1 && fps > 0 ? float(frames - 1) / fps : 0.f; }
@@ -86,6 +86,11 @@ public:
 	[[nodiscard]] int findSequence(std::string_view name) const;
 	/// Paths of the files the sequences come from (index = StudioSequence::model).
 	[[nodiscard]] std::vector<std::string> files() const;
+
+	/// Adds a sequence made of plain frames (an animation being imported, for its preview):
+	/// frames[f][bone] is every bone's position and rotation relative to its parent. Its
+	/// StudioSequence::model is -1. Returns the sequence's index.
+	int addKeyframedSequence(StudioSequence sequence, std::vector<std::vector<std::pair<AnimVec, AnimQuat>>> frames);
 
 	/// The pose of every bone of the model (relative to its parent) at `cycle` (0 = first frame,
 	/// 1 = last frame) of the sequence; the rest pose for an unknown sequence.
@@ -128,6 +133,7 @@ private:
 
 	std::vector<File> m_files;
 	std::vector<StudioSequence> m_sequences;
+	std::vector<std::vector<std::vector<std::pair<AnimVec, AnimQuat>>>> m_keyframed;   ///< Frames of addKeyframedSequence's
 };
 
 /// The vertices moved by the skinning matrices (positions and normals, weights from

@@ -13,7 +13,7 @@ nav_order: 3
 
 The window has six parts, from left to right and top to bottom:
 
-1. **Side bar**: the pages *Map*, *Materials*, *Models*, *Sounds*, *Particles* and *Project*.
+1. **Side bar**: the pages *Map*, *Materials*, *Models*, *Animations*, *Sounds*, *Particles* and *Project*.
 2. **Tool strip**: the tools for building the map.
 3. **Top bar**: the game, undo and redo, selection modes, grid and snapping, view switches, *Check* and *Run map*.
 4. **Left panel**: the *Tool*, *Outliner*, *VisGroups*, *Map Look* and *History* tabs.

@@ -91,10 +91,18 @@ std::vector<SequenceUse> sequenceUses(const MapDocument& doc, const EntityCatalo
 
 namespace edit {
 
-Change useSequence(MapDocument& doc, int entityId, std::string_view sequence, std::string_view key) {
+Change useSequence(MapDocument& doc, int entityId, std::string_view sequence, std::string_view key, std::string_view model) {
 	const Entity* entity = doc.findEntity(entityId);
 	if (!entity || entityId == 0 || trim(sequence).empty()) return {};
 	const std::string name(trim(sequence));
+	const std::string newModel = normalizePath(model);
+	// The entity that moves takes the new model (a script's NPC, found by name).
+	const auto switchModel = [&](Transaction& t, int actorId) {
+		Entity* actor = doc.findEntity(actorId);
+		if (!actor || newModel.empty() || iequals(normalizePath(actor->get("model")), newModel)) return;
+		t.touchEntity(actorId);
+		doc.findEntity(actorId)->set("model", newModel);
+	};
 	const auto keys = sequenceKeys(entity->classname());
 	if (!keys.empty()) {
 		std::string target = keys.front().key;
@@ -104,12 +112,22 @@ Change useSequence(MapDocument& doc, int entityId, std::string_view sequence, st
 		Transaction t(doc, "Use animation");
 		t.touchEntity(entityId);
 		doc.findEntity(entityId)->set(target, name);
+		int actor = entityId;
+		if (isScriptClass(entity->classname())) {
+			actor = 0;
+			const std::string npcName = doc.findEntity(entityId)->get("m_iszEntity");
+			for (const auto& other : doc.entities) {
+				if (!npcName.empty() && !isScriptClass(other.classname()) && iequals(other.get("targetname"), npcName)) actor = other.id;
+			}
+		}
+		if (actor) switchModel(t, actor);
 		return t.finish();
 	}
 	if (!isNpcClass(entity->classname())) return {};
 	// An NPC: a scripted_sequence at its feet keeps it in the animation (its pose helper).
 	Transaction t(doc, "Use animation");
 	t.touchEntity(entityId);
+	switchModel(t, entityId);
 	Entity* npc = doc.findEntity(entityId);
 	std::string npcName = npc->get("targetname");
 	if (npcName.empty()) {
