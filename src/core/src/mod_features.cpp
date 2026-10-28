@@ -326,7 +326,8 @@ std::vector<GeneratedFile> generatedModFiles(const fs::path& modDir) {
 		if (isFile(modDir / "bin" / dll)) add(modDir / "bin" / dll, "shader DLL of mapbase-fidelity", false);
 	}
 	if (isFile(modDir / "cfg" / "fidelity.cfg")) add(modDir / "cfg" / "fidelity.cfg", "settings of mapbase-fidelity", false);
-	if (const auto lights = modDir / "fidelity_lights.rad"; isFile(lights) && firstLine(lights).starts_with("// mapbase-fidelity: generated")) {
+	if (const auto lights = modDir / "fidelity_lights.rad"; isFile(lights) && (firstLine(lights).starts_with("// mapbase-fidelity: generated") ||
+	                                                                           firstLine(lights) == "noshadow mapbase_fidelity_generated_by_deploy_ps1")) {
 		add(lights, "light list made by deploy.bat", false);
 	}
 	const auto previews = modDir / "fidelity_preview";

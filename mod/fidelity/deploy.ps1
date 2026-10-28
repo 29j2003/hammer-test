@@ -322,6 +322,14 @@ function Get-ContainerModels([string[]]$Folders, [hashtable]$Materials) {
 
 # ------------------------------------------------------------ baked light ---
 $LightsFile = 'fidelity_lights.rad'
+# VRAD's lights files have no comments: every line that is not blank is read as
+# "texture R G B brightness", "noshadow <material>" or "forcetextureshadow <model>"
+# (vrad.cpp ReadLightFile) - a "// ..." line became a texlight named "//"
+# ("unknown light specifier type", then "ERROR: Duplication of '//'" for each
+# further one). So the file carries no comments; its first line marks it as
+# deploy.ps1's own: a noshadow entry no material name contains (VRAD reads it
+# without a message, it changes nothing).
+$LightsMarker = 'noshadow mapbase_fidelity_generated_by_deploy_ps1'
 
 # ---------------------------------------------------------- distant sounds ---
 # Far-away versions of these game sounds (sound_distant.cs); client.dll knows the names
@@ -387,6 +395,34 @@ function Get-TexlightColor($Reflectivity) {
     $max = ($c | Measure-Object -Maximum).Maximum
     if ($max -le 0.0001) { return '255 255 255' }
     return (($c | ForEach-Object { [int][Math]::Round(255 * [Math]::Pow($_ / $max, 1 / 2.2)) }) -join ' ')
+}
+
+# deploy.ps1 made this lights file: its marker line first (earlier versions: a
+# "// mapbase-fidelity: generated" comment)
+function Test-OwnLightsFile([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $first = Get-FirstLine $Path
+    return ($first -eq $LightsMarker) -or ($first -like "$GeneratedMarker*")
+}
+
+# Folders whose lights.rad VRAD may read as the game's: the game folders, the
+# mod, the shared Mapbase content (VRAD finds "lights.rad" on the mod's search
+# paths) and the SDK's bin folder (VRAD's fallback next to vrad.exe)
+function Get-LightsRadFolders([string]$Game, [string[]]$VpkFolders) {
+    $folders = @($VpkFolders) + @($Game)
+    if ($env:FIDELITY_VPK_DIRS) { return $folders }
+    foreach ($library in Get-SteamLibraries $Game) {
+        foreach ($app in @('Source SDK Base 2013 Singleplayer', 'Half-Life 2')) {
+            $bin = Join-Path $library "common/$app/bin"
+            if (Test-Path -LiteralPath $bin) { $folders += $bin }
+        }
+        $shared = Join-Path $library 'sourcemods/mapbase_shared'
+        if (Test-Path -LiteralPath $shared) {
+            $folders += $shared
+            $folders += @(Get-ChildItem -LiteralPath $shared -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        }
+    }
+    return $folders
 }
 
 # Texture names a lights.rad in these folders already lists (they stay as they are)
@@ -1069,7 +1105,7 @@ if ($Remove) {
     Remove-GeneratedHeights $Game @{}
     Remove-DistantSounds $Game @{}
     $lights = Join-Path $Game $LightsFile
-    if ((Get-FirstLine $lights) -like "$GeneratedMarker*") { Remove-Item -LiteralPath $lights -Force }
+    if (Test-OwnLightsFile $lights) { Remove-Item -LiteralPath $lights -Force }
     foreach ($name in @($ShaderDll, $OldShaderDll)) {
         $dll = Join-Path $Game "bin/$name"
         if (Test-Path -LiteralPath $dll) { Remove-Item -LiteralPath $dll -Force }
@@ -1304,7 +1340,7 @@ if ($NoSheen) {
 
 # ------------------------------------------------------------ baked light ---
 $lightsTarget = Join-Path $Game $LightsFile
-$lightsOurs = -not (Test-Path -LiteralPath $lightsTarget) -or ((Get-FirstLine $lightsTarget) -like "$GeneratedMarker*")
+$lightsOurs = -not (Test-Path -LiteralPath $lightsTarget) -or (Test-OwnLightsFile $lightsTarget)
 if ($NoLights) {
     if ((Test-Path -LiteralPath $lightsTarget) -and $lightsOurs) { Remove-Item -LiteralPath $lightsTarget -Force }
     Write-Host "  skipped  baked light (-NoLights)"
@@ -1349,7 +1385,7 @@ if ($NoLights) {
     }
 
     # Textures the game's lights.rad already lights stay as they are
-    $known = Get-KnownTexlights (@($vpkFolders) + @($Game))
+    $known = Get-KnownTexlights (Get-LightsRadFolders $Game $vpkFolders)
     foreach ($name in @($glowing.Keys)) { if ($known.ContainsKey($name)) { $glowing.Remove($name) } }
 
     # Colours from the .vtf headers (the mod's own first, then the game's archives)
@@ -1357,16 +1393,13 @@ if ($NoLights) {
     foreach ($texture in $glowing.Values) { $needed["materials/$texture.vtf"] = $true }
     $colors = Get-VtfColors $Game $vpkFolders $needed
 
-    $lines = @(
-        ($GeneratedMarker + ' (lights) - delete this line to keep your own changes'),
-        '// Extra VRAD lights file: compile with  -lights fidelity_lights.rad -textureshadows',
-        '// Glowing wall textures ($selfillum) not in the game''s lights.rad: "texture R G B brightness".',
-        '// Delete a line to keep a texture dark, change the last number to make it brighter or darker.'
-    )
+    # No comments (see $LightsMarker): glowing wall textures ($selfillum) not in the
+    # game's lights.rad as "texture R G B brightness", then leaf shadows for foliage.
+    # Delete the first line to keep own changes; deploy.ps1 then leaves the file alone.
+    $lines = @($LightsMarker)
     foreach ($name in ($glowing.Keys | Sort-Object)) {
         $lines += "$name $(Get-TexlightColor $colors["materials/$($glowing[$name]).vtf"]) $TexlightBrightness"
     }
-    $lines += '// Foliage casts leaf shadows (texture alpha) instead of solid blocks (needs -textureshadows).'
     foreach ($model in ($foliage.Keys | Sort-Object)) { $lines += "forcetextureshadow $model" }
     Write-Text $lightsTarget (($lines -join "`r`n") + "`r`n")
     Write-Host "  lights   $($glowing.Count) glowing wall textures, $($foliage.Count) foliage models -> $LightsFile"

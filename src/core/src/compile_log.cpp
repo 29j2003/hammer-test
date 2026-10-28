@@ -5,6 +5,8 @@
 #include <sme/text.h>
 
 #include <array>
+#include <cstring>
+#include <cstdint>
 #include <cctype>
 
 namespace sme {
@@ -120,6 +122,109 @@ std::string compilePhase(std::string_view line) {
 		return {};
 	}
 	return std::string(trim(line.substr(0, colon)));
+}
+
+namespace {
+
+std::uint32_t readU32(std::span<const std::byte> data, std::size_t at) {
+	return static_cast<std::uint32_t>(data[at]) | (static_cast<std::uint32_t>(data[at + 1]) << 8) | (static_cast<std::uint32_t>(data[at + 2]) << 16) |
+	       (static_cast<std::uint32_t>(data[at + 3]) << 24);
+}
+std::uint16_t readU16(std::span<const std::byte> data, std::size_t at) {
+	return static_cast<std::uint16_t>(static_cast<unsigned>(data[at]) | (static_cast<unsigned>(data[at + 1]) << 8));
+}
+
+/// "materials/maps/<map>/c-512_256_64.vtf" or ".hdr.vtf" (the names the game gives built cubemaps).
+bool isBuiltCubemapName(std::string_view name, std::string_view prefix) {
+	const std::string lower = toLower(name);
+	if (!lower.starts_with(prefix)) return false;
+	std::string_view rest = std::string_view(lower).substr(prefix.size());
+	if (rest.ends_with(".hdr.vtf")) rest.remove_suffix(8);
+	else if (rest.ends_with(".vtf")) rest.remove_suffix(4);
+	else return false;
+	int numbers = 0;
+	bool digit = false;
+	for (std::size_t i = 0; i < rest.size(); ++i) {
+		const char c = rest[i];
+		if (c >= '0' && c <= '9') {
+			digit = true;
+		} else if (c == '-' && !digit) {
+		} else if (c == '_' && digit) {
+			++numbers;
+			digit = false;
+		} else {
+			return false;
+		}
+	}
+	return digit && numbers == 2;
+}
+
+} // namespace
+
+std::optional<BspCubemaps> readBspCubemaps(std::span<const std::byte> bsp, std::string_view mapName) {
+	constexpr std::size_t HEADER = 8 + 64 * 16 + 4;
+	if (bsp.size() < HEADER || std::memcmp(bsp.data(), "VBSP", 4) != 0) return std::nullopt;
+	const auto lump = [&](int index) -> std::optional<std::span<const std::byte>> {
+		const std::size_t at = 8 + static_cast<std::size_t>(index) * 16;
+		const std::uint32_t offset = readU32(bsp, at), length = readU32(bsp, at + 4);
+		if (offset > bsp.size() || length > bsp.size() - offset) return std::nullopt;
+		return bsp.subspan(offset, length);
+	};
+	BspCubemaps out;
+	const auto samples = lump(42);   // LUMP_CUBEMAPS: dcubemapsample_t, 16 bytes each
+	if (!samples) return std::nullopt;
+	out.samples = static_cast<int>(samples->size() / 16);
+	const auto pak = lump(40);       // LUMP_PAKFILE: an uncompressed zip
+	if (!pak) return std::nullopt;
+	if (pak->size() < 22) return out;
+	// End of central directory: the last "PK\5\6" (a comment may follow it).
+	std::size_t eocd = std::string::npos;
+	const std::size_t lowest = pak->size() > 22 + 65535 ? pak->size() - 22 - 65535 : 0;
+	for (std::size_t at = pak->size() - 22 + 1; at-- > lowest;) {
+		if (readU32(*pak, at) == 0x06054b50u) {
+			eocd = at;
+			break;
+		}
+	}
+	if (eocd == std::string::npos) return out;
+	const std::size_t entries = readU16(*pak, eocd + 10);
+	std::size_t at = readU32(*pak, eocd + 16);
+	const std::string prefix = "materials/maps/" + toLower(mapName) + "/c";
+	for (std::size_t i = 0; i < entries; ++i) {
+		if (at > pak->size() || pak->size() - at < 46 || readU32(*pak, at) != 0x02014b50u) break;
+		const std::size_t nameLength = readU16(*pak, at + 28), extra = readU16(*pak, at + 30), comment = readU16(*pak, at + 32);
+		if (pak->size() - at - 46 < nameLength) break;
+		const std::string_view name(reinterpret_cast<const char*>(pak->data() + at + 46), nameLength);
+		if (isBuiltCubemapName(name, prefix)) ++out.built;
+		at += 46 + nameLength + extra + comment;
+	}
+	return out;
+}
+
+CubemapVerdict judgeCubemapBuild(int exitCode, bool crashed, const std::optional<BspCubemaps>& before, const std::optional<BspCubemaps>& after,
+                                 bool mapRewritten) {
+	CubemapVerdict v;
+	if (!after) {
+		v.message = crashed ? "The game crashed while building the cubemaps, and the map in maps/ cannot be read."
+		                    : "The map in maps/ cannot be read after building the cubemaps - compile again.";
+		return v;
+	}
+	if (after->samples == 0) {
+		v.ok = true;
+		v.message = "The map has no env_cubemap, so there was nothing to build (shiny materials reflect the sky).";
+		return v;
+	}
+	const int built = after->built;
+	const bool newer = mapRewritten || !before || built > before->built;
+	if (built > 0 && newer) {
+		v.ok = true;
+		v.message = std::to_string(built) + " cubemap" + (built == 1 ? "" : "s") + " built into the map" +
+		            (exitCode != 0 ? " (the game always ends with exit code " + std::to_string(exitCode) + " after building - that is fine)." : ".");
+		return v;
+	}
+	v.message = crashed ? "The game crashed while building the cubemaps; the map has none built."
+	                    : "The game ended (exit code " + std::to_string(exitCode) + ") without building cubemaps into maps/ - start it once by hand and look at its console.";
+	return v;
 }
 
 } // namespace sme
