@@ -73,6 +73,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `material`, `texture`, `assets` | VMT inkl. `patch`, VTF → RGBA (vtfpp), Material-Kategorien, MDL-Kopf (Sequenzen, `$includemodel`), Soundscripts (mit Dateien, Kanal, Lautstärke, Pitch, Soundlevel; schreiben/ersetzen, Manifest ergänzen), Soundscapes (Übersicht; Bearbeiten in `soundscape`), „Meintest du …“; `editMaterialText` ändert nur die genannten Parameter im VMT-Text (Proxies, Reihenfolge, `[$WIN32]` bleiben; Patch → `insert`/`replace`) |
 | `audio` | Sounds decodieren: WAV (PCM 8/16/24/32, Float, MS-ADPCM, IMA-ADPCM, MP3 in WAV), MP3 (minimp3), OGG (stb_vorbis; beide als Einzeldatei mit Hash gepinnt, gebaut in `codecs*.c`); Loop-Punkt aus `cue`/`smpl`; Wellenform |
 | `soundscape` | Soundscape-Skripte lesen und schreiben (Regeln, DSP-Namen, Manifest), Details unter „Oberfläche – Einzelheiten“ |
+| `sound_categories` | Kategorien der Sounds-Seite (Waffen, NPCs, Umgebung, Physik, Spieler, Fahrzeuge, Türen, Musik, Oberfläche, Stimmen, Sonstiges): Dateien nach dem ersten Ordner, sonst nach Wörtern im Pfad; Soundscript-Einträge nach dem Namen (`Weapon_…`, `Wood.Impact…`, `….Step…`), sonst nach ihrer ersten Datei; `soundFolder` |
+| `sound_edit` | Sounds bearbeiten (rein, ohne Dateien): `trimmed`, `cut`, `silence`, `fadeIn`/`fadeOut`, `applyGain`, `normalize`, `reverse` auf einem Frame-Bereich (`FrameRange`, leer = alles; der Loop-Punkt wandert mit); `resampled`/`speedChanged` mit gefensterter Sinc-Interpolation (filtert beim Heruntertakten), `toMono`; `encodeWav` schreibt 16-bit-PCM mit `cue `-Punkt (den liest Source) und `smpl`-Loop |
 | `studio_model` | Dreiecke eines Modells aus `.mdl` (Bodyparts, Meshes, Skins, `$cdmaterials`), `.vvd` (Vertices, Fixups) und `.dx90.vtx` (LOD 0, Strip-Groups 25/33 Byte); Referenz-Pose, alles grenzgeprüft |
 | `particles` | Partikelsysteme aus PCF (DMX über sourcepp), Vorschau-Simulation `ParticleSimulation`, Demo-PCF schreiben |
 | `entity_catalog` | FGDs laden (toolpp), Basisklassen auflösen, Helfer (`studio`, `size`, `color`, `iconsprite`); Editor-Sprite einer Klasse/Entity: `edit::classSprite`, `edit::entitySprite` (`sprite()` → eigenes `model`) |
@@ -117,7 +119,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `asset_browser` | Dock Asset Browser: Materialien und Modelle, Indizierung im Hintergrund |
 | `models_page`, `model_viewer` | Seite Models: Ordnerbaum + Suche + Vorschaubilder, 3D-Ansicht (OpenGL, Skins, Bodygroups, Drahtgitter), Infos, „Place in map“ |
 | `material_editor`, `material_preview` | Seite Materials: VMT bearbeiten, Live-Vorschau (OpenGL), Schalter für die mapbase-fidelity-Shader |
-| `sound_browser`, `sound_player`, `soundscape_editor` | Seite/Dock Sounds: Liste, Wiedergabe (QAudioSink, optional), Soundscript- und Soundscape-Editor |
+| `sound_browser`, `sound_player`, `soundscape_editor` | Seite/Dock Sounds: Kategorien, Baum, Wiedergabe (QAudioSink, optional), Sound bearbeiten und als WAV speichern, Soundscript- und Soundscape-Editor |
 | `particle_browser` | Seite/Dock Particles: Liste, Vorschau (`ParticlePreview`), Teile als Karten |
 | `tool_panel` | Dock Tool: Optionen des Werkzeugs, Formen, Entity-Liste (`EntityPicker`) |
 | `properties_panel`, `properties_instance` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose, Justify; func_instance-Kasten |
@@ -162,10 +164,22 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 - `AssetBrowser` indiziert im Hintergrund alle Materialien (mit Kategorie) und Modelle. Modelle: `ModelCache` (gehört dem
   `Editor`, lädt in Threads, meldet `modelReady`, trägt die Modellgröße in den `EntityCatalog` ein → Auswahlbox passt),
   `ModelThumbnails` zeichnet Vorschaubilder per CPU (kein GL-Kontext nötig) nur für sichtbare Einträge.
-- Sounds-Seite bzw. -Dock (`SoundBrowser`): drei Spalten – Liste (Soundscripts gruppiert, Dateien, Soundscapes) | Player mit
-  Wellenform (`SoundWaveform`) | Soundscript-Eintrag (speichert in `scripts/game_sounds_<mod>.txt` + Manifest). Klick
-  decodiert im Hintergrund (`decodeAudio`) und spielt über `SoundPlayer` (QAudioSink im Format des Geräts, eigene
-  Umrechnung von Rate/Kanälen; kein FFmpeg-Plugin nötig, Gerät erst beim ersten Abspielen geöffnet).
+- Sounds-Seite bzw. -Dock (`SoundBrowser`): Kategorien-Liste (Zahlen je Kategorie, „All sounds“, „Soundscapes“) | Baum
+  (je Kategorie ein Zweig, darin Ordner; Soundscript-Einträge stehen im Ordner ihrer ersten Datei vor den Dateien, damit
+  `Weapon_Pistol.Single` bei `weapons/pistol/*.wav` liegt) | rechts Player + Bearbeiten und darunter (Seite, hoch) bzw.
+  daneben (Dock, niedrig; `resizeEvent` dreht den Splitter) der Soundscript-Eintrag oder der Soundscape-Editor. Suchen
+  geht über alle Kategorien. Beim ersten Füllen ist die erste Kategorie mit Sounds gewählt und ihr erster Sound gezeigt
+  (ohne Abspielen). `reveal(name, kind)` wählt Kategorie und Eintrag (z. B. „Edit soundscape“ der Eigenschaften).
+  Klick decodiert im Hintergrund (`decodeAudio`) und spielt über `SoundPlayer` (QAudioSink im Format des Geräts, eigene
+  Umrechnung von Rate/Kanälen; kein FFmpeg-Plugin nötig, Gerät erst beim ersten Abspielen geöffnet). Speichert Einträge
+  in `scripts/game_sounds_<mod>.txt` + Manifest.
+- Sound bearbeiten: `SoundWaveform` wählt per Ziehen einen Bereich (Shift erweitert; Klick ohne Ziehen spielt ab dort).
+  Jede Funktion (`sound_edit`) ist ein Schritt in einem eigenen Undo-Stapel des Browsers (`applyEdit`, `undoEdit`,
+  `redoEdit`, „Revert“); er gilt für den gezeigten Sound und wird beim Laden eines anderen geleert. „▶ Selection“
+  spielt eine Kopie des Bereichs (Abspielkopf mit Versatz). `saveEdited` schreibt `encodeWav` nach
+  `sound/<pfad>.wav` im Mod-Ordner (nie ins Spiel; eine vorhandene Datei der Mod nur nach Rückfrage; Pfade mit `..`,
+  `:` oder absolut werden abgelehnt); Vorschlag ist der Pfad des gezeigten Sounds (die Mod spielt ihn dann statt des
+  Spiel-Sounds). Mit „+ sound script entry“ landet die Datei im Eintrag rechts und `saveEntry` speichert ihn.
 - Soundscape-Editor (`SoundscapeEditor`, `soundscape_editor.cpp`): rechte Spalte des Sound-Browsers (Stapel mit dem
   Soundscript-Eintrag). Kern-Modul `soundscape`: `parseSoundscapes` liest alle Regeln (`playlooping`, `playrandom` mit
   `rndwave`, `playsoundscape`, unbekannte Blöcke als `Other`), Unbekanntes bleibt in `extra`; `upsertSoundscape`/

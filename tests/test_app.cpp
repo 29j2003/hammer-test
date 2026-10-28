@@ -54,6 +54,7 @@
 #include <QStandardPaths>
 #include <QToolButton>
 
+#include <sme/audio.h>
 #include <sme/brush.h>
 #include <sme/entity_search.h>
 #include <sme/text.h>
@@ -1413,6 +1414,97 @@ TEST_CASE("editing with the mouse in the real window") {
 			REQUIRE(removed.wait(10000));
 			CHECK(sounds->tree()->findItems("mymod.cave", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
 			CHECK_FALSE(sounds->tree()->findItems("demo.outside", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+		}
+		{
+			// Categories: the sounds sorted by what they are, scripts beside the files of their folder.
+			window.showPage(MainWindow::Page::Sounds);
+			settle();
+			QStringList categoryTexts;
+			for (int i = 0; i < sounds->categories()->count(); ++i) categoryTexts << sounds->categories()->item(i)->text();
+			CHECK(categoryTexts.front().startsWith("All sounds"));
+			REQUIRE(categoryTexts.filter("Weapons").size() == 1);
+			CHECK(categoryTexts.filter("Weapons").front().endsWith(" 2"));   // Weapon_Pistol.Single and its file
+			CHECK(categoryTexts.filter("Doors and buttons").front().endsWith(" 2"));
+			CHECK(categoryTexts.filter("Voice and dialogue").front().endsWith(" 2"));   // NPC_Citizen.Hello speaks
+			CHECK(categoryTexts.back().startsWith("Soundscapes"));
+			QSignalSpy loaded(sounds, &SoundBrowser::audioLoaded);
+			auto* pistol = sounds->reveal("pistol_fire2.wav", SoundBrowser::FileSound);
+			REQUIRE(pistol);
+			CHECK(sounds->categories()->currentItem()->text().startsWith("Weapons"));
+			CHECK_FALSE(pistol->isHidden());
+			CHECK(pistol->parent()->text(0) == "weapons/pistol");
+			CHECK(pistol->parent()->child(0)->text(0) == "Weapon_Pistol.Single");
+			// Searching finds things in other categories too.
+			sounds->findChild<QLineEdit*>("soundSearch")->setText("squeak");
+			QTest::qWait(400);
+			const auto squeak = sounds->tree()->findItems("Doors.Squeak", Qt::MatchExactly | Qt::MatchRecursive);
+			REQUIRE(squeak.size() == 1);
+			CHECK_FALSE(squeak.front()->isHidden());
+			CHECK(pistol->isHidden());
+			sounds->findChild<QLineEdit*>("soundSearch")->clear();
+			QTest::qWait(400);
+			REQUIRE((sounds->currentAudio() || loaded.wait(10000)));
+			auto audio = sounds->currentAudio();
+			REQUIRE(audio);
+			const std::size_t frames = audio->frames();
+			CHECK(frames == 22050 * 4 / 10);
+
+			// Edit: select the middle half with the mouse, trim to it, fade out, undo and redo.
+			auto* wave = sounds->waveform();
+			REQUIRE(wave->isVisible());
+			const int w = wave->width(), h = wave->height();
+			QTest::mousePress(wave, Qt::LeftButton, {}, QPoint(w / 4, h / 2));
+			QTest::mouseMove(wave, QPoint(w / 2, h / 2));
+			QTest::mouseMove(wave, QPoint(w * 3 / 4, h / 2));
+			QTest::mouseRelease(wave, Qt::LeftButton, {}, QPoint(w * 3 / 4, h / 2));
+			const auto selected = wave->selection();
+			CHECK(double(selected.size()) == doctest::Approx(frames / 2.0).epsilon(0.03));
+			const auto click = [&](const char* name) {
+				auto* button = sounds->findChild<QToolButton*>(name);
+				REQUIRE(button);
+				REQUIRE(button->isEnabled());
+				button->click();
+			};
+			click("soundTrim");
+			REQUIRE(sounds->currentAudio()->frames() == selected.size());
+			CHECK(sounds->edited());
+			CHECK(sounds->currentAudio()->samples.front() == audio->samples[selected.begin]);
+			click("soundFadeOut");   // no selection after the length changed: the last tenth
+			CHECK(sounds->currentAudio()->samples.back() == 0);
+			click("soundUndo");
+			click("soundUndo");
+			CHECK(sounds->currentAudio()->frames() == frames);
+			CHECK_FALSE(sounds->edited());
+			click("soundRedo");
+			click("soundRedo");
+			CHECK(sounds->currentAudio()->samples.back() == 0);
+			const auto editedFrames = sounds->currentAudio()->frames();
+
+			// Save as a WAV into the mod, with a sound script entry for it.
+			sounds->findChild<QLineEdit*>("soundSaveName")->setText("mymod/pistol_short.wav");
+			sounds->findChild<QLineEdit*>("soundEntryName")->setText("MyMod.PistolShort");
+			sounds->findChild<QCheckBox*>("soundSaveScript")->setChecked(true);
+			QSignalSpy savedIndex(sounds, &SoundBrowser::indexed);
+			sounds->findChild<QPushButton*>("soundSaveWav")->click();
+			REQUIRE(savedIndex.wait(10000));
+			QFile savedFile(fromPath(f.mod / "sound/mymod/pistol_short.wav"));
+			REQUIRE(savedFile.open(QIODevice::ReadOnly));
+			const QByteArray bytes = savedFile.readAll();
+			const auto back = decodeAudio(std::span(reinterpret_cast<const std::byte*>(bytes.constData()), std::size_t(bytes.size())));
+			REQUIRE(back);
+			CHECK(back->frames() == editedFrames);
+			CHECK(back->sampleRate == 22050);
+			CHECK(back->format == "PCM 16 bit");
+			QFile script(fromPath(f.mod / "scripts/game_sounds_mymod.txt"));
+			REQUIRE(script.open(QIODevice::ReadOnly));
+			const QString scriptText = script.readAll();
+			CHECK(scriptText.contains("MyMod.PistolShort"));
+			CHECK(scriptText.contains("mymod/pistol_short.wav"));
+			CHECK_FALSE(sounds->tree()->findItems("pistol_short.wav", Qt::MatchExactly | Qt::MatchRecursive).isEmpty());
+			CHECK_FALSE(sounds->edited());
+			window.grab().save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/sounds_page.png");
+			window.showPage(MainWindow::Page::Map);
+			settle();
 		}
 		const auto drop = [&](const char* format, const QByteArray& data) {
 			QMimeData mime;

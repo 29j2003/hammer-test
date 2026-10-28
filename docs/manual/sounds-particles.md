@@ -16,15 +16,18 @@ more room; in the bottom panel you can drag sounds into the map while you build.
 
 ![The Sounds page](images/sounds.png)
 
-On the left is a tree of everything the game can play:
+On the left is the list of **categories**: *Weapons*, *NPCs and creatures*, *Ambient*, *Physics and impacts*,
+*Player*, *Vehicles*, *Doors and buttons*, *Music*, *Interface*, *Voice and dialogue* and *Other*, each with the number
+of sounds, plus *All sounds* and *Soundscapes*. Mapsmith sorts by the folders (`weapons/`, `npc/`, `vo/` ...) and by
+the names of sound script entries (`Weapon_Pistol.Single`, `Wood.ImpactHard`).
 
-- **Sound scripts**: named entries like `Doors.Squeak`, defined in `scripts/game_sounds_*.txt`. Most entities that
-  play sounds want these names.
-- **Sound files**: the `.wav`, `.mp3` and `.ogg` files below `sound/`.
-- **Soundscapes**: ambient sound setups from `scripts/soundscapes_*.txt`.
+Next to it the tree shows the chosen category by folder. In each folder come first the **sound scripts** (orange: named
+entries like `Doors.Squeak` from `scripts/game_sounds_*.txt`, which most entities want) and then the **sound files**
+(`.wav`, `.mp3`, `.ogg` below `sound/`). A script sits in the folder of its first file, so `Weapon_Pistol.Single` is
+right next to `weapons/pistol/pistol_fire2.wav`. Open a script to see its files.
 
-Type in **Search sounds, files and soundscapes (words: door metal) ...** to filter; the list next to it limits the tree
-to one kind.
+Type in **Search all sounds and soundscapes (words: door metal) ...** to search every category at once; the list
+next to it shows only scripts or only files.
 
 ### Listening
 
@@ -41,6 +44,35 @@ Mapsmith plays WAV (including ADPCM), MP3 and OGG files itself.
 - **Drag** a soundscape into the view: it becomes an `env_soundscape` with that soundscape.
 - **Double-click** sets the sound on the selected entity.
 - **Ctrl+C** copies the name; Ctrl+V pastes it into any field.
+
+### Editing a sound
+
+Below the waveform are the edit tools. They work on the **selection** - drag across the waveform to select a part
+(Shift+drag changes it) - or on the whole sound when nothing is selected. The line above the tools shows what is
+selected.
+
+| Tool | What it does |
+|---|---|
+| **Trim to selection** | keeps only the selected part |
+| **Cut** | removes the selected part |
+| **Silence** | makes the selected part silent |
+| **Fade in** / **Fade out** | over the selection; without one over the first / last tenth |
+| **Normalize** | as loud as possible without clipping (peak at -1 dB) |
+| **Reverse** | backwards |
+| **Gain** | louder or quieter by the decibels next to it (6 dB is twice as loud) |
+| **Speed** | faster and higher above 100 %, slower and lower below, like a tape |
+| **Sample rate ...** | 44100, 22050 or 11025 Hz, the rates the Source engine plays well |
+| **Mono** | one channel; sounds placed in the world should be mono |
+| **Loop from here** / **No loop** | the game repeats the sound from the selection's start to the end, or plays it once |
+
+**▶ Selection** plays only the selected part. **↶ Undo**, **↷ Redo** and **Revert** step through your edits of this
+sound; *● edited* next to its name means there are unsaved changes.
+
+**Save WAV to the mod** writes the result as a 16-bit WAV below the mod's `sound/` folder, at the path in **Save as
+sound/**. It suggests the path of the sound you opened: a file there replaces the game's sound in your mod. Mapsmith
+never writes into the game's own folders; replacing a file your mod already has asks first. With **+ sound script
+entry** the file also goes into the sound script entry on the right, which is saved with it (give it a name first, or
+Mapsmith makes one from the mod and file name).
 
 ### Sound script entries
 
