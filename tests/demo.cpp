@@ -540,12 +540,52 @@ void createDemo(Fixture& f) {
 	// Model with animations (sequences shared through an include model, like HL2's citizens).
 	// A stand-in person made of boxes (real .mdl/.vvd/.vtx files, so the viewport and the
 	// model browser show it like any model of the game).
-	writeStudioModel(f.mod / "models/humans/group01/male_07.mdl",
-	                 makeStudioModel({{-7, -10, 0, 7, -2, 34}, {-7, 2, 0, 7, 10, 34},     // legs
-	                                  {-8, -12, 34, 8, 12, 60}, {-6, -18, 36, 6, -12, 58}, {-6, 12, 36, 6, 18, 58},   // body, arms
-	                                  {-5, -5, 60, 6, 5, 72}},                            // head
-	                                 {"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"}, "models/humans/male_shared.mdl", "male_sheet",
-	                                 "models/humans/"));
+	// It has a skeleton like HL2's (ValveBiped bones) and animations of its own; the walk cycles
+	// come from the shared model, as in the game.
+	const std::vector<StudioModelSpec::Bone> skeleton = {
+		{"ValveBiped.Bip01_Pelvis", -1, {0, 0, 34}, {0, 0, 0}},     {"ValveBiped.Bip01_Spine", 0, {0, 0, 0}, {0, 0, 0}},
+		{"ValveBiped.Bip01_Head1", 1, {0, 0, 26}, {0, 0, 0}},       {"ValveBiped.Bip01_L_UpperArm", 1, {0, 15, 24}, {0, 0, 0}},
+		{"ValveBiped.Bip01_R_UpperArm", 1, {0, -15, 24}, {0, 0, 0}}, {"ValveBiped.Bip01_L_Thigh", 0, {0, 6, 0}, {0, 0, 0}},
+		{"ValveBiped.Bip01_R_Thigh", 0, {0, -6, 0}, {0, 0, 0}}};
+	// One frame: every bone at rest, some turned (bone index -> pitch about the side axis, roll).
+	const auto pose = [&skeleton](std::initializer_list<std::tuple<int, float, float>> turns, float drop = 0) {
+		std::vector<std::array<float, 6>> frame;
+		for (const auto& bone : skeleton) frame.push_back({bone.pos[0], bone.pos[1], bone.pos[2], 0, 0, 0});
+		frame[0][2] -= drop;
+		for (const auto& [bone, pitch, roll] : turns) {
+			frame[std::size_t(bone)][3] = roll;
+			frame[std::size_t(bone)][4] = pitch;
+		}
+		return frame;
+	};
+	const auto cycle = [&pose](int frames, float legs, float arms, float drop = 0) {
+		std::vector<std::vector<std::array<float, 6>>> out;
+		for (int i = 0; i < frames; ++i) {
+			const float s = std::sin(float(i) / float(frames - 1) * 2.f * float(std::numbers::pi));
+			out.push_back(pose({{5, legs * s, 0}, {6, -legs * s, 0}, {3, -arms * s, 0}, {4, arms * s, 0}}, drop * std::abs(s)));
+		}
+		return out;
+	};
+	{
+		StudioModelSpec citizen;
+		citizen.groups.push_back({"body", {{"male_07",
+		                                    {{-7, -10, 0, 7, -2, 34}, {-7, 2, 0, 7, 10, 34},                                          // legs
+		                                     {-8, -12, 34, 8, 12, 60}, {-6, -18, 36, 6, -12, 58}, {-6, 12, 36, 6, 18, 58},   // body, arms
+		                                     {-5, -5, 60, 6, 5, 72}}}}});                                                     // head
+		citizen.boxBones = {6, 5, 1, 4, 3, 2};
+		citizen.bones = skeleton;
+		citizen.textures = {"male_sheet"};
+		citizen.cdmaterials = "models/humans/";
+		citizen.include = "models/humans/male_shared.mdl";
+		citizen.animations = {
+			{"idle_subtle", "ACT_IDLE", 15, true, {pose({}), pose({{1, 0.05f, 0}, {2, -0.08f, 0}}), pose({})}},
+			{"lineidle01", "ACT_IDLE", 15, true, {pose({}), pose({{2, 0.3f, 0}}), pose({})}},
+			{"lineidle02", "", 15, true, {pose({}), pose({{3, -0.4f, 0}, {4, -0.4f, 0}}), pose({})}},
+			{"cower", "ACT_COWER", 10, false, {pose({}), pose({{1, 0.6f, 0}, {3, -2.2f, 0}, {4, -2.2f, 0}, {5, -1.2f, 0}, {6, -1.2f, 0}}, 14)}},
+			{"cower_idle", "ACT_COWER", 10, true, {pose({{1, 0.6f, 0}, {3, -2.2f, 0}, {4, -2.2f, 0}, {5, -1.2f, 0}, {6, -1.2f, 0}}, 14)}},
+		};
+		writeStudioModel(f.mod / "models/humans/group01/male_07.mdl", makeStudioModel(citizen));
+	}
 	// Hammer's green player start figure (info_player_start: studio("models/editor/playerstart.mdl")).
 	writeBytes(mat / "models/editor/playerstart.vtf", makeTexture(32, [](double u, double v) {
 		return Rgba{0.15, 0.75 - v * 0.2, 0.2 + u * 0.05};
@@ -581,8 +621,24 @@ void createDemo(Fixture& f) {
 	          vmt("VertexLitGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glassbottle\"\n"));
 	writeStudioModel(f.sdkBase / "hl2/models/props_junk/glassbottle01a.mdl",
 	                 makeStudioModel({{-3, -3, 0, 3, 3, 8}, {-1.5f, -1.5f, 8, 1.5f, 1.5f, 13}}, {"idle"}, "", "glassbottle01a", "models/props_junk/"));
-	writeBytes(f.mod / "models/humans/male_shared.mdl",
-	           makeModelFile({"walk_all", "run_all", "sitchair1", "sit_ground", "lean_wall", "leanwall_idle", "Idle_Relaxed_SMG1_1", "crouch_idle"}, ""));
+	{
+		// The shared animations: a skeleton without triangles (like HL2's male_shared.mdl).
+		StudioModelSpec shared;
+		shared.bones = skeleton;
+		shared.textures = {"combine_soldier_sheet"};
+		shared.cdmaterials = "models/combine_soldier/";
+		shared.animations = {
+			{"walk_all", "ACT_WALK", 30, true, cycle(17, 0.5f, 0.35f)},
+			{"run_all", "ACT_RUN", 30, true, cycle(13, 0.9f, 0.7f, 2)},
+			{"sitchair1", "ACT_BUSY_SIT_CHAIR", 10, true, {pose({{5, -1.5f, 0}, {6, -1.5f, 0}}, 16)}},
+			{"sit_ground", "ACT_BUSY_SIT_GROUND", 10, true, {pose({{5, -1.5f, 0}, {6, -1.5f, 0}}, 30)}},
+			{"lean_wall", "", 10, false, {pose({}), pose({{1, -0.2f, 0}})}},
+			{"leanwall_idle", "", 10, true, {pose({{1, -0.2f, 0}}), pose({{1, -0.22f, 0}})}},
+			{"Idle_Relaxed_SMG1_1", "ACT_IDLE_RELAXED", 15, true, {pose({{3, -0.5f, 0}}), pose({{3, -0.55f, 0}})}},
+			{"crouch_idle", "ACT_CROUCHIDLE", 10, true, {pose({{5, -1.0f, 0}, {6, -1.0f, 0}}, 12)}},
+		};
+		writeStudioModel(f.mod / "models/humans/male_shared.mdl", makeStudioModel(shared));
+	}
 
 	// Sounds.
 	writeText(f.mod / "scripts/game_sounds_manifest.txt", "game_sounds_manifest\n{\n\t\"precache_file\" \"scripts/game_sounds_demo.txt\"\n}\n");

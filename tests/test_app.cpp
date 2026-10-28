@@ -61,6 +61,7 @@
 #include <QToolButton>
 #include <QWheelEvent>
 
+#include <sme/studio_anim.h>
 #include <sme/audio.h>
 #include <sme/asset_refs.h>
 #include <sme/brush.h>
@@ -104,6 +105,7 @@
 #include "mod_code_panel.h"
 #include "mod_page.h"
 #include "model_viewer.h"
+#include "animations_page.h"
 #include "models_page.h"
 #include "map_look_panel.h"
 #include "material_preview.h"
@@ -2536,6 +2538,181 @@ TEST_CASE("panels: the wheel scrolls instead of switching, low docks show whole 
 	window.resizeDocks({dock}, {420}, Qt::Vertical);
 	settle();
 	CHECK(list->iconSize().height() > low);
+}
+
+TEST_CASE("animations page: a model's sequences played in 3D, where the map uses them, put on an entity") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const QString citizenModel = "models/humans/group01/male_07.mdl";
+	int citizen = 0;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01") citizen = e.id;
+	}
+	REQUIRE(citizen != 0);
+	// A prop playing one of the citizen's animations and a script for the citizen.
+	auto [placeProp, propId] = edit::placeEntity(editor.doc(), "prop_dynamic", {200, 0, 0}, editor.entities()->find("prop_dynamic"),
+	                                             {{"model", citizenModel.toStdString()}, {"DefaultAnim", "lineidle01"}});
+	editor.commit(std::move(placeProp));
+	auto [placeScript, scriptId] = edit::placeEntity(editor.doc(), "scripted_sequence", {-100, 40, 0}, editor.entities()->find("scripted_sequence"),
+	                                                 {{"m_iszEntity", "citizen_01"}, {"m_iszPlay", "cower"}});
+	editor.commit(std::move(placeScript));
+
+	// The side bar has the page next to Models.
+	QAction* pageAction = nullptr;
+	for (auto* a : window.findChildren<QAction*>()) {
+		if (a->objectName() == "page:Animations") pageAction = a;
+	}
+	REQUIRE(pageAction);
+	pageAction->trigger();
+	settle();
+	auto* page = window.animationsPage();
+	REQUIRE(page);
+	CHECK(page->isVisible());
+	// The map's animated models come first.
+	REQUIRE(page->modelList()->count() > 1);
+	CHECK_FALSE(page->modelList()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "In this map"
+	CHECK(page->modelList()->item(1)->data(Qt::UserRole).toString() == citizenModel);
+
+	QSignalSpy loaded(page, &AnimationsPage::modelLoaded);
+	page->modelList()->setCurrentRow(1);
+	REQUIRE((loaded.count() > 0 || loaded.wait(10000)));
+	REQUIRE(page->animated());
+	// Its own sequences and those of the shared model, with activity and origin.
+	auto* list = page->sequenceList();
+	REQUIRE(list->topLevelItemCount() == 13);
+	QStringList names;
+	for (int i = 0; i < list->topLevelItemCount(); ++i) names << list->topLevelItem(i)->text(0);
+	CHECK(names.mid(0, 5) == QStringList{"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"});
+	CHECK(names.contains("walk_all"));
+	CHECK(page->currentSequence() == "idle_subtle");   // the idle is shown first
+	REQUIRE(page->selectSequence("walk_all"));
+	CHECK(list->currentItem()->text(1) == "ACT_WALK");
+	CHECK(list->currentItem()->text(3) == "male_shared.mdl");
+	CHECK(list->currentItem()->text(0) == "walk_all");
+
+	// The pose moves the vertices: a quarter into the walk the legs swing (the right leg forward).
+	for (int i = 0; i < 20 && !page->viewer()->model(); ++i) QTest::qWait(50);
+	const auto rest = page->viewer()->model();
+	REQUIRE(rest);
+	const int uploads = page->viewer()->posesUploaded();
+	page->setCycle(0.25f);
+	settle();
+	CHECK(page->viewer()->posesUploaded() > uploads);
+	std::vector<ModelVertex> posed;
+	skinVertices(*rest, page->animated()->skinning(page->animated()->findSequence("walk_all"), 0.25f), posed);
+	float moved = 0;
+	for (std::size_t i = 0; i < posed.size(); ++i) moved = std::max(moved, std::abs(posed[i].position[0] - rest->vertices[i].position[0]));
+	CHECK(moved > 5.f);
+	// Play runs on its own; pause stops it; without Loop it stops on the last frame.
+	page->setCycle(0);
+	page->setPlaying(true);
+	QTest::qWait(300);
+	CHECK(page->cycle() > 0.1f);
+	page->setPlaying(false);
+	const float paused = page->cycle();
+	QTest::qWait(150);
+	CHECK(page->cycle() == paused);
+	page->setLooping(false);
+	page->setSpeed(2);
+	page->setCycle(0.95f);
+	page->setPlaying(true);
+	QTest::qWait(400);
+	CHECK(page->cycle() == 1.f);
+	CHECK_FALSE(page->playing());
+	page->setLooping(true);
+
+	// Where the map uses the model's animations: the prop and the script (through its NPC).
+	QStringList uses;
+	for (int i = 0; i < page->usesList()->count(); ++i) uses << page->usesList()->item(i)->text();
+	CHECK(uses.join(QStringLiteral("\n")).contains("Default animation: lineidle01"));
+	CHECK(uses.join('\n').contains("citizen_01"));
+	CHECK(uses.join('\n').contains("Action: cower"));
+
+	// Use on selected entity: the prop's DefaultAnim, the NPC's pose helper, a script's field.
+	CHECK_FALSE(page->useButton()->isEnabled());   // nothing selected
+	Selection one;
+	one.entities.push_back(propId);
+	editor.setSelection(one);
+	settle();
+	CHECK(page->useButton()->isEnabled());
+	REQUIRE(page->useOnSelection());
+	CHECK(editor.doc().findEntity(propId)->get("DefaultAnim") == "walk_all");
+	one.entities = {citizen};
+	editor.setSelection(one);
+	REQUIRE(page->selectSequence("cower_idle"));
+	REQUIRE(page->useOnSelection());
+	const Entity* helper = nullptr;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01_pose") helper = &e;
+	}
+	REQUIRE(helper);
+	CHECK(helper->get("m_iszIdle") == "cower_idle");
+	CHECK(helper->get("m_iszEntity") == "citizen_01");
+	one.entities = {scriptId};
+	editor.setSelection(one);
+	REQUIRE(page->selectSequence("lean_wall"));
+	REQUIRE(page->useOnSelection("m_iszEntry"));
+	CHECK(editor.doc().findEntity(scriptId)->get("m_iszEntry") == "lean_wall");
+	editor.undo();
+	CHECK(editor.doc().findEntity(scriptId)->get("m_iszEntry").empty());
+
+	// Double-click in "Used in this map": the entity is selected in the map.
+	settle();
+	QListWidgetItem* propUse = nullptr;
+	for (int i = 0; i < page->usesList()->count(); ++i) {
+		if (page->usesList()->item(i)->data(Qt::UserRole).toInt() == propId) propUse = page->usesList()->item(i);
+	}
+	REQUIRE(propUse);
+	emit page->usesList()->itemDoubleClicked(propUse);
+	settle();
+	CHECK(window.currentPage() == MainWindow::Page::Map);
+	REQUIRE(editor.selection().entities.size() == 1);
+	CHECK(editor.selection().entities.front() == propId);
+
+	// ▶ next to an animation field in Object Properties opens the page on that animation, playing.
+	one.entities = {scriptId};
+	editor.setSelection(one);
+	settle();
+	QToolButton* preview = nullptr;
+	for (auto* button : window.properties()->findChildren<QToolButton*>("previewSequence")) {
+		const auto* box = button->parentWidget()->findChild<QComboBox*>();
+		if (box && box->currentText() == "cower") preview = button;   // the Action field
+	}
+	REQUIRE(preview);
+	page->selectModel("models/props_demo/crate01.mdl");   // another model first
+	preview->click();
+	settle();
+	CHECK(window.currentPage() == MainWindow::Page::Animations);
+	CHECK(page->currentModel() == citizenModel);
+	for (int i = 0; i < 100 && page->currentSequence().isEmpty(); ++i) QTest::qWait(50);
+	for (int i = 0; i < 100 && !page->playing(); ++i) QTest::qWait(50);
+	CHECK(page->playing());
+	if (const auto shot = qEnvironmentVariable("SME_ANIMATION_SHOT"); !shot.isEmpty()) {
+		page->selectSequence("walk_all");
+		page->setPlaying(false);
+		page->setCycle(0.25f);
+		settle();
+		window.grab().save(shot);
+	}
+	page->setPlaying(false);
 }
 
 TEST_CASE("update check: release information and the version button") {
@@ -5220,6 +5397,7 @@ int main(int argc, char** argv) {
 	for (const char* scheme : {"file", "http", "https"}) QDesktopServices::setUrlHandler(QString::fromLatin1(scheme), &external, "open");
 	doctest::Context context(argc, argv);
 	const int result = context.run();
+	for (const char* scheme : {"file", "http", "https"}) QDesktopServices::unsetUrlHandler(QString::fromLatin1(scheme));
 	for (const auto& stray : strays.strays) {
 		std::fprintf(stderr, "Shown as its own window before it had a parent: %s\n", qPrintable(stray));
 	}

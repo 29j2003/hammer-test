@@ -13,6 +13,7 @@
 #include <QVector3D>
 
 #include <memory>
+#include <vector>
 
 #include <sme/studio_model.h>
 
@@ -35,6 +36,11 @@ public:
 	/// Text in the middle while there is no model ("Loading ...", "Cannot load: ...").
 	void setMessage(const QString& message);
 	[[nodiscard]] QString message() const { return m_message; }
+	/// Draws the model's vertices moved into a pose (animation previews; same count as the
+	/// model's vertices, empty = the rest pose). Only the vertex buffer is updated.
+	void setPose(std::vector<ModelVertex> vertices);
+	/// How many poses were uploaded (tests).
+	[[nodiscard]] int posesUploaded() const { return m_posesUploaded; }
 	void setWireframe(bool on);
 	[[nodiscard]] bool wireframe() const { return m_wireframe; }
 	/// Camera around the whole model, seen from the front-left and a little above.
@@ -65,6 +71,9 @@ private:
 	MaterialCache* m_materials;
 	std::shared_ptr<const ModelGeometry> m_model;
 	bool m_dirty = false;                 ///< m_model not uploaded yet
+	std::vector<ModelVertex> m_pose;      ///< Posed vertices waiting for the next frame
+	bool m_poseDirty = false;
+	int m_posesUploaded = 0;
 	QString m_message;
 	bool m_wireframe = false;
 	std::unique_ptr<QOpenGLShaderProgram> m_program, m_lineProgram;

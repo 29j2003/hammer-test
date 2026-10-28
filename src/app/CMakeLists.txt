@@ -31,7 +31,7 @@ add_library(smeapp STATIC
 	model_cache.cpp
 	model_thumbnails.cpp
 	model_viewer.cpp
-	models_page.cpp
+	models_page.cpp animations_page.cpp
 	panels.cpp
 	particle_browser.cpp
 	properties_panel.cpp

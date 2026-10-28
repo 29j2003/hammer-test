@@ -10,6 +10,7 @@
 #include "features_panel.h"
 #include "mod_code_panel.h"
 #include "mod_page.h"
+#include "animations_page.h"
 #include "models_page.h"
 #include "maps_panel.h"
 #include "menu_editor.h"
@@ -432,6 +433,14 @@ void MainWindow::createDocks() {
 	m_materialEditor = new MaterialEditor(m_editor, this);
 	// Models page: every model with a 3D view; "Place in map" arms the entity tool with it.
 	m_modelsPage = new ModelsPage(m_editor, m_assets, m_materials);
+	m_animationsPage = new AnimationsPage(m_editor, m_assets, m_materials);
+	connect(m_animationsPage, &AnimationsPage::entityRequested, this, [this](int entityId) {
+		Selection one;
+		one.entities.push_back(entityId);
+		m_editor->setSelection(one);
+		showPage(Page::Map);
+		activeView()->frameSelection();
+	});
 	connect(m_modelsPage, &ModelsPage::placeRequested, this, [this](const QString& classname, const std::vector<std::pair<std::string, std::string>>& keys) {
 		m_editor->setCurrentEntity(classname, keys);
 		showPage(Page::Map);
@@ -532,6 +541,7 @@ void MainWindow::createDocks() {
 	(new QVBoxLayout(m_particlesPage))->setContentsMargins(0, 0, 0, 0);
 	m_pages->addWidget(m_materialEditor);
 	m_pages->addWidget(m_modelsPage);
+	m_pages->addWidget(m_animationsPage);
 	m_pages->addWidget(m_soundsPage);
 	m_pages->addWidget(m_particlesPage);
 	m_pages->addWidget(m_projectPage);
@@ -587,6 +597,10 @@ void MainWindow::createDocks() {
 		raiseDock("Material Editor");
 	});
 	// "Edit soundscape" on a soundscape entity: the Sounds page with that soundscape open.
+	connect(m_properties, &PropertiesPanel::animationPreviewRequested, this, [this](const QString& model, const QString& sequence) {
+		showPage(Page::Animations);
+		m_animationsPage->showFor(model, sequence);
+	});
 	connect(m_properties, &PropertiesPanel::editSoundscapeRequested, this, [this](const QString& name) {
 		showPage(Page::Sounds);
 		m_sounds->reveal(name, SoundBrowser::SoundscapeEntry);
@@ -661,7 +675,7 @@ void MainWindow::showMaterialEditor() {
 }
 
 void MainWindow::showPage(Page page) {
-	QWidget* const widgets[] = {m_rows, m_materialEditor, m_modelsPage, m_soundsPage, m_particlesPage, m_projectPage};
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_modelsPage, m_animationsPage, m_soundsPage, m_particlesPage, m_projectPage};
 	QWidget* target = widgets[int(page)];
 	// The browsers that are docks while mapping move to their page and back.
 	const auto borrow = [](QWidget* browser, QDockWidget* dock, QWidget* holder, bool toPage) {
@@ -712,8 +726,8 @@ void MainWindow::placeCornerGrips() {
 }
 
 MainWindow::Page MainWindow::currentPage() const {
-	QWidget* const widgets[] = {m_rows, m_materialEditor, m_modelsPage, m_soundsPage, m_particlesPage, m_projectPage};
-	for (int i = 0; i < 6; ++i) {
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_modelsPage, m_animationsPage, m_soundsPage, m_particlesPage, m_projectPage};
+	for (int i = 0; i < int(std::size(widgets)); ++i) {
 		if (m_pages->currentWidget() == widgets[i]) return Page(i);
 	}
 	return Page::Map;
@@ -766,7 +780,7 @@ void MainWindow::raiseDock(const QString& name) {
 		showMaterialEditor();
 		return;
 	}
-	static const QMap<QString, Page> PAGES = {{"Materials", Page::Materials}, {"Models", Page::Models}, {"Mod", Page::Project}, {"Project", Page::Project}};
+	static const QMap<QString, Page> PAGES = {{"Materials", Page::Materials}, {"Models", Page::Models}, {"Animations", Page::Animations}, {"Mod", Page::Project}, {"Project", Page::Project}};
 	if (const auto it = PAGES.constFind(name); it != PAGES.constEnd()) {
 		showPage(*it);
 		return;
@@ -1001,6 +1015,7 @@ void MainWindow::createActions() {
 	mapPage->setChecked(true);
 	pageAction("page:materials", tr("Materials"), tr("Material Editor: textures, shaders and mapbase-fidelity effects"), Page::Materials);
 	pageAction("page:models", tr("Models"), tr("Every model with a 3D view, skins and body groups; place one in the map"), Page::Models);
+	pageAction("page:animations", tr("Animations"), tr("Watch a model's animations, see which entities play them, put one on an entity"), Page::Animations);
 	// Dragging a model, material, sound ... onto the Map button opens the map, so the drag can go
 	// on into a view.
 	if (auto* mapButton = m_pageBar->widgetForAction(mapPage)) {
