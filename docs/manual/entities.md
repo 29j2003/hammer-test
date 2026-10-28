@@ -199,6 +199,28 @@ The **Models** button in the side bar shows every model of the game and its mods
 - You can also **drag** a model onto the **Map** button of the side bar; the map opens and you drop the model into a
   view. **Copy path** puts `models/.../name.mdl` on the clipboard.
 
+### Importing your own models
+
+**Import ...** on the Models page (or *File › Import into the mod › Model ...*) brings a model made in Blender or
+another program into the mod: an `.obj` (with its `.mtl` and pictures) or a reference `.smd`.
+
+- **Kind**: *static prop* (part of the world), *physics prop* (falls, can be picked up) or *dynamic prop*.
+- **Units** and **Y is up**: most programs save metres with Y up (Source: inches, Z up). The line at the top shows
+  the size it will have in the map - a door is about 56 × 108 units, a player 72 high - so wrong units show before
+  importing. The model stands on the ground at its middle.
+- **Collision**: *Wrapped* (one solid shape around it, best for most props), *Box*, or *Its separate parts* (each
+  separate piece of the model on its own, e.g. a table top and legs). **Mass** for physics props: from its size, or
+  your own value.
+- **Materials**: each material of the model becomes a model material from its picture (named in the `.mtl`, or a
+  picture with the material's name next to the model); without a picture it gets the `.mtl`'s colour.
+- Mapsmith writes the sources (`modelsrc/<folder>/<name>/`: reference and collision `.smd`, `.qc`) and compiles them
+  with the game's **studiomdl** (in the SDK's `bin` folder, next to VBSP; choose it with *studiomdl ...* if it is
+  elsewhere). The model appears in `models/<folder>/<name>.mdl`. If studiomdl fails, its reason and full output are
+  shown and nothing stays behind.
+
+*File › Import into the mod › Imported files ...* lists everything imported into the mod; **Remove import** takes
+one out again, also after a restart.
+
 ## NPCs and animated models
 
 Select an NPC or a `prop_dynamic`. The **Animation / pose** box (**Animation** for props) lists the model's

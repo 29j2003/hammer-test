@@ -105,6 +105,11 @@ public:
 	/// Selects a system by name in the list (shows it); false if there is none.
 	bool selectSystem(const QString& name);
 
+
+signals:
+	/// "Import ...": bring the mapper's own files into the mod (ImportDialog).
+	void importRequested();
+
 private:
 	void fill();
 	void filter(const QString& text);

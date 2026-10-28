@@ -45,6 +45,21 @@ Mapsmith plays WAV (including ADPCM), MP3 and OGG files itself.
 - **Double-click** sets the sound on the selected entity.
 - **Ctrl+C** copies the name; Ctrl+V pastes it into any field.
 
+### Importing your own sounds
+
+**Import ...** next to the search box (or *File › Import into the mod › Sound ...*) brings a WAV, MP3, OGG or FLAC
+file into the mod as a WAV the game plays (16 bit; Source cannot play OGG or FLAC itself):
+
+- **Folder** and **Name**: it goes to `sound/<folder>/<name>.wav` (letters, digits, `_` and `-` only).
+- **Quality**: 44100 Hz, 22050 Hz (half the size) or 11025 Hz. **Channels**: mono for sounds that come from a place
+  in the world, stereo for music and sounds that are everywhere. **Normalize** makes it as loud as possible.
+- **Loops in the game**: for hums, machines and rain played by an `ambient_generic` (the file gets a loop point).
+- **Sound script entry**: a name like `Custom.Hum` with volume, pitch and how far it is heard; it goes into
+  `scripts/game_sounds_mapsmith.txt`, which is added to the mod's sound list (the game's own list is copied first, so
+  no sound of the game goes missing).
+- **▶ Listen** plays it as it will be imported. **Goes to** shows where; if something with that name exists,
+  **Replace** must be ticked. After importing, **Undo import** takes it back.
+
 ### Editing a sound
 
 Below the waveform are the edit tools. They work on the **selection** - drag across the waveform to select a part
@@ -146,6 +161,11 @@ The **Particles** page shows the game's particle systems, from the `.pcf` files 
 The preview simulates the common parts: emitting, lifetime, size, colour and alpha, movement with gravity and drag,
 fading, scaling and rotation, with the system's sprite material; additive materials glow. It is close to the game, not
 exact: parts it does not know are listed but have no effect, and sprite-sheet animation is not played.
+
+**Import ...** next to the search box brings a particle file (`.pcf`, made with the game's particle editor or taken
+from another mod) into `particles/` and lists it in `particles/particles_manifest.txt` (made from the game's list if
+the mod has none). **Load with every map** puts a `!` in front, which effects started by code need. The dialog lists
+the systems in the file; files without any are refused.
 
 **Drag** a system into the map (from the page or the bottom panel's *Particles* tab) for an `info_particle_system`
 that plays it. In the map views, particle effects are not drawn; they only show in the game.

@@ -8,6 +8,8 @@
 #pragma once
 
 #include "asset_menu.h"
+#include "import_dialog.h"
+
 #include <QMainWindow>
 #include <QPointer>
 
@@ -95,6 +97,12 @@ public:
 	/// report.ps1 and opens the zip's folder). Reachable from the Map menu, the Compile dock and
 	/// the Problems dock - where one looks after testing a map in the game.
 	void makeReport();
+	/// "Import ..." (pages, File › Import into the mod): the import dialog for a kind of file.
+	ImportDialog* openImport(ImportDialog::Kind kind);
+	/// File › Import into the mod › Imported files: the list of imports, each can be removed.
+	void showImports();
+	/// Reads the mod's files again soon (after imports, updates); the open map stays.
+	void reloadGameSoon();
 	/// Shows a dock by its title (on the Map page); "Map", "Materials", "Material Editor", "Models" and "Mod" show that page.
 	void raiseDock(const QString& name);
 	/// Puts the corner handles where the map views meet the panels (hidden on other pages).
@@ -170,6 +178,7 @@ private:
 	QList<QPointer<QWidget>> m_hiddenForTab;    ///< Docks and tool bars put away for another tab
 	QList<QPointer<QAction>> m_disabledForTab;  ///< Map keys switched off for another tab
 	bool m_mapHidden = false;
+	QPointer<ImportDialog> m_importDialog;     ///< The open import dialog
 	bool m_reloadPending = false;               ///< The game is read again soon (the mod's files changed)
 	bool m_quad = false;
 	QPointer<Viewport> m_active;

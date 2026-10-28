@@ -373,6 +373,11 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	bar->addWidget(new QLabel(tr("Light")));
 	bar->addWidget(m_lighting);
 	bar->addStretch(1);
+	auto* importPicture = new QPushButton(tr("Import ..."));
+	importPicture->setObjectName("importMaterial");
+	importPicture->setToolTip(tr("Make a material from your own picture (PNG, JPG, TGA): a VTF and a VMT in the mod"));
+	bar->addWidget(importPicture);
+	connect(importPicture, &QPushButton::clicked, this, &MaterialEditor::importRequested);
 	m_save = new QPushButton(tr("Save"));
 	m_save->setDefault(true);
 	m_save->setProperty("accent", true);

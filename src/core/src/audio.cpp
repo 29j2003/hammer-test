@@ -319,6 +319,229 @@ bool decodeWav(const Bytes& in, DecodedAudio& out, std::string* error) {
 	return !out.samples.empty() || fail(error, "WAV without samples");
 }
 
+// --- FLAC ------------------------------------------------------------------------------
+// Imported sounds may come as FLAC (Source plays only WAV and MP3, the importer converts).
+// A plain decoder after the format description at xiph.org/flac/format.html: STREAMINFO,
+// frames with constant, verbatim, fixed and LPC subframes, Rice-coded residuals, stereo
+// decorrelation. Every read is bounds-checked; broken files end the decoding cleanly.
+
+/// Big-endian bit reader.
+class FlacBits {
+public:
+	explicit FlacBits(std::span<const std::byte> data, std::size_t byte = 0) : m_data(data), m_bit(byte * 8) {}
+	[[nodiscard]] bool ok() const { return m_ok; }
+	[[nodiscard]] std::size_t bytePos() const { return (m_bit + 7) / 8; }
+	void align() { m_bit = (m_bit + 7) / 8 * 8; }
+	std::uint64_t bits(int n) {
+		std::uint64_t value = 0;
+		for (int i = 0; i < n; ++i) {
+			if (m_bit >= m_data.size() * 8) {
+				m_ok = false;
+				return 0;
+			}
+			const auto byte = std::to_integer<std::uint8_t>(m_data[m_bit / 8]);
+			value = (value << 1) | ((byte >> (7 - m_bit % 8)) & 1u);
+			++m_bit;
+		}
+		return value;
+	}
+	std::int64_t signedBits(int n) {
+		if (n == 0) return 0;
+		const std::uint64_t value = bits(n);
+		return (value & (std::uint64_t(1) << (n - 1))) ? std::int64_t(value) - (std::int64_t(1) << n) : std::int64_t(value);
+	}
+	/// Count of 0 bits before the next 1 (Rice quotient); stops at a sane limit.
+	std::uint32_t unary() {
+		std::uint32_t count = 0;
+		while (bits(1) == 0) {
+			if (!m_ok || ++count > (1u << 24)) {
+				m_ok = false;
+				return 0;
+			}
+		}
+		return count;
+	}
+
+private:
+	std::span<const std::byte> m_data;
+	std::size_t m_bit;
+	bool m_ok = true;
+};
+
+bool flacResidual(FlacBits& in, int blockSize, int order, std::vector<std::int64_t>& out) {
+	const int method = int(in.bits(2));
+	if (method > 1) return false;
+	const int paramBits = method == 0 ? 4 : 5;
+	const int escape = method == 0 ? 15 : 31;
+	const int partitionOrder = int(in.bits(4));
+	const int partitions = 1 << partitionOrder;
+	if ((blockSize >> partitionOrder) < order || blockSize % partitions != 0) return false;
+	for (int p = 0; p < partitions; ++p) {
+		const int count = (blockSize >> partitionOrder) - (p == 0 ? order : 0);
+		const int param = int(in.bits(paramBits));
+		if (param == escape) {
+			const int raw = int(in.bits(5));
+			for (int i = 0; i < count; ++i) out.push_back(in.signedBits(raw));
+		} else {
+			for (int i = 0; i < count; ++i) {
+				const std::uint64_t value = (std::uint64_t(in.unary()) << param) | in.bits(param);
+				out.push_back(std::int64_t(value >> 1) ^ -std::int64_t(value & 1));
+			}
+		}
+		if (!in.ok()) return false;
+	}
+	return true;
+}
+
+bool flacSubframe(FlacBits& in, int blockSize, int bps, std::vector<std::int64_t>& out) {
+	out.clear();
+	if (in.bits(1) != 0) return false;
+	const int type = int(in.bits(6));
+	int wasted = 0;
+	if (in.bits(1)) wasted = int(in.unary()) + 1;
+	bps -= wasted;
+	if (bps <= 0 || bps > 33) return false;
+	if (type == 0) {
+		out.assign(std::size_t(blockSize), in.signedBits(bps));
+	} else if (type == 1) {
+		for (int i = 0; i < blockSize; ++i) out.push_back(in.signedBits(bps));
+	} else if (type >= 8 && type <= 12) {
+		const int order = type - 8;
+		if (order > blockSize) return false;
+		for (int i = 0; i < order; ++i) out.push_back(in.signedBits(bps));
+		std::vector<std::int64_t> residual;
+		if (!flacResidual(in, blockSize, order, residual)) return false;
+		for (const auto r : residual) {
+			const std::size_t n = out.size();
+			std::int64_t predicted = 0;
+			switch (order) {
+				case 1: predicted = out[n - 1]; break;
+				case 2: predicted = 2 * out[n - 1] - out[n - 2]; break;
+				case 3: predicted = 3 * out[n - 1] - 3 * out[n - 2] + out[n - 3]; break;
+				case 4: predicted = 4 * out[n - 1] - 6 * out[n - 2] + 4 * out[n - 3] - out[n - 4]; break;
+				default: break;
+			}
+			out.push_back(predicted + r);
+		}
+	} else if (type >= 32) {
+		const int order = type - 31;
+		if (order > blockSize) return false;
+		for (int i = 0; i < order; ++i) out.push_back(in.signedBits(bps));
+		const int precision = int(in.bits(4)) + 1;
+		if (precision == 16) return false;   // 1111 is invalid
+		const int shift = int(in.signedBits(5));
+		if (shift < 0) return false;
+		std::vector<std::int64_t> coefficients;
+		for (int i = 0; i < order; ++i) coefficients.push_back(in.signedBits(precision));
+		std::vector<std::int64_t> residual;
+		if (!flacResidual(in, blockSize, order, residual)) return false;
+		for (const auto r : residual) {
+			const std::size_t n = out.size();
+			std::int64_t sum = 0;
+			for (int j = 0; j < order; ++j) sum += coefficients[std::size_t(j)] * out[n - 1 - std::size_t(j)];
+			out.push_back((sum >> shift) + r);
+		}
+	} else {
+		return false;
+	}
+	if (!in.ok() || int(out.size()) != blockSize) return false;
+	if (wasted > 0) {
+		for (auto& s : out) s *= (std::int64_t(1) << wasted);
+	}
+	return true;
+}
+
+bool decodeFlac(std::span<const std::byte> data, DecodedAudio& out, std::string* error) {
+	const Bytes bytes(data);
+	std::size_t at = 4;
+	int streamRate = 0, streamChannels = 0, streamBps = 0;
+	// Metadata blocks: STREAMINFO first, the others are skipped.
+	for (bool last = false; !last;) {
+		if (!bytes.has(at, 4)) return fail(error, "FLAC header is cut off");
+		const std::uint8_t head = bytes.u8(at);
+		last = (head & 0x80) != 0;
+		const std::size_t length = (std::size_t(bytes.u8(at + 1)) << 16) | (std::size_t(bytes.u8(at + 2)) << 8) | bytes.u8(at + 3);
+		if (!bytes.has(at + 4, length)) return fail(error, "FLAC header is cut off");
+		if ((head & 0x7f) == 0 && length >= 18) {
+			FlacBits info(data, at + 4 + 10);
+			streamRate = int(info.bits(20));
+			streamChannels = int(info.bits(3)) + 1;
+			streamBps = int(info.bits(5)) + 1;
+		}
+		at += 4 + length;
+	}
+	if (streamRate <= 0 || streamBps < 4) return fail(error, "FLAC without stream information");
+	out.sampleRate = streamRate;
+	out.channels = streamChannels;
+	out.format = "FLAC " + std::to_string(streamBps) + " bit";
+	std::vector<std::vector<std::int64_t>> channels;
+	std::vector<std::int64_t> sub;
+	while (bytes.has(at, 2)) {
+		// Frame sync 0xFFF8/0xFFF9; anything else ends the stream (a trailing tag, padding).
+		if (bytes.u8(at) != 0xff || (bytes.u8(at + 1) & 0xfe) != 0xf8) break;
+		FlacBits in(data, at);
+		in.bits(16);
+		const int blockCode = int(in.bits(4));
+		const int rateCode = int(in.bits(4));
+		const int assignment = int(in.bits(4));
+		const int sizeCode = int(in.bits(3));
+		in.bits(1);
+		// The frame or sample number, UTF-8 style: count the leading ones.
+		const auto first = in.bits(8);
+		for (int extra = 0, mask = 0x80; (first & std::uint64_t(mask)) && mask > 1; mask >>= 1, ++extra) {
+			if (extra > 0) in.bits(8);
+		}
+		int blockSize = 0;
+		if (blockCode == 1) blockSize = 192;
+		else if (blockCode >= 2 && blockCode <= 5) blockSize = 576 << (blockCode - 2);
+		else if (blockCode == 6) blockSize = int(in.bits(8)) + 1;
+		else if (blockCode == 7) blockSize = int(in.bits(16)) + 1;
+		else if (blockCode >= 8) blockSize = 256 << (blockCode - 8);
+		if (rateCode == 12) in.bits(8);
+		else if (rateCode == 13 || rateCode == 14) in.bits(16);
+		in.bits(8);   // header CRC
+		static constexpr std::array<int, 8> SIZES{0, 8, 12, 0, 16, 20, 24, 32};
+		const int bps = sizeCode == 0 ? streamBps : SIZES[std::size_t(sizeCode)];
+		const int frameChannels = assignment <= 7 ? assignment + 1 : (assignment <= 10 ? 2 : 0);
+		if (!in.ok() || blockSize <= 0 || bps <= 0 || frameChannels != streamChannels) return fail(error, "broken FLAC frame");
+		channels.assign(std::size_t(frameChannels), {});
+		for (int c = 0; c < frameChannels; ++c) {
+			// The side channel has one bit more.
+			const bool side = (assignment == 8 && c == 1) || (assignment == 9 && c == 0) || (assignment == 10 && c == 1);
+			if (!flacSubframe(in, blockSize, bps + (side ? 1 : 0), sub)) return fail(error, "broken FLAC subframe");
+			channels[std::size_t(c)] = sub;
+		}
+		if (assignment >= 8) {
+			auto& a = channels[0];
+			auto& b = channels[1];
+			for (int i = 0; i < blockSize; ++i) {
+				const std::int64_t x = a[std::size_t(i)], y = b[std::size_t(i)];
+				if (assignment == 8) b[std::size_t(i)] = x - y;              // left, side
+				else if (assignment == 9) a[std::size_t(i)] = x + y;         // side, right
+				else {                                                       // mid, side
+					const std::int64_t mid = (x * 2) | (y & 1);
+					a[std::size_t(i)] = (mid + y) >> 1;
+					b[std::size_t(i)] = (mid - y) >> 1;
+				}
+			}
+		}
+		for (int i = 0; i < blockSize; ++i) {
+			for (int c = 0; c < frameChannels; ++c) {
+				const std::int64_t s = channels[std::size_t(c)][std::size_t(i)];
+				const std::int64_t scaled = bps >= 16 ? s >> (bps - 16) : s * (std::int64_t(1) << (16 - bps));
+				out.samples.push_back(clamp16(int(std::clamp<std::int64_t>(scaled, -32768, 32767))));
+			}
+		}
+		if (out.frames() > MAX_FRAMES) return fail(error, "sound is too long");
+		in.align();
+		in.bits(16);   // frame CRC
+		if (!in.ok()) break;
+		at = in.bytePos();
+	}
+	if (out.samples.empty()) return fail(error, "FLAC without audio frames");
+	return true;
+}
+
 } // namespace
 
 std::optional<DecodedAudio> decodeAudio(std::span<const std::byte> data, std::string_view name, std::string* error) {
@@ -329,6 +552,8 @@ std::optional<DecodedAudio> decodeAudio(std::span<const std::byte> data, std::st
 		ok = decodeWav(in, out, error);
 	} else if (in.tag(0, "OggS")) {
 		ok = decodeOgg(data, out, error);
+	} else if (in.tag(0, "fLaC")) {
+		ok = decodeFlac(data, out, error);
 	} else if (endsWithI(name, ".wav")) {
 		ok = fail(error, "not a RIFF WAVE file");
 	} else {
@@ -342,8 +567,8 @@ std::optional<DecodedAudio> decodeAudio(std::span<const std::byte> data, std::st
 
 std::optional<bool> soundFileLoops(std::span<const std::byte> data) {
 	const Bytes in(data);
-	if (in.tag(0, "OggS")) {
-		return std::nullopt;   // Source 1 does not play Ogg
+	if (in.tag(0, "OggS") || in.tag(0, "fLaC")) {
+		return std::nullopt;   // Source 1 does not play Ogg or FLAC
 	}
 	if (!(in.tag(0, "RIFF") && in.tag(8, "WAVE"))) {
 		return false;          // MP3: the engine never loops it

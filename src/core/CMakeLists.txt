@@ -5,6 +5,7 @@ set_target_properties(smecodecs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # smecore: everything that does not need Qt (file formats, games, map document, geometry, undo).
 add_library(smecore STATIC
+	src/asset_import.cpp
 	src/assets.cpp
 	src/audio.cpp
 	src/brush.cpp
@@ -35,6 +36,7 @@ add_library(smecore STATIC
 	src/mod_install.cpp
 	src/mod_features.cpp
 	src/mod_menu.cpp
+	src/model_import.cpp
 	src/localization.cpp
 	src/editing.cpp
 	src/entity_catalog.cpp

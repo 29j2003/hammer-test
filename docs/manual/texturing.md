@@ -72,6 +72,20 @@ you want the texture to stay in place while the brush moves, for example to line
 
 Scaling with texture lock keeps the texture size: the texture is not stretched with the brush.
 
+## Your own pictures as materials
+
+**Import ...** in the Material Editor's top bar (or *File › Import into the mod › Picture as material ...*) makes a
+material from a PNG, JPG, TGA or BMP: a texture (`.vtf`) and a material (`.vmt`) in `materials/<folder>/`.
+
+- **For**: *Brushes* (walls, floors; LightmappedGeneric) or *Models* (VertexLitGeneric, in `materials/models/`).
+- **Surface**: what it is made of - footsteps, bullet holes and impact sounds come from it.
+- **Transparency**: *From the picture* uses its alpha channel: only fully clear or fully solid pixels make a cut-out
+  (fences, leaves), soft alpha makes it see-through (glass).
+- **Size**: the game needs sizes like 256, 512, 1024; the picture is scaled to the nearest one, at most this.
+  **Compress** (DXT) makes it 4-8 times smaller and a little blurry.
+- **Normal map**: a picture with the same name and `_normal` (or `_n`, `_nrm`, `_bump`) next to it becomes the bump map.
+- If a material with that name exists, **Replace** must be ticked; **Undo import** brings the old one back.
+
 ## The Material Editor
 
 The **Materials** page in the side bar is the Material Editor. On the left it lists every material of the game, with
