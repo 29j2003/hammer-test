@@ -119,7 +119,8 @@ private:
 	void applyPose();
 	void tick();
 	[[nodiscard]] int sequenceIndex() const;
-	void askImport();
+	/// "Add animation ...": choose an .smd (the file dialog starts in `startFolder`), name it, preview it.
+	void askImport(const QString& startFolder = {});
 	void updatePendingBar();
 	/// The model the new animations belong to (the original, also when Mapsmith's copy is shown).
 	[[nodiscard]] QString originalModel() const;
@@ -150,6 +151,7 @@ private:
 	QListWidget* m_uses = nullptr;
 	QPushButton* m_use = nullptr;
 	QPushButton* m_add = nullptr;
+	QPushButton* m_addSample = nullptr;   ///< "Use a sample ...": the dialog in samples/animations
 	QTimer* m_timer = nullptr;
 	QTimer* m_mapRefresh = nullptr;
 	QElapsedTimer m_clock;

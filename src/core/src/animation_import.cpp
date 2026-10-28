@@ -133,6 +133,7 @@ std::optional<SmdAnimation> parseSmd(std::string_view text, std::string* error) 
 		++lineNumber;
 		const std::string_view line = trim(raw);
 		if (line.empty() || line.starts_with("//") || line.starts_with("#") || line.starts_with(";")) {
+			if (section == Section::None && smd.nodes.empty() && line.find(RELATIVE_SMD_MARKER) != std::string_view::npos) smd.relative = true;
 			if (end == text.size()) break;
 			continue;
 		}
@@ -207,6 +208,51 @@ SkeletonMatch matchSkeleton(const SmdAnimation& smd, const std::vector<StudioBon
 AnimVec quaternionAngles(const AnimQuat& q) {
 	const AnimVec qa = matrixAngles(quaternionMatrix(q, {}));   // pitch, yaw, roll
 	return {qa.z, qa.x, qa.y};                                  // RadianEuler: roll, pitch, yaw
+}
+
+bool animationNeedsCompleting(const SmdAnimation& smd, const std::vector<StudioBone>& bones) {
+	return smd.relative || !matchSkeleton(smd, bones).notInSmd.empty();
+}
+
+std::string completedAnimationSmd(const SmdAnimation& smd, const std::vector<StudioBone>& bones) {
+	const SkeletonMatch match = matchSkeleton(smd, bones);
+	std::vector<int> fromSmd(bones.size(), -1);   // model bone -> .smd node
+	for (std::size_t n = 0; n < match.toModel.size(); ++n) {
+		if (match.toModel[n] >= 0 && fromSmd[std::size_t(match.toModel[n])] < 0) fromSmd[std::size_t(match.toModel[n])] = int(n);
+	}
+	// A bone in the .smd's own space (root bones turned back for studiomdl, like referenceSmd).
+	const auto smdSpace = [&](std::size_t b, AnimVec pos, AnimQuat quat) {
+		if (bones[b].parent < 0) {
+			pos = rotateZ(pos, -PI / 2);
+			quat = multiplyQ(zQuat(-PI / 2), quat);
+		}
+		return std::pair{pos, quaternionAngles(quat)};
+	};
+	std::string out = "version 1\n// Completed by Mapsmith for the model's skeleton: every bone in every frame.\nnodes\n";
+	for (std::size_t b = 0; b < bones.size(); ++b) out += std::to_string(b) + " \"" + clean(bones[b].name) + "\" " + std::to_string(bones[b].parent) + "\n";
+	out += "end\nskeleton\n";
+	for (std::size_t f = 0; f < smd.frames.size(); ++f) {
+		out += "time " + std::to_string(f) + "\n";
+		const auto& frame = smd.frames[f];
+		for (std::size_t b = 0; b < bones.size(); ++b) {
+			const int n = fromSmd[b];
+			std::pair<AnimVec, AnimVec> value;
+			if (n >= 0 && std::size_t(n) < frame.size() && !smd.relative) {
+				value = frame[std::size_t(n)];   // whole pose from the file, already in its space
+			} else if (n >= 0 && std::size_t(n) < frame.size()) {
+				const auto& [offset, angles] = frame[std::size_t(n)];
+				const AnimVec pos{bones[b].pos.x + offset.x, bones[b].pos.y + offset.y, bones[b].pos.z + offset.z};
+				value = smdSpace(b, pos, multiplyQ(bones[b].quat, angleQuaternion(angles)));
+			} else {
+				value = smdSpace(b, bones[b].pos, bones[b].quat);   // not in the file: the rest pose
+			}
+			const auto& [pos, rot] = value;
+			out += std::to_string(b) + " " + number(pos.x) + " " + number(pos.y) + " " + number(pos.z) + " " + number(rot.x) + " " + number(rot.y) + " " +
+			       number(rot.z) + "\n";
+		}
+	}
+	out += "end\n";
+	return out;
 }
 
 int addPreviewSequence(AnimatedModel& model, const SmdAnimation& smd, const ImportedAnimation& options) {

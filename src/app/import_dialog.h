@@ -68,6 +68,8 @@ public:
 	[[nodiscard]] bool busy() const;
 	/// studiomdl for the current game: the setting, else next to VBSP.
 	[[nodiscard]] static QString studiomdlPath(Editor* editor);
+	/// Mapsmith's sample files for a kind (samples/sounds, ...; empty without samples).
+	[[nodiscard]] static QString sampleFolder(Kind kind);
 	/// File dialog filter for a kind.
 	[[nodiscard]] static QString fileFilter(Kind kind);
 

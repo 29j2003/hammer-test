@@ -63,6 +63,10 @@ jobs:
         with:
           name: screenshots
           path: screenshots/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mapsmith-samples
+          path: build/samples/
           retention-days: 14
 
   mod:
@@ -110,6 +114,8 @@ jobs:
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.txt $out
           # The mod's features Mapsmith installs into a mod (Project > Features).
           Copy-Item -Recurse features-bundle "$out/features"
+          # Sample files to try the importers with (Use a sample ...), written by the build (sme-make-samples).
+          Copy-Item -Recurse build/samples "$out/samples"
           Copy-Item build/_deps/sourcepp-src/LICENSE "$out/LICENSE_sourcepp.txt"
           Copy-Item build/_deps/sourcepp-src/THIRDPARTY_LEGAL_NOTICES.txt "$out/THIRD_PARTY_NOTICES_sourcepp.txt"
           # windeployqt adds the Qt DLLs (and opengl32sw.dll, a software OpenGL fallback).

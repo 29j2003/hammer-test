@@ -206,7 +206,10 @@ The **Models** button in the side bar shows every model of the game and its mods
 ### Importing your own models
 
 **Import ...** on the Models page (or *File › Import into the mod › Model ...*) brings a model made in Blender or
-another program into the mod: an `.obj` (with its `.mtl` and pictures) or a reference `.smd`.
+another program into the mod: an `.obj` (with its `.mtl` and pictures) or a reference `.smd`. An `.smd` with more than
+one bone is imported **rigged**: it keeps its skeleton and bone weights (and its own orientation - *Y is up* does not
+apply), so animations can be added to it on the Animations page. **Use a sample ...** opens Mapsmith's sample models
+(a crate and a rigged hanging sign, see *Getting started*).
 
 - **Kind**: *static prop* (part of the world), *physics prop* (falls, can be picked up) or *dynamic prop*.
 - **Units** and **Y is up**: most programs save metres with Y up (Source: inches, Z up). The line at the top shows
@@ -251,7 +254,12 @@ The **Animations** button in the side bar (under *Models*) plays the animations 
 (Source's animation format, e.g. with Blender Source Tools) on the model's skeleton - the bone names must be those of
 the model (`ValveBiped.Bip01_...` for HL2's people). The dialog shows how many bones match and asks for a name, the
 speed (fps), whether it loops and an optional activity (lets the AI pick it by itself). The animation plays at once,
-marked *new - not built*.
+marked *new - not built*. **Use a sample ...** next to the button starts in Mapsmith's sample animations.
+
+The file may move only some of the bones: the others keep the model's rest pose, and Mapsmith writes the complete
+animation for studiomdl, so what you see is what gets built. A file whose header has the comment
+`// mapsmith: relative` holds changes on top of the rest pose instead of whole poses (Mapsmith's samples for
+Half-Life 2's people work that way, so they fit every one of them).
 
 **Build into the mod** makes it part of the game with the game's own `studiomdl` (next to `vbsp.exe` in the SDK
 tools). Mapsmith does not change the original model: it builds a new one, `models/mapsmith/<same path>.mdl` in your
