@@ -414,10 +414,12 @@ void SourceControlPanel::refresh() {
 
 SourceControlPanel::~SourceControlPanel() {
 	std::queue<Job>().swap(m_jobs);
-	if (m_process) {
-		m_process->disconnect(this);
-		m_process->kill();
-		m_process->waitForFinished(2000);
+	for (auto* process : findChildren<QProcess*>(Qt::FindDirectChildrenOnly)) {
+		process->disconnect(this);
+		if (process->state() != QProcess::NotRunning) {
+			process->kill();
+			process->waitForFinished(2000);
+		}
 	}
 }
 
@@ -458,7 +460,7 @@ void SourceControlPanel::startNext() {
 		process->deleteLater();
 		m_process = nullptr;
 		if (done) done(exit, out, err);
-		startNext();
+		if (!m_process) startNext();   // `done` may already have started the next job
 	});
 	connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
 		if (error != QProcess::FailedToStart) return;

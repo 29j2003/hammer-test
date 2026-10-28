@@ -275,15 +275,12 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 
 ModCodePanel::~ModCodePanel() {
 	// A running build goes on by itself otherwise; the banner may not be in a page yet.
-	if (m_process) {
-		m_process->disconnect(this);
-		m_process->kill();
-		m_process->waitForFinished(2000);
-	}
-	if (m_gitProcess) {
-		m_gitProcess->disconnect(this);
-		m_gitProcess->kill();
-		m_gitProcess->waitForFinished(2000);
+	for (auto* process : findChildren<QProcess*>(Qt::FindDirectChildrenOnly)) {
+		process->disconnect(this);
+		if (process->state() != QProcess::NotRunning) {
+			process->kill();
+			process->waitForFinished(2000);
+		}
 	}
 	if (m_banner && !m_banner->parent()) delete m_banner;
 }
