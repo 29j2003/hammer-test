@@ -20,6 +20,7 @@
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/decals.h>
 #include <sme/map_tools.h>
 #include <sme/shapes.h>
 #include <sme/soundscape_area.h>
@@ -184,7 +185,7 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		requestFrame();
 	});
 	connect(materials, &MaterialCache::materialReady, this, [this](const QString& name) {
-		m_renderer.materialReady(name);
+		if (m_renderer.materialReady(name)) m_needsRebuild = true;   // an infodecal gets its real size
 		requestFrame();
 	});
 	m_fpsClock.start();
@@ -1781,12 +1782,34 @@ void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, c
 	}
 	probe.setOrigin({0, 0, 0});
 	const Bounds local = edit::entityBounds(probe, catalog);
-	const auto rest = at ? at : restingPlace(pos, local);
+	auto finalKeys = keys;
+	std::optional<Vec3> rest = at;   // a drop already knows where
+	const bool overlay = classname == "info_overlay", decal = classname == "infodecal";
+	if ((overlay || decal) && !m_camera.is2D()) {
+		// Decals and overlays sit on the face under the mouse, with the current material.
+		if (const auto hit = m_renderer.pick(rayAt(pos), true); hit && hit->sideId != 0) {
+			const auto has = [&](const char* key) { return std::any_of(keys.begin(), keys.end(), [&](const auto& kv) { return kv.first == key; }); };
+			const QString material = normalizedMaterialName(m_editor->currentMaterial());
+			if (decal && !has("texture")) {
+				finalKeys.emplace_back("texture", material.toStdString());
+			} else if (overlay && !has("material")) {
+				// Texture size x $decalscale like a decal, until it is resized in the properties.
+				double width = 128, height = 128;
+				if (const auto* game = m_editor->game()) {
+					if (const auto size = decalSize(game->files, material.toStdString())) std::tie(width, height) = *size;
+				}
+				for (auto& kv : overlayKeysOnFace(hit->point, hit->normal, hit->sideId, material.toStdString(), width, height)) {
+					finalKeys.push_back(std::move(kv));
+				}
+			}
+			if (!rest) rest = hit->point;
+		}
+	}
+	if (!rest) rest = restingPlace(pos, local);
 	if (!rest) {
 		return;
 	}
 	const Vec3 origin = *rest;
-	auto finalKeys = keys;
 	const bool hasAngles = definition && definition->property("angles");
 	const bool anglesGiven = std::any_of(keys.begin(), keys.end(), [](const auto& kv) { return kv.first == "angles"; });
 	if (!m_camera.is2D() && m_editor->randomYaw() && hasAngles && !anglesGiven) {

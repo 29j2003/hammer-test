@@ -173,6 +173,27 @@ With **Mapbase**, reflections can be **parallax-corrected**: they line up with t
 The editor creates and names the `parallax_obb` and links it to the cubemap. Cubemaps are built after compiling; see
 [Compiling](compiling.html#cubemaps).
 
+## Decals and overlays
+
+Both put a texture onto brush faces: a sign, a crack, a stain, an arrow.
+
+- **`infodecal`** is put on by the game while the map loads. Its size is the texture's size (times the material's
+  `$decalscale`); it lands on the nearest face that faces it.
+- **`info_overlay`** is put on by the compiler. It can be any size, and it is cut to the faces listed in its *Brush
+  faces* (`sides`) key.
+
+To place one:
+
+1. Pick the material in the Asset Browser (decal materials are usually under `decals/` or `overlays/`).
+2. Arm `infodecal` or `info_overlay` with the Entity tool and click a face in the 3D view.
+
+The decal takes the material as its *Texture*. The overlay gets the clicked face as its only side, lies flat on it,
+starts as big as the texture and is upright seen from the front (on floors the texture's top points along +Y).
+
+The views draw both on the brushes as the game shows them, see-through parts included; the small box at the entity
+stays for moving it. Clicking the drawn decal or overlay selects it. **Show > Other entities** hides them with the
+other helpers. Decals that the game would bend around a corner are only drawn on the face they sit on.
+
 ## Soundscapes
 
 An `env_soundscape` plays a soundscape (ambient sound) while the player is in its area.

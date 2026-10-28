@@ -230,6 +230,30 @@ constexpr std::string_view DEMO_FGD = R"FGD(
 	input StopSound(void) : "Stops the sound."
 ]
 
+@PointClass color(200 0 0) = infodecal : "A decal (a texture with see-through parts) the engine puts on the surface at its position."
+[
+	texture(decal) : "Texture"
+]
+
+@PointClass color(200 0 200) = info_overlay : "A texture put on brush faces by the map compiler; it follows the faces it lists."
+[
+	material(material) : "Material"
+	sides(sidelist) : "Brush faces"
+	RenderOrder(integer) : "Render order" : 0
+	StartU(float) : "U start" : "0.0"
+	EndU(float) : "U end" : "1.0"
+	StartV(float) : "V start" : "0.0"
+	EndV(float) : "V end" : "1.0"
+	BasisOrigin(string) : "Overlay basis origin (read-only)"
+	BasisU(string) : "Overlay basis U (read-only)"
+	BasisV(string) : "Overlay basis V (read-only)"
+	BasisNormal(string) : "Overlay basis normal (read-only)"
+	uv0(string) : "Overlay corner 0 (read-only)"
+	uv1(string) : "Overlay corner 1 (read-only)"
+	uv2(string) : "Overlay corner 2 (read-only)"
+	uv3(string) : "Overlay corner 3 (read-only)"
+]
+
 @PointClass base(Targetname) iconsprite("editor/logic_relay.vmt") color(0 200 120) = logic_relay : "Forwards a message: fires OnTrigger when it is triggered."
 [
 	input Trigger(void) : "Fire the OnTrigger output."
@@ -368,6 +392,15 @@ void createDemo(Fixture& f) {
 	// a stand-in file, enough for the editor to offer relief, water and liquid.
 	writeText(f.mod / "shaders/fxc/fidelity_parallax_ps30.vcs", "stand-in for the test\n");
 	writeText(mat / "demo/glass001.vmt", vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glass\"\n"));
+	// A decal: a yellow arrow on transparent ground (128 x 128 texture, $decalscale 0.5 = 64 units).
+	writeBytes(mat / "decals/demo_arrow.vtf", makeTexture(128, [](double u, double v) {
+		const double x = u - 0.5, y = v - 0.5;
+		const bool head = y < 0 && y > -0.42 && std::abs(x) < (y + 0.42) * 0.9;
+		const bool shaft = y >= 0 && y < 0.4 && std::abs(x) < 0.12;
+		return (head || shaft) ? Rgba{1.0, 0.82, 0.1, 1} : Rgba{0, 0, 0, 0};
+	}, true));
+	writeText(mat / "decals/demo_arrow.vmt",
+	          vmt("LightmappedGeneric", "\t\"$basetexture\" \"decals/demo_arrow\"\n\t\"$decal\" \"1\"\n\t\"$translucent\" \"1\"\n\t\"$decalscale\" \"0.5\"\n"));
 	// Editor sprites (iconsprite in the FGD): a ring in the class color around a small symbol.
 	struct Sprite {
 		const char* name;

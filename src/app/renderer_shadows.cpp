@@ -129,7 +129,7 @@ void SceneRenderer::drawDepth(const QMatrix4x4& viewProjection) {
 	for (const auto& batch : m_batches) {
 		const auto& tex = texture(batch.material);
 		// Glass, water and tool textures (sky, triggers, nodraw) let the light through.
-		if (tex.isTool || tex.isSky || tex.kind == MaterialInfo::Kind::Translucent || tex.kind == MaterialInfo::Kind::Additive) {
+		if (batch.decal || tex.isTool || tex.isSky || tex.kind == MaterialInfo::Kind::Translucent || tex.kind == MaterialInfo::Kind::Additive) {
 			continue;
 		}
 		glDrawArrays(GL_TRIANGLES, batch.first, batch.count);

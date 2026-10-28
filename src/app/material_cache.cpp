@@ -80,6 +80,11 @@ std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& 
 	} else if (material->flag("$alphatest")) {
 		info->kind = MaterialInfo::Kind::AlphaTest;
 	}
+	if (const auto scale = material->param("$decalscale"); !scale.empty()) {
+		bool ok = false;
+		const float value = QString::fromStdString(scale).toFloat(&ok);
+		if (ok && value > 0) info->decalScale = value;
+	}
 	const auto preview = material->previewTexture();
 	if (!preview.empty()) {
 		if (const auto image = loadTexture(fs, preview, maxSize, &error)) {

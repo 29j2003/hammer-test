@@ -1,6 +1,6 @@
 // renderer.h - Draws the map with OpenGL 3.3: textured brushes batched per material,
-// displacements, entity boxes, wireframe edges, selection highlight, lighting preview,
-// grid and helper lines (gizmos, previews).
+// displacements, infodecals and overlays on the brushes, entity boxes, wireframe edges,
+// selection highlight, lighting preview, grid and helper lines (gizmos, previews).
 //
 // Geometry is rebuilt only when the document changes. Selection and "hide while dragging"
 // are per-face flags in a small texture, so clicking never rebuilds the scene.
@@ -81,7 +81,9 @@ public:
 	void setSelection(const MapDocument& doc, const Selection& selection, const Selection& hidden = {}, int hoverSideId = 0);
 	/// Hides the selected objects (they are drawn by drawPreview while dragging).
 	void setHideSelected(bool hide) { m_hideSelected = hide; }
-	void materialReady(const QString& name);
+	/// A material finished loading. True when the scene must be rebuilt: an infodecal using it
+	/// was drawn with a stand-in size.
+	bool materialReady(const QString& name);
 
 	/// Camera and drawing mode of one frame.
 	struct Params {
@@ -134,12 +136,16 @@ public:
 	[[nodiscard]] int lightCount() const { return static_cast<int>(m_lights.size()); }
 	/// Lights that cast shadows in the last frame (sun counts as one).
 	[[nodiscard]] int shadowCasterCount() const { return m_shadowCasterCount; }
+	/// Infodecal and info_overlay polygons drawn on the brushes (counted per entity kind).
+	[[nodiscard]] int decalPolygonCount() const { return m_decalPolygons; }
+	[[nodiscard]] int overlayPolygonCount() const { return m_overlayPolygons; }
 
 private:
 	struct Batch {
 		QString material;
 		GLint first = 0;
 		GLsizei count = 0;
+		bool decal = false;    ///< Infodecals and overlays: blended on top, texture coordinates 0..1
 	};
 	struct GpuTexture {
 		GLuint id = 0;
@@ -276,6 +282,8 @@ private:
 	Bounds m_sceneBounds;
 	std::size_t m_triangleCount = 0;
 	int m_drawCalls = 0;
+	int m_decalPolygons = 0, m_overlayPolygons = 0;
+	QSet<QString> m_decalsWaiting;   ///< Decal materials not loaded at the last rebuild (size unknown)
 	bool m_hideSelected = false;
 	bool m_initialized = false;
 	const MapDocument* m_doc = nullptr;   ///< For picking (valid between rebuilds)
