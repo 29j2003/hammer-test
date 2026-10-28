@@ -118,6 +118,8 @@ selects the objects in the map, and often a button that fixes it right away. The
 | A `prop_static` whose model is not a static prop (VBSP deletes it), or a `prop_physics` without a collision model (the game removes it) | **Make prop_…** (the class the model is made for) |
 | An `ambient_generic` whose *Is NOT Looped* flag does not match the sound: a looping WAV (cue point) with the flag on cannot be stopped, a one-shot WAV with it off plays only once | **Turn "Is NOT Looped" on/off** |
 | More than one `sky_camera` (the 3D skybox may show the wrong one) | — |
+| Shiny materials (`$envmap env_cubemap`) on brushes, but no `env_cubemap` in the map - in the game they mirror the sky (a shiny floor turns pink at sunset) | **Place env_cubemap** (at eye height above the player start, else in the middle of the map) |
+| The compiled map in the game's `maps` folder has `env_cubemap`s whose reflections were never built (only when it is newer than the `.vmf`) | **Build cubemaps** opens the compile dialog with **Cubemaps** ticked |
 | An output the entity's class does not have | **Use …** when it looks like a typo |
 | An output to a target name no entity has | **Remove output** |
 | An output to an input the target does not have | **Use …** when it looks like a typo |
@@ -181,6 +183,9 @@ it into the `.bsp` in the `maps` folder, then closes.
   players use; with *Both* lighting, build both.
 - Build cubemaps again after every compile; a new compile replaces the `.bsp` and its reflections.
 - Cubemaps are built from the light of the compiled map, so build them after VRAD, as the dialog does.
+- Forgot it? **Problems** says so (*reflections were never built*) as long as the map in `maps` has unbuilt
+  cubemaps, and its **Build cubemaps** button opens the compile dialog with the step ticked. It also warns when shiny
+  materials are used but the map has no `env_cubemap` at all.
 - The game always ends with exit code 1 after building cubemaps. Mapsmith therefore looks into the map in `maps`
   instead: the log says how many cubemaps are now in it, and the step only fails when none were built.
 - For reflections that line up with the room (Mapbase), give the cubemap a room box; see
