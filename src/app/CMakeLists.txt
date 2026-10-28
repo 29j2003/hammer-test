@@ -35,7 +35,7 @@ add_library(smeapp STATIC
 	panels.cpp
 	particle_browser.cpp
 	properties_panel.cpp
-	class_picker.cpp wheel_guard.cpp
+	class_picker.cpp wheel_guard.cpp text_copy.cpp start_page.cpp
 	replace_materials_dialog.cpp
 	properties_instance.cpp
 	properties_door.cpp

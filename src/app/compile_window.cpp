@@ -4,7 +4,10 @@
 
 #include "compile.h"
 #include "mod_code_panel.h"
+#include "text_copy.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -13,6 +16,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSplitter>
+#include <QTextDocumentFragment>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -53,11 +57,15 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	m_reportButton->setObjectName("compileMakeReport");
 	m_reportButton->setToolTip(reportHowTo());
 	m_reportButton->setVisible(false);
+	m_copyButton = new QPushButton(tr("Copy all"));
+	m_copyButton->setObjectName("compileCopyAll");
+	m_copyButton->setToolTip(tr("Copy the summary, every warning and error and the full output (to search it or send it)"));
 	header->addWidget(m_title, 1);
 	header->addWidget(m_time);
 	header->addWidget(m_total);
 	header->addWidget(m_leakButton);
 	header->addWidget(m_reportButton);
+	header->addWidget(m_copyButton);
 	header->addWidget(m_cancel);
 	header->addWidget(m_again);
 	v->addLayout(header);
@@ -81,6 +89,7 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	m_problems = new QTreeWidget;
 	m_problems->setHeaderLabels({tr("Warnings and errors")});
 	m_problems->setWordWrap(true);
+	makeTreeCopyable(m_problems);   // Ctrl+C and right-click Copy / Copy all
 	rv->addWidget(m_problems, 1);
 	m_summary = new QLabel;
 	m_summary->setWordWrap(true);
@@ -96,6 +105,7 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	m_log->setMaximumBlockCount(20000);
 	m_log->setLineWrapMode(QPlainTextEdit::NoWrap);
 	m_log->setPlaceholderText(tr("Full output of the compile tools"));
+	addCopyAll(m_log);
 	vertical->addWidget(m_log);
 	vertical->setStretchFactor(0, 2);
 	vertical->setStretchFactor(1, 1);
@@ -107,6 +117,7 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	connect(m_again, &QPushButton::clicked, this, &CompileWindow::compileAgain);
 	connect(m_leakButton, &QPushButton::clicked, this, &CompileWindow::showLeak);
 	connect(m_reportButton, &QPushButton::clicked, this, &CompileWindow::reportRequested);
+	connect(m_copyButton, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(allText()); });
 
 	connect(runner, &CompileRunner::started, this, [this](const QString& vmfPath, const QStringList& steps) {
 		m_mapName = QFileInfo(vmfPath).fileName();
@@ -247,6 +258,16 @@ void CompileWindow::finish(bool ok) {
 		text += tr("<br>The map works; the warnings above say what could be better.");
 	}
 	m_summary->setText(text);
+}
+
+QString CompileWindow::allText() const {
+	QStringList parts;
+	parts << m_title->text();
+	if (!m_summary->text().isEmpty()) parts << QTextDocumentFragment::fromHtml(m_summary->text()).toPlainText();
+	const QString problems = treeText(m_problems, false);
+	if (!problems.isEmpty()) parts << problems;
+	if (!m_log->toPlainText().isEmpty()) parts << m_log->toPlainText();
+	return parts.join(QStringLiteral("\n\n"));
 }
 
 } // namespace sme::app

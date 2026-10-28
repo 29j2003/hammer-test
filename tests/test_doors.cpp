@@ -303,4 +303,24 @@ TEST_CASE("connections: likely pairs first, target named in the same step") {
 	CHECK(doc.findEntity(sourceId)->connections.empty());
 	CHECK(doc.findEntity(targetId)->get("targetname").empty());
 	CHECK(edit::connect(doc, sourceId, 12345, connection).second.empty());
+
+	// A target field (a scripted_sequence's Target NPC) picks an entity without a name: it gets
+	// one in the same step, and another target can be chosen any time.
+	auto [c3, scriptId] = edit::placeEntity(doc, "scripted_sequence", {0, 64, 0}, nullptr);
+	auto [c4, npcId] = edit::placeEntity(doc, "npc_citizen", {0, 128, 0}, nullptr);
+	auto [c5, otherId] = edit::placeEntity(doc, "npc_alyx", {64, 128, 0}, nullptr);
+	auto [pick, npcName] = edit::setTarget(doc, {scriptId}, "m_iszEntity", npcId);
+	CHECK(npcName == doc.findEntity(npcId)->get("targetname"));
+	CHECK_FALSE(npcName.empty());
+	CHECK(doc.findEntity(scriptId)->get("m_iszEntity") == npcName);
+	history.push(std::move(pick));
+	auto [repick, otherName] = edit::setTarget(doc, {scriptId}, "m_iszEntity", otherId);
+	history.push(std::move(repick));
+	CHECK(doc.findEntity(scriptId)->get("m_iszEntity") == otherName);
+	history.undo(doc);
+	CHECK(doc.findEntity(scriptId)->get("m_iszEntity") == npcName);
+	CHECK(doc.findEntity(otherId)->get("targetname").empty());
+	history.undo(doc);
+	CHECK(doc.findEntity(npcId)->get("targetname").empty());
+	CHECK(edit::setTarget(doc, {scriptId}, "m_iszEntity", 9999).second.empty());
 }

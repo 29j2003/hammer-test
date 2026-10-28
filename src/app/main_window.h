@@ -34,6 +34,7 @@ class AssetBrowser;
 class CompileWindow;
 class MapLookPanel;
 class MaterialEditor;
+class StartPage;
 class ModPage;
 class ModelsPage;
 class MapsPanel;
@@ -79,6 +80,17 @@ public:
 	/// Pages of the side bar on the left.
 	enum class Page { Map, Materials, Models, Sounds, Particles, Project };
 	void showPage(Page page);
+	/// The start page: continue, recent projects, start new (shown at start when wanted).
+	void showStartPage();
+	[[nodiscard]] bool startPageShown() const;
+	[[nodiscard]] StartPage* startPage() const { return m_startPage; }
+	/// Opens a recent project: its game or mod, then the map, on the Map page.
+	bool openProject(const QString& gameKey, const QString& mapPath);
+	/// The guided new project: a new mod (Mapbase, features installed), then a first map.
+	bool startNewProject();
+	/// A first map in the current mod: a closed room with light, player start and cubemap, saved
+	/// as <name>.vmf in the mod's map folder and opened.
+	bool makeStarterMap(const QString& name);
 	[[nodiscard]] Page currentPage() const;
 	[[nodiscard]] QStackedWidget* pages() const { return m_pages; }
 	[[nodiscard]] ModPage* modPage() const { return m_modPage; }
@@ -180,6 +192,9 @@ private:
 	SoundBrowser* m_sounds = nullptr;
 	ParticleBrowser* m_particles = nullptr;
 	CompileWindow* m_compileWindow = nullptr;
+	StartPage* m_startPage = nullptr;
+	QString m_pickedMaterial;   ///< Picked in the browser while mapping (the Materials page opens it)
+	QString m_editorAtPick;     ///< The material editor's material at that moment
 	MaterialEditor* m_materialEditor;
 	std::vector<Vec3> m_lastLeak;
 	Outliner* m_outliner = nullptr;

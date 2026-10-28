@@ -63,6 +63,9 @@ public:
 	void addLeak(const std::vector<Vec3>& line);
 	[[nodiscard]] int errorCount() const;
 
+	/// Every problem with its fix as text ("Copy all").
+	[[nodiscard]] QString problemsText() const;
+
 signals:
 	/// "Show leak line" was pressed / a problem's objects were selected and should be framed.
 	void showLeak(const std::vector<Vec3>& line);

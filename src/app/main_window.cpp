@@ -13,6 +13,7 @@
 #include "models_page.h"
 #include "maps_panel.h"
 #include "menu_editor.h"
+#include "start_page.h"
 #include "texts_panel.h"
 #include "new_mod_dialog.h"
 #include "source_control_panel.h"
@@ -79,6 +80,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <map>
@@ -92,6 +94,7 @@
 
 #include <sme/checks.h>
 #include <sme/game.h>
+#include <sme/map_tools.h>
 #include <sme/scene_export.h>
 #include <sme/text.h>
 
@@ -351,8 +354,21 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 		m_materials->setFileSystem(m_editor->game() ? &m_editor->game()->files : nullptr);
 		m_materials->setRelief(m_editor->fidelityLook());
 		if (m_editor->game()) {
+			// Search paths of gameinfo.txt that are not there (language packs, the episodes' bin
+			// folders ...) are normal: one quiet line instead of a wall of warnings.
+			QStringList missing;
 			for (const auto& problem : m_editor->game()->problems) {
-				m_log->append(QString::fromStdString(problem), QColor(255, 200, 100));
+				const QString text = QString::fromStdString(problem);
+				if (text.startsWith(QLatin1String("VPK not found")) || text.startsWith(QLatin1String("Folder not found"))) {
+					missing << text;
+				} else {
+					m_log->append(text, QColor(255, 200, 100));
+				}
+			}
+			if (!missing.isEmpty()) {
+				m_log->append(tr("%n optional search path(s) of gameinfo.txt are not installed (language packs and the like) - that is normal.",
+				                 nullptr, int(missing.size())),
+				              QColor(140, 140, 140));
 			}
 		}
 		QTimer::singleShot(0, this, &MainWindow::refreshGames);   // not while its menu action is still running
@@ -535,6 +551,21 @@ void MainWindow::createDocks() {
 	m_pages->addWidget(m_soundsPage);
 	m_pages->addWidget(m_particlesPage);
 	m_pages->addWidget(m_projectPage);
+	// The start page: continue, recent projects, start new (shown at start, File > Start page).
+	m_startPage = new StartPage;
+	m_pages->addWidget(m_startPage);
+	connect(m_startPage, &StartPage::openProject, this, &MainWindow::openProject);
+	connect(m_startPage, &StartPage::newProjectRequested, this, &MainWindow::startNewProject);
+	connect(m_startPage, &StartPage::closeRequested, this, [this] { showPage(Page::Map); });
+	connect(m_startPage, &StartPage::openMapRequested, this, [this] {
+		const QString dir = m_editor->gameKey().isEmpty() ? QString() : m_editor->gameSettings().mapDir;
+		const QString path = QFileDialog::getOpenFileName(this, tr("Open map"), dir, tr("Valve map (*.vmf)"));
+		if (!path.isEmpty() && openMap(path)) showPage(Page::Map);
+	});
+	// Every map opened or saved is a recent project (with a picture of the 3D view when saved).
+	connect(m_editor, &Editor::documentReplaced, this, [this] {
+		if (!m_editor->filePath().isEmpty()) rememberRecentProject(m_editor->gameKey(), m_editor->filePath());
+	});
 	for (int i = 1; i < m_pages->count(); ++i) {
 		m_pages->widget(i)->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);   // see showPage()
 	}
@@ -580,6 +611,10 @@ void MainWindow::createDocks() {
 	connect(m_assets, &AssetBrowser::materialPicked, this, [this](const QString& name) {
 		if (currentPage() == Page::Materials && name.compare(m_materialEditor->materialName(), Qt::CaseInsensitive) != 0) {
 			m_materialEditor->openMaterial(name);
+		} else if (currentPage() != Page::Materials) {
+			// Picked while mapping: the Materials page shows it when it is opened next.
+			m_pickedMaterial = name;
+			m_editorAtPick = m_materialEditor->materialName();
 		}
 	});
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
@@ -633,7 +668,9 @@ void MainWindow::createDocks() {
 	// switch to a compact form (the Sounds panel does below 420 pixels).
 	for (auto* dock : std::as_const(m_docks)) {
 		const auto area = dockWidgetArea(dock);
-		if (area == Qt::BottomDockWidgetArea) dock->widget()->setMinimumHeight(90);
+		// The Asset Browser keeps one row of tiles with their names (its own minimum), the others
+		// may get as low as 90 pixels.
+		if (area == Qt::BottomDockWidgetArea) dock->widget()->setMinimumHeight(dock->widget() == m_assets ? m_assets->minimumSizeHint().height() : 90);
 		if (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea) dock->widget()->setMinimumWidth(200);
 		connect(dock, &QDockWidget::visibilityChanged, this, [this] { QTimer::singleShot(0, this, &MainWindow::placeCornerGrips); });
 	}
@@ -686,9 +723,23 @@ void MainWindow::showPage(Page page) {
 	}
 	m_assets->setPageMode(page == Page::Materials);
 	QTimer::singleShot(0, this, &MainWindow::placeCornerGrips);   // after the docks are back or gone
-	// The page never starts empty: without an open material it shows the browser's current one.
-	if (page == Page::Materials && m_materialEditor->materialName().isEmpty() && !m_assets->shownMaterial().isEmpty()) {
-		m_materialEditor->openMaterial(m_assets->shownMaterial());
+	// The page shows the current material (picked in the browser or with the eyedropper); a
+	// material with unsaved changes stays open, with a hint which one is current.
+	if (page == Page::Materials) {
+		// The material picked in the browser since the editor's material was opened; without
+		// one an empty page shows the browser's current material.
+		const QString open = m_materialEditor->materialName();
+		QString wanted = open == m_editorAtPick ? m_pickedMaterial : QString();
+		if (open.isEmpty() && wanted.isEmpty()) wanted = m_assets->shownMaterial();
+		m_pickedMaterial.clear();
+		if (!wanted.isEmpty() && open.compare(wanted, Qt::CaseInsensitive) != 0) {
+			if (open.isEmpty() || !m_materialEditor->hasUnsavedChanges()) {
+				m_materialEditor->openMaterial(wanted);
+				if (m_assets->shownMaterial().compare(wanted, Qt::CaseInsensitive) != 0) m_assets->selectMaterial(wanted);
+			} else {
+				emit m_editor->message(tr("%1 has unsaved changes and stays open - the current material is %2").arg(open, wanted));
+			}
+		}
 	}
 	setMapWorkspaceShown(page == Page::Map);
 	if (m_pageGroup) {
@@ -802,6 +853,8 @@ void MainWindow::createActions() {
 	file->addAction(action(tr("New map"), QKeySequence::New, [this] {
 		if (maybeSave()) m_editor->newMap();
 	}));
+	file->addAction(action(tr("Start page"), QKeySequence(), [this] { showStartPage(); }));
+	file->addAction(action(tr("New project (mod and first map) ..."), QKeySequence(), [this] { startNewProject(); }));
 	file->addAction(action(tr("New mod ..."), QKeySequence(), [this] { runNewModDialog(m_editor, this); }));
 	file->addAction(action(tr("Open ..."), QKeySequence::Open, [this] {
 		if (!maybeSave()) return;
@@ -1078,7 +1131,9 @@ void MainWindow::createActions() {
 	m_gameButton->setPopupMode(QToolButton::InstantPopup);
 	m_gameButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
 	m_gameButton->setMinimumWidth(260);
-	m_gameButton->setToolTip(tr("Game or mod to edit for (all Source 1 games and mods found on this PC)"));
+	m_gameButton->setObjectName("gameButton");
+	m_gameButton->setProperty("chooser", true);
+	m_gameButton->setToolTip(tr("The mod (or game) you are working on - click to switch. Your own mods are listed first."));
 	m_gameMenu = new QMenu(m_gameButton);
 	m_gameMenu->setToolTipsVisible(true);
 	m_gameButton->setMenu(m_gameMenu);
@@ -1491,10 +1546,27 @@ void MainWindow::refreshGames() {
 		matches.push_back(action);
 	}
 	QList<QAction*> groups;
-	groups.push_back(m_gameMenu->addSection(tr("Steam games")));
-	std::map<std::string, std::vector<const GameEntry*>> byApp, modsByBase;
+	// The mapper's own mods first (sourcemods, a new one included), newest folder first: this is
+	// where one switches between them.
+	std::vector<const GameEntry*> ownMods;
 	for (const auto& game : games) {
-		(game.isSourceMod ? modsByBase : byApp)[game.appName].push_back(&game);
+		if (game.isSourceMod) ownMods.push_back(&game);
+	}
+	if (!ownMods.empty()) {
+		std::error_code ec;
+		std::stable_sort(ownMods.begin(), ownMods.end(), [&ec](const GameEntry* a, const GameEntry* b) {
+			return std::filesystem::last_write_time(a->gameDir, ec) > std::filesystem::last_write_time(b->gameDir, ec);
+		});
+		groups.push_back(m_gameMenu->addSection(tr("Your mods")));
+		for (const auto* game : ownMods) {
+			auto* action = makeAction(m_gameMenu, *game, entryText(*game) + QStringLiteral("   - sourcemods/") + QString::fromStdString(game->folder()));
+			groups.push_back(action);
+		}
+	}
+	groups.push_back(m_gameMenu->addSection(tr("Steam games")));
+	std::map<std::string, std::vector<const GameEntry*>> byApp;
+	for (const auto& game : games) {
+		if (!game.isSourceMod) byApp[game.appName].push_back(&game);
 	}
 	for (const auto& [app, list] : byApp) {
 		if (list.size() == 1) {
@@ -1520,21 +1592,6 @@ void MainWindow::refreshGames() {
 			}
 		}
 	}
-	if (!modsByBase.empty()) {
-		groups.push_back(m_gameMenu->addSection(tr("Source mods")));
-		for (const auto& [base, list] : modsByBase) {
-			QMenu* target = m_gameMenu;
-			if (modsByBase.size() > 1) {
-				target = m_gameMenu->addMenu(tr("Based on %1").arg(QString::fromStdString(base.empty() ? "unknown game" : base)));
-				target->setToolTipsVisible(true);
-				groups.push_back(target->menuAction());
-			}
-			for (const auto* game : list) {
-				auto* action = makeAction(target, *game, entryText(*game));
-				if (target == m_gameMenu) groups.push_back(action);
-			}
-		}
-	}
 	connect(search, &QLineEdit::textChanged, m_gameMenu, [matches, groups](const QString& text) {
 		const QString needle = text.trimmed().toLower();
 		for (auto* action : groups) action->setVisible(needle.isEmpty());
@@ -1545,7 +1602,7 @@ void MainWindow::refreshGames() {
 		QTimer::singleShot(0, search, [search] { search->setFocus(); });
 	});
 	const GameEntry* current = m_editor->gameEntry();
-	m_gameButton->setText(current ? entryText(*current) + QStringLiteral("  ▾") : tr("Choose a game...  ▾"));
+	m_gameButton->setText(current ? tr("Mod:  %1  ▾").arg(entryText(*current).trimmed()) : tr("Choose your mod or game ...  ▾"));
 }
 
 void MainWindow::selectGame(const QString& key) {
@@ -1614,6 +1671,85 @@ bool MainWindow::save(bool saveAs) {
 		return false;
 	}
 	updateTitle();
+	rememberRecentProject(m_editor->gameKey(), path, view3D()->grabFramebuffer());
+	return true;
+}
+
+void MainWindow::showStartPage() {
+	m_startPage->refresh();
+	m_pages->setCurrentWidget(m_startPage);
+	for (auto* widget : {static_cast<QWidget*>(m_rows), static_cast<QWidget*>(m_materialEditor), static_cast<QWidget*>(m_modelsPage),
+	                     static_cast<QWidget*>(m_soundsPage), static_cast<QWidget*>(m_particlesPage), static_cast<QWidget*>(m_projectPage)}) {
+		widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+	}
+	m_startPage->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+	setMapWorkspaceShown(false);
+	if (m_pageGroup) {
+		// No side bar page is current while the start page shows.
+		m_pageGroup->setExclusive(false);
+		for (auto* a : m_pageGroup->actions()) a->setChecked(false);
+		m_pageGroup->setExclusive(true);
+	}
+}
+
+bool MainWindow::startPageShown() const {
+	return m_pages->currentWidget() == m_startPage;
+}
+
+bool MainWindow::openProject(const QString& gameKey, const QString& mapPath) {
+	if (!maybeSave()) return false;
+	if (!gameKey.isEmpty() && gameKey != m_editor->gameKey()) selectGame(gameKey);
+	if (!openMap(mapPath)) return false;
+	showPage(Page::Map);
+	return true;
+}
+
+bool MainWindow::startNewProject() {
+	if (!maybeSave()) return false;
+	// 1. The mod (Mapbase by default, the features go in with it).
+	NewModDialog dialog(m_editor, this);
+	dialog.setWindowTitle(tr("New project"));
+	if (dialog.exec() != QDialog::Accepted) return false;
+	QString error;
+	const QString key = createModAndSwitch(m_editor, dialog.modTemplate(), dialog.mapsToCopy(), &error, dialog.featuresOff());
+	if (key.isEmpty()) {
+		QMessageBox::warning(this, tr("New project"), error);
+		return false;
+	}
+	return makeStarterMap(QString::fromStdString(dialog.modTemplate().folder));
+}
+
+bool MainWindow::makeStarterMap(const QString& name) {
+	// 2. A first map: a closed room with light, player start and cubemap, in the mod's map folder.
+	m_editor->newMap();
+	edit::StarterRoomMaterials materials;
+	if (const auto* game = m_editor->game()) {
+		// The game's own materials when it has them (Half-Life 2's), else the dev textures.
+		const auto pick = [game](std::initializer_list<const char*> names, const std::string& fallback) {
+			for (const char* name : names) {
+				if (game->files.exists(std::string("materials/") + name + ".vmt")) return QString::fromLatin1(name).toUpper().toStdString();
+			}
+			return fallback;
+		};
+		materials.floor = pick({"concrete/concretefloor001a", "dev/dev_measuregeneric01b"}, materials.floor);
+		materials.walls = pick({"brick/brickwall001a", "concrete/concretewall001a", "dev/dev_measurewall01a"}, materials.walls);
+		materials.ceiling = pick({"concrete/concreteceiling001a", "dev/dev_measuregeneric01"}, materials.ceiling);
+	}
+	m_editor->commit(edit::starterRoom(m_editor->doc(), materials));
+	QDir().mkpath(m_editor->gameSettings().mapDir);
+	QString path = QDir(m_editor->gameSettings().mapDir).filePath((name.isEmpty() ? QStringLiteral("first_map") : name) + QStringLiteral(".vmf"));
+	for (int i = 2; QFileInfo::exists(path); ++i) path = QDir(m_editor->gameSettings().mapDir).filePath(QStringLiteral("%1_%2.vmf").arg(name).arg(i));
+	QString error;
+	if (!m_editor->saveMap(path, &error)) {
+		QMessageBox::warning(this, tr("New project"), tr("Could not save the first map:\n%1").arg(error));
+		return false;
+	}
+	updateTitle();
+	showPage(Page::Map);
+	for (auto* view : m_views) view->frameSelection();
+	rememberRecentProject(m_editor->gameKey(), path);
+	emit m_editor->message(tr("Your project is ready: %1 with a first room. Build on it, then Run map (F9) to walk around in it.")
+	                           .arg(QFileInfo(path).fileName()));
 	return true;
 }
 

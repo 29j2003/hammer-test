@@ -51,6 +51,10 @@ never switches between *Keyvalues*, *Outputs* and *Inputs*. The sky list is the 
 moment (without scrolling), then the wheel goes through the skies. Picking another object keeps the panel where you
 had scrolled to.
 
+Fields that name another entity (a scripted_sequence's *Target NPC*, a *Target*) list every named entity and also the
+ones without a name (NPCs first for an NPC field): pick one and it gets a name in the same step (one undo). You can
+always pick another one or type a name.
+
 Fields that name something of the game are drop-down lists you can scroll through or type into: the sky
 (worldspawn *SkyBox Texture Name*, with pictures), soundscapes, sounds, models, particle systems, materials, decals and
 sprites, entity names (targets) and animations.

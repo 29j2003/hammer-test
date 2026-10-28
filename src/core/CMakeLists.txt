@@ -51,6 +51,7 @@ add_library(smecore STATIC
 	src/map.cpp
 	src/map_budget.cpp
 	src/map_tools.cpp
+	src/recent_projects.cpp
 	src/soundscape_area.cpp
 	src/doors.cpp
 	src/io_links.cpp

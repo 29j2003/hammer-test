@@ -78,6 +78,18 @@ struct WaterResult {
 [[nodiscard]] WaterResult makeWater(MapDocument& doc, const Selection& selection, const std::string& waterMaterial, const EntityCatalog* catalog,
                                     double cubemapRange = 512);
 
+/// Materials of the starter room (the game's own when it has them).
+struct StarterRoomMaterials {
+	std::string floor = "DEV/DEV_MEASUREGENERIC01B";
+	std::string walls = "DEV/DEV_MEASUREWALL01A";
+	std::string ceiling = "DEV/DEV_MEASUREGENERIC01";
+};
+
+/// A first map to start from: a closed room (floor, four walls, ceiling - no leak) of `size`
+/// inside, a light under the ceiling, an info_player_start on the floor and an env_cubemap.
+/// One undo step "Starter room".
+[[nodiscard]] Change starterRoom(MapDocument& doc, const StarterRoomMaterials& materials, const Vec3& size = {768, 768, 256});
+
 } // namespace edit
 
 } // namespace sme

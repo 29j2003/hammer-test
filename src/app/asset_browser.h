@@ -24,6 +24,7 @@ class QComboBox;
 class QTabWidget;
 class QCheckBox;
 class QListWidget;
+class QToolButton;
 
 namespace sme::app {
 
@@ -182,6 +183,10 @@ public:
 	[[nodiscard]] QListView* modelView() const { return m_modelView; }
 	/// "Used in this map" of the model tab.
 	[[nodiscard]] QCheckBox* modelsUsedOnly() const { return m_modelsUsedOnly; }
+	/// One row of tiles with names, the search row and the tabs (the dock never gets lower).
+	[[nodiscard]] QSize minimumSizeHint() const override;
+	/// Opens the popup with the recently used materials (the "Recent" button).
+	void showRecent();
 
 signals:
 	/// Background indexing finished (the name lists are filled).
@@ -202,16 +207,17 @@ private:
 
 	Editor* m_editor;
 	MaterialCache* m_thumbnails;
-	QTabWidget* m_tabs;
+	QTabWidget* m_tabs = nullptr;
 
 	MaterialListModel* m_materialModel;
 	MaterialFilter* m_materialFilter;
 	QListView* m_materialView;
-	QLineEdit* m_materialSearch;
+	QLineEdit* m_materialSearch = nullptr;
 	QComboBox* m_materialCategory;
-	QLabel* m_materialInfo;
+	QLabel* m_materialInfo = nullptr;
 	QListWidget* m_recent;
-	bool m_recentRoom = true;   ///< The browser is high enough for the row of recent materials
+	QToolButton* m_recentButton = nullptr;   ///< "Recent" in the search row
+	QWidget* m_recentPopup = nullptr;        ///< Popup with the recent materials
 	QFutureWatcher<AssetIndex> m_indexWatcher;
 	std::atomic<int> m_generation{0};
 
@@ -225,7 +231,7 @@ private:
 	QLineEdit* m_modelSearch;
 	QCheckBox* m_modelsUsedOnly;
 	ModelSearchFilter* m_modelFilter;
-	QLabel* m_modelInfo;
+	QLabel* m_modelInfo = nullptr;
 };
 
 } // namespace sme::app

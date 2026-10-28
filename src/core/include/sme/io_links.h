@@ -42,6 +42,11 @@ namespace edit {
 /// the target's name (empty if source or target do not exist).
 [[nodiscard]] std::pair<Change, std::string> connect(MapDocument& doc, int sourceId, int targetId, Connection connection);
 
+/// Sets `key` of the entities `ids` to the target entity's name (target fields like a
+/// scripted_sequence's "Target NPC"); a target without a name gets one from uniqueTargetName()
+/// in the same undo step. Returns the change and the name (empty if the target does not exist).
+[[nodiscard]] std::pair<Change, std::string> setTarget(MapDocument& doc, const std::vector<int>& ids, const std::string& key, int targetId);
+
 } // namespace edit
 
 } // namespace sme

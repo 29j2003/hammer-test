@@ -14,8 +14,11 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 
 ## What it can do
 
+- **Start page**: continue your last map in one click, open a recent one, or start a new project - a Mapbase mod with
+  Mapsmith's features installed and a first room, open and ready to build on.
 - **Finds your games and mods by itself**: every Source 1 game in your Steam libraries and every mod in
-  `steamapps/sourcemods` (Mapbase mods included), shown with clear names and grouped by game, with a search field.
+  `steamapps/sourcemods` (Mapbase mods included), shown with clear names - your own mods first in the **Mod** box at
+  the top - with a search field.
   FGDs and compile tools are taken from your Hammer/Hammer++ setup; Mapbase mods also get Mapbase's FGD, so entities
   like `env_global_light` are there. Folders that are only content of another game (like `hl2` inside Entropy : Zero 2)
   are marked "base content" and listed last.

@@ -4,10 +4,12 @@
 
 #include <sme/assets.h>
 #include <sme/brush.h>
+#include <sme/csg.h>
 #include <sme/filesystem.h>
 #include <sme/history.h>
 #include <sme/map_budget.h>
 #include <sme/map_tools.h>
+#include <sme/recent_projects.h>
 
 #include <filesystem>
 #include <fstream>
@@ -172,4 +174,57 @@ TEST_CASE("make water: material, nodraw, lod control and cubemap in one step") {
 	CHECK(none.brushes == 0);
 	CHECK(none.change.empty());
 	(void)c1; (void)c2;
+}
+
+TEST_CASE("starter room: a closed room with light, player start and cubemap, one undo step") {
+	MapDocument doc;
+	edit::StarterRoomMaterials materials;
+	materials.walls = "BRICK/WALL";
+	History history;
+	history.push(edit::starterRoom(doc, materials, {512, 384, 256}));
+	REQUIRE(doc.world.solids.size() == 6);
+	Bounds all;
+	for (const auto& solid : doc.world.solids) {
+		for (const auto& corner : solidCorners(solid)) all.add(corner);
+	}
+	CHECK(all.min == Vec3{-272, -208, -16});   // 16 units of wall around 512 x 384 x 256 inside
+	CHECK(all.max == Vec3{272, 208, 272});
+	int walls = 0;
+	for (const auto& solid : doc.world.solids) {
+		if (solid.sides.front().material == "BRICK/WALL") ++walls;
+	}
+	CHECK(walls == 4);
+	std::vector<std::string> classes;
+	for (const auto& entity : doc.entities) classes.push_back(entity.classname());
+	CHECK(classes == std::vector<std::string>{"info_player_start", "light", "env_cubemap"});
+	// Everything inside the room.
+	for (const auto& entity : doc.entities) {
+		const Vec3 o = entity.origin();
+		CHECK(o.x > -256);
+		CHECK(o.x < 256);
+		CHECK(o.z > 0);
+		CHECK(o.z < 256);
+	}
+	history.undo(doc);
+	CHECK(doc.world.solids.empty());
+	CHECK(doc.entities.empty());
+}
+
+TEST_CASE("recent projects: newest first, one entry per map, kept as text") {
+	std::vector<RecentProject> list;
+	list = rememberProject(list, {"sourcemods/a", "C:/maps/one.vmf", 10});
+	list = rememberProject(list, {"sourcemods/b", "C:/maps/two.vmf", 20});
+	list = rememberProject(list, {"sourcemods/a", "c:\\MAPS\\one.vmf", 30});   // the same map again
+	REQUIRE(list.size() == 2);
+	CHECK(list[0].time == 30);
+	CHECK(list[1].mapPath == "C:/maps/two.vmf");
+	CHECK(rememberProject(list, {"x", "", 40}) == list);   // a map never saved is not a project
+	for (int i = 0; i < 20; ++i) list = rememberProject(list, {"g", "/m/" + std::to_string(i) + ".vmf", i});
+	CHECK(list.size() == 12);
+	CHECK(list.front().mapPath == "/m/19.vmf");
+	const auto text = writeRecentProjects(list);
+	CHECK(parseRecentProjects(text) == list);
+	CHECK(parseRecentProjects("broken\nx\ty\n12\tsourcemods/c\t/maps/c.vmf\n").size() == 1);
+	CHECK(forgetProject(list, "/M/19.VMF").size() == 11);
+	CHECK(writeRecentProjects({{"bad\tkey", "/a.vmf", 1}}).empty());
 }

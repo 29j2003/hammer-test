@@ -61,6 +61,7 @@
 #include <sme/doors.h>
 #include <sme/game.h>
 #include <sme/history.h>
+#include <sme/io_links.h>
 #include <sme/map_tools.h>
 #include <sme/sky_presets.h>
 #include <sme/soundscape_area.h>
@@ -366,6 +367,16 @@ void PropertiesPanel::rebuild() {
 	}
 	layout->addStretch(1);
 	// (The wheel scrolls the panel past drop-downs and number boxes: WheelGuard.)
+	// Drop-downs never ask for the width of their longest entry: the panel fits its dock, and a
+	// long choice is read in the opened list.
+	for (auto* combo : content->findChildren<QComboBox*>()) {
+		combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		combo->setMinimumContentsLength(std::min(combo->minimumContentsLength() > 0 ? combo->minimumContentsLength() : 8, 8));
+		// As wide as the row allows, never wider: the arrow always stays in view.
+		combo->setSizePolicy(QSizePolicy::Ignored, combo->sizePolicy().verticalPolicy());
+		combo->setMinimumWidth(std::max(combo->minimumWidth(), 72));
+		if (auto* view = combo->view()) view->setMinimumWidth(std::max(view->minimumWidth(), 220));
+	}
 	// The panel stays where it was scrolled to: the same group stays at the same height, so
 	// picking another object keeps the place one was editing.
 	const int oldScroll = m_scroll->verticalScrollBar()->value();
@@ -535,7 +546,7 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 		// Never measure every name for the box's width (that alone took seconds with all of
 		// HL2's models); the popup lists them with one row height.
 		combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-		combo->setMinimumContentsLength(12);
+		combo->setMinimumContentsLength(8);
 		combo->setMaxVisibleItems(20);   // a long list to scroll through, not a handful of rows
 		if (auto* list = qobject_cast<QListView*>(combo->view())) list->setUniformItemSizes(true);
 		if (shared) {
@@ -570,8 +581,42 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 			connect(use, &QToolButton::clicked, this, [this, commit] { commit(m_editor->currentMaterial().toLower()); });
 			after = use;
 		}
-		connect(combo, &QComboBox::activated, this, [combo, commit](int) { commit(combo->currentText()); });
+		// Target fields also list the entities without a name (NPCs first for a Target NPC):
+		// picking one names it in the same undo step, so any entity can be the target.
+		const bool namesEntities = isTarget && type != "filterclass" && type != "npcclass";
+		if (namesEntities && !shared) {
+			const bool wantsNpc = toLower(key) == "m_iszentity" || type == "target_name_or_class";
+			std::vector<const Entity*> unnamed;
+			for (const auto& entity : m_editor->doc().entities) {
+				if (!entity.get("targetname").empty() || std::find(ids.begin(), ids.end(), entity.id) != ids.end()) continue;
+				unnamed.push_back(&entity);
+			}
+			const auto isNpc = [](const Entity* e) { return startsWithI(e->classname(), "npc_") || startsWithI(e->classname(), "monster_"); };
+			if (wantsNpc) std::stable_partition(unnamed.begin(), unnamed.end(), isNpc);
+			if (unnamed.size() > 200) unnamed.resize(200);
+			for (const Entity* entity : unnamed) {
+				combo->addItem(tr("%1  #%2  (no name yet - gets one)").arg(qs(entity->classname())).arg(entity->id));
+				combo->setItemData(combo->count() - 1, entity->id, TARGET_ENTITY_ROLE);
+			}
+			combo->setEditText(mixed ? QString() : value);   // adding items must not change the text shown
+		}
+		const auto ids2 = ids;
+		connect(combo, &QComboBox::activated, this, [this, combo, commit, ids2, key](int index) {
+			if (const int targetId = combo->itemData(index, TARGET_ENTITY_ROLE).toInt(); targetId > 0) {
+				auto [change, name] = edit::setTarget(m_editor->doc(), ids2, key, targetId);
+				if (!name.empty()) {
+					m_editor->commit(std::move(change));
+					emit m_editor->message(tr("Target set to %1 (the entity got this name)").arg(qs(name)));
+				}
+				return;
+			}
+			commit(combo->currentText());
+		});
 		connect(combo->lineEdit(), &QLineEdit::editingFinished, this, [combo, commit, value] {
+			if (combo->currentIndex() >= 0 && combo->itemData(combo->currentIndex(), TARGET_ENTITY_ROLE).toInt() > 0 &&
+			    combo->currentText() == combo->itemText(combo->currentIndex())) {
+				return;   // an unnamed entity was picked: activated() names it
+			}
 			if (combo->currentText() != value) {
 				commit(combo->currentText());
 			}
@@ -861,7 +906,7 @@ void PropertiesPanel::addRow(QGridLayout* grid, const QString& label, QWidget* e
 	auto* name = new QLabel(label);
 	name->setProperty("role", "rowLabel");
 	name->setWordWrap(true);
-	name->setMinimumWidth(110);
+	name->setMinimumWidth(84);   // long names wrap: the panel fits narrow docks
 	name->setMaximumWidth(160);
 	name->setToolTip(help);
 	name->setBuddy(editor);

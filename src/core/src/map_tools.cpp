@@ -465,6 +465,38 @@ WaterResult makeWater(MapDocument& doc, const Selection& selection, const std::s
 	return result;
 }
 
+Change starterRoom(MapDocument& doc, const StarterRoomMaterials& materials, const Vec3& size) {
+	Transaction t(doc, "Starter room");
+	const double wall = 16;
+	const Vec3 half{size.x / 2, size.y / 2, 0};
+	const Bounds inside{{-half.x, -half.y, 0}, {half.x, half.y, size.z}};
+	const auto add = [&](const Bounds& box, const std::string& material) {
+		Solid solid = makeBlock(doc, box, material);
+		t.touchSolid({0, solid.id});
+		doc.world.solids.push_back(std::move(solid));
+	};
+	const Vec3 lo = inside.min, hi = inside.max;
+	add({{lo.x - wall, lo.y - wall, lo.z - wall}, {hi.x + wall, hi.y + wall, lo.z}}, materials.floor);
+	add({{lo.x - wall, lo.y - wall, hi.z}, {hi.x + wall, hi.y + wall, hi.z + wall}}, materials.ceiling);
+	add({{lo.x - wall, lo.y - wall, lo.z}, {lo.x, hi.y + wall, hi.z}}, materials.walls);
+	add({{hi.x, lo.y - wall, lo.z}, {hi.x + wall, hi.y + wall, hi.z}}, materials.walls);
+	add({{lo.x, lo.y - wall, lo.z}, {hi.x, lo.y, hi.z}}, materials.walls);
+	add({{lo.x, hi.y, lo.z}, {hi.x, hi.y + wall, hi.z}}, materials.walls);
+	const auto place = [&](const std::string& classname, const Vec3& origin, std::vector<std::pair<std::string, std::string>> keys) {
+		Entity entity;
+		entity.id = doc.newEntityId();
+		t.touchEntity(entity.id);
+		entity.set("classname", classname);
+		entity.set("origin", formatVec3(origin));
+		for (auto& [key, value] : keys) entity.set(key, value);
+		doc.entities.push_back(std::move(entity));
+	};
+	place("info_player_start", {0, -size.y / 4, 1}, {{"angles", "0 90 0"}});
+	place("light", {0, 0, size.z - 32}, {{"_light", "255 240 220 400"}});
+	place("env_cubemap", {0, 0, 64}, {});
+	return t.finish();
+}
+
 } // namespace edit
 
 } // namespace sme
