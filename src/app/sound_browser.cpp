@@ -542,9 +542,9 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	// Explicit minimum widths: the parts may get narrow in the dock instead of making the whole window
 	// wider than the screen (a layout's own minimum would add up all buttons of a row).
 	m_categories->setMinimumWidth(130);
-	left->setMinimumWidth(220);
-	player->setMinimumWidth(300);
-	m_editors->setMinimumWidth(240);
+	left->setMinimumWidth(200);
+	player->setMinimumWidth(220);
+	m_editors->setMinimumWidth(200);
 	m_rightSplit = new QSplitter(Qt::Horizontal);
 	m_rightSplit->setChildrenCollapsible(false);
 	m_rightSplit->addWidget(player);
@@ -756,6 +756,9 @@ void SoundBrowser::resizeEvent(QResizeEvent* event) {
 	if (m_tools->isVisibleTo(this) != roomy) {
 		m_tools->setVisible(roomy);
 		m_editHint->setVisible(!roomy);
+		// The low dock under the map leaves out the category list (search and the tree find
+		// everything); the page has it. Keeps the dock narrow enough for small screens.
+		m_categories->setVisible(roomy);
 	}
 	// The page is tall: the editor goes below the player. The dock is low: beside it.
 	const auto orientation = height() >= 560 ? Qt::Vertical : Qt::Horizontal;

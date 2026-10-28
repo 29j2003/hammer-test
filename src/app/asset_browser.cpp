@@ -321,6 +321,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		});
 		v->addWidget(m_materialView, 1);
 		m_materialInfo = new QLabel(tr("No game loaded"));
+		m_materialInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);   // long names must not widen the window
 		m_materialInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		v->addWidget(m_materialInfo);
 		m_tabs->addTab(page, tr("Materials"));
@@ -372,6 +373,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_modelView->setModel(proxy);
 		v->addWidget(m_modelView, 1);
 		m_modelInfo = new QLabel(tr("No game loaded"));
+		m_modelInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 		m_modelInfo->setWordWrap(true);
 		m_modelInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		v->addWidget(m_modelInfo);

@@ -349,6 +349,9 @@ void MainWindow::createDocks() {
 	m_pages->addWidget(m_soundsPage);
 	m_pages->addWidget(m_particlesPage);
 	m_pages->addWidget(m_projectPage);
+	for (int i = 1; i < m_pages->count(); ++i) {
+		m_pages->widget(i)->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);   // see showPage()
+	}
 
 	// Left: the tool's options, the Outliner and
 	// mapbase-fidelity's look per map as tabs. Right: only the properties of what is selected.
@@ -455,6 +458,12 @@ void MainWindow::showPage(Page page) {
 	borrow(m_particles, m_particlesDock, m_particlesPage, page == Page::Particles);
 	if (page == Page::Project) m_modPage->refresh();
 	m_pages->setCurrentWidget(target);
+	// A stacked widget is as wide as its widest page; only the shown page may count, or the map
+	// with its docks would need the Materials page's width too.
+	for (auto* widget : widgets) {
+		widget->setSizePolicy(widget == target ? QSizePolicy::Preferred : QSizePolicy::Ignored,
+		                      widget == target ? QSizePolicy::Preferred : QSizePolicy::Ignored);
+	}
 	m_assets->setPageMode(page == Page::Materials);
 	// The page never starts empty: without an open material it shows the browser's current one.
 	if (page == Page::Materials && m_materialEditor->materialName().isEmpty() && !m_assets->shownMaterial().isEmpty()) {

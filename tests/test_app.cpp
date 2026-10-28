@@ -1960,7 +1960,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		// Many requests in a row draw only a few frames.
 		Viewport* view = window.view3D();
 		int frames = 0;
-		QObject::connect(view, &QOpenGLWidget::frameSwapped, view, [&frames] { ++frames; });
+		const auto counting = QObject::connect(view, &QOpenGLWidget::frameSwapped, view, [&frames] { ++frames; });
 		QElapsedTimer clock;
 		clock.start();
 		while (clock.elapsed() < 500) {
@@ -1969,6 +1969,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 			QApplication::processEvents();
 		}
 		settle();
+		QObject::disconnect(counting);   // `frames` ends with this block
 		CHECK(frames <= 40);   // 60 fps for half a second, with some slack
 		CHECK(frames >= 3);
 	}
@@ -2008,6 +2009,35 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 	settle();
 	CHECK(window.assets()->parentWidget() != holder);
 	CHECK(window.assets()->isVisible());
+
+	// Fits a laptop screen (1366 wide) on every page and with every dock under the map.
+	const auto tooWide = [&window](const QString& where) {
+		const int width = window.minimumSizeHint().width();
+		if (width > 1366) {
+			QStringList wide;
+			QList<QPointer<QWidget>> widgets;
+			for (auto* w : window.findChildren<QWidget*>()) widgets << w;
+			for (const auto& w : widgets) {
+				if (w && w->isVisible() && w->minimumSizeHint().width() > 500) {
+					wide << QString("%1 '%2' %3").arg(w->metaObject()->className(), w->objectName()).arg(w->minimumSizeHint().width());
+				}
+			}
+			MESSAGE(where.toStdString() << ": " << wide.join("; ").toStdString());
+		}
+		return width;
+	};
+	for (const auto page : {MainWindow::Page::Map, MainWindow::Page::Materials, MainWindow::Page::Models, MainWindow::Page::Sounds,
+	                        MainWindow::Page::Particles, MainWindow::Page::Project}) {
+		window.showPage(page);
+		settle();
+		CHECK(tooWide(QString("page %1").arg(int(page))) <= 1366);
+	}
+	window.showPage(MainWindow::Page::Map);
+	for (const QString dock : {"Asset Browser", "Sounds", "Particles", "Compile", "Problems", "History", "Log"}) {
+		window.raiseDock(dock);
+		settle();
+		CHECK(tooWide(dock) <= 1366);
+	}
 }
 
 TEST_CASE("update check: release information and the version button") {
