@@ -456,8 +456,10 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 	const bool isSound = type == "sound";
 	const bool isModel = type == "studio" || toLower(key) == "model";
 	const bool isParticle = type == "particlesystem" || toLower(key) == "effect_name";
+	const bool isSoundscape = iequals(key, "soundscape") || type == "soundscape";
+	const bool isMaterial = type == "material" || type == "decal" || type == "sprite";
 
-	if (isTarget || isSequence || isSound || isModel || isParticle) {
+	if (isTarget || isSequence || isSound || isModel || isParticle || isSoundscape || isMaterial) {
 		auto* combo = new QComboBox;
 		combo->setEditable(true);
 		combo->setInsertPolicy(QComboBox::NoInsert);
@@ -478,11 +480,29 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 			shared = sharedNames(QStringLiteral("model"), m_assets->modelNames());
 		} else if (isParticle) {
 			shared = sharedNames(QStringLiteral("particle"), m_assets->particleNames());
+		} else if (isSoundscape) {
+			shared = sharedNames(QStringLiteral("soundscape"), m_assets->soundscapeNames());
+		} else if (isMaterial) {
+			// Sprites come from materials/sprites, everything else from all materials.
+			const QString kind = type == "sprite" ? QStringLiteral("sprite") : QStringLiteral("material");
+			auto& cached = m_materialNames[kind];
+			const auto all = m_assets->materialNames();
+			if (cached.isEmpty() || m_materialNameCount != all.size()) {
+				m_materialNameCount = all.size();
+				for (auto& [k, list] : m_materialNames) list.clear();
+				for (const auto& name : all) {
+					const QString q = QString::fromStdString(name).toLower();
+					m_materialNames[QStringLiteral("material")] << q;
+					if (q.startsWith(QLatin1String("sprites/"))) m_materialNames[QStringLiteral("sprite")] << q;
+				}
+			}
+			shared = sharedNames(kind, m_materialNames[kind]);
 		}
 		// Never measure every name for the box's width (that alone took seconds with all of
 		// HL2's models); the popup lists them with one row height.
 		combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
 		combo->setMinimumContentsLength(12);
+		combo->setMaxVisibleItems(20);   // a long list to scroll through, not a handful of rows
 		if (auto* list = qobject_cast<QListView*>(combo->view())) list->setUniformItemSizes(true);
 		if (shared) {
 			combo->setModel(shared);
@@ -504,9 +524,18 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 		if (isSequence && items.isEmpty()) {
 			combo->lineEdit()->setPlaceholderText(tr("set a model first to list its animations"));
 		}
+		QWidget* after = nullptr;   // a button right of the box
 		if (isSound) attachAssetMenu(combo->lineEdit(), AssetKind::Sound);
 		if (isModel) attachAssetMenu(combo->lineEdit(), AssetKind::Model);
 		if (isParticle) attachAssetMenu(combo->lineEdit(), AssetKind::Particle);
+		if (isMaterial) {
+			attachAssetMenu(combo->lineEdit(), AssetKind::Material);
+			auto* use = new QToolButton;
+			use->setText(tr("Use current"));
+			use->setToolTip(tr("Set the material selected in the material browser"));
+			connect(use, &QToolButton::clicked, this, [this, commit] { commit(m_editor->currentMaterial().toLower()); });
+			after = use;
+		}
 		connect(combo, &QComboBox::activated, this, [combo, commit](int) { commit(combo->currentText()); });
 		connect(combo->lineEdit(), &QLineEdit::editingFinished, this, [combo, commit, value] {
 			if (combo->currentText() != value) {
@@ -514,6 +543,7 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 			}
 		});
 		h->addWidget(combo, 1);
+		if (after) h->addWidget(after);
 		return row;
 	}
 
@@ -558,13 +588,6 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 			commit(text);
 		});
 		h->addWidget(pick);
-	} else if (type == "material" || type == "decal" || type == "sprite") {
-		attachAssetMenu(edit, AssetKind::Material);
-		auto* use = new QToolButton;
-		use->setText(tr("Use current"));
-		use->setToolTip(tr("Set the material selected in the material browser"));
-		connect(use, &QToolButton::clicked, this, [this, commit] { commit(m_editor->currentMaterial().toLower()); });
-		h->addWidget(use);
 	} else if (type == "angle") {
 		for (const int yaw : {0, 90, 180, 270}) {
 			auto* button = new QToolButton;
@@ -608,6 +631,7 @@ QWidget* PropertiesPanel::makeSkyPicker(const QString& value) {
 	loadSkies();
 	auto* combo = new QComboBox;
 	combo->setObjectName("skyPicker");
+	combo->setMaxVisibleItems(16);
 	combo->setEditable(true);
 	combo->setInsertPolicy(QComboBox::NoInsert);
 	combo->setIconSize(QSize(28, 28));

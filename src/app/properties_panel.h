@@ -117,7 +117,9 @@ private:
 
 	Editor* m_editor;
 	AssetBrowser* m_assets;
-	std::map<QString, std::pair<QStringListModel*, qsizetype>> m_sharedNames;   ///< kind -> model, name count
+	std::map<QString, std::pair<QStringListModel*, qsizetype>> m_sharedNames;
+	std::map<QString, QStringList> m_materialNames;   ///< "material" / "sprite" -> names, built once per game
+	std::size_t m_materialNameCount = 0;   ///< kind -> model, name count
 	AssetMenuFiller m_menuFiller;
 	MaterialCache* m_materials;
 	QScrollArea* m_scroll;

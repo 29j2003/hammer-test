@@ -520,6 +520,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_models = std::move(index.models);
 		m_sounds = std::move(index.sounds);
 		m_particles = std::move(index.particles);
+		m_soundscapes = std::move(index.soundscapes);
 		m_materialModel->setItems(std::move(index.materials));
 		m_materialInfo->setText(tr("%1 of %2 materials - drag onto a face, double-click applies to the selection")
 		                            .arg(m_materialFilter->rowCount())
@@ -665,6 +666,8 @@ void AssetBrowser::reload() {
 		}
 		if (generation == m_generation) {
 			index.particles = particleSystems(*fs);
+			for (const auto& scape : soundscapes(*fs)) index.soundscapes << QString::fromStdString(scape.name);
+			index.soundscapes.sort(Qt::CaseInsensitive);
 		}
 		return index;
 	}));

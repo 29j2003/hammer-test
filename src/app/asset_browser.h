@@ -118,6 +118,7 @@ struct AssetIndex {
 	QStringList models;
 	QStringList sounds;
 	std::vector<ParticleSystem> particles;
+	QStringList soundscapes;   ///< Names for env_soundscape's "soundscape" key
 };
 
 /// The Asset Browser dock: materials and models with search, filters and thumbnails.
@@ -132,6 +133,7 @@ public:
 	[[nodiscard]] std::vector<std::string> materialNames() const;
 	[[nodiscard]] QStringList modelNames() const { return m_models; }
 	[[nodiscard]] QStringList soundNames() const { return m_sounds; }
+	[[nodiscard]] QStringList soundscapeNames() const { return m_soundscapes; }
 	[[nodiscard]] QStringList particleNames() const;
 	[[nodiscard]] const std::vector<ParticleSystem>& particles() const { return m_particles; }
 	void showMaterials();
@@ -182,7 +184,7 @@ private:
 
 	bool m_pageMode = false;   ///< Shown on the Materials page
 	AssetMenuFiller m_menuFiller;
-	QStringList m_models, m_sounds;
+	QStringList m_models, m_sounds, m_soundscapes;
 	std::vector<ParticleSystem> m_particles;
 	ModelThumbnails* m_modelThumbnails;
 	ModelListModel* m_modelModel;

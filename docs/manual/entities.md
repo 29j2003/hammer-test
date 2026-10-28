@@ -47,6 +47,10 @@ it down, e.g. `prop phys`), move with the **arrow keys** and press **Enter**. Wi
 related to the current one come first (for `prop_static`: `prop_dynamic`, `prop_physics` …). The keys stay.
 The mouse wheel scrolls the panel; it only changes a drop-down or number field you clicked into first.
 
+Fields that name something of the game are drop-down lists you can scroll through or type into: the sky
+(worldspawn *SkyBox Texture Name*, with pictures), soundscapes, sounds, models, particle systems, materials, decals and
+sprites, entity names (targets) and animations.
+
 ## The properties panel
 
 Select an entity and the right panel shows it.

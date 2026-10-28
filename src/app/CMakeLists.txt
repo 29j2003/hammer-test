@@ -63,6 +63,13 @@ else()
 	message(STATUS "Sound preview: off (Qt Multimedia not found)")
 endif()
 
+# Small pictures the style sheet uses (the arrow of drop-down boxes), drawn at twice the size
+# they are shown at so they stay sharp on high DPI screens.
+qt_add_resources(smeapp "ui"
+	PREFIX "/ui"
+	BASE resources
+	FILES resources/chevron-down.png resources/chevron-down-hover.png)
+
 qt_add_executable(Mapsmith main.cpp)
 if(WIN32)
 	target_sources(Mapsmith PRIVATE resources/mapsmith.rc)   # program icon

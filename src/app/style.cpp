@@ -94,7 +94,9 @@ QPushButton[role="groupHeader"]:hover { color: #ffffff; background: #2c2c2c; }
 
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { padding: 4px 6px; border: 1px solid #3b3b3b; border-radius: 5px; background: #1e1e1e; selection-background-color: #f5a524; selection-color: #1b1b1b; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #b8801f; }
-QComboBox::drop-down { border: none; width: 18px; }
+QComboBox::drop-down { border: none; border-left: 1px solid #333333; width: 20px; }
+QComboBox::down-arrow { image: url(:/ui/chevron-down.png); width: 10px; height: 6px; }
+QComboBox::down-arrow:hover, QComboBox::down-arrow:on { image: url(:/ui/chevron-down-hover.png); }
 QComboBox QAbstractItemView { background: #2a2a2a; border: 1px solid #3a3a3a; selection-background-color: #3e3e3e; selection-color: #ffffff; }
 QComboBox[problem="true"], QLineEdit[problem="true"] { border: 1px solid #d04040; }
 

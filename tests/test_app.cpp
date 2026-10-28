@@ -2267,6 +2267,34 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		settle();
 	}
 
+	{
+		// Drop-downs show their arrow, and a soundscape is picked from the game's list.
+		CHECK(QFile::exists(":/ui/chevron-down.png"));
+		auto [place, scapeId] = edit::placeEntity(editor.doc(), "env_soundscape", {64, 0, 32}, editor.entities()->find("env_soundscape"));
+		editor.commit(std::move(place));
+		Selection one;
+		one.entities.push_back(scapeId);
+		editor.setSelection(one);
+		settle();
+		REQUIRE(window.assets()->soundscapeNames().contains("demo.outside"));
+		QComboBox* scapes = nullptr;
+		for (auto* combo : window.properties()->findChildren<QComboBox*>()) {
+			if (combo->isEditable() && combo->model()->rowCount() == window.assets()->soundscapeNames().size() &&
+			    combo->findText("demo.outside") >= 0) {
+				scapes = combo;
+			}
+		}
+		REQUIRE(scapes);
+		CHECK(scapes->maxVisibleItems() >= 16);
+		scapes->setCurrentIndex(scapes->findText("demo.outside"));
+		emit scapes->activated(scapes->currentIndex());
+		settle();
+		CHECK(editor.doc().findEntity(scapeId)->get("soundscape") == "demo.outside");
+		editor.undo();
+		editor.undo();
+		settle();
+	}
+
 	// Hide tools: one action hides triggers and tool brushes and brings them back.
 	auto* hideTools = window.findChild<QAction*>("hideTools");
 	REQUIRE(hideTools);
