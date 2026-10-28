@@ -9,7 +9,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 ## Aufbau
 - `src/core/` – Bibliothek `smecore` ohne Qt (Namespace `sme`): Text-/Pfad-Helfer (`text`), Versionen + Prüfsummen (`version`), Steam/Spiele (`steam`, `game_discovery`, `gameinfo`,
   `hammer_config`, `game`), Dateisystem aus Ordnern + VPKs (`filesystem`), Materialien/Texturen (`material`, `texture`,
-  `assets` inkl. Sounds/Soundscapes/Partikel, Soundscapes bearbeiten `soundscape`, Höhenkarten für Relief `heightmap`, Sound-Decoder `audio`, Partikel aus PCF + Vorschau-Simulation `particles`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
+  `assets` inkl. Sounds/Soundscapes/Partikel, Soundscapes bearbeiten `soundscape`, Höhenkarten für Relief `heightmap`, Sound-Decoder `audio`, Sounds bearbeiten + WAV schreiben `sound_edit`, Sound-Kategorien `sound_categories`, Partikel aus PCF + Vorschau-Simulation `particles`, Modelle MDL/VVD/VTX `studio_model`), FGD (`entity_catalog`), Karte
   (`keyvalues`, `map`, Cordons/Pfade/Fallen lassen/Cubemap-Raum-Boxen `map_tools`, Soundscape-Bereich Kugel/Block `soundscape_area`), Geometrie (`brush`, `math`, CSG `csg`, Formen `shapes`),
   Bearbeiten + Undo (`editing`, `history`), Kopieren/Einfügen von Kartenobjekten (`clipboard`), Arten zum Ausblenden (`visibility`), VisGroups (`visgroups`), func_instance laden/auflösen (`instances`), Look-Werte von mapbase-fidelity pro Karte (`fidelity_look`), Hauptmenü der Mod (`mod_menu`), Licht passend zum Himmel (`sky_presets`), Git-Ausgaben lesen (`git_status`), neue Mod anlegen (`mod_template`), Prüfungen mit Autofix + Leaks (`checks`), Autosave-Namen (`autosave`), Entities finden (`entity_search`), Material ersetzen (`material_replace`), Kompilier-Einstellungen + Befehlszeilen (`compile_options`), Kompilier-Meldungen (`compile_log`),
   Export glTF/OBJ (`scene_export`).
@@ -17,7 +17,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   `camera`, `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
   Licht-Vorschau nach VRAD-Formeln, Schatten in `renderer_shadows`), `material_cache`
   (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
-  `asset_browser` (Materialien, Modelle), `material_editor` + `material_preview` (inkl. Schalter für die mapbase-fidelity-Shader der Mod), `sound_browser` + `sound_player` + `soundscape_editor`
+  `asset_browser` (Materialien, Modelle), `material_editor` + `material_preview` (inkl. Schalter für die mapbase-fidelity-Shader der Mod), `sound_browser` (Kategorien, Bearbeiten mit Undo, als WAV speichern) + `sound_player` + `soundscape_editor`
   (Sounds-Seite/-Dock, Wiedergabe über QAudioSink, optional), `copy_paste`,
   `map_look_panel`, `menu_editor` (Hauptmenü der Mod), `mod_page` (Project-Seite, Tab Overview), `maps_panel` (alle Karten, Stapel-Kompilieren), `new_mod_dialog` (neue Mod aus Karten), `source_control_panel` (Git: Änderungen, Commit, Pull/Push), `ship_panel` (Karte/Mod für Spieler: bspzip, ZIP, Workshop), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
   Justify; func_instance-Kasten in `properties_instance`), `visgroups_panel`, `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),

@@ -425,7 +425,9 @@ void createDemo(Fixture& f) {
 	writeText(f.mod / "scripts/game_sounds_manifest.txt", "game_sounds_manifest\n{\n\t\"precache_file\" \"scripts/game_sounds_demo.txt\"\n}\n");
 	writeText(f.mod / "scripts/game_sounds_demo.txt",
 	          "\"Demo.Wind\" { \"channel\" \"CHAN_STATIC\" \"wave\" \"ambient/wind1.wav\" }\n"
-	          "\"Demo.Alarm\" { \"wave\" \"ambient/alarm1.wav\" }\n\"NPC_Citizen.Hello\" { \"wave\" \"vo/hello.wav\" }\n");
+	          "\"Demo.Alarm\" { \"wave\" \"ambient/alarm1.wav\" }\n\"NPC_Citizen.Hello\" { \"wave\" \"vo/hello.wav\" }\n"
+	          "\"Weapon_Pistol.Single\" { \"channel\" \"CHAN_WEAPON\" \"soundlevel\" \"SNDLVL_GUNFIRE\" \"wave\" \")weapons/pistol/pistol_fire2.wav\" }\n"
+	          "\"Doors.Squeak\" { \"wave\" \"doors/door_squeak1.wav\" }\n");
 	// Real WAV files (16-bit mono): a wind loop with a cue point and a short alarm beep.
 	const auto writeWav = [](const std::filesystem::path& path, const std::vector<std::int16_t>& samples, std::optional<std::uint32_t> loop) {
 		std::vector<std::byte> out;
@@ -471,6 +473,27 @@ void createDemo(Fixture& f) {
 		}
 		writeWav(f.mod / "sound/ambient/wind1.wav", wind, 0u);
 		writeWav(f.mod / "sound/ambient/alarm1.wav", alarm, std::nullopt);
+		// One sound for some more categories of the Sounds page: a shot, a squeaking door, a metal hit, a voice.
+		std::vector<std::int16_t> shot, squeak, impact, voice;
+		for (int i = 0; i < 22050 * 4 / 10; ++i) {
+			shot.push_back(std::int16_t((hash(i, 3, 11) - 0.5) * 50000 * std::exp(-i / 1800.0)));
+		}
+		for (int i = 0; i < 22050 * 6 / 10; ++i) {
+			const double t = i / 22050.0;
+			squeak.push_back(std::int16_t(std::sin(2 * 3.14159265 * (500 + 400 * std::sin(t * 9)) * t) * 7000 * std::min(1.0, t * 8)));
+		}
+		for (int i = 0; i < 22050 / 4; ++i) {
+			const double t = i / 22050.0;
+			impact.push_back(std::int16_t((std::sin(2 * 3.14159265 * 1250 * t) * 0.6 + (hash(i, 5, 2) - 0.5)) * 20000 * std::exp(-t * 18)));
+		}
+		for (int i = 0; i < 22050 * 8 / 10; ++i) {
+			const double t = i / 22050.0;
+			voice.push_back(std::int16_t(std::sin(2 * 3.14159265 * 140 * t + std::sin(2 * 3.14159265 * 5 * t) * 3) * 8000 * std::sin(3.14159265 * t / 0.8)));
+		}
+		writeWav(f.mod / "sound/weapons/pistol/pistol_fire2.wav", shot, std::nullopt);
+		writeWav(f.mod / "sound/doors/door_squeak1.wav", squeak, std::nullopt);
+		writeWav(f.mod / "sound/physics/metal/metal_box_impact_hard1.wav", impact, std::nullopt);
+		writeWav(f.mod / "sound/vo/hello.wav", voice, std::nullopt);
 	}
 	writeText(f.mod / "scripts/soundscapes_manifest.txt", "soundscapes_manifest\n{\n\t\"file\" \"scripts/soundscapes_demo.txt\"\n}\n");
 	writeText(f.mod / "scripts/soundscapes_demo.txt",

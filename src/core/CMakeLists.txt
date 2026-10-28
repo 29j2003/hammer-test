@@ -20,6 +20,8 @@ add_library(smecore STATIC
 	src/entity_search.cpp
 	src/material_replace.cpp
 	src/soundscape.cpp
+	src/sound_categories.cpp
+	src/sound_edit.cpp
 	src/shipping.cpp
 	src/visgroups.cpp
 	src/instances.cpp

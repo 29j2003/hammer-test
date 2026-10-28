@@ -117,10 +117,15 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   its parts as cards: emitters, initializers, operators, renderers and children with all their values. The preview runs
   the common parts (emitting, lifetime, size, color, alpha, movement with gravity and drag, fading, scaling, rotation); it
   is close to the game, not exact.
-- **Sounds**: click a sound to hear it (WAV including ADPCM, MP3, OGG) with its waveform and loop point; click into the
-  waveform to play from there. Drag sounds into the map for an ambient_generic or env_soundscape. Edit sound script
-  entries (channel, volume, pitch, sound level, files) and **Save to the mod**: they go into
-  `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
+- **Sounds**: sounds are sorted into categories (weapons, NPCs, ambient, physics, player, vehicles, doors, music,
+  interface, voice), each by folder, with sound script entries next to their files; search looks through all of them.
+  Click a sound to hear it (WAV including ADPCM, MP3, OGG) with its waveform and loop point. Drag sounds into the map
+  for an ambient_generic or env_soundscape. Edit sound script entries (channel, volume, pitch, sound level, files) and
+  **Save to the mod**: they go into `scripts/game_sounds_<mod>.txt`, which is added to the mod's sound manifest.
+- **Editing sounds**: drag on the waveform to select a part, then *Trim to selection*, *Cut*, *Silence*, *Fade in/out*,
+  *Normalize*, *Reverse*, *Gain*, *Speed*, a sample rate (44100/22050/11025 Hz), *Mono*, or set the loop point; *Undo*
+  and *Redo* step through the edits. **Save WAV to the mod** writes a 16-bit WAV into the mod's `sound/` folder (the
+  game's own path makes the mod play it instead), optionally with a sound script entry.
 - **Soundscapes**: click a soundscape (or **+ Soundscape** for a new one) to edit it: name, room effect (DSP, with
   names like *Concrete, small*), fade-in, and its sounds as cards - a **looping** sound, **random** sounds every few
   seconds, or another **soundscape** inside it - each with volume, pitch, sound level and position. **▶** on a card
