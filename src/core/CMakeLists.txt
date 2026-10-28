@@ -31,6 +31,7 @@ add_library(smecore STATIC
 	src/visgroups.cpp
 	src/instances.cpp
 	src/mod_template.cpp
+	src/mod_code.cpp
 	src/mod_menu.cpp
 	src/localization.cpp
 	src/editing.cpp

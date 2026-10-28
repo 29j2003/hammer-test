@@ -6,6 +6,7 @@
 #include "compile_window.h"
 #include "enhancements.h"
 #include "map_look_panel.h"
+#include "mod_code_panel.h"
 #include "mod_page.h"
 #include "models_page.h"
 #include "maps_panel.h"
@@ -438,7 +439,31 @@ void MainWindow::createDocks() {
 	m_projectPage->addTab(m_textsPanel, tr("Texts"));
 	connect(m_textsPanel, &TextsPanel::saved, menuEditor, [menuEditor] { menuEditor->refreshTitles(); });
 	connect(menuEditor, &MenuEditor::saved, m_textsPanel, [this] { m_textsPanel->reloadIfUnchanged(); });
-	m_projectPage->addTab(new SourceControlPanel(m_editor), tr("Source control"));
+	auto* sourceControl = new SourceControlPanel(m_editor);
+	m_projectPage->addTab(sourceControl, tr("Source control"));
+	// Mod code: the mod's own source runs from here (update after a pull, game files, report);
+	// its line on the Overview says when new code is waiting or an update runs.
+	m_modCode = new ModCodePanel(m_editor);
+	m_projectPage->addTab(m_modCode, tr("Mod code"));
+	m_modPage->addBanner(m_modCode->banner());
+	connect(sourceControl, &SourceControlPanel::pulled, m_modCode, &ModCodePanel::afterPull);
+	connect(sourceControl, &SourceControlPanel::updateModRequested, this, [this](const QString& root) {
+		if (QFileInfo(root).canonicalFilePath() != QFileInfo(m_modCode->repository()).canonicalFilePath()) m_modCode->setRepository(root);
+		m_projectPage->setCurrentWidget(m_modCode);
+		m_modCode->start(ModCodeAction::Update);
+	});
+	connect(m_modCode, &ModCodePanel::showRequested, this, [this] {
+		showPage(Page::Project);
+		m_projectPage->setCurrentWidget(m_modCode);
+	});
+	// New DLLs, shaders and materials in the mod: the game is read again (the open map stays),
+	// so the views, browsers and the game enhancements see them.
+	connect(m_modCode, &ModCodePanel::modUpdated, this, [this] {
+		m_log->append(tr("The mod was updated - reading its files again"));
+		QTimer::singleShot(0, this, [this] {
+			if (!m_editor->gameKey().isEmpty()) selectGame(m_editor->gameKey());
+		});
+	});
 	m_projectPage->addTab(new ShipPanel(m_editor), tr("Ship"));
 	connect(m_modPage, &ModPage::compileSettingsRequested, this, [this] {
 		showPage(Page::Map);

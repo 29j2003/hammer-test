@@ -7,7 +7,7 @@ nav_order: 9
 {: .no_toc }
 
 The **Project** page in the side bar is about your mod as a whole: its maps, its main menu, its source code and how to
-share it. It has six tabs: **Overview**, **Maps**, **Menu**, **Texts**, **Source control** and **Ship**.
+share it. It has seven tabs: **Overview**, **Maps**, **Menu**, **Texts**, **Source control**, **Mod code** and **Ship**.
 
 ![The Project page](images/project.png)
 
@@ -164,11 +164,62 @@ Mapsmith).
 **History** lists the recent commits with their author and time. **Output** shows what git said.
 
 Other buttons appear when they make sense: **Open on GitHub** (the repository's page), **Open in Visual Studio** (when
-a `.sln` solution is in the folder) and **Run update.bat** (when the repository has one).
+a `.sln` solution is in the folder) and **Update mod** (when the repository is the mod's source code, see
+[Mod code](#mod-code-update-without-bat-files)).
 
 {: .note }
 Mapsmith only talks to the network through git, and only when you press Fetch, Pull or Push. Git uses your own
 login; Mapsmith never sees a password.
+
+## Mod code: update without .bat files
+
+If your mod is built from its own source code – a Mapbase checkout with mapbase-fidelity, which has `update.bat`,
+`deploy.bat` and `report.bat` – the **Mod code** tab does what those scripts do, inside Mapsmith: in the background,
+without a console window and without "Press any key".
+
+**Source code of the mod.** Mapsmith looks for the checkout by itself: in the Source control folder of this mod (and
+the folder it is in), in `Documents\GitHub`, `source\repos` and similar folders in your home folder, and in folders
+like `GitHub` or `repos` at the top of each drive – a folder named like the mod first. If it finds nothing, press
+**Choose folder ...** and pick the folder that has `fidelity` and `sp` in it. The choice is remembered for this mod.
+
+**Update mod** runs the checkout's `fidelity/update.ps1` for the open mod. You see its steps tick off – *Find Visual
+Studio 2022*, *Project files*, *Build game code*, *Copy DLLs into the mod*, *VRAD with baked AO*, *Game files* and
+*Done* – with a progress bar and the full output below. **Cancel** stops the script and the build it started. At the
+end a summary says how it went; when something failed it names the step and what to do, for example:
+
+- *Visual Studio 2022 was not found* – install it (the free Community edition is enough) with the workload *Desktop
+  development with C++*, then press Update mod again.
+- *The game code did not compile* – the first errors are listed; the whole build log is `fidelity/update.log` in the
+  source folder.
+- *The game is still running* / *Hammer or a map compile is still running* – close it and try again.
+
+After a successful update Mapsmith reads the mod again (new shaders, materials and game enhancements show up in the
+views right away); the open map stays open.
+
+**Skip VRAD** leaves the custom VRAD out (faster; map compiles then bake no ambient occlusion). **Install game files
+only** runs `deploy.ps1` (shaders, cfg, generated materials – no build). **Make report** runs `report.ps1`: it packs
+what `fidelity_report` wrote in the game into `fidelity_report.zip` and opens its folder, ready to send.
+
+**Automatic** (per mod, all off until you switch them on):
+
+- **Update the mod after every Pull that brings new code** – a Pull in Source control (or **Pull & update** here)
+  runs Update mod by itself.
+- **Look for new commits when Mapsmith starts** – runs `git fetch`; the Overview tab then shows "N new changes in the
+  mod's code" with a **Pull & update** button.
+- **Pull and update automatically when Mapsmith starts** – gets the new commits and updates the mod as soon as the mod
+  is opened.
+
+Without any of these, the Overview still tells you when the checkout changed since its last update (for example after
+a pull with another program), and offers **Update mod**.
+
+{: .important }
+Building the mod's DLLs needs **Windows with Visual Studio 2022** installed (workload *Desktop development with C++*).
+On Linux and macOS the build is not possible; Install game files only and Make report work there when PowerShell 7
+(`pwsh`) is installed.
+
+{: .note }
+Mapsmith uses your own git for this and only contacts the remote when one of the automatic options is on or you press
+Check now, Pull & update or Pull.
 
 ## Ship
 

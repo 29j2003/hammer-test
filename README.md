@@ -151,7 +151,7 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   into a view.
 - **Side bar**: on the far left *Map*, *Materials*, *Models*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
-  has the tabs *Overview*, *Maps*, *Menu*, *Texts*, *Source control* and *Ship* (below). *Overview* shows the chosen game or
+  has the tabs *Overview*, *Maps*, *Menu*, *Texts*, *Source control*, *Mod code* and *Ship* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
   was found, and the entity definitions (FGDs); **New mod ...** is there and in the File menu.
 - **Maps** (Project page): every map of the game or mod in one list, with when it was changed, whether its BSP is *up to date*,
@@ -181,8 +181,11 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   mod's source code). You see the branch, how many commits are waiting to be pushed or pulled, and the changed files
   with check boxes. Write a message and *Commit* the checked files. *Fetch*, *Pull* and *Push* talk to the remote,
   and only when you press them. *Open on GitHub* shows the repository's page; the history lists the last 30 commits.
-  *Open in Visual Studio* appears when the folder has a solution; *Run update.bat* appears when it has that script
-  (Windows). Needs Git installed.
+  *Open in Visual Studio* appears when the folder has a solution; *Update mod* appears when it is the mod's source code.
+  Needs Git installed.
+- **Mod code** (Project page): if your mod is built from its own source (Mapbase with mapbase-fidelity), *Update mod*
+  builds and installs it from inside Mapsmith – what `update.bat` does, with steps, progress and a clear summary, no
+  console window; optionally after every Pull or when Mapsmith starts. Building needs Windows with Visual Studio 2022.
 - **Material editor**: the *Materials* page (right-click a material > *Edit material*, *Edit* next to a selected
   face, or *View > Material Editor*). On the left: every material of the game with search, filters and pictures (click one to edit it) and the ones you edited lately. In the
   middle the parameters in groups; a group with a switch in its header is a feature (*Normal map*, *Relief*,

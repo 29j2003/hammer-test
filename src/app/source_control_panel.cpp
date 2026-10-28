@@ -28,6 +28,7 @@
 
 #include <sme/game.h>
 #include <sme/git_status.h>
+#include <sme/mod_code.h>
 
 namespace sme::app {
 
@@ -140,7 +141,7 @@ SourceControlPanel::SourceControlPanel(Editor* editor, QWidget* parent) : QWidge
 	m_pull = button(tr("Pull"), "scmPull", tr("Get the new commits from the remote and merge them"));
 	m_push = button(tr("Push"), "scmPush", tr("Send your commits to the remote"));
 	m_openSolution = button(tr("Open in Visual Studio"), "scmSolution", tr("Open the solution of the source code"));
-	m_runUpdate = button(tr("Run update.bat"), "scmUpdate", tr("Build and install everything after a pull (the repository's own script)"));
+	m_runUpdate = button(tr("Update mod"), "scmUpdate", tr("Build the mod's code and install everything into the mod (Project > Mod code)"));
 	for (auto* b : {m_fetch, m_pull, m_push}) actionRow->addWidget(b);
 	actionRow->addStretch(1);
 	actionRow->addWidget(m_openSolution);
@@ -237,7 +238,7 @@ SourceControlPanel::SourceControlPanel(Editor* editor, QWidget* parent) : QWidge
 		if (!url.empty()) QDesktopServices::openUrl(QUrl(QString::fromStdString(url)));
 	});
 	connect(m_fetch, &QPushButton::clicked, this, [this] { network({"fetch", "--prune"}); });
-	connect(m_pull, &QPushButton::clicked, this, [this] { network({"pull", "--no-rebase"}); });
+	connect(m_pull, &QPushButton::clicked, this, &SourceControlPanel::pull);
 	connect(m_push, &QPushButton::clicked, this, [this] {
 		// The first push of a branch also sets its upstream.
 		if (m_upstream.isEmpty() && !m_branch.isEmpty()) {
@@ -249,13 +250,8 @@ SourceControlPanel::SourceControlPanel(Editor* editor, QWidget* parent) : QWidge
 	connect(m_openSolution, &QPushButton::clicked, this, [this] {
 		if (!m_solution.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(m_solution));
 	});
-	connect(m_runUpdate, &QPushButton::clicked, this, [this] {
-#ifdef Q_OS_WIN
-		// Its own console window, so the build output stays visible.
-		QProcess::startDetached(QStringLiteral("cmd.exe"), {"/c", "start", "update", "cmd", "/k", "update.bat"}, m_root);
-		log(tr("Started update.bat in its own window"));
-#endif
-	});
+	// The mod's source code: Mapsmith runs its update script itself (Project > Mod code).
+	connect(m_runUpdate, &QPushButton::clicked, this, [this] { emit updateModRequested(m_root); });
 	connect(m_init, &QPushButton::clicked, this, [this] {
 		run({"init"}, [this](int code, const QByteArray&, const QByteArray&) {
 			emit commandFinished(code == 0);
@@ -312,11 +308,7 @@ void SourceControlPanel::updateTools() {
 	m_commit->setEnabled(repo && idle);
 	m_openRemote->setVisible(!remoteWebUrl(m_remoteUrl.toStdString()).empty());
 	m_openSolution->setVisible(repo && !m_solution.isEmpty());
-#ifdef Q_OS_WIN
-	m_runUpdate->setVisible(repo && QFileInfo::exists(QDir(m_root).filePath("update.bat")));
-#else
-	m_runUpdate->setVisible(false);
-#endif
+	m_runUpdate->setVisible(repo && modCodeScripts(toPath(m_root)).has_value());
 }
 
 void SourceControlPanel::refresh() {
@@ -523,6 +515,25 @@ void SourceControlPanel::commit() {
 			refresh();
 		}, true);
 	}, true);
+}
+
+void SourceControlPanel::pull() {
+	// The commit before and after tell whether the pull brought anything (Mod code updates then).
+	run({"rev-parse", "HEAD"}, [this](int, const QByteArray& before, const QByteArray&) {
+		log(tr("Contacting %1 ...").arg(m_remoteUrl.isEmpty() ? tr("the remote") : QString::fromStdString(remoteWebUrl(m_remoteUrl.toStdString()))));
+		run({"pull", "--no-rebase"}, [this, before = before.trimmed()](int code, const QByteArray&, const QByteArray&) {
+			if (code != 0) {
+				emit commandFinished(false);
+				refresh();
+				return;
+			}
+			run({"rev-parse", "HEAD"}, [this, before](int, const QByteArray& after, const QByteArray&) {
+				emit commandFinished(true);
+				emit pulled(m_root, after.trimmed() != before);
+				refresh();
+			});
+		}, true);
+	});
 }
 
 void SourceControlPanel::network(const QStringList& args) {

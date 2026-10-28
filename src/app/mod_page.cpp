@@ -116,6 +116,10 @@ ModPage::ModPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(ed
 	refresh();
 }
 
+void ModPage::addBanner(QWidget* banner) {
+	static_cast<QVBoxLayout*>(layout())->insertWidget(2, banner);   // under the title and details
+}
+
 void ModPage::refresh() {
 	m_maps->clear();
 	m_mounts->clear();
