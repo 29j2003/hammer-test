@@ -3,6 +3,7 @@
 #include "mod_page.h"
 
 #include "editor.h"
+#include "enhancements.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -103,8 +104,12 @@ ModPage::ModPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(ed
 	m_fgds->setRootIsDecorated(false);
 	m_fgds->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
 	grid->addWidget(section(tr("Entities"), m_fgds), 1, 1);
+	// Game enhancements: mapbase-fidelity's effects for the whole mod (on by default).
+	grid->addWidget(new EnhancementsSection(editor->enhancements()), 2, 0, 1, 2);
 	grid->setColumnStretch(0, 1);
 	grid->setColumnStretch(1, 2);
+	grid->setRowStretch(0, 3);
+	grid->setRowStretch(1, 2);
 	v->addLayout(grid, 1);
 
 	connect(editor, &Editor::gameChanged, this, &ModPage::refresh);

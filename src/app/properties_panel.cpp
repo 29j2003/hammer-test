@@ -8,6 +8,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "enhancements.h"
 #include "material_cache.h"
 #include "toggle_switch.h"
 
@@ -723,6 +724,13 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	}
 	if (entityIds.size() == 1 && isSoundscapeEntity(*first)) {
 		buildSoundscapeArea(layout, *first);
+	}
+	// Game enhancements of the prop's model (mapbase-fidelity): its switches hide when none applies.
+	if (const QString model = qs(first->get("model")); entityIds.size() == 1 && m_editor->enhancements()->available() &&
+	                                                    model.endsWith(QStringLiteral(".mdl"), Qt::CaseInsensitive)) {
+		auto* switches = new EnhancementSwitches(m_editor->enhancements());
+		layout->addWidget(switches);
+		switches->setModel(model);
 	}
 
 	// Tabs: Keyvalues / Outputs / Inputs with their counts (outputs and inputs for one entity).

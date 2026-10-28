@@ -99,6 +99,44 @@ The Material Editor can switch materials to the add-on's shaders: **Relief** (`F
 `Fidelity_WorldVertexTransition`), **Water** (`Water_Fidelity`) and **Liquid** for glass props (`Fidelity_Liquid`).
 See [mapbase-fidelity materials](texturing.html#mapbase-fidelity-materials).
 
+## Game enhancements
+
+The add-on has effects that belong on many of the game's materials at once: **liquid inside** bottles, jars and
+vials, **sway in the wind** for leaves, bushes and plants, and **sun glint and foam** on water. They are **on by
+default**: when you open a mod with mapbase-fidelity, Mapsmith finds every material they are made for (with the same
+rules as the add-on's `deploy.bat`) and writes the matching material into the mod, in the background. You do not have
+to run `deploy.bat` for them, and the 3D view shows the materials as the game will.
+
+### For the whole mod
+
+**Project › Overview › Game enhancements** has one switch per effect. Off takes the effect away from every material
+(the game's own look comes back); on writes them again. Next to each switch: on how many materials it is now.
+
+**Left out** lists the models (and materials) you switched off one by one. Select one and press **Remove from list**
+to give it the effect again.
+
+### For one model
+
+Select a prop and look at **Object Properties**, or pick the model on the **Models** page: a **Game enhancements**
+box shows a switch for each effect its materials can have. Switch it off and the model is left out; on brings it back.
+
+{: .note }
+Models share materials. When one model is left out, the material is off for **every** model that uses it; their
+switches then say so (*a material is shared with a model that is left out*).
+
+### What Mapsmith writes
+
+- The materials go into the mod's `materials` folder, with the same first line `deploy.bat` writes. `deploy.bat` and
+  Mapsmith therefore agree; running either one keeps the other's work.
+- An effect that is off for a material `deploy.bat` would change is kept off with a copy of the game's material
+  (first line `// mapsmith: game enhancement off ...`). `deploy.bat` leaves such files alone.
+- **Your own materials are never overwritten**: a material in the mod without either first line counts as yours.
+  The status line under the switches says how many were kept (*kept (your own material)*); hover over it for the list.
+- The choices are stored in the mod, in `cfg/mapsmith_enhancements.txt`, so they travel with it (and with Git).
+
+Relief (walls with real depth) is not part of this: switch it per material in the Material Editor. The bottle models
+`deploy.bat` copies for dark glass are also left to `deploy.bat`.
+
 ## Tips
 
 - Make the light right first (sun direction, `light_environment` colours, light entities), then use the Image values

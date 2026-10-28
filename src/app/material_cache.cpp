@@ -227,6 +227,11 @@ void MaterialCache::reload(const QString& rawName) {
 	(void)get(name);
 }
 
+bool MaterialCache::isKnown(const QString& rawName) const {
+	const QString name = normalizedMaterialName(rawName);
+	return m_loaded.contains(name) || m_pending.contains(name);
+}
+
 std::shared_ptr<const MaterialInfo> MaterialCache::get(const QString& rawName) {
 	const QString name = normalizedMaterialName(rawName);
 	if (const auto it = m_loaded.constFind(name); it != m_loaded.constEnd()) {

@@ -74,6 +74,8 @@ public:
 	[[nodiscard]] bool relief() const { return m_relief; }
 	/// Forgets one material and reads it again (after it was edited); materialReady follows.
 	void reload(const QString& name);
+	/// The material was asked for (loaded or loading).
+	[[nodiscard]] bool isKnown(const QString& name) const;
 
 signals:
 	/// A material finished loading (on the GUI thread).

@@ -1,6 +1,7 @@
 // mod_page.h - The Overview tab of the Project page: what the editor
 // knows about the chosen game or mod - title, folders, the maps in its map folder, the search
-// paths of gameinfo.txt with what was found, and the entity definitions (FGDs).
+// paths of gameinfo.txt with what was found, the entity definitions (FGDs) and the mod's game
+// enhancements (mapbase-fidelity's effects, see enhancements.h).
 
 #pragma once
 

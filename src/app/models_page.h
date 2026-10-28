@@ -132,6 +132,7 @@ private:
 	QList<QComboBox*> m_bodyBoxes;
 	QLabel* m_details;
 	QListWidget* m_materialList;
+	class EnhancementSwitches* m_enhancementSwitches;
 	AssetMenuFiller m_menuFiller;
 	QComboBox* m_placeAs;
 	QPushButton* m_place;

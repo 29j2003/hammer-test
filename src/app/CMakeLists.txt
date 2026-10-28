@@ -12,6 +12,7 @@ add_library(smeapp STATIC
 	compile_window.cpp
 	copy_paste.cpp
 	editor.cpp
+	enhancements.cpp
 	find_dialog.cpp
 	history_panel.cpp
 	main_window.cpp

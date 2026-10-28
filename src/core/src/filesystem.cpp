@@ -86,6 +86,18 @@ struct GameFileSystem::MountData {
 	std::once_flag indexOnce;
 	std::shared_mutex indexMutex;   ///< Readers share it; noteWrittenFile() adds entries
 	std::unordered_map<std::string, std::filesystem::path> index;
+	// The mount's real path (readOriginal compares it with a folder), made on first use.
+	std::once_flag canonicalOnce;
+	std::filesystem::path canonical;
+
+	const std::filesystem::path& canonicalPath(const std::filesystem::path& path) {
+		std::call_once(canonicalOnce, [&] {
+			std::error_code ec;
+			canonical = std::filesystem::weakly_canonical(path, ec);
+			if (ec) canonical = path.lexically_normal();
+		});
+		return canonical;
+	}
 
 	void buildIndex(const std::filesystem::path& root) {
 		std::call_once(indexOnce, [&] {
@@ -277,9 +289,39 @@ std::optional<std::vector<std::byte>> GameFileSystem::read(std::string_view path
 	if (!index) {
 		return std::nullopt;
 	}
+	return readMount(*index, safeRelativePath(path));
+}
+
+std::optional<std::string> GameFileSystem::readOriginal(std::string_view path, const std::filesystem::path& folder, std::string_view pathId) const {
 	const auto relative = safeRelativePath(path);
-	auto& data = *m_data[*index];
-	if (m_mounts[*index].kind == Mount::Kind::Vpk) {
+	if (relative.empty()) return std::nullopt;
+	std::error_code ec;
+	const auto skip = std::filesystem::weakly_canonical(folder, ec);
+	for (std::size_t i = 0; i < m_mounts.size(); ++i) {
+		if (!mountMatches(i, pathId)) continue;
+		// Folders and VPKs inside the skipped folder (its pak01_dir.vpk too) do not count.
+		auto& data = *m_data[i];
+		const auto rel = data.canonicalPath(m_mounts[i].path).lexically_relative(skip);
+		if (!skip.empty() && !rel.empty() && *rel.begin() != "..") continue;
+		bool has = false;
+		if (m_mounts[i].kind == Mount::Kind::Vpk) {
+			has = data.vpk && data.vpk->hasEntry(relative);
+		} else {
+			data.buildIndex(m_mounts[i].path);
+			const std::shared_lock lock(data.indexMutex);
+			has = data.index.contains(relative);
+		}
+		if (!has) continue;
+		auto bytes = readMount(i, relative);
+		if (!bytes) return std::nullopt;
+		return std::string(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+	}
+	return std::nullopt;
+}
+
+std::optional<std::vector<std::byte>> GameFileSystem::readMount(std::size_t mountIndex, const std::string& relative) const {
+	auto& data = *m_data[mountIndex];
+	if (m_mounts[mountIndex].kind == Mount::Kind::Vpk) {
 		const std::lock_guard lock(data.mutex);
 		return data.vpk->readEntry(relative);
 	}
@@ -365,6 +407,14 @@ std::size_t GameFileSystem::fileCount(std::size_t mountIndex) const {
 }
 
 void GameFileSystem::noteWrittenFile(const std::filesystem::path& file) {
+	noteFile(file, true);
+}
+
+void GameFileSystem::noteRemovedFile(const std::filesystem::path& file) {
+	noteFile(file, false);
+}
+
+void GameFileSystem::noteFile(const std::filesystem::path& file, bool exists) {
 	for (std::size_t i = 0; i < m_mounts.size(); ++i) {
 		if (m_mounts[i].kind != Mount::Kind::Directory || !m_mounts[i].present) {
 			continue;
@@ -383,7 +433,11 @@ void GameFileSystem::noteWrittenFile(const std::filesystem::path& file) {
 		auto& data = *m_data[i];
 		data.buildIndex(m_mounts[i].path);
 		const std::unique_lock lock(data.indexMutex);
-		data.index.emplace(text, file);
+		if (exists) {
+			data.index.emplace(text, file);
+		} else {
+			data.index.erase(text);
+		}
 	}
 }
 
