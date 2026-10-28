@@ -135,6 +135,10 @@ public:
 	/// lines from the selected entities to the entities their outputs fire at (and back).
 	[[nodiscard]] bool showGrid3D() const { return m_showGrid3D; }
 	void setShowGrid3D(bool on);
+	/// Highest frame rate of the map views (0: no limit). The views only draw when something
+	/// changes; the limit caps flying, dragging and other continuous movement.
+	[[nodiscard]] int maxFps() const { return m_maxFps; }
+	void setMaxFps(int fps);
 	[[nodiscard]] bool showEntityNames() const { return m_showEntityNames; }
 	void setShowEntityNames(bool on);
 	[[nodiscard]] bool showConnections() const { return m_showConnections; }
@@ -287,6 +291,7 @@ private:
 	RenderMode m_renderMode = RenderMode::Lit;
 	bool m_shadows = true;
 	bool m_showGrid3D = true;
+	int m_maxFps = 144;
 	bool m_showEntityNames = true;
 	bool m_showConnections = true;
 	bool m_hasFidelity = false;

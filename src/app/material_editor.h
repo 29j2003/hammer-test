@@ -88,6 +88,8 @@ public:
 	/// Shows a material ("concrete/wall01") for editing.
 	void openMaterial(const QString& name);
 	[[nodiscard]] QString materialName() const { return m_name; }
+	/// Left column; MainWindow puts the Asset Browser (materials) into it while the page is shown.
+	[[nodiscard]] QWidget* browserHolder() const { return m_browserHolder; }
 	[[nodiscard]] QString shader() const { return m_shader; }
 	/// Current value of a parameter as it would be saved ("" if not set).
 	[[nodiscard]] QString value(const QString& key) const;
@@ -162,8 +164,9 @@ private:
 	bool m_heightDirty = false;           ///< Save writes a new height map
 	int m_heightGeneration = 0;
 
-	QLineEdit* m_search;
+	QWidget* m_browserHolder;           ///< Takes the Asset Browser while the page is shown
 	QListWidget* m_recent;
+	QLabel* m_recentTitle;
 	QVBoxLayout* m_column = nullptr;      ///< The parameter groups
 	std::map<QString, QStringList> m_featureKeys;   ///< Feature switch -> the parameters it owns
 	std::map<QString, QString> m_parked;  ///< Parameters of features turned off (lowercase key -> value)

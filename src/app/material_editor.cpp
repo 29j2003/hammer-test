@@ -270,33 +270,34 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	split->setChildrenCollapsible(false);
 	outer->addWidget(split);
 
-	// Far left: open a material, the ones edited lately.
+	// Far left: every material of the game (the Asset Browser comes over while this page is shown,
+	// see MainWindow::showPage), below the ones edited lately.
 	auto* browse = new QWidget;
 	auto* b = new QVBoxLayout(browse);
-	b->setContentsMargins(10, 10, 6, 10);
-	b->setSpacing(6);
-	m_search = new QLineEdit;
-	m_search->setObjectName("materialSearch");
-	m_search->setPlaceholderText(tr("Open a material ..."));
-	m_search->setClearButtonEnabled(true);
-	connect(m_search, &QLineEdit::returnPressed, this, [this] {
-		if (!m_search->text().trimmed().isEmpty()) openMaterial(m_search->text().trimmed());
-	});
-	b->addWidget(m_search);
-	b->addSpacing(4);
-	auto* recentTitle = new QLabel(tr("Recent"));
+	b->setContentsMargins(0, 0, 0, 6);
+	b->setSpacing(4);
+	m_browserHolder = new QWidget;
+	m_browserHolder->setObjectName("materialBrowserHolder");
+	auto* holderLayout = new QVBoxLayout(m_browserHolder);
+	holderLayout->setContentsMargins(0, 0, 0, 0);
+	b->addWidget(m_browserHolder, 1);
+	m_recentTitle = new QLabel(tr("Edited lately"));
+	auto* recentTitle = m_recentTitle;
+	recentTitle->setContentsMargins(8, 4, 0, 0);
 	recentTitle->setStyleSheet("font-weight: bold;");
 	b->addWidget(recentTitle);
 	m_recent = new QListWidget;
 	m_recent->setObjectName("recentMaterials");
 	m_recent->setFrameShape(QFrame::NoFrame);
+	m_recent->setMaximumHeight(110);
 	m_recent->setTextElideMode(Qt::ElideLeft);   // the end of a path tells most
 	m_recent->addItems(QSettings().value("materialEditor/recent").toStringList());
 	connect(m_recent, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
 		if (item->text() != m_name) openMaterial(item->text());
 	});
-	b->addWidget(m_recent, 1);
-	b->addWidget(hint(tr("Or right-click a material in the Asset Browser: Edit material.")));
+	b->addWidget(m_recent);
+	m_recentTitle->setVisible(m_recent->count() > 0);
+	m_recent->setVisible(m_recent->count() > 0);
 	split->addWidget(browse);
 
 	// Middle: the parameters in groups.
@@ -312,7 +313,7 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	m_title = new QLabel(tr("<span style='font-size:13pt'><b>No material</b></span>"));
 	m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
 	m_column->addWidget(m_title);
-	m_where = hint(tr("Open a material on the left, or right-click one in the Asset Browser and choose Edit material."));
+	m_where = hint(tr("Click a material on the left to edit it."));
 	m_where->setTextInteractionFlags(Qt::TextSelectableByMouse);
 	m_column->addWidget(m_where);
 	m_notice = new QLabel;
@@ -368,7 +369,7 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	split->setStretchFactor(0, 0);
 	split->setStretchFactor(1, 0);
 	split->setStretchFactor(2, 1);
-	split->setSizes({210, 470, 900});
+	split->setSizes({430, 470, 760});
 
 	connect(m_shape, &QComboBox::currentIndexChanged, this, [this](int i) { m_preview->setShape(static_cast<MaterialPreview::Shape>(i)); });
 	connect(m_lighting, &QComboBox::currentIndexChanged, this, [this](int i) { m_preview->setLighting(static_cast<MaterialPreview::Lighting>(i)); });
@@ -410,34 +411,27 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 		m_save->setEnabled(false);
 		m_saveAs->setEnabled(false);
 		updateSections();
-		// Texture and material names for the completers, read once per game in the background.
+		// Texture names for the completers, read once per game in the background.
 		auto* game = m_editor->game();
 		if (!game) return;
 		const GameFileSystem* fs = &game->files;
-		auto* watcher = new QFutureWatcher<std::pair<QStringList, QStringList>>(this);
+		auto* watcher = new QFutureWatcher<QStringList>(this);
 		connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
 			watcher->deleteLater();
-			const auto [textures, materials] = watcher->result();
-			const auto completer = [this](const QStringList& names, QLineEdit* field) {
-				auto* c = new QCompleter(new QStringListModel(names, field), field);
+			const QStringList textures = watcher->result();
+			for (auto& [key, field] : m_textureFields) {
+				auto* c = new QCompleter(new QStringListModel(textures, field), field);
 				c->setCaseSensitivity(Qt::CaseInsensitive);
 				c->setFilterMode(Qt::MatchContains);
 				field->setCompleter(c);
-				return c;
-			};
-			for (auto& [key, field] : m_textureFields) completer(textures, field);
-			connect(completer(materials, m_search), qOverload<const QString&>(&QCompleter::activated), this,
-			        [this](const QString& name) { openMaterial(name); });
+			}
 		});
 		watcher->setFuture(QtConcurrent::run([fs] {
-			QStringList textures, materials;
+			QStringList textures;
 			for (const auto& file : fs->list("materials", ".vtf")) {
 				textures << QString::fromStdString(file.substr(10, file.size() - 14));   // without materials/ and .vtf
 			}
-			for (const auto& file : fs->list("materials", ".vmt")) {
-				materials << QString::fromStdString(file.substr(10, file.size() - 14));
-			}
-			return std::pair{textures, materials};
+			return textures;
 		}));
 	});
 	updateSections();
@@ -454,6 +448,8 @@ void MaterialEditor::rememberRecent(const QString& name) {
 	m_recent->insertItem(0, name);
 	while (m_recent->count() > 20) delete m_recent->takeItem(m_recent->count() - 1);
 	m_recent->setCurrentRow(0);
+	m_recentTitle->show();
+	m_recent->show();
 	QSettings().setValue("materialEditor/recent", recentMaterials());
 }
 

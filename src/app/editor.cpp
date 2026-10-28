@@ -46,6 +46,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_snapping = settings.value("editor/snapping", true).toBool();
 	m_shadows = settings.value("editor/shadows", true).toBool();
 	m_showGrid3D = settings.value("view/grid3D", true).toBool();
+	m_maxFps = std::max(0, settings.value("view/maxFps", 144).toInt());
 	m_showEntityNames = settings.value("view/entityNames", true).toBool();
 	m_showConnections = settings.value("view/connections", true).toBool();
 	m_hiddenKinds = settings.value("view/hiddenKinds", 0u).toUInt() & ALL_OBJECT_KINDS;
@@ -635,6 +636,14 @@ bool setViewOption(bool& member, bool on, const char* key) {
 
 void Editor::setShowGrid3D(bool on) {
 	if (setViewOption(m_showGrid3D, on, "view/grid3D")) emit settingsChanged();
+}
+
+void Editor::setMaxFps(int fps) {
+	fps = std::max(0, fps);
+	if (fps == m_maxFps) return;
+	m_maxFps = fps;
+	QSettings().setValue("view/maxFps", fps);
+	emit settingsChanged();
 }
 
 void Editor::setShowEntityNames(bool on) {

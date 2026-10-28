@@ -47,7 +47,9 @@
 #include <QTest>
 #include <QTabWidget>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QFrame>
+#include <QOpenGLWidget>
 #include <QStandardPaths>
 #include <QToolButton>
 
@@ -92,6 +94,7 @@
 #include "soundscape_editor.h"
 #include "source_control_panel.h"
 #include <sme/visgroups.h>
+#include <sme/visibility.h>
 #include "visgroups_panel.h"
 #include "maps_panel.h"
 #include "new_mod_dialog.h"
@@ -853,7 +856,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		// Its own page: the map's docks and tool bars step aside (and come back with the Map page).
 		CHECK(window.pages()->currentWidget() == materials);
 		CHECK(window.currentPage() == MainWindow::Page::Materials);
-		CHECK_FALSE(window.assets()->isVisible());
+		CHECK(window.assets()->isVisible());   // the material list comes along to the page
 		CHECK(materials->recentMaterials().value(0) == "demo/brickwall001");
 		CHECK(materials->value("$basetexture") == "demo/brickwall001");
 		CHECK(materials->value("$surfaceprop") == "brick");
@@ -1821,6 +1824,95 @@ TEST_CASE("editing with the mouse in the real window") {
 	CHECK(editor.doc().world.solids.size() == 2);
 	CHECK(editor.doc().entities.size() == 1);
 	CHECK_FALSE(editor.modified());
+}
+
+TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page lists every material") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QSignalSpy indexed(window.assets(), &AssetBrowser::materialsIndexed);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	REQUIRE((indexed.count() > 0 || indexed.wait(10000)));
+	settle();
+
+	// Frame limit: default 144, chosen in View > Frame rate limit, remembered.
+	CHECK(editor.maxFps() == 144);
+	auto* fpsMenu = window.findChild<QMenu*>("fpsMenu");
+	REQUIRE(fpsMenu);
+	QAction* sixty = nullptr;
+	for (auto* a : fpsMenu->actions()) {
+		if (a->data().toInt() == 60) sixty = a;
+	}
+	REQUIRE(sixty);
+	sixty->trigger();
+	CHECK(editor.maxFps() == 60);
+	CHECK(QSettings().value("view/maxFps").toInt() == 60);
+	{
+		// Many requests in a row draw only a few frames.
+		Viewport* view = window.view3D();
+		int frames = 0;
+		QObject::connect(view, &QOpenGLWidget::frameSwapped, view, [&frames] { ++frames; });
+		QElapsedTimer clock;
+		clock.start();
+		while (clock.elapsed() < 500) {
+			view->camera().yaw += 0.1f;
+			view->requestFrame();
+			QApplication::processEvents();
+		}
+		settle();
+		CHECK(frames <= 40);   // 60 fps for half a second, with some slack
+		CHECK(frames >= 3);
+	}
+
+	// Hide tools: one action hides triggers and tool brushes and brings them back.
+	auto* hideTools = window.findChild<QAction*>("hideTools");
+	REQUIRE(hideTools);
+	CHECK_FALSE(hideTools->isChecked());
+	hideTools->trigger();
+	CHECK_FALSE(editor.kindVisible(ObjectKind::Triggers));
+	CHECK_FALSE(editor.kindVisible(ObjectKind::ToolBrushes));
+	CHECK(editor.kindVisible(ObjectKind::World));
+	editor.setKindVisible(ObjectKind::Triggers, true);
+	CHECK_FALSE(hideTools->isChecked());
+	editor.setKindVisible(ObjectKind::Triggers, false);
+	CHECK(hideTools->isChecked());
+	hideTools->trigger();
+	CHECK(editor.kindVisible(ObjectKind::Triggers));
+	CHECK(editor.kindVisible(ObjectKind::ToolBrushes));
+	CHECK(window.findChild<QToolButton*>("showMenuButton"));
+
+	// Materials page: the whole material list is there and the page opens a material right away.
+	window.showPage(MainWindow::Page::Materials);
+	settle();
+	auto* holder = window.materialEditor()->findChild<QWidget*>("materialBrowserHolder");
+	REQUIRE(holder);
+	CHECK(window.assets()->parentWidget() == holder);
+	CHECK(window.assets()->isVisible());
+	CHECK_FALSE(window.materialEditor()->materialName().isEmpty());
+	auto* list = window.assets()->findChild<QListView*>("materialList");
+	REQUIRE(list);
+	CHECK(list->model()->rowCount() > 5);
+	list->setCurrentIndex(list->model()->index(3, 0));
+	settle();
+	CHECK(window.materialEditor()->materialName() == list->model()->index(3, 0).data(Qt::UserRole).toString());
+	window.showPage(MainWindow::Page::Map);
+	settle();
+	CHECK(window.assets()->parentWidget() != holder);
+	CHECK(window.assets()->isVisible());
 }
 
 TEST_CASE("update check: release information and the version button") {

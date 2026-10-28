@@ -128,6 +128,7 @@ private:
 	MapsPanel* m_mapsPanel = nullptr;
 	QWidget* m_soundsPage = nullptr;         ///< Holds the Sounds browser while its page is shown
 	QWidget* m_particlesPage = nullptr;
+	QDockWidget* m_assetsDock = nullptr;
 	QDockWidget* m_soundsDock = nullptr;
 	QDockWidget* m_particlesDock = nullptr;
 	QList<QPointer<QWidget>> m_hiddenForTab;    ///< Docks and tool bars put away for another tab

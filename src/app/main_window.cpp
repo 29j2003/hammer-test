@@ -325,6 +325,7 @@ void MainWindow::createDocks() {
 	tool->raise();
 	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
 	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
+	m_assetsDock = assets;
 	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
 	auto* particles = addDock(tr("Particles"), m_particles, Qt::BottomDockWidgetArea);
 	m_soundsDock = sounds;
@@ -340,6 +341,18 @@ void MainWindow::createDocks() {
 	auto* history = addDock(tr("History"), new HistoryPanel(m_editor), Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, history);
 	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
+	connect(m_assets, &AssetBrowser::materialsIndexed, this, [this] {
+		// The Materials page opened before the list was ready.
+		if (currentPage() == Page::Materials && m_materialEditor->materialName().isEmpty() && !m_assets->shownMaterial().isEmpty()) {
+			m_materialEditor->openMaterial(m_assets->shownMaterial());
+		}
+	});
+	// On the Materials page a click in the browser opens the material.
+	connect(m_assets, &AssetBrowser::materialPicked, this, [this](const QString& name) {
+		if (currentPage() == Page::Materials && name.compare(m_materialEditor->materialName(), Qt::CaseInsensitive) != 0) {
+			m_materialEditor->openMaterial(name);
+		}
+	});
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
@@ -399,10 +412,16 @@ void MainWindow::showPage(Page page) {
 			dock->setWidget(browser);
 		}
 	};
+	borrow(m_assets, m_assetsDock, m_materialEditor->browserHolder(), page == Page::Materials);
 	borrow(m_sounds, m_soundsDock, m_soundsPage, page == Page::Sounds);
 	borrow(m_particles, m_particlesDock, m_particlesPage, page == Page::Particles);
 	if (page == Page::Project) m_modPage->refresh();
 	m_pages->setCurrentWidget(target);
+	m_assets->setPageMode(page == Page::Materials);
+	// The page never starts empty: without an open material it shows the browser's current one.
+	if (page == Page::Materials && m_materialEditor->materialName().isEmpty() && !m_assets->shownMaterial().isEmpty()) {
+		m_materialEditor->openMaterial(m_assets->shownMaterial());
+	}
 	setMapWorkspaceShown(page == Page::Map);
 	if (m_pageGroup) {
 		const auto actions = m_pageGroup->actions();
@@ -908,6 +927,21 @@ void MainWindow::createActions() {
 	const auto kindToggle = [&](const QString& iconName, const QString& tip, ObjectKind kind) {
 		viewToggle(iconName, tip, [this, kind] { return m_editor->kindVisible(kind); }, [this, kind](bool on) { m_editor->setKindVisible(kind, on); });
 	};
+	// One click (Ctrl+Alt+T) hides what is in the way while building: triggers and tool brushes
+	// (clip, nodraw, hint, skip ...), like Source 2 Hammer's tool material filter.
+	auto* hideTools = top->addAction(icon("view:tools"), tr("Hide tools"));
+	hideTools->setObjectName("hideTools");
+	hideTools->setCheckable(true);
+	hideTools->setShortcut(QKeySequence("Ctrl+Alt+T"));
+	hideTools->setToolTip(tr("Hide triggers, clips and other tool brushes while building (Ctrl+Alt+T) - they stay in the map"));
+	const auto toolsHidden = [this] { return !m_editor->kindVisible(ObjectKind::Triggers) && !m_editor->kindVisible(ObjectKind::ToolBrushes); };
+	hideTools->setChecked(toolsHidden());
+	connect(hideTools, &QAction::toggled, this, [this, toolsHidden](bool hide) {
+		if (hide == toolsHidden()) return;
+		m_editor->setKindVisible(ObjectKind::Triggers, !hide);
+		m_editor->setKindVisible(ObjectKind::ToolBrushes, !hide);
+	});
+	connect(m_editor, &Editor::viewFilterChanged, hideTools, [hideTools, toolsHidden] { hideTools->setChecked(toolsHidden()); });
 	kindToggle("view:helpers", tr("Show helper entities (logic, info, paths, sounds ...)"), ObjectKind::Helpers);
 	kindToggle("page:models", tr("Show models (props)"), ObjectKind::Models);
 	kindToggle("tool:entity", tr("Show lights"), ObjectKind::Lights);
@@ -921,10 +955,12 @@ void MainWindow::createActions() {
 	           [this](bool on) { m_editor->setShowConnections(on); });
 	viewToggle("view:grid3d", tr("Grid in the 3D view"), [this] { return m_editor->showGrid3D(); }, [this](bool on) { m_editor->setShowGrid3D(on); });
 	auto* showMore = new QToolButton;
+	showMore->setObjectName("showMenuButton");
 	showMore->setIcon(icon("eye"));
-	showMore->setToolTip(tr("Show: every kind of object"));
+	showMore->setText(tr("Show"));
+	showMore->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	showMore->setToolTip(tr("Show or hide each kind of object: world, brush entities, triggers, tool brushes, sky, models, NPCs, lights, cubemaps, helpers"));
 	showMore->setPopupMode(QToolButton::InstantPopup);
-	showMore->setProperty("iconOnly", true);
 	auto* showMenu = new QMenu(showMore);
 	connect(showMenu, &QMenu::aboutToShow, this, [this, showMenu] {
 		showMenu->clear();
@@ -992,6 +1028,21 @@ void MainWindow::createActions() {
 	view->addSeparator();
 	view->addActions(m_renderGroup->actions());
 	view->addAction(shadows);
+	// Frame limit: the map views never draw faster than this (saves the graphics card).
+	auto* fpsMenu = view->addMenu(tr("Frame rate limit"));
+	fpsMenu->setObjectName("fpsMenu");
+	auto* fpsGroup = new QActionGroup(fpsMenu);
+	for (const int fps : {30, 60, 120, 144, 200, 240, 0}) {
+		auto* a = fpsMenu->addAction(fps > 0 ? tr("%1 fps").arg(fps) : tr("No limit"));
+		a->setCheckable(true);
+		a->setData(fps);
+		a->setChecked(m_editor->maxFps() == fps);
+		fpsGroup->addAction(a);
+		connect(a, &QAction::triggered, this, [this, fps] { m_editor->setMaxFps(fps); });
+	}
+	connect(fpsMenu, &QMenu::aboutToShow, fpsMenu, [this, fpsGroup] {
+		for (auto* a : fpsGroup->actions()) a->setChecked(a->data().toInt() == m_editor->maxFps());
+	});
 	view->addSeparator();
 	for (auto* dock : m_docks) {
 		view->addAction(dock->toggleViewAction());

@@ -102,7 +102,7 @@ void Viewport::updateClipPreview() {
 	const auto plane = clipPlane();
 	if (!plane) {
 		setPreviewSolids({});
-		update();
+		requestFrame();
 		return;
 	}
 	// The parts that stay, as they will be (the scratch document only hands out ids).
@@ -116,7 +116,7 @@ void Viewport::updateClipPreview() {
 		if (m_clipKeep != edit::ClipKeep::Back && front) kept.push_back(std::move(*front));
 	}
 	setPreviewSolids(kept);
-	update();
+	requestFrame();
 }
 
 void Viewport::applyClip() {
@@ -128,7 +128,7 @@ void Viewport::applyClip() {
 	m_editor->clipSelection(*plane, m_clipKeep);
 	m_clipPoints.clear();
 	setPreviewSolids({});
-	update();
+	requestFrame();
 }
 
 void Viewport::resetToolState() {
@@ -143,7 +143,7 @@ void Viewport::resetToolState() {
 	if (hadPreview) {
 		setPreviewSolids({});
 	}
-	update();
+	requestFrame();
 }
 
 std::vector<Viewport::VertexHandle> Viewport::vertexHandles() const {
@@ -219,7 +219,7 @@ void Viewport::updateVertexDrag(const QPointF& pos) {
 		}
 	}
 	setPreviewSolids(moved);
-	update();
+	requestFrame();
 }
 
 void Viewport::finishPolygon() {
@@ -240,7 +240,7 @@ void Viewport::finishPolygon() {
 		m_editor->createPolygonBrush(m_polygon, extrude);
 	}
 	m_polygon.clear();
-	update();
+	requestFrame();
 }
 
 bool Viewport::toolMousePress(QMouseEvent* event) {
@@ -259,7 +259,7 @@ bool Viewport::toolMousePress(QMouseEvent* event) {
 			m_clipPoints.push_back(toolPoint(pos, false));
 			updateClipPreview();
 		}
-		update();
+		requestFrame();
 		return true;
 	}
 	if (tool == Editor::Tool::Vertex) {
@@ -297,7 +297,7 @@ bool Viewport::toolMousePress(QMouseEvent* event) {
 				for (const auto& c : handle.corners) if (!selected(c)) m_vertexSelection.push_back(c);
 			}
 			m_editor->setVertexCorners(m_vertexSelection);
-			update();
+			requestFrame();
 			return true;
 		}
 		if (!all) {
@@ -320,7 +320,7 @@ bool Viewport::toolMousePress(QMouseEvent* event) {
 		if (m_polygon.empty() || length(p - m_polygon.back()) > 0.01) {
 			m_polygon.push_back(p);
 		}
-		update();
+		requestFrame();
 		return true;
 	}
 	return false;
@@ -351,7 +351,7 @@ bool Viewport::toolKey(QKeyEvent* event) {
 		}
 		if (event->key() == Qt::Key_Backspace && !m_polygon.empty()) {
 			m_polygon.pop_back();
-			update();
+			requestFrame();
 			return true;
 		}
 		if (event->key() == Qt::Key_Escape && !m_polygon.empty()) {
@@ -362,7 +362,7 @@ bool Viewport::toolKey(QKeyEvent* event) {
 	if (tool == Editor::Tool::Vertex && event->key() == Qt::Key_Escape && !m_vertexSelection.empty()) {
 		m_vertexSelection.clear();
 		m_editor->setVertexCorners(m_vertexSelection);
-		update();
+		requestFrame();
 		return true;
 	}
 	return false;

@@ -66,6 +66,8 @@ public:
 	/// Where pasted objects with this box go: their center under the mouse (resting on the
 	/// surface in 3D), or nothing when the mouse is not over this view.
 	[[nodiscard]] std::optional<Vec3> pasteCenter(const Bounds& box) const;
+	/// Asks for a frame, at most as often as Editor::maxFps() allows (use instead of update()).
+	void requestFrame();
 	/// Line from a compile leak (.lin pointfile); empty clears it.
 	void setLeakLine(const std::vector<Vec3>& points);
 
@@ -210,7 +212,9 @@ private:
 	bool m_lookDirty = true;
 	Qt::KeyboardModifiers m_pressModifiers;
 	QSet<int> m_keys;
+	void applyFrameLimit();
 	QTimer m_moveTimer;
+	QTimer m_frameTimer;                  ///< A frame that waits for the frame limit
 	QElapsedTimer m_moveClock;
 	float m_flySpeed = 600.f;
 	Vec3 m_orbitPivot;
@@ -273,6 +277,7 @@ private:
 	double m_frameMs = 0;
 	int m_frames = 0;
 	QElapsedTimer m_fpsClock;
+	QElapsedTimer m_lastFrame;            ///< When the last frame was drawn (frame limit)
 	double m_fps = 0;
 };
 

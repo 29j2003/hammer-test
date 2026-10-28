@@ -129,6 +129,10 @@ public:
 	[[nodiscard]] const std::vector<ParticleSystem>& particles() const { return m_particles; }
 	void showMaterials();
 	void showModels();
+	/// On the Materials page: only the material list (no Models tab), larger previews.
+	void setPageMode(bool page);
+	/// The selected material, else the first one listed ("" before the list is ready).
+	[[nodiscard]] QString shownMaterial() const;
 	/// A material was edited or created: new thumbnail, and listed if it is new.
 	void materialChanged(const QString& name);
 	[[nodiscard]] ModelThumbnails* modelThumbnails() const { return m_modelThumbnails; }
@@ -139,6 +143,8 @@ signals:
 	void materialsIndexed();
 	/// "Edit material ..." in the material list's menu.
 	void editMaterialRequested(const QString& name);
+	/// A material was clicked in the list (lowercase name as listed, "concrete/wall01").
+	void materialPicked(const QString& name);
 
 private:
 	void reload();
@@ -160,6 +166,7 @@ private:
 	QFutureWatcher<AssetIndex> m_indexWatcher;
 	std::atomic<int> m_generation{0};
 
+	bool m_pageMode = false;   ///< Shown on the Materials page
 	QStringList m_models, m_sounds;
 	std::vector<ParticleSystem> m_particles;
 	ModelThumbnails* m_modelThumbnails;

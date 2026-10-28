@@ -115,12 +115,17 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	m_lastBlockDepth.add({0, 0, 0});
 	m_lastBlockDepth.add({64, 64, 64});
 
-	m_moveTimer.setInterval(0);   // as fast as the display allows while flying
 	connect(&m_moveTimer, &QTimer::timeout, this, &Viewport::moveCamera);
+	m_moveTimer.setTimerType(Qt::PreciseTimer);
+	m_frameTimer.setSingleShot(true);
+	m_frameTimer.setTimerType(Qt::PreciseTimer);
+	connect(&m_frameTimer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
+	applyFrameLimit();
+	connect(editor, &Editor::settingsChanged, this, &Viewport::applyFrameLimit);
 	connect(editor, &Editor::documentChanged, this, [this] {
 		m_needsRebuild = true;
 		m_selectionDirty = true;
-		update();
+		requestFrame();
 	});
 	connect(editor, &Editor::documentReplaced, this, [this] {
 		m_needsRebuild = true;
@@ -139,14 +144,14 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	for (const auto signal : {&Editor::documentChanged, &Editor::settingsChanged, &Editor::gameChanged}) {
 		connect(editor, signal, this, [this] {
 			m_lookDirty = true;
-			update();
+			requestFrame();
 		});
 	}
 	connect(editor, &Editor::selectionChanged, this, [this] {
 		m_selectionDirty = true;
-		update();
+		requestFrame();
 	});
-	connect(editor, &Editor::settingsChanged, this, qOverload<>(&QWidget::update));
+	connect(editor, &Editor::settingsChanged, this, &Viewport::requestFrame);
 	connect(editor, &Editor::toolChanged, this, &Viewport::resetToolState);
 	connect(editor, &Editor::selectionChanged, this, [this] {
 		// The clip preview and the selected corners belong to the old selection.
@@ -162,21 +167,21 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		// Picked in another view, or used up by an edge action.
 		if (m_drag != Drag::Vertex) {
 			m_vertexSelection = m_editor->vertexCorners();
-			update();
+			requestFrame();
 		}
 	});
 	connect(editor, &Editor::gameChanged, this, [this] {
 		m_needsRebuild = true;
-		update();
+		requestFrame();
 	});
 	connect(editor->models(), &ModelCache::modelReady, this, [this] {
 		// Several models finish between two frames: the next paint rebuilds once.
 		m_needsRebuild = true;
-		update();
+		requestFrame();
 	});
 	connect(materials, &MaterialCache::materialReady, this, [this](const QString& name) {
 		m_renderer.materialReady(name);
-		update();
+		requestFrame();
 	});
 	m_fpsClock.start();
 
@@ -282,6 +287,19 @@ void Viewport::updateLook() {
 }
 
 void Viewport::fillShowMenu(QMenu* menu, Editor* editor) {
+	const bool toolsHidden = !editor->kindVisible(ObjectKind::Triggers) && !editor->kindVisible(ObjectKind::ToolBrushes);
+	auto* tools = menu->addAction(toolsHidden ? tr("Show triggers and tool brushes again\tCtrl+Alt+T") : tr("Hide triggers and tool brushes\tCtrl+Alt+T"));
+	connect(tools, &QAction::triggered, editor, [editor, toolsHidden] {
+		editor->setKindVisible(ObjectKind::Triggers, toolsHidden);
+		editor->setKindVisible(ObjectKind::ToolBrushes, toolsHidden);
+	});
+	auto* geometry = menu->addAction(tr("Only geometry (hide every entity, trigger and tool brush)"));
+	connect(geometry, &QAction::triggered, editor, [editor] {
+		for (const auto kind : {ObjectKind::Triggers, ObjectKind::ToolBrushes, ObjectKind::Models, ObjectKind::Npcs, ObjectKind::Lights,
+		                        ObjectKind::Cubemaps, ObjectKind::Helpers}) {
+			editor->setKindVisible(kind, false);
+		}
+	});
 	menu->addSection(tr("Show"));
 	const std::pair<ObjectKind, QString> kinds[] = {
 		{ObjectKind::World, tr("World brushes")},
@@ -325,7 +343,7 @@ void Viewport::setCameraKind(Camera::Kind kind) {
 		frameSelection();
 	}
 	updateViewButton();
-	update();
+	requestFrame();
 }
 
 void Viewport::initializeGL() {
@@ -413,18 +431,19 @@ void Viewport::frameSelection() {
 		const double dist = radius / std::tan(qDegreesToRadians(m_camera.fov) / 2) * 1.1;
 		m_camera.position = toQt(center) - m_camera.forward() * float(dist);
 	}
-	update();
+	requestFrame();
 }
 
 void Viewport::setLeakLine(const std::vector<Vec3>& points) {
 	m_leak = points;
-	update();
+	requestFrame();
 }
 
 // --- Drawing -------------------------------------------------------------------
 
 void Viewport::paintGL() {
 	m_frameClock.start();
+	m_lastFrame.start();
 	auto* gl = QOpenGLContext::currentContext()->functions();
 	const QColor bg = m_camera.is2D() ? QColor(24, 25, 28) : QColor(54, 58, 66);
 	gl->glClearColor(bg.redF(), bg.greenF(), bg.blueF(), 1);
@@ -536,7 +555,9 @@ void Viewport::paintGL() {
 		m_fpsClock.restart();
 		// The view only draws when something changes, so frames per second say little; the time
 		// a frame takes says what the view could do.
-		emit statsChanged(tr("%1 ms/frame (%2 fps possible)").arg(m_frameMs, 0, 'f', 1).arg(m_frameMs > 0.01 ? std::min(9999.0, 1000.0 / m_frameMs) : 9999.0, 0, 'f', 0));
+		const int limit = m_editor->maxFps();
+		emit statsChanged(limit > 0 ? tr("%1 ms/frame · max %2 fps").arg(m_frameMs, 0, 'f', 1).arg(limit)
+		                            : tr("%1 ms/frame · no fps limit").arg(m_frameMs, 0, 'f', 1));
 		emit statsDetail(tr("%1 triangles, %2 draw calls, %3 lights (%6 with shadows), %4 ms CPU/frame, %5 frames drawn per second")
 		                      .arg(m_renderer.triangleCount())
 		                      .arg(m_renderer.lastDrawCalls())
@@ -891,6 +912,22 @@ void Viewport::drawOverlay() {
 		              "Right mouse: look around, with W A S D Q E to fly\nCtrl+O: open a .vmf"));
 	}
 
+	// What the view filters hide, so a hidden trigger is never a surprise.
+	if (const std::uint32_t hidden = m_editor->hiddenKinds()) {
+		static const std::pair<ObjectKind, const char*> NAMES[] = {
+			{ObjectKind::World, QT_TR_NOOP("world")}, {ObjectKind::BrushEntities, QT_TR_NOOP("brush entities")},
+			{ObjectKind::Triggers, QT_TR_NOOP("triggers")}, {ObjectKind::ToolBrushes, QT_TR_NOOP("tool brushes")},
+			{ObjectKind::Sky, QT_TR_NOOP("sky")}, {ObjectKind::Models, QT_TR_NOOP("models")}, {ObjectKind::Npcs, QT_TR_NOOP("NPCs")},
+			{ObjectKind::Lights, QT_TR_NOOP("lights")}, {ObjectKind::Cubemaps, QT_TR_NOOP("cubemaps")}, {ObjectKind::Helpers, QT_TR_NOOP("helpers")},
+		};
+		QStringList names;
+		for (const auto& [kind, name] : NAMES) {
+			if (hidden & static_cast<std::uint32_t>(kind)) names << tr(name);
+		}
+		p.drawText(QRectF(width() - 508, 8, 500, 20), tr("Hidden: %1").arg(names.join(QStringLiteral(", "))), QColor(255, 200, 120),
+		           Qt::AlignRight | Qt::AlignTop);
+	}
+
 	// Entity names in the 2D views (Hammer's "show entity names"), when zoomed in far enough.
 	if (m_camera.is2D() && m_editor->showEntityNames() && !m_editor->doc().entities.empty()) {
 		// How many pixels 64 units take here (the 2D view shows two of the three axes).
@@ -955,6 +992,28 @@ void Viewport::paintOverlayImage() {
 	}
 }
 
+// --- Frame limit -----------------------------------------------------------------
+
+void Viewport::applyFrameLimit() {
+	// While flying the camera moves once per frame: as often as the limit allows.
+	const int fps = m_editor->maxFps();
+	m_moveTimer.setInterval(fps > 0 ? std::max(1, 1000 / fps) : 0);
+}
+
+void Viewport::requestFrame() {
+	const int fps = m_editor->maxFps();
+	if (fps <= 0 || !m_lastFrame.isValid()) {
+		update();
+		return;
+	}
+	const qint64 wait = 1000 / fps - m_lastFrame.elapsed();
+	if (wait <= 0) {
+		update();
+	} else if (!m_frameTimer.isActive()) {
+		m_frameTimer.start(int(wait));   // the frame comes once the limit allows it, with all changes
+	}
+}
+
 // --- Camera ----------------------------------------------------------------------
 
 void Viewport::moveCamera() {
@@ -978,7 +1037,7 @@ void Viewport::moveCamera() {
 	const float boost = m_keys.contains(Qt::Key_Shift) ? 3.f : 1.f;
 	m_camera.position += dir.normalized() * float(m_flySpeed * boost * dt);
 	m_lookFlew = true;
-	update();
+	requestFrame();
 }
 
 void Viewport::wheelEvent(QWheelEvent* event) {
@@ -995,7 +1054,7 @@ void Viewport::wheelEvent(QWheelEvent* event) {
 	} else {
 		m_camera.position += m_camera.forward() * float(steps * std::max(32.0, m_flySpeed * 0.25));
 	}
-	update();
+	requestFrame();
 }
 
 // --- Mouse -----------------------------------------------------------------------
@@ -1245,7 +1304,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 				const float speed = std::max(0.5f, m_flySpeed / 600.f);
 				m_camera.position += (-m_camera.right() * float(delta.x()) + m_camera.up() * float(delta.y())) * speed;
 			}
-			update();
+			requestFrame();
 			return;
 		}
 		case Drag::Orbit: {
@@ -1254,7 +1313,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 			m_camera.yaw -= float(delta.x() * 0.3);
 			m_camera.pitch = std::clamp(m_camera.pitch - float(delta.y() * 0.3), -89.f, 89.f);
 			m_camera.position = pivot - m_camera.forward() * distance;
-			update();
+			requestFrame();
 			return;
 		}
 		case Drag::Gizmo:
@@ -1278,12 +1337,12 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 				m_blockBox.max.z = std::max(z0, z1);
 				updateShapePreview();
 			}
-			update();
+			requestFrame();
 			return;
 		}
 		case Drag::Marquee:
 			m_marquee = QRectF(m_pressPos, pos).normalized();
-			update();
+			requestFrame();
 			return;
 		case Drag::ClipLine:
 			m_clipPoints.back() = toolPoint(pos, false);
@@ -1305,7 +1364,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 	const Handle hover = hitHandle(pos);
 	if (hover != m_hover) {
 		m_hover = hover;
-		update();
+		requestFrame();
 	}
 }
 
@@ -1353,7 +1412,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 			if (QLineF(m_pressPos, releasePos).length() < 4) {
 				m_drag = Drag::None;   // a click, not a drag
 				setPreviewSolids({});
-				update();
+				requestFrame();
 				break;
 			}
 			if (m_camera.is2D()) {
@@ -1368,7 +1427,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 			} else {
 				m_drag = Drag::None;
 			}
-			update();
+			requestFrame();
 			break;
 		}
 		case Drag::ClipLine:
@@ -1390,7 +1449,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 				for (const auto& c : corners) m_vertexSelection.push_back(c + delta);
 			}
 			m_editor->setVertexCorners(m_vertexSelection);
-			update();
+			requestFrame();
 			break;
 		}
 		case Drag::Marquee: {
@@ -1400,7 +1459,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 			} else {
 				marqueeSelect(m_marquee, event->modifiers());
 			}
-			update();
+			requestFrame();
 			break;
 		}
 		default:
@@ -1460,7 +1519,7 @@ void Viewport::setHoverSide(int sideId) {
 	if (m_hoverSide != sideId) {
 		m_hoverSide = sideId;
 		m_selectionDirty = true;
-		update();
+		requestFrame();
 	}
 }
 
@@ -1582,7 +1641,7 @@ void Viewport::updateGhost(const QPointF* pos) {
 	                     (ghost && (ghost->box.min != m_ghost->box.min || ghost->box.max != m_ghost->box.max || ghost->model != m_ghost->model));
 	m_ghost = std::move(ghost);
 	if (changed) {
-		update();
+		requestFrame();
 	}
 }
 
@@ -1760,7 +1819,7 @@ void Viewport::beginGizmoDrag(Handle handle, const QPointF& pos) {
 			}
 		}
 	}
-	update();
+	requestFrame();
 }
 
 void Viewport::updateGizmoDrag(const QPointF& pos) {
@@ -1795,7 +1854,7 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		} else {
 			m_dragNewBounds.min[axis] = std::min(m_dragBounds.max[axis] - minimumSize, snap(m_dragBounds.min[axis] + t, grid));
 		}
-		update();
+		requestFrame();
 		return;
 	} else if (handle >= Handle::RadiusMinX && handle <= Handle::RadiusMaxZ) {
 		// The square follows the mouse along its axis; the radius grows outward on both sides.
@@ -1805,7 +1864,7 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		                                 : closestOnAxis(m_dragCenter, axisVector(axis), ray) - m_dragStartParam;
 		const double outward = index % 2 == 1 ? t : -t;
 		m_dragRadius = std::max(minimumSize, snap(m_dragStartRadius + outward, grid));
-		update();
+		requestFrame();
 		return;
 	} else if (handle == Handle::Corner) {
 		// Nearest corner of another object on screen wins; otherwise the corner follows the
@@ -1859,7 +1918,7 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 			m_previewModel.rotate(float(m_dragAngle), axisQt);
 			m_previewModel.translate(-toQt(m_dragCenter));
 		}
-		update();
+		requestFrame();
 		return;
 	} else if (handle >= Handle::ScaleMinX && handle <= Handle::ScaleMaxZ) {
 		const int index = static_cast<int>(handle) - static_cast<int>(Handle::ScaleMinX);
@@ -1899,11 +1958,11 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		m_previewModel.translate(toQt(m_dragNewBounds.min));
 		m_previewModel.scale(float(to.x / std::max(from.x, 1e-6)), float(to.y / std::max(from.y, 1e-6)), float(to.z / std::max(from.z, 1e-6)));
 		m_previewModel.translate(-toQt(m_dragBounds.min));
-		update();
+		requestFrame();
 		return;
 	}
 	m_previewModel.translate(toQt(m_dragDelta));
-	update();
+	requestFrame();
 }
 
 bool Viewport::handleFacesCamera(const Vec3& point, int axis, int side) const {
@@ -1991,7 +2050,7 @@ void Viewport::finishGizmoDrag(bool clone) {
 	}
 	m_dragDelta = {};
 	m_dragAngle = 0;
-	update();
+	requestFrame();
 }
 
 void Viewport::updateShapePreview() {
@@ -2030,14 +2089,14 @@ void Viewport::updateBlockDrag(const QPointF& pos) {
 		}
 	}
 	updateShapePreview();
-	update();
+	requestFrame();
 }
 
 void Viewport::createBlockFromDrag() {
 	m_drag = Drag::None;
 	const Vec3 size = m_blockBox.size();
 	if (size.x <= 0 || size.y <= 0 || size.z <= 0) {
-		update();
+		requestFrame();
 		return;
 	}
 	m_lastBlockDepth = m_blockBox;
@@ -2047,7 +2106,7 @@ void Viewport::createBlockFromDrag() {
 	} else {
 		m_editor->createShape(m_blockBox);   // block, wedge, cylinder, arch, ... (Tool panel)
 	}
-	update();
+	requestFrame();
 }
 
 bool Viewport::event(QEvent* event) {
@@ -2139,7 +2198,7 @@ void Viewport::endLook() {
 	releaseMouse();
 	unsetCursor();
 	QCursor::setPos(m_lookAnchor);
-	update();
+	requestFrame();
 }
 
 void Viewport::applyLook() {
@@ -2160,7 +2219,7 @@ void Viewport::applyLook() {
 		QCursor::setPos(m_lookAnchor);
 		m_lookLast = QCursor::pos();   // where it really is (warping is not possible everywhere)
 	}
-	update();
+	requestFrame();
 }
 
 void Viewport::cancelInteraction() {
@@ -2176,7 +2235,7 @@ void Viewport::cancelInteraction() {
 	m_dragHandle = Handle::None;
 	m_dragDelta = {};
 	m_dragAngle = 0;
-	update();
+	requestFrame();
 }
 
 // --- Keyboard ---------------------------------------------------------------------

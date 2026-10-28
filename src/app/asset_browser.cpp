@@ -22,6 +22,7 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
@@ -305,6 +306,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_materialFilter = new MaterialFilter(this);
 		m_materialFilter->setSourceModel(m_materialModel);
 		m_materialView = makeIconView(page);
+		m_materialView->setObjectName("materialList");
 		addCopyShortcut(m_materialView, Qt::UserRole);   // Ctrl+C: the material's name
 		m_materialView->setModel(m_materialFilter);
 		m_materialView->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -335,6 +337,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		connect(m_materialView->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex& index) {
 			showMaterialInfo(index);
 			if (index.isValid()) {
+				emit materialPicked(index.data(Qt::UserRole).toString());
 				m_editor->setCurrentMaterial(index.data(Qt::UserRole).toString().toUpper());
 				emit m_editor->message(tr("Current material: %1 - Shift+T applies it, Ctrl+right mouse paints it")
 				                           .arg(index.data(Qt::UserRole).toString()));
@@ -458,6 +461,19 @@ void AssetBrowser::showModels() {
 	m_tabs->setCurrentIndex(1);
 }
 
+void AssetBrowser::setPageMode(bool page) {
+	m_pageMode = page;
+	m_tabs->tabBar()->setVisible(!page);
+	updateRecent();   // the page has its own list of what was edited
+	if (page) showMaterials();
+}
+
+QString AssetBrowser::shownMaterial() const {
+	const QModelIndex current = m_materialView->currentIndex();
+	if (current.isValid()) return current.data(Qt::UserRole).toString();
+	return m_materialFilter->rowCount() > 0 ? m_materialFilter->index(0, 0).data(Qt::UserRole).toString() : QString();
+}
+
 QStringList AssetBrowser::particleNames() const {
 	QStringList names;
 	for (const auto& system : m_particles) {
@@ -536,7 +552,7 @@ void AssetBrowser::reload() {
 
 void AssetBrowser::updateRecent() {
 	m_recent->clear();
-	m_recent->setVisible(!m_editor->recentMaterials().isEmpty());
+	m_recent->setVisible(!m_pageMode && !m_editor->recentMaterials().isEmpty());
 	for (const auto& name : m_editor->recentMaterials()) {
 		auto* item = new QListWidgetItem(name.section('/', -1).toLower(), m_recent);
 		item->setData(Qt::UserRole, name);
