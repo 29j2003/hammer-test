@@ -26,6 +26,7 @@
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
@@ -258,7 +259,11 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 		applyFilter();
 	});
 	// How often the map uses each model: the counts behind the names and the "Used in this map" filter.
-	connect(editor, &Editor::documentChanged, this, [this] {
+	m_usageUpdate = new QTimer(this);
+	m_usageUpdate->setSingleShot(true);
+	m_usageUpdate->setInterval(50);   // once after a burst of edits, not once per commit
+	connect(editor, &Editor::documentChanged, m_usageUpdate, qOverload<>(&QTimer::start));
+	connect(m_usageUpdate, &QTimer::timeout, this, [this] {
 		m_model->setUsage(modelUsageOf(m_editor->doc()));
 		if (m_usedOnly->isChecked()) applyFilter();
 		if (!m_current.isEmpty() && isVisible()) updateDetails();

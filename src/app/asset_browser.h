@@ -24,6 +24,7 @@ class QComboBox;
 class QTabWidget;
 class QCheckBox;
 class QListWidget;
+class QTimer;
 class QToolButton;
 
 namespace sme::app {
@@ -220,6 +221,7 @@ private:
 	QWidget* m_recentPopup = nullptr;        ///< Popup with the recent materials
 	QFutureWatcher<AssetIndex> m_indexWatcher;
 	std::atomic<int> m_generation{0};
+	QTimer* m_usageUpdate = nullptr;   ///< Gathers the edits of one moment into one count of the used assets
 
 	bool m_pageMode = false;   ///< Shown on the Materials page
 	AssetMenuFiller m_menuFiller;

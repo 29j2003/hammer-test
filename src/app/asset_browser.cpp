@@ -34,6 +34,7 @@
 #include <QRegularExpression>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -660,7 +661,13 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_thumbnails->setFileSystem(nullptr);
 	});
 	connect(editor, &Editor::gameChanged, this, &AssetBrowser::reload);
-	connect(editor, &Editor::documentChanged, this, &AssetBrowser::updateUsedMaterials);
+	// Counting the used materials and models walks every face of the map: once after a burst of edits,
+	// not once per commit (a big map spent most of an edit here).
+	m_usageUpdate = new QTimer(this);
+	m_usageUpdate->setSingleShot(true);
+	m_usageUpdate->setInterval(50);
+	connect(m_usageUpdate, &QTimer::timeout, this, &AssetBrowser::updateUsedMaterials);
+	connect(editor, &Editor::documentChanged, m_usageUpdate, qOverload<>(&QTimer::start));
 	connect(&m_indexWatcher, &QFutureWatcherBase::finished, this, [this] {
 		if (m_indexWatcher.future().resultCount() == 0 || m_indexWatcher.isCanceled()) {
 			return;

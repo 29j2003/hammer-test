@@ -224,6 +224,7 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	m_mapRefresh->setSingleShot(true);
 	m_mapRefresh->setInterval(400);
 	connect(m_mapRefresh, &QTimer::timeout, this, [this] {
+		if (!isVisible()) return;   // showEvent catches up: no scan of the map while mapping elsewhere
 		refreshModels();
 		updateUses();
 		updateUseButton();

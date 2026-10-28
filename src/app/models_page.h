@@ -31,6 +31,7 @@ class QListView;
 class QListWidget;
 class QPushButton;
 class QTreeWidget;
+class QTimer;
 class QTreeWidgetItem;
 
 namespace sme::app {
@@ -146,6 +147,7 @@ private:
 	QPushButton* m_copy;
 	QString m_folder;            ///< Folder picked in the tree ("models/props_c17/", empty = all)
 	QString m_current;
+	QTimer* m_usageUpdate = nullptr;   ///< Counts the model uses once after a burst of edits
 	ModelInfo m_info;
 	std::vector<std::string> m_sequences;
 	bool m_hasPhysics = false;
