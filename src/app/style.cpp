@@ -126,6 +126,7 @@ QLabel#entityClass { font-size: 11pt; font-weight: 600; color: #f0f0f0; }
 QFrame#featureHeader { background: #2e2e2e; border-radius: 5px; }
 QFrame#featureHeader QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #6a6a6a; border-radius: 3px; background: #1e1e1e; }
 QFrame#featureHeader QCheckBox::indicator:checked { background: #f5a524; border-color: #f5a524; }
+QGroupBox#displaceTools QPushButton:checked { background: #f5a524; border-color: #f5a524; color: #1a1a1a; font-weight: 600; }
 QSlider::groove:horizontal { height: 4px; background: #3a3a3a; border-radius: 2px; }
 QSlider::sub-page:horizontal { background: #f5a524; border-radius: 2px; }
 QSlider::handle:horizontal { background: #e8e8e8; width: 12px; height: 12px; margin: -5px 0; border-radius: 6px; }

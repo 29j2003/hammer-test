@@ -47,6 +47,7 @@ add_library(smeapp STATIC
 	updater.cpp
 	viewport.cpp
 	viewport_tools.cpp
+	viewport_displace.cpp
 	visgroups_panel.cpp)
 target_include_directories(smeapp PUBLIC .)
 target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)

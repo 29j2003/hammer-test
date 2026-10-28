@@ -1,6 +1,7 @@
 // brush.cpp - Brush geometry and transforms (see brush.h).
 
 #include <sme/brush.h>
+#include <sme/displacement.h>
 
 #include <sme/text.h>
 
@@ -355,19 +356,8 @@ std::optional<DisplacementMesh> buildDisplacement(const Side& side, const FaceGe
 		return std::nullopt;
 	}
 
-	// Corners in VBSP's order: clockwise seen from outside, beginning at the corner nearest to
-	// startposition (CCoreDispInfo::GenerateDispSurf). "elevation" is ignored like VBSP does.
-	std::vector<Vec3> corners(face.vertices.rbegin(), face.vertices.rend());
-	std::size_t startIndex = 0;
-	double best = std::numeric_limits<double>::max();
-	for (std::size_t i = 0; i < 4; ++i) {
-		const double d = length(corners[i] - start);
-		if (d < best) {
-			best = d;
-			startIndex = i;
-		}
-	}
-	std::rotate(corners.begin(), corners.begin() + static_cast<std::ptrdiff_t>(startIndex), corners.end());
+	// Corners in VBSP's order (displacement.h). "elevation" is ignored like VBSP does.
+	const auto corners = displacementCorners(face, start);
 
 	const auto rows = [&](std::string_view block) {
 		std::vector<std::string> out;

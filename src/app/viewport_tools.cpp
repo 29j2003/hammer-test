@@ -132,6 +132,8 @@ void Viewport::applyClip() {
 }
 
 void Viewport::resetToolState() {
+	if (m_drag == Drag::Sculpt) finishSculpt();
+	if (m_editor->tool() != Editor::Tool::Displace) m_brushCursor.reset();
 	const bool hadPreview = !m_clipPoints.empty() || m_drag == Drag::Vertex;
 	m_clipPoints.clear();
 	m_vertexSelection.clear();
@@ -244,6 +246,9 @@ void Viewport::finishPolygon() {
 }
 
 bool Viewport::toolMousePress(QMouseEvent* event) {
+	if (m_editor->tool() == Editor::Tool::Displace && displaceMousePress(event)) {
+		return true;
+	}
 	const auto tool = m_editor->tool();
 	if (event->button() != Qt::LeftButton) {
 		return false;
@@ -328,6 +333,9 @@ bool Viewport::toolMousePress(QMouseEvent* event) {
 
 bool Viewport::toolKey(QKeyEvent* event) {
 	const auto tool = m_editor->tool();
+	if (tool == Editor::Tool::Displace && displaceKey(event)) {
+		return true;
+	}
 	const bool enter = event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter;
 	if (tool == Editor::Tool::Clip) {
 		if (enter) {
@@ -414,6 +422,8 @@ void Viewport::drawToolLines(std::vector<LineVertex>& lines) const {
 				addLine(lines, handle.corners[0] + shift, handle.corners[1] + shift, VERTEX_SELECTED);
 			}
 		}
+	} else if (tool == Editor::Tool::Displace) {
+		drawBrushCursor(lines);
 	} else if (tool == Editor::Tool::Polygon) {
 		for (std::size_t i = 0; i < m_polygon.size(); ++i) {
 			addMarker(lines, m_polygon[i], marker * 1.5, VERTEX_SELECTED);

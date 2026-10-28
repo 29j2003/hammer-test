@@ -122,6 +122,7 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	connect(&m_frameTimer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
 	applyFrameLimit();
 	connect(editor, &Editor::settingsChanged, this, &Viewport::applyFrameLimit);
+	connect(editor, &Editor::displaceSettingsChanged, this, &Viewport::requestFrame);   // brush circle size
 	connect(editor, &Editor::documentChanged, this, [this] {
 		m_needsRebuild = true;
 		m_selectionDirty = true;
@@ -1041,6 +1042,9 @@ void Viewport::moveCamera() {
 }
 
 void Viewport::wheelEvent(QWheelEvent* event) {
+	if (displaceWheel(event)) {
+		return;
+	}
 	const double steps = event->angleDelta().y() / 120.0;
 	if (m_camera.is2D()) {
 		const Vec3 before = viewPlanePoint(event->position());
@@ -1354,8 +1358,14 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 		case Drag::Paint:
 			paintAt(pos);
 			return;
+		case Drag::Sculpt:
+			displaceMouseMove(pos);
+			return;
 		case Drag::None:
 			break;
+	}
+	if (m_editor->tool() == Editor::Tool::Displace) {
+		updateBrushCursor(pos);
 	}
 	if (!m_camera.is2D()) {
 		showHoverInfo(pos);
@@ -1397,6 +1407,10 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 	if (drag == Drag::Paint) {
 		m_drag = Drag::None;
 		setHoverSide(0);
+		return;
+	}
+	if (drag == Drag::Sculpt) {
+		if (event->button() == Qt::LeftButton) finishSculpt();
 		return;
 	}
 	if (event->button() != Qt::LeftButton) {
@@ -2121,6 +2135,14 @@ bool Viewport::event(QEvent* event) {
 	// Tab cycles the clip tool's mode (Qt would move the focus otherwise).
 	if (event->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Tab && m_editor->tool() == Editor::Tool::Clip) {
 		return toolKey(static_cast<QKeyEvent*>(event));
+	}
+	// [ and ] size the displacement brush (elsewhere they change the grid).
+	if (event->type() == QEvent::ShortcutOverride && m_editor->tool() == Editor::Tool::Displace) {
+		const int key = static_cast<QKeyEvent*>(event)->key();
+		if ((key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) && static_cast<QKeyEvent*>(event)->modifiers() == Qt::NoModifier) {
+			event->accept();
+			return true;
+		}
 	}
 	// Enter and Backspace belong to the tools while they collect points.
 	if (event->type() == QEvent::ShortcutOverride && (m_editor->tool() == Editor::Tool::Clip || m_editor->tool() == Editor::Tool::Polygon)) {

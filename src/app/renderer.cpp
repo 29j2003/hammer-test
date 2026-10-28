@@ -559,6 +559,53 @@ void pushEdge(std::vector<float>& out, const Vec3& a, const Vec3& b, const QVect
 	out.insert(out.end(), {float(b.x), float(b.y), float(b.z), color.x(), color.y(), color.z(), float(face)});
 }
 
+/// Vertex floats of a displacement face (two triangles per cell, normals averaged per vertex,
+/// texture coordinates from the flat base like the engine) and its picking triangles. Returns
+/// the number of triangles.
+std::size_t displacementTriangles(const Side& side, const FaceGeometry& face, const DisplacementMesh& disp, int id, std::vector<float>& vertices,
+                                  std::vector<Vec3>* pickTriangles, std::vector<int>* pickSides) {
+	const int n = disp.size;
+	std::vector<Vec3> normals(disp.positions.size());
+	for (int i = 0; i + 1 < n; ++i) {
+		for (int j = 0; j + 1 < n; ++j) {
+			const int a = i * n + j, b = i * n + j + 1, c = (i + 1) * n + j, d = (i + 1) * n + j + 1;
+			for (const auto& tri : {std::array<int, 3>{a, c, b}, std::array<int, 3>{b, c, d}}) {
+				const Vec3 tn = cross(disp.positions[tri[1]] - disp.positions[tri[0]], disp.positions[tri[2]] - disp.positions[tri[0]]);
+				for (int k : tri) {
+					normals[k] += tn;
+				}
+			}
+		}
+	}
+	const bool flip = [&] {
+		Vec3 sum;
+		for (const auto& nn : normals) sum += nn;
+		return dot(sum, face.normal) < 0;
+	}();
+	std::size_t count = 0;
+	for (int i = 0; i + 1 < n; ++i) {
+		for (int j = 0; j + 1 < n; ++j) {
+			const int a = i * n + j, b = i * n + j + 1, c = (i + 1) * n + j, d = (i + 1) * n + j + 1;
+			for (auto tri : {std::array<int, 3>{a, c, b}, std::array<int, 3>{b, c, d}}) {
+				if (flip) {
+					std::swap(tri[1], tri[2]);
+				}
+				for (int k : tri) {
+					const Vec3& p = disp.positions[k];
+					// Texture coordinates from the undisplaced point (project back onto the face plane).
+					const Vec3 base = p - face.normal * dot(p - face.vertices[0], face.normal);
+					const auto tc = textureCoordinate(side, base);
+					pushVertex(vertices, p, normalize(flip ? -normals[k] : normals[k]), float(tc.u), float(tc.v), disp.alpha[k], id);
+					if (pickTriangles) pickTriangles->push_back(p);
+				}
+				if (pickSides) pickSides->push_back(face.sideIndex);
+				++count;
+			}
+		}
+	}
+	return count;
+}
+
 bool intersectTriangle(const Ray& ray, const Vec3& a, const Vec3& b, const Vec3& c, double& t) {
 	const Vec3 e1 = b - a, e2 = c - a;
 	const Vec3 p = cross(ray.direction, e2);
@@ -799,48 +846,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			if (auto disp = buildDisplacement(side, face)) {
 				// Displacement grid; UVs come from the flat base surface like in the engine.
 				const int n = disp->size;
-				std::vector<Vec3> flat(disp->positions.size());
-				std::vector<Vec3> corners(face.vertices.rbegin(), face.vertices.rend());
-				// buildDisplacement already rotated to the start corner; recompute flat points from its grid corners.
-				const Vec3 c0 = disp->positions[0] - (disp->positions[0] - corners[0]) * 0; // positions include offsets; use base grid below
-				(void)c0;
-				std::vector<Vec3> normals(disp->positions.size());
-				for (int i = 0; i + 1 < n; ++i) {
-					for (int j = 0; j + 1 < n; ++j) {
-						const int a = i * n + j, b = i * n + j + 1, c = (i + 1) * n + j, d = (i + 1) * n + j + 1;
-						for (const auto& tri : {std::array<int, 3>{a, c, b}, std::array<int, 3>{b, c, d}}) {
-							const Vec3 tn = cross(disp->positions[tri[1]] - disp->positions[tri[0]], disp->positions[tri[2]] - disp->positions[tri[0]]);
-							for (int k : tri) {
-								normals[k] += tn;
-							}
-						}
-					}
-				}
-				const bool flip = [&] {
-					Vec3 sum;
-					for (const auto& nn : normals) sum += nn;
-					return dot(sum, face.normal) < 0;
-				}();
-				for (int i = 0; i + 1 < n; ++i) {
-					for (int j = 0; j + 1 < n; ++j) {
-						const int a = i * n + j, b = i * n + j + 1, c = (i + 1) * n + j, d = (i + 1) * n + j + 1;
-						for (auto tri : {std::array<int, 3>{a, c, b}, std::array<int, 3>{b, c, d}}) {
-							if (flip) {
-								std::swap(tri[1], tri[2]);
-							}
-							for (int k : tri) {
-								const Vec3& p = disp->positions[k];
-								// Texture coordinates from the undisplaced point (project back onto the face plane).
-								const Vec3 base = p - face.normal * dot(p - face.vertices[0], face.normal);
-								const auto tc = textureCoordinate(side, base);
-								pushVertex(vertices, p, normalize(flip ? -normals[k] : normals[k]), float(tc.u), float(tc.v), disp->alpha[k], id);
-								pick.triangles.push_back(p);
-							}
-							pick.triangleSides.push_back(face.sideIndex);
-							++m_triangleCount;
-						}
-					}
-				}
+				m_triangleCount += displacementTriangles(side, face, *disp, id, vertices, &pick.triangles, &pick.triangleSides);
 				for (const auto& p : disp->positions) {
 					pick.bounds.add(p);
 					m_sceneBounds.add(p);
@@ -1121,6 +1127,37 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_faceCount = faceIndex;
 	m_flags.assign(static_cast<std::size_t>(std::max(faceIndex, 1)), 0);
 	ensureFlagTexture();
+}
+
+bool SceneRenderer::updateDisplacement(int sideId, const Side& side, const FaceGeometry& face, const DisplacementMesh& mesh) {
+	const auto it = m_sideFaces.find(sideId);
+	if (!m_initialized || it == m_sideFaces.end()) return false;
+	bool updated = false;
+	for (const int id : it->second) {
+		const auto [first, count] = m_rangesByFace[static_cast<std::size_t>(id)];
+		std::vector<float> vertices;
+		vertices.reserve(static_cast<std::size_t>(count) * FLOATS_PER_VERTEX);
+		std::vector<Vec3> triangles;
+		displacementTriangles(side, face, mesh, id, vertices, &triangles, nullptr);
+		if (static_cast<int>(vertices.size() / FLOATS_PER_VERTEX) != count) return false;   // not drawn as this displacement
+		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+		glBufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(first) * FLOATS_PER_VERTEX * sizeof(float),
+		                static_cast<GLsizeiptr>(vertices.size() * sizeof(float)), vertices.data());
+		// Picking follows the new surface: replace this face's triangles in its brush's list.
+		const SolidRef ref = m_faceToSide[static_cast<std::size_t>(id)].first;
+		for (auto& pick : m_pickItems) {
+			if (pick.detached || !(pick.solid == ref)) continue;
+			std::size_t next = 0;
+			for (std::size_t t = 0; t < pick.triangleSides.size() && next < triangles.size(); ++t) {
+				if (pick.triangleSides[t] != face.sideIndex) continue;
+				for (int k = 0; k < 3; ++k) pick.triangles[t * 3 + k] = triangles[next++];
+			}
+			for (const auto& p : mesh.positions) pick.bounds.add(p);
+		}
+		updated = true;
+	}
+	m_shadowsDirty = true;
+	return updated;
 }
 
 void SceneRenderer::setSelection(const MapDocument& doc, const Selection& selection, const Selection& hidden, int hoverSideId) {

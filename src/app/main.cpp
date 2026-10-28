@@ -13,7 +13,8 @@
 //   --model PATH         show a model on the Models page (with --page models)
 //   --pick-edge          vertex tool with an edge of the first brush picked
 //   --particle NAME      show a particle system in the Particles browser (with --page particles)
-//   --tool NAME          start with a tool (block, entity, ...)
+//   --tool NAME          start with a tool (block, entity, displace, ...)
+//   --hover "x y z"      move the mouse over this point in the 3D view before the screenshot
 //   --material NAME      open a material in the Material Editor
 //   --check              run the problem checks after loading
 //   --screenshot FILE    save a picture of the window after loading and quit
@@ -24,6 +25,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QMap>
+#include <QMouseEvent>
 #include <QCommandLineParser>
 #include <QSettings>
 #include <QSurfaceFormat>
@@ -97,7 +99,8 @@ int main(int argc, char** argv) {
 	parser.addOption({"pick-edge", "Vertex tool with the top front edge of the first brush picked."});
 	parser.addOption({"particle", "Show a particle system in the Particles browser.", "name"});
 	parser.addOption({"material", "Open a material in the Material Editor.", "name"});
-	parser.addOption({"tool", "Start with a tool (select, move, rotate, scale, block, entity, clip, vertex, polygon).", "tool"});
+	parser.addOption({"tool", "Start with a tool (select, move, rotate, scale, block, entity, clip, vertex, polygon, displace).", "tool"});
+	parser.addOption({"hover", "Move the mouse over this point \"x y z\" of the 3D view (screenshots of hover effects).", "point"});
 	parser.addOption({"check", "Run the problem checks."});
 	parser.addOption({"screenshot", "Save a screenshot and quit.", "file"});
 	parser.addOption({"wait", "Milliseconds before the screenshot.", "ms", "2500"});
@@ -223,6 +226,7 @@ int main(int argc, char** argv) {
 				{"select", Editor::Tool::Select}, {"move", Editor::Tool::Move},     {"rotate", Editor::Tool::Rotate},
 				{"scale", Editor::Tool::Scale},   {"block", Editor::Tool::Block},   {"entity", Editor::Tool::Entity},
 				{"clip", Editor::Tool::Clip},     {"vertex", Editor::Tool::Vertex}, {"polygon", Editor::Tool::Polygon},
+				{"displace", Editor::Tool::Displace},
 			};
 			editor.setTool(TOOLS.value(parser.value("tool").toLower(), Editor::Tool::Select));
 		}
@@ -236,6 +240,18 @@ int main(int argc, char** argv) {
 	}
 	if (parser.isSet("check")) {
 		QObject::connect(window.assets(), &AssetBrowser::materialsIndexed, &window, [&] { window.problems()->runChecks(); });
+	}
+	if (parser.isSet("hover")) {
+		// Shortly before the screenshot, when the views have drawn (picking needs their geometry).
+		QTimer::singleShot(std::max(300, parser.value("wait").toInt() - 600), &window, [&] {
+			const auto parts = parser.value("hover").split(' ', Qt::SkipEmptyParts);
+			QPointF at;
+			auto* view = window.view3D();
+			if (parts.size() == 3 && view->camera().project({parts[0].toDouble(), parts[1].toDouble(), parts[2].toDouble()}, view->width(), view->height(), at)) {
+				QMouseEvent move(QEvent::MouseMove, at, view->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+				QApplication::sendEvent(view, &move);
+			}
+		});
 	}
 	if (parser.isSet("screenshot")) {
 		QTimer::singleShot(parser.value("wait").toInt(), &window, [&] {

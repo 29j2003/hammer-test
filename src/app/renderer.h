@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <sme/brush.h>
 #include <sme/editing.h>
 #include <sme/entity_catalog.h>
 #include <sme/instances.h>
@@ -72,6 +73,10 @@ public:
 	void setInstanceProvider(InstanceProvider provider) { m_instanceProvider = std::move(provider); }
 	/// Box around the drawn content of a func_instance (empty if it has none).
 	[[nodiscard]] Bounds instanceBounds(int entityId) const;
+	/// Displacement tool: new vertex positions and blend of one displacement face while a stroke
+	/// runs, without rebuilding the scene (the vertex count stays the same). False if the face
+	/// is not drawn as a displacement of that size - then rebuild.
+	bool updateDisplacement(int sideId, const Side& side, const FaceGeometry& face, const DisplacementMesh& mesh);
 	/// Updates selection flags (cheap).
 	void setSelection(const MapDocument& doc, const Selection& selection, const Selection& hidden = {}, int hoverSideId = 0);
 	/// Hides the selected objects (they are drawn by drawPreview while dragging).

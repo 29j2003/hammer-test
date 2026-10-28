@@ -134,6 +134,36 @@ other) and choose **Brushes > Round or bevel edge ...** (Ctrl+Shift+R). Set the 
 2. **Enter** or a double-click makes the brush, as high as the last block.
 3. **Backspace** removes the last corner, **Esc** cancels.
 
+## Displacements
+
+Displacements turn a brush face into a grid of points you can shape - hills, ditches, cliffs, paths blending into grass.
+The **Displacement tool (Shift+D)** does everything:
+
+1. **Make one.** Choose **Create** and click a face in the 3D view, or select brushes (or faces) first and press
+   **Make**: every selected face, or the upward faces of the selected brushes, becomes a displacement. **Power** sets
+   the detail: 2 (4 × 4 cells), 3 (8 × 8, the usual) or 4 (16 × 16). Only faces with four corners can be one.
+2. **Shape it.** Pick a mode and drag over the displacement. The orange circle is the brush; the inner ring is where
+   it works half as strong.
+   - **Raise** lifts the ground, **Shift** + drag lowers it.
+   - **Smooth** evens out bumps and sharp edges.
+   - **Flatten** pulls everything towards the height where the stroke began (roads, building plots).
+   - **Noise** adds random bumps for rough ground.
+   - **Paint blend** paints the second texture of a blend material (shader WorldVertexTransition, e.g. grass to dirt);
+     **Shift** + drag paints it away again.
+3. **Size and strength.** **Ctrl + mouse wheel** or **[ ]** changes the radius, the **Strength** slider how much one
+   pass does. A stroke - from pressing the mouse button to letting go - is one undo step.
+4. **Neighbours.** Displacements next to each other can get a crack where their edges no longer meet. **Sew** moves
+   the shared edge points to the same height (the selected displacements, or all of them when nothing is selected).
+5. **Undo it.** **Flat again** turns the selected displacements back into plain faces.
+
+Tips:
+
+- Brushes with displacements are not solid in the game: only the displacement surface is. Put a nodraw brush or the
+  skybox under big terrains, the map has to stay sealed.
+- Neighbouring displacements need the same power on a shared edge to sew cleanly.
+- The ground under the brush counts only if it faces about the same way as the face you started on, so walls next to
+  a terrain stay untouched while you sculpt the ground.
+
 ## Hollow, Carve and Merge
 
 These are in the **Tool** tab (Select tool), in the **Brushes** menu and in the right-click menu.
