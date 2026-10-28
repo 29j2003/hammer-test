@@ -446,6 +446,11 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 		m_baseImage = base == images.end() ? QImage() : base->second;
 		emit previewUpdated();
 	});
+	// Jobs still reading the old game's files finish before its file system goes away.
+	connect(editor, &Editor::gameAboutToChange, this, [this] {
+		for (auto& job : m_jobs) job.waitForFinished();
+		m_jobs.clear();
+	});
 	connect(editor, &Editor::gameChanged, this, [this] {
 		m_name.clear();
 		m_values.clear();
@@ -469,13 +474,13 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 				field->setCompleter(c);
 			}
 		});
-		watcher->setFuture(QtConcurrent::run([fs] {
+		watcher->setFuture(track(QtConcurrent::run([fs] {
 			QStringList textures;
 			for (const auto& file : fs->list("materials", ".vtf")) {
 				textures << QString::fromStdString(file.substr(10, file.size() - 14));   // without materials/ and .vtf
 			}
 			return textures;
-		}));
+		})));
 	});
 	updateSections();
 }
@@ -1079,7 +1084,7 @@ void MaterialEditor::makeHeightMap(HeightFrom from) {
 		refreshHeights();
 		emit heightsReady();
 	});
-	watcher->setFuture(QtConcurrent::run([fs, from, ssbump, base = base.toStdString(), bump = bump.toStdString()]() -> Made {
+	watcher->setFuture(track(QtConcurrent::run([fs, from, ssbump, base = base.toStdString(), bump = bump.toStdString()]() -> Made {
 		Made made;
 		std::string error;
 		const auto baseImage = base.empty() ? std::nullopt : loadTexture(*fs, base, 512, &error);
@@ -1101,7 +1106,7 @@ void MaterialEditor::makeHeightMap(HeightFrom from) {
 		made.used = use;
 		made.error = QString::fromStdString(error);
 		return made;
-	}));
+	})));
 }
 
 void MaterialEditor::setHeightInverted(bool inverted) {
@@ -1174,12 +1179,12 @@ void MaterialEditor::loadHeightSource() {
 		refreshHeights();
 		emit heightsReady();
 	});
-	watcher->setFuture(QtConcurrent::run([fs, path, base = value("$basetexture").toStdString()]() -> Loaded {
+	watcher->setFuture(track(QtConcurrent::run([fs, path, base = value("$basetexture").toStdString()]() -> Loaded {
 		Loaded loaded;
 		if (const auto image = loadTexture(*fs, path, 512)) loaded.first = heightFromImage(*image);
 		if (const auto image = base.empty() ? std::nullopt : loadTexture(*fs, base, 512)) loaded.second = detectReliefLayout(*image);
 		return loaded;
-	}));
+	})));
 }
 
 void MaterialEditor::paintZones() {
@@ -1501,13 +1506,13 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 		if (!value(key).isEmpty()) wanted[key] = value(key).toStdString();
 	}
 	const GameFileSystem* fs = &game->files;
-	m_textureWatcher.setFuture(QtConcurrent::run([fs, wanted] {
+	m_textureWatcher.setFuture(track(QtConcurrent::run([fs, wanted] {
 		std::map<QString, QImage> images;
 		for (const auto& [key, name] : wanted) {
 			if (auto image = loadTexture(*fs, name, 512)) images[key] = toImage(*image);
 		}
 		return images;
-	}));
+	})));
 }
 
 QString MaterialEditor::savePath(const QString& name) const {
