@@ -22,6 +22,7 @@
 #include <sme/texture.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <optional>
 #include <cstdint>
@@ -383,56 +384,14 @@ TEST_CASE("model body groups, skins and prop settings") {
 	CHECK(plain->keyValues.empty());
 }
 
-namespace {
-
-/// A .bsp with `samples` env_cubemap samples and a pakfile listing `names` (central directory only).
-std::vector<std::byte> makeCubemapBsp(int samples, const std::vector<std::string>& names) {
-	std::vector<std::byte> out(8 + 64 * 16 + 4);
-	const auto put32 = [](std::vector<std::byte>& v, std::size_t at, std::uint32_t value) {
-		for (int i = 0; i < 4; ++i) v[at + std::size_t(i)] = std::byte((value >> (8 * i)) & 0xff);
-	};
-	std::memcpy(out.data(), "VBSP", 4);
-	put32(out, 4, 20);
-	const std::size_t cubemapsAt = out.size();
-	out.resize(out.size() + std::size_t(samples) * 16);
-	put32(out, 8 + 42 * 16, std::uint32_t(cubemapsAt));
-	put32(out, 8 + 42 * 16 + 4, std::uint32_t(samples * 16));
-	std::vector<std::byte> zip;
-	const auto append16 = [&zip](std::uint16_t v) { zip.push_back(std::byte(v & 0xff)); zip.push_back(std::byte(v >> 8)); };
-	const auto append32 = [&](std::uint32_t v) { append16(std::uint16_t(v & 0xffff)); append16(std::uint16_t(v >> 16)); };
-	zip.resize(10);   // stands for the local entries
-	const std::size_t centralAt = zip.size();
-	for (const auto& name : names) {
-		append32(0x02014b50u);
-		for (int i = 0; i < 6; ++i) append16(0);   // versions, flags, method, time, date
-		append32(0); append32(0); append32(0);     // crc, sizes
-		append16(std::uint16_t(name.size()));
-		for (int i = 0; i < 4; ++i) append16(0);   // extra, comment, disk, internal attributes
-		append32(0); append32(0);                  // external attributes, local header offset
-		for (const char c : name) zip.push_back(std::byte(c));
-	}
-	const std::size_t centralSize = zip.size() - centralAt;
-	append32(0x06054b50u);
-	append16(0); append16(0);
-	append16(std::uint16_t(names.size())); append16(std::uint16_t(names.size()));
-	append32(std::uint32_t(centralSize)); append32(std::uint32_t(centralAt));
-	append16(0);
-	const std::size_t pakAt = out.size();
-	out.insert(out.end(), zip.begin(), zip.end());
-	put32(out, 8 + 40 * 16, std::uint32_t(pakAt));
-	put32(out, 8 + 40 * 16 + 4, std::uint32_t(zip.size()));
-	return out;
-}
-
-} // namespace
 
 TEST_CASE("compile output: built cubemaps are judged by the map, not by the game's exit code") {
-	const auto fresh = makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf", "materials/maps/test/c144_-16_24.vtf"});
+	const auto fresh = test::makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf", "materials/maps/test/c144_-16_24.vtf"});
 	const auto before = readBspCubemaps(fresh, "test");
 	REQUIRE(before);
 	CHECK(before->samples == 2);
 	CHECK(before->built == 1);   // cubemapdefault (VBSP's) does not count
-	const auto built = makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf", "materials/maps/TEST/c144_-16_24.vtf",
+	const auto built = test::makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf", "materials/maps/TEST/c144_-16_24.vtf",
 	                                      "materials/maps/test/c-512_0_64.vtf", "materials/maps/test/c-512_0_64.hdr.vtf",
 	                                      "materials/maps/other/c1_2_3.vtf", "materials/maps/test/c1_2.vtf"});
 	const auto after = readBspCubemaps(built, "Test");
@@ -461,6 +420,115 @@ TEST_CASE("compile output: built cubemaps are judged by the map, not by the game
 	auto garbage = built;
 	for (std::size_t i = 8 + 64 * 16 + 4; i < garbage.size(); i += 3) garbage[i] = std::byte(0xff);
 	(void)readBspCubemaps(garbage, "test");
+}
+
+TEST_CASE("checks: shiny materials without env_cubemap, compiled map whose cubemaps were never built") {
+	namespace fs = std::filesystem;
+	const auto dir = fs::temp_directory_path() / "sme_cubemap_checks";
+	fs::remove_all(dir);
+	test::writeText(dir / "game/materials/demo/shiny.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"demo/shiny\"\n\t\"$envmap\" \"env_cubemap\"\n}\n");
+	test::writeText(dir / "game/materials/demo/sky.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"demo/sky\"\n\t\"$envmap\" \"env_sky\"\n}\n");
+	test::writeText(dir / "game/materials/demo/dull.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"demo/dull\"\n}\n");
+	GameFileSystem files;
+	files.addDirectory(dir / "game", {"game"});
+
+	MapDocument doc;
+	auto [floor, floorRef] = edit::createBlock(doc, Bounds{{0, 0, 0}, {512, 512, 16}}, "DEMO/SHINY");
+	(void)floor;
+	auto [wall, wallRef] = edit::createBlock(doc, Bounds{{0, 0, 16}, {16, 512, 256}}, "DEMO/DULL");
+	(void)wall;
+	CheckCache cache;
+	CheckContext context;
+	context.files = &files;
+	context.cache = &cache;
+	const auto find = [](const std::vector<Problem>& problems, Problem::Kind kind) -> const Problem* {
+		for (const auto& p : problems) {
+			if (p.kind == kind) return &p;
+		}
+		return nullptr;
+	};
+	auto problems = checkMap(doc, context);
+	const auto* none = find(problems, Problem::Kind::NoCubemap);
+	REQUIRE(none);
+	CHECK(none->severity == Problem::Severity::Warning);
+	CHECK(none->objects.faces.size() == 6);          // the floor's six faces; the dull wall does not count
+	CHECK(none->message.find("DEMO/SHINY") != std::string::npos);
+	CHECK(none->message.find("mirror the sky") != std::string::npos);
+	CHECK(none->fixLabel == "Place env_cubemap");
+	CHECK(cache.reflective.at("demo/shiny"));
+	CHECK_FALSE(cache.reflective.at("demo/dull"));
+
+	// The fix: one env_cubemap at eye height above the player start (undoable).
+	auto [start, startId] = edit::placeEntity(doc, "info_player_start", {100, 200, 16}, nullptr);
+	(void)start;
+	(void)startId;
+	auto fix = applyFix(doc, *none, nullptr);
+	REQUIRE_FALSE(fix.empty());
+	const Entity* cubemap = nullptr;
+	for (const auto& e : doc.entities) {
+		if (e.classname() == "env_cubemap") cubemap = &e;
+	}
+	REQUIRE(cubemap);
+	CHECK(cubemap->origin().x == doctest::Approx(100));
+	CHECK(cubemap->origin().y == doctest::Approx(200));
+	CHECK(cubemap->origin().z == doctest::Approx(80));
+	CHECK_FALSE(find(checkMap(doc, context), Problem::Kind::NoCubemap));
+	// Without a player start it goes into the middle of the world brushes.
+	{
+		MapDocument plain;
+		auto [block, ref] = edit::createBlock(plain, Bounds{{0, 0, 0}, {256, 128, 64}}, "DEMO/SHINY");
+		(void)block;
+		const auto* p = find(checkMap(plain, context), Problem::Kind::NoCubemap);
+		REQUIRE(p);
+		REQUIRE_FALSE(applyFix(plain, *p, nullptr).empty());
+		REQUIRE(plain.entities.size() == 1);
+		CHECK(plain.entities.front().origin().x == doctest::Approx(128));
+		CHECK(plain.entities.front().origin().z == doctest::Approx(32));
+	}
+	// $envmap with an own cubemap texture is not about env_cubemap.
+	{
+		MapDocument other;
+		auto [block, ref] = edit::createBlock(other, Bounds{{0, 0, 0}, {64, 64, 64}}, "demo/sky");
+		(void)block;
+		CHECK_FALSE(find(checkMap(other, context), Problem::Kind::NoCubemap));
+	}
+
+	// The compiled map: cubemap samples, but nothing built.
+	const auto vmf = dir / "mapsrc/test.vmf";
+	const auto bsp = dir / "game/maps/test.bsp";
+	test::writeText(vmf, "versioninfo\n{\n}\n");
+	const auto writeBsp = [&](const std::vector<std::byte>& bytes) {
+		fs::create_directories(bsp.parent_path());
+		std::ofstream out(bsp, std::ios::binary | std::ios::trunc);
+		out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+	};
+	writeBsp(test::makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf"}));
+	fs::last_write_time(vmf, fs::last_write_time(bsp) - std::chrono::minutes(5));   // compiled after the last save
+	context.compiledMap = bsp;
+	context.mapSource = vmf;
+	problems = checkMap(doc, context);
+	const auto* unbuilt = find(problems, Problem::Kind::CubemapsNotBuilt);
+	REQUIRE(unbuilt);
+	CHECK(unbuilt->action == "buildCubemaps");
+	CHECK(unbuilt->fixLabel == "Build cubemaps");
+	CHECK(unbuilt->message.find("test.bsp") != std::string::npos);
+	CHECK(unbuilt->message.find("2 env_cubemap") != std::string::npos);
+	CHECK(applyFix(doc, *unbuilt, nullptr).empty());   // an app action, not a map edit
+	// Built: no problem (the file changed, so it is read again).
+	writeBsp(test::makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf", "materials/maps/test/c100_200_80.vtf"}));
+	fs::last_write_time(bsp, fs::last_write_time(vmf) + std::chrono::minutes(10));
+	CHECK_FALSE(find(checkMap(doc, context), Problem::Kind::CubemapsNotBuilt));
+	// A map saved after the compile: the old .bsp says nothing about it.
+	writeBsp(test::makeCubemapBsp(2, {}));
+	fs::last_write_time(bsp, fs::last_write_time(vmf) - std::chrono::minutes(1));
+	CHECK_FALSE(find(checkMap(doc, context), Problem::Kind::CubemapsNotBuilt));
+	// No compiled map, or a broken one: nothing.
+	fs::last_write_time(vmf, fs::last_write_time(bsp) - std::chrono::minutes(5));
+	writeBsp({std::byte('x'), std::byte('y')});
+	CHECK_FALSE(find(checkMap(doc, context), Problem::Kind::CubemapsNotBuilt));
+	fs::remove(bsp);
+	CHECK_FALSE(find(checkMap(doc, context), Problem::Kind::CubemapsNotBuilt));
+	fs::remove_all(dir);
 }
 
 TEST_CASE("compile output: errors, warnings, explanations, progress") {

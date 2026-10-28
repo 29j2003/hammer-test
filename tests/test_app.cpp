@@ -55,6 +55,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTabWidget>
+#include <QMessageBox>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QFrame>
@@ -87,6 +88,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <chrono>
 #include <fstream>
 #include <memory>
 #include <cstdio>
@@ -5907,6 +5909,116 @@ TEST_CASE("import: own sounds, pictures, models and particle files come into the
 	REQUIRE(records.size() == 3);   // sound, material, particles (the model was taken back)
 	CHECK(records[1].asset == "custom/red_bricks");
 	CHECK(window.findChild<QMenu*>("importMenu"));
+}
+
+TEST_CASE("problems: shiny materials without env_cubemap get one, unbuilt cubemaps open the compile with Cubemaps on") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	test::writeText(f.mod / "materials/test/shiny_floor.vmt",
+	                "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"demo/concrete\"\n\t\"$envmap\" \"env_cubemap\"\n}\n");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+
+	auto [floor, floorRef] = edit::createBlock(editor.doc(), Bounds{{0, 0, 0}, {512, 512, 16}}, "TEST/SHINY_FLOOR");
+	editor.commit(std::move(floor));
+	auto [start, startId] = edit::placeEntity(editor.doc(), "info_player_start", {64, 64, 16}, editor.entities()->find("info_player_start"));
+	editor.commit(std::move(start));
+	(void)floorRef;
+	(void)startId;
+	const auto vmf = QDir(fromPath(f.mod)).filePath("mapsrc/shiny.vmf");
+	REQUIRE(editor.saveMap(vmf));
+
+	const auto button = [&](const QString& label) -> QPushButton* {
+		window.raiseDock("Problems");
+		window.problems()->runChecks();
+		settle();
+		for (auto* b : window.problems()->findChildren<QPushButton*>()) {
+			if (b->text() == label) return b;
+		}
+		return nullptr;
+	};
+	const auto cubemapCount = [&] {
+		return std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "env_cubemap"; });
+	};
+
+	// 1. Shiny floor, no env_cubemap: one click places it above the player start, undoable.
+	auto* place = button("Place env_cubemap");
+	REQUIRE(place);
+	CHECK(window.problems()->problemsText().contains("mirror the sky"));
+	QTest::mouseClick(place, Qt::LeftButton);
+	settle();
+	CHECK(cubemapCount() == 1);
+	CHECK_FALSE(button("Place env_cubemap"));
+	editor.undo();
+	settle();
+	CHECK(cubemapCount() == 0);
+	editor.redo();
+	settle();
+	CHECK(cubemapCount() == 1);
+	REQUIRE(editor.saveMap(vmf));
+
+	// 2. The compiled map in the game's maps folder has the env_cubemap but nothing built.
+	const auto bsp = f.mod / "maps/shiny.bsp";
+	std::filesystem::create_directories(bsp.parent_path());
+	{
+		const auto bytes = test::makeCubemapBsp(1, {"materials/maps/shiny/cubemapdefault.vtf"});
+		std::ofstream out(bsp, std::ios::binary);
+		out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+	}
+	std::filesystem::last_write_time(toPath(vmf), std::filesystem::last_write_time(bsp) - std::chrono::minutes(2));
+	auto* build = button("Build cubemaps");
+	REQUIRE(build);
+	CHECK(window.problems()->problemsText().contains("never built"));
+	CHECK_FALSE(loadCompileOptions(editor.gameKey()).cubemaps);
+	// The button opens the compile dialog with the Cubemaps step on (a question about errors or
+	// saving is answered first); the test cancels the dialog.
+	bool sawDialog = false, cubemapsOn = false;
+	QTimer watcher;
+	watcher.setInterval(50);
+	QObject::connect(&watcher, &QTimer::timeout, [&] {
+		QWidget* modal = QApplication::activeModalWidget();
+		if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+			if (auto* yes = box->button(QMessageBox::Yes)) yes->click();
+			return;
+		}
+		if (auto* dialog = qobject_cast<CompileDialog*>(modal)) {
+			sawDialog = true;
+			if (auto* toggle = dialog->findChild<QCheckBox*>("cubemaps")) cubemapsOn = toggle->isChecked();
+			dialog->reject();
+		}
+	});
+	watcher.start();
+	QTest::mouseClick(build, Qt::LeftButton);
+	watcher.stop();
+	settle();
+	CHECK(sawDialog);
+	CHECK(cubemapsOn);
+	CHECK(loadCompileOptions(editor.gameKey()).cubemaps);
+	CHECK(loadCompileOptions(editor.gameKey()).copy);
+
+	// Built into the map: the problem is gone.
+	{
+		const auto bytes = test::makeCubemapBsp(1, {"materials/maps/shiny/cubemapdefault.vtf", "materials/maps/shiny/c64_64_80.vtf"});
+		std::ofstream out(bsp, std::ios::binary | std::ios::trunc);
+		out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+	}
+	std::filesystem::last_write_time(bsp, std::filesystem::last_write_time(toPath(vmf)) + std::chrono::minutes(5));
+	CHECK_FALSE(button("Build cubemaps"));
 }
 
 namespace {
