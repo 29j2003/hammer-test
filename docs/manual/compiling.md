@@ -155,7 +155,8 @@ See [Source mapping basics](mapping-basics.html#leaks) for more.
 ## Cubemaps
 
 Shiny materials reflect the nearest `env_cubemap`. Until the cubemaps are built, they reflect a default image, which
-often looks too bright or wrong.
+often looks too bright or wrong. The lighting preview already shows the reflections while you map (see
+[Cubemap reflections](texturing.html#cubemap-reflections)); the game needs them built as described here.
 
 Cubemaps are not built by the compile tools but by the game itself. Tick **Cubemaps** in the compile dialog: after
 compiling, Mapsmith starts the game with `-buildcubemaps`, the game renders the view of every `env_cubemap` and saves

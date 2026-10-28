@@ -54,6 +54,8 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   bricks, stones and tiles without a bump map; wood stays flat) – real depth in the preview without deploying first.
 - **Lighting preview with real-time shadows** from your light entities (light, light_spot, light_environment), using
   VRAD's own falloff formulas: the sun and the nearest spot and point lights cast shadows (F7 turns them off).
+  **Cubemap reflections**: shiny (`$envmap`) materials reflect the nearest `env_cubemap` live, box-projected with a
+  Mapbase room box, without compiling; a selected cubemap shows a mirror sphere (Map > Build cubemaps redraws them).
   Entities show their editor icons (the sprites and models Hammer uses).
 - **Models**: props and NPCs are drawn with their real model and textures. The model browser shows a preview of every
   model; drag one into the 3D view to place it as a prop_static.

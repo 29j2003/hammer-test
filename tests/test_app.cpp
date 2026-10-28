@@ -3270,6 +3270,105 @@ TEST_CASE("decals and overlays: placed on a face with the current material, draw
 	CHECK(view->renderer().overlayPolygonCount() == 2);
 }
 
+TEST_CASE("cubemap reflections: env_cubemaps drawn into the preview, $envmap faces reflect the nearest one") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	// A shiny floor: the demo's metal with a full reflection.
+	test::writeText(f.mod / "materials/demo/shiny_floor.vmt",
+	                "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"demo/metal001\"\n\t\"$envmap\" \"env_cubemap\"\n\t\"$envmaptint\" \"[1 1 1]\"\n}\n");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	editor.setRenderMode(Editor::RenderMode::Lit);
+	CHECK(editor.reflections());   // on by default
+	settle();
+
+	// A room: the shiny floor and a bright wall it can reflect.
+	auto [floorMade, floorRef] = edit::createBlock(editor.doc(), box({0, 0, 0}, {512, 512, 16}), "DEMO/SHINY_FLOOR");
+	editor.commit(std::move(floorMade));
+	auto [wallMade, wallRef] = edit::createBlock(editor.doc(), box({0, 480, 16}, {512, 512, 256}), "DEMO/BRICKWALL001");
+	editor.commit(std::move(wallMade));
+	const auto topSideId = [&] {
+		const Solid* solid = editor.doc().findSolid(floorRef);
+		for (const auto& face : buildBrushGeometry(*solid).faces) {
+			if (face.normal.z > 0.9) return solid->sides[static_cast<std::size_t>(face.sideIndex)].id;
+		}
+		return 0;
+	}();
+	REQUIRE(topSideId != 0);
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(256, 40, 120);
+	view->camera().yaw = 90;
+	view->camera().pitch = -30;
+	view->update();
+	for (int i = 0; i < 10; ++i) settle();
+	CHECK(view->renderer().cubemapCount() == 0);
+	CHECK(view->renderer().cubemapOfSide(topSideId) == -1);
+	const QPoint floorPoint = screen(view, {256, 300, 16});
+	const QColor withSky = view->grabFramebuffer().pixelColor(floorPoint);   // no cubemap yet: the default reflection
+
+	// An env_cubemap above the floor: drawn a moment later, a few faces per frame.
+	const auto* definition = editor.entities() ? editor.entities()->find("env_cubemap") : nullptr;
+	auto [placed, cubemapId] = edit::placeEntity(editor.doc(), "env_cubemap", {256, 256, 96}, definition, {});
+	editor.commit(std::move(placed));
+	view->update();
+	settle();
+	CHECK(view->renderer().cubemapCount() == 1);
+	CHECK(view->renderer().cubemapOfSide(topSideId) == 0);
+	for (int i = 0; i < 100 && view->renderer().builtCubemapCount() < 1; ++i) {
+		QTest::qWait(30);
+	}
+	CHECK(view->renderer().builtCubemapCount() == 1);
+	CHECK_FALSE(view->renderer().cubemapWorkPending());
+	settle();
+	const QColor reflected = view->grabFramebuffer().pixelColor(floorPoint);
+	CHECK(reflected != withSky);   // the floor shows the room now, not the default picture
+
+	// The switch in the view's corner menu turns the reflection off (the floor gets darker).
+	editor.setReflections(false);
+	CHECK_FALSE(QSettings().value("editor/reflections", true).toBool());
+	view->update();
+	settle();
+	const QColor plain = view->grabFramebuffer().pixelColor(floorPoint);
+	CHECK(plain.lightness() < reflected.lightness());
+	editor.setReflections(true);
+	settle();
+
+	// Map > Build cubemaps draws it again; a selected env_cubemap shows its preview sphere.
+	auto* build = window.findChild<QAction*>("buildCubemaps");
+	REQUIRE(build);
+	build->trigger();
+	CHECK(view->renderer().cubemapWorkPending());
+	for (int i = 0; i < 100 && view->renderer().cubemapWorkPending(); ++i) {
+		QTest::qWait(30);
+	}
+	CHECK_FALSE(view->renderer().cubemapWorkPending());
+	const QPoint spherePoint = screen(view, {256, 256, 96});
+	const QColor beforeSelect = view->grabFramebuffer().pixelColor(spherePoint);
+	Selection selection;
+	selection.entities.push_back(cubemapId);
+	editor.setSelection(selection);
+	view->update();
+	settle();
+	const QImage shot = view->grabFramebuffer();
+	CHECK(shot.pixelColor(spherePoint) != beforeSelect);
+	shot.save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/cubemap_reflections.png");
+}
+
 TEST_CASE("texts: the mod's localization and captions, edited, translated, saved and compiled") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());

@@ -169,6 +169,23 @@ liquid and glass colour and opacity, the *Fill level* (*Different in every prop*
 A material that `deploy.bat` generated is marked as such. Saving it in the editor makes it the mod's own, and
 `deploy.bat` leaves it alone from then on.
 
+## Cubemap reflections
+
+In the lighting preview, shiny materials (those with `$envmap`) reflect the map as they will in the game, without
+compiling. Like Source 2 Hammer, Mapsmith draws the view of every `env_cubemap` into a small cubemap of its own, and
+each face reflects the cubemap the compiler would give it: the one whose *Brush faces* (`sides`) list the face, else the
+nearest. `$envmaptint`, `$envmapmask`, `$basealphaenvmapmask`, `$normalmapalphaenvmapmask` and `$fresnelreflection` are
+taken into account. A cubemap with a room box (Mapbase `parallax_obb`, see
+[Cubemaps and room boxes](entities.html#cubemaps-and-room-boxes)) reflects box-projected, so the reflection lines up with
+the room. Without any `env_cubemap` shiny faces reflect the sky, as the game does with its default cubemap.
+
+- The cubemaps are drawn again a moment after you change the map, a few faces per frame, so the view stays smooth.
+  **Map > Build cubemaps** draws them all again right away.
+- Select an `env_cubemap` to see a small mirror sphere at its position: what that cubemap sees.
+- **Cubemap reflections** in each view's corner menu turns them off.
+- The game still needs `buildcubemaps` after compiling (see [Cubemaps](compiling.html#cubemaps)); the preview only
+  shows what that will look like. It is drawn with the lighting preview, so it is close, not exact.
+
 ## Tips
 
 - Keep texture scale 0.25 on world brushes unless you have a reason. Very small scales make blurry textures, and

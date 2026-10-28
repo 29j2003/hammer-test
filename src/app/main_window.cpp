@@ -1260,6 +1260,13 @@ void MainWindow::createActions() {
 	map->addAction(action(tr("Clear leak line"), QKeySequence(), [this] {
 		for (auto* v : m_views) v->setLeakLine({});
 	}));
+	// Like the game's buildcubemaps: the reflection preview draws every env_cubemap again.
+	auto* buildCubemaps = action(tr("Build cubemaps"), QKeySequence(), [this] {
+		for (auto* v : m_views) v->buildCubemaps();
+		emit m_editor->message(tr("Cubemaps are drawn again - $envmap materials reflect them in the lighting preview"));
+	});
+	buildCubemaps->setObjectName("buildCubemaps");
+	map->addAction(buildCubemaps);
 	map->addSeparator();
 	// Cordons: compile only a part of the map (several boxes, like CS:GO Hammer and Hammer++).
 	map->addAction(action(tr("Add cordon around selection"), QKeySequence("Ctrl+Shift+K"), [this] {

@@ -35,6 +35,7 @@ add_library(smeapp STATIC
 	replace_materials_dialog.cpp
 	properties_instance.cpp
 	renderer.cpp
+	renderer_cubemaps.cpp
 	renderer_shadows.cpp
 	ship_panel.cpp
 	shortcut_dialog.cpp

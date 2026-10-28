@@ -44,15 +44,18 @@ uniform usampler2D u_flags;
 uniform int u_hideSelected;
 uniform int u_onlySelected;
 uniform int u_faceOverride;    // models: one flag slot for the whole instance (-1: per vertex, -2: no flags)
+uniform usampler2D u_probeFaces;   // unit 15: the cubemap each face reflects (0 = none)
 out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_uvw;
 flat out uint v_flag;
+flat out int v_probe;
 void main() {
 	int id = u_faceOverride >= 0 ? u_faceOverride : int(a_face + 0.5);
 	uint f = u_faceOverride == -2 ? 0u : texelFetch(u_flags, ivec2(id % 4096, id / 4096), 0).r;
 	v_flag = f;
+	v_probe = u_faceOverride == -2 ? 0 : int(texelFetch(u_probeFaces, ivec2(id % 4096, id / 4096), 0).r);
 	vec4 world = u_model * vec4(a_pos, 1.0);
 	v_world = world.xyz;
 	v_normal = mat3(u_model) * a_normal;
@@ -114,6 +117,18 @@ uniform vec2 u_viewport;
 uniform int u_hasHeight;               // relief: height map on unit 11 (white = top)
 uniform sampler2D u_height;
 uniform float u_parallaxDepth;
+flat in int v_probe;
+uniform int u_reflections;             // cubemap reflections on (the view's switch)
+uniform int u_probePass;               // drawing into a cubemap: no tint, no reflections
+uniform int u_envmap;                  // this material has $envmap
+uniform vec3 u_envTint;                // $envmaptint
+uniform float u_fresnel;               // $fresnelreflection
+uniform int u_envMaskMode;             // 0 none, 1 mask texture (unit 12), 2 base alpha, 3 inverted base alpha
+uniform sampler2D u_envMask;
+uniform sampler2D u_probeAtlas;        // unit 13: six faces per cubemap, 8 cubemaps per row
+uniform sampler2D u_probeData;         // unit 14: origin (w: 0 not drawn yet, 1 drawn, 2 with room box), box min, box max
+uniform float u_probeTile;             // pixels per cube face
+uniform int u_probeSphere;             // > 0: the preview sphere of cubemap u_probeSphere - 1
 out vec4 fragColor;
 
 // Relief like mapbase-fidelity's Fidelity_Parallax: walks into the height map along the view
@@ -246,6 +261,35 @@ vec3 skyClouds(vec3 dir, vec3 color) {
 
 vec3 toLinear(vec3 c) { return pow(c, vec3(2.2)); }
 
+// A cubemap of the map in direction `dir` (sme/cubemaps.h has the same face layout), parallax
+// corrected with its room box. Not drawn yet: the sky.
+const vec3 CUBE_FORWARD[6] = vec3[6](vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0), vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1));
+const vec3 CUBE_UP[6] = vec3[6](vec3(0, 0, 1), vec3(0, 0, 1), vec3(0, 0, 1), vec3(0, 0, 1), vec3(0, 1, 0), vec3(0, 1, 0));
+vec3 defaultReflection(vec3 dir) { return u_hasSky == 1 ? skyTexture(dir) : vec3(0.42, 0.46, 0.52); }
+vec3 probeColor(int probe, vec3 world, vec3 dir, bool boxProject) {
+	vec4 origin = texelFetch(u_probeData, ivec2(0, probe), 0);
+	if (origin.w < 0.5) return defaultReflection(dir);
+	if (boxProject && origin.w > 1.5) {
+		vec3 lo = texelFetch(u_probeData, ivec2(1, probe), 0).xyz;
+		vec3 hi = texelFetch(u_probeData, ivec2(2, probe), 0).xyz;
+		vec3 safe = mix(vec3(1e-6), dir, step(vec3(1e-6), abs(dir)));
+		vec3 t = (mix(lo, hi, step(vec3(0.0), dir)) - world) / safe;
+		float leave = min(min(t.x, t.y), t.z);
+		if (leave > 0.0) {
+			vec3 c = world + dir * leave - origin.xyz;
+			if (dot(c, c) > 1e-6) dir = normalize(c);
+		}
+	}
+	vec3 a = abs(dir);
+	int face = (a.x >= a.y && a.x >= a.z) ? (dir.x >= 0.0 ? 0 : 1) : ((a.y >= a.z) ? (dir.y >= 0.0 ? 2 : 3) : (dir.z >= 0.0 ? 4 : 5));
+	vec3 f = CUBE_FORWARD[face], u = CUBE_UP[face], r = cross(f, u);
+	vec2 st = (vec2(dot(dir, r), dot(dir, u)) / max(dot(dir, f), 1e-6) + 1.0) * 0.5;
+	float inset = 1.0 / u_probeTile;
+	st = clamp(st, vec2(inset), vec2(1.0 - inset));
+	vec2 tile = vec2(float((probe % 8) * 6 + face), float(probe / 8));
+	return textureLod(u_probeAtlas, (tile + st) * u_probeTile / vec2(textureSize(u_probeAtlas, 0)), 0.0).rgb;
+}
+
 // 2 x 2 samples with hardware comparison: soft edges.
 float pcf(sampler2DShadow map, vec3 c, vec4 rect, float texel) {
 	float lit = 0.0;
@@ -284,6 +328,12 @@ float lightShadow(int i, vec3 world, vec3 n) {
 vec3 toGamma(vec3 c) { return pow(c, vec3(1.0 / 2.2)); }
 
 void main() {
+	if (u_probeSphere > 0) {
+		// Preview sphere of a selected env_cubemap: only its reflection, as Source 2 shows it.
+		vec3 V = normalize(u_camPos - v_world);
+		fragColor = vec4(probeColor(u_probeSphere - 1, v_world, reflect(-V, normalize(v_normal)), false), 1.0);
+		return;
+	}
 	vec4 base;
 	vec2 uv = v_uv;
 	float relief = 1.0;            // height at the visible point (1 = top)
@@ -337,7 +387,7 @@ void main() {
 		vec3 dir = normalize(v_world - u_camPos);
 		color = skyClouds(dir, skyTexture(dir));
 		color = grade(color);
-		if ((v_flag & 1u) != 0u) color = mix(color, vec3(1.0, 0.45, 0.1), 0.35);
+		if ((v_flag & 1u) != 0u && u_probePass == 0) color = mix(color, vec3(1.0, 0.45, 0.1), 0.35);
 		fragColor = vec4(color, 1.0);
 		return;
 	}
@@ -377,12 +427,24 @@ void main() {
 		// Soft filmic curve: keeps hot spots near lights from clipping to white.
 		light *= 1.0 - (1.0 - relief) * 0.35;   // deep parts darker ($parallaxao)
 		vec3 hdr = toLinear(base.rgb) * light * u_exposure;
+		if (u_envmap == 1 && u_reflections == 1 && u_probePass == 0) {
+			// $envmap: the cubemap in the reflected direction, added on top as the engine does.
+			vec3 V = normalize(u_camPos - v_world);
+			vec3 R = reflect(-V, n);
+			vec3 env = v_probe > 0 ? probeColor(v_probe - 1, v_world, R, true) : defaultReflection(R);
+			vec3 mask = vec3(1.0);
+			if (u_envMaskMode == 1) mask = texture(u_envMask, uv).rgb;
+			else if (u_envMaskMode == 2) mask = vec3(base.a);
+			else if (u_envMaskMode == 3) mask = vec3(1.0 - base.a);
+			float fresnel = mix(pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 5.0), 1.0, u_fresnel);
+			hdr += toLinear(env) * u_envTint * mask * fresnel * u_exposure;
+		}
 		color = grade(toGamma(vec3(1.0) - exp(-hdr * 1.25)));
 	}
-	if ((v_flag & 1u) != 0u) {
+	if ((v_flag & 1u) != 0u && u_probePass == 0) {
 		color = mix(color, vec3(1.0, 0.45, 0.1), 0.35);
 	}
-	if ((v_flag & 4u) != 0u) {
+	if ((v_flag & 4u) != 0u && u_probePass == 0) {
 		color = mix(color, vec3(0.25, 0.7, 1.0), 0.45);   // face under a dragged material / paint brush
 	}
 	if (u_previewTint == 1) {
@@ -661,6 +723,7 @@ bool SceneRenderer::initialize(MaterialCache* materials, QString* error) {
 	if (!initShadows(error)) {
 		return false;
 	}
+	initCubemaps();
 
 	glGenVertexArrays(1, &m_vao);
 	glGenBuffers(1, &m_vbo);
@@ -748,6 +811,7 @@ void SceneRenderer::release() {
 		if (tex.id) glDeleteTextures(1, &tex.id);
 		if (tex.id2) glDeleteTextures(1, &tex.id2);
 		if (tex.height) glDeleteTextures(1, &tex.height);
+		if (tex.envMask) glDeleteTextures(1, &tex.envMask);
 	}
 	m_textures.clear();
 	for (auto& model : m_gpuModels) {
@@ -772,6 +836,7 @@ void SceneRenderer::release() {
 	glDeleteVertexArrays(1, &m_edgeVao);
 	glDeleteVertexArrays(1, &m_lineVao);
 	releaseShadows();
+	releaseCubemaps();
 	m_program.reset();
 	m_edgeProgram.reset();
 	m_lineProgram.reset();
@@ -817,6 +882,13 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 
 	std::vector<int> faceVertexOffset;   // per face: vertex offset within its material list
 	std::vector<QString> faceMaterial;
+	// Per face: its side id (0 for models and instance brushes) and center, for the cubemap it
+	// reflects; side id -1 = reflects nothing (entity boxes, decals).
+	std::vector<std::pair<int, Vec3>> faceSides;
+	const auto noteFace = [&faceSides](int id, int sideId, const Vec3& center) {
+		if (static_cast<std::size_t>(id) >= faceSides.size()) faceSides.resize(static_cast<std::size_t>(id) + 1, {-1, Vec3{}});
+		faceSides[static_cast<std::size_t>(id)] = {sideId, center};
+	};
 
 	// `detached`: a brush that is not in the document (instance content); it has no side ids of
 	// the map and picking it selects its entity.
@@ -834,6 +906,11 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			const QString material = normalizedMaterialName(QString::fromStdString(side.material));
 			auto& vertices = byMaterial[material];
 			const int id = faceIndex++;
+			{
+				Vec3 center;
+				for (const auto& v : face.vertices) center += v;
+				noteFace(id, detached ? 0 : side.id, face.vertices.empty() ? center : center / double(face.vertices.size()));
+			}
 			if (!detached) m_sideFaces[side.id].push_back(id);
 			m_solidFaces[solidKey(ref)].push_back(id);
 			if (entityId != 0) {
@@ -942,6 +1019,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			instance.transform = QMatrix4x4(float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2]), float(o.x), float(r.m[1][0]), float(r.m[1][1]),
 			                                float(r.m[1][2]), float(o.y), float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2]), float(o.z), 0, 0, 0, 1);
 			instance.face = faceIndex++;
+			noteFace(instance.face, 0, o);
 			m_entityFaces[entity.id].push_back(instance.face);
 			m_faceToSide.emplace_back(SolidRef{entity.id, 0}, 0);
 			m_modelInstances.push_back(std::move(instance));
@@ -1215,6 +1293,8 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_faceCount = faceIndex;
 	m_flags.assign(static_cast<std::size_t>(std::max(faceIndex, 1)), 0);
 	ensureFlagTexture();
+	faceSides.resize(static_cast<std::size_t>(faceIndex), {-1, Vec3{}});
+	updateProbes(doc, faceSides);
 }
 
 bool SceneRenderer::updateDisplacement(int sideId, const Side& side, const FaceGeometry& face, const DisplacementMesh& mesh) {
@@ -1249,6 +1329,12 @@ bool SceneRenderer::updateDisplacement(int sideId, const Side& side, const FaceG
 }
 
 void SceneRenderer::setSelection(const MapDocument& doc, const Selection& selection, const Selection& hidden, int hoverSideId) {
+	m_selectedProbes.clear();
+	for (const int id : selection.entities) {
+		for (std::size_t i = 0; i < m_probes.size(); ++i) {
+			if (m_probes[i].entityId == id) m_selectedProbes.push_back(static_cast<int>(i));
+		}
+	}
 	std::fill(m_flags.begin(), m_flags.end(), 0);
 	for (const int face : m_volumeFaces) {
 		if (face >= 0 && static_cast<std::size_t>(face) < m_flags.size()) m_flags[static_cast<std::size_t>(face)] = FLAG_VOLUME;
@@ -1356,6 +1442,18 @@ void SceneRenderer::uploadTexture(GpuTexture& tex, const MaterialInfo& info) {
 		tex.height = 0;
 	}
 	tex.parallaxDepth = info.height.isNull() ? 0.f : info.parallaxDepth;
+	tex.envmap = info.envmap;
+	tex.envTint = QVector3D(info.envmapTint[0], info.envmapTint[1], info.envmapTint[2]);
+	tex.fresnel = info.fresnel;
+	tex.envMaskMode = 0;
+	if (info.envmapMask == MaterialInfo::EnvmapMask::Texture && !info.envmapMaskImage.isNull()) {
+		upload(tex.envMask, info.envmapMaskImage.convertToFormat(QImage::Format_RGBA8888));
+		tex.envMaskMode = 1;
+	} else if (info.envmapMask == MaterialInfo::EnvmapMask::BaseAlpha) {
+		tex.envMaskMode = 2;
+	} else if (info.envmapMask == MaterialInfo::EnvmapMask::InvertedBaseAlpha) {
+		tex.envMaskMode = 3;
+	}
 	tex.kind = info.kind;
 	tex.isTool = info.isTool;
 	tex.isSky = info.isSky;
@@ -1370,6 +1468,9 @@ void SceneRenderer::setCommonUniforms(QOpenGLShaderProgram& program, const Param
 	if (&program == m_program.get()) {
 		program.setUniformValue("u_skyFace", 0);
 		program.setUniformValue("u_hasHeight", 0);
+		program.setUniformValue("u_envmap", 0);
+		program.setUniformValue("u_probeSphere", 0);
+		bindProbes(program);
 	}
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, m_flagTexture);
@@ -1393,7 +1494,7 @@ void SceneRenderer::bindSky(QOpenGLShaderProgram& program, const Params& params)
 	program.setUniformValue("u_clouds", QVector4D(m_skyLook.clouds, std::max(m_skyLook.scale, 0.05f), m_skyLook.coverage, m_skyLook.darkness));
 	program.setUniformValue("u_cloudSun", QVector4D(-m_sunDirection, m_hasSun ? 1.f : 0.f));
 	// Colour grading only in the lighting preview (the game grades the lit picture).
-	const bool grading = m_grade.on && params.mode == Mode::Lit;
+	const bool grading = m_grade.on && params.mode == Mode::Lit && !m_probesDrawing;   // the cubemaps keep the plain picture
 	program.setUniformValue("u_grade", grading ? 1 : 0);
 	if (grading) {
 		const auto& g = m_grade;
@@ -1414,7 +1515,8 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 	for (const auto& batch : m_batches) {
 		auto& tex = texture(batch.material);
 		const bool translucent = tex.kind == MaterialInfo::Kind::Translucent || tex.kind == MaterialInfo::Kind::Additive || batch.decal;
-		if (translucent != translucentPass || (!params.showToolTextures && tex.isTool)) {
+		// Inside a cubemap tool textures are invisible as in the game, except the sky.
+		if (translucent != translucentPass || (!params.showToolTextures && tex.isTool && !(m_probesDrawing && tex.isSky))) {
 			continue;
 		}
 		glActiveTexture(GL_TEXTURE0);
@@ -1439,6 +1541,7 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 			program.setUniformValue("u_parallaxDepth", tex.parallaxDepth);
 		}
 		program.setUniformValue("u_opacity", translucent && tex.isTool ? 0.55f : 1.f);
+		bindEnvmap(program, tex, params.reflections && params.mode == Mode::Lit);
 		if (tex.kind == MaterialInfo::Kind::Additive) {
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 		} else {
@@ -1449,6 +1552,22 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 	}
 	program.setUniformValue("u_skyFace", 0);
 	program.setUniformValue("u_hasHeight", 0);
+	program.setUniformValue("u_envmap", 0);
+}
+
+void SceneRenderer::bindEnvmap(QOpenGLShaderProgram& program, const GpuTexture& tex, bool reflections) {
+	const bool on = tex.envmap && reflections && !m_probesDrawing;
+	program.setUniformValue("u_envmap", on ? 1 : 0);
+	if (!on) return;
+	program.setUniformValue("u_envTint", tex.envTint);
+	program.setUniformValue("u_fresnel", tex.fresnel);
+	program.setUniformValue("u_envMaskMode", tex.envMaskMode);
+	if (tex.envMaskMode == 1) {
+		glActiveTexture(GL_TEXTURE12);
+		glBindTexture(GL_TEXTURE_2D, tex.envMask);
+		glActiveTexture(GL_TEXTURE0);
+		program.setUniformValue("u_envMask", 12);
+	}
 }
 
 void SceneRenderer::render(const Params& params) {
@@ -1490,14 +1609,38 @@ void SceneRenderer::render(const Params& params) {
 		return;
 	}
 
+	// Cubemaps that wait are drawn first (a few faces per frame); they bind their own framebuffer.
+	if (params.mode == Mode::Lit && params.reflections) {
+		buildProbeFaces(6);
+	}
+	drawSurfaces(params, false);
+	drawProbeSpheres(params);
+
+	// Selection outline on top of the surfaces.
+	m_edgeProgram->bind();
+	setCommonUniforms(*m_edgeProgram, params, QMatrix4x4());
+	m_edgeProgram->setUniformValue("u_onlySelected", 1);
+	m_edgeProgram->setUniformValue("u_hideSelected", m_hideSelected ? 1 : 0);
+	glBindVertexArray(m_edgeVao);
+	glDisable(GL_DEPTH_TEST);
+	glDrawArrays(GL_LINES, 0, m_edgeCount);
+	glEnable(GL_DEPTH_TEST);
+	++m_drawCalls;
+	glBindVertexArray(0);
+}
+
+void SceneRenderer::drawSurfaces(const Params& params, bool probePass) {
 	m_program->bind();
 	setCommonUniforms(*m_program, params, QMatrix4x4());
 	m_program->setUniformValue("u_tex", 0);
 	m_program->setUniformValue("u_tex2", 1);
 	m_program->setUniformValue("u_mode", params.mode == Mode::Lit ? 0 : 1);
-	m_program->setUniformValue("u_hideSelected", m_hideSelected ? 1 : 0);
+	m_program->setUniformValue("u_hideSelected", m_hideSelected && !probePass ? 1 : 0);
 	m_program->setUniformValue("u_onlySelected", 0);
 	m_program->setUniformValue("u_previewTint", 0);
+	m_program->setUniformValue("u_probePass", probePass ? 1 : 0);
+	m_program->setUniformValue("u_reflections", params.reflections ? 1 : 0);
+	m_modelReflections = params.reflections && params.mode == Mode::Lit && !probePass;
 	m_program->setUniformValue("u_exposure", 1.0f);
 	m_program->setUniformValue("u_sunDir", m_sunDirection);
 	m_program->setUniformValue("u_sunColor", m_sunColor);
@@ -1560,8 +1703,8 @@ void SceneRenderer::render(const Params& params) {
 	glBindVertexArray(m_vao);
 	glEnable(GL_CULL_FACE);
 
-	// Entity boxes (flat colored).
-	if (m_entityCount > 0) {
+	// Entity boxes (flat colored); not inside cubemaps.
+	if (m_entityCount > 0 && !probePass) {
 		m_program->setUniformValue("u_useColor", 1);
 		m_program->setUniformValue("u_hasTex2", 0);
 		m_program->setUniformValue("u_alphaTest", 0);
@@ -1571,7 +1714,7 @@ void SceneRenderer::render(const Params& params) {
 		++m_drawCalls;
 		m_program->setUniformValue("u_useColor", 0);
 	}
-	drawSprites(params);
+	if (!probePass) drawSprites(params);
 	m_program->bind();
 	glBindVertexArray(m_vao);
 
@@ -1582,18 +1725,7 @@ void SceneRenderer::render(const Params& params) {
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 	glDisable(GL_CULL_FACE);
-
-	// Selection outline on top of the surfaces.
-	m_edgeProgram->bind();
-	setCommonUniforms(*m_edgeProgram, params, QMatrix4x4());
-	m_edgeProgram->setUniformValue("u_onlySelected", 1);
-	m_edgeProgram->setUniformValue("u_hideSelected", m_hideSelected ? 1 : 0);
-	glBindVertexArray(m_edgeVao);
-	glDisable(GL_DEPTH_TEST);
-	glDrawArrays(GL_LINES, 0, m_edgeCount);
-	glEnable(GL_DEPTH_TEST);
-	++m_drawCalls;
-	glBindVertexArray(0);
+	m_program->setUniformValue("u_probePass", 0);
 }
 
 void SceneRenderer::drawSprites(const Params& params) {
@@ -1932,6 +2064,7 @@ void SceneRenderer::drawModels(QOpenGLShaderProgram& program, bool flat, const Q
 				glActiveTexture(GL_TEXTURE0);
 				glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
 				program.setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
+				bindEnvmap(program, tex, m_modelReflections);
 			}
 			glDrawElements(GL_TRIANGLES, mesh.count, GL_UNSIGNED_INT, reinterpret_cast<void*>(static_cast<std::uintptr_t>(mesh.first) * sizeof(std::uint32_t)));
 			++m_drawCalls;
@@ -1945,6 +2078,7 @@ void SceneRenderer::drawModels(QOpenGLShaderProgram& program, bool flat, const Q
 	program.setUniformValue("u_faceOverride", -1);
 	program.setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
 	program.setUniformValue("u_alphaTest", 0);
+	program.setUniformValue("u_envmap", 0);
 }
 
 void SceneRenderer::drawLines(const std::vector<LineVertex>& lines, const QMatrix4x4& viewProjection, bool onTop, float width) {

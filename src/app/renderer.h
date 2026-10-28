@@ -1,12 +1,14 @@
 // renderer.h - Draws the map with OpenGL 3.3: textured brushes batched per material,
 // displacements, infodecals and overlays on the brushes, entity boxes, wireframe edges,
-// selection highlight, lighting preview, grid and helper lines (gizmos, previews).
+// selection highlight, lighting preview (shadows in renderer_shadows.cpp, cubemap reflections in
+// renderer_cubemaps.cpp), grid and helper lines (gizmos, previews).
 //
 // Geometry is rebuilt only when the document changes. Selection and "hide while dragging"
 // are per-face flags in a small texture, so clicking never rebuilds the scene.
 
 #pragma once
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
 #include <QMatrix4x4>
@@ -23,6 +25,7 @@
 #include <vector>
 
 #include <sme/brush.h>
+#include <sme/cubemaps.h>
 #include <sme/editing.h>
 #include <sme/entity_catalog.h>
 #include <sme/instances.h>
@@ -92,6 +95,7 @@ public:
 		Mode mode = Mode::Lit;
 		bool showToolTextures = true;
 		bool shadows = true;          ///< Real-time shadows in the lighting preview
+		bool reflections = true;      ///< Cubemap reflections on $envmap materials (lighting preview)
 	};
 	/// Draws the whole scene for one frame.
 	void render(const Params& params);
@@ -136,6 +140,19 @@ public:
 	[[nodiscard]] int lightCount() const { return static_cast<int>(m_lights.size()); }
 	/// Lights that cast shadows in the last frame (sun counts as one).
 	[[nodiscard]] int shadowCasterCount() const { return m_shadowCasterCount; }
+	/// Cubemap reflections (renderer_cubemaps.cpp): every env_cubemap is drawn from its origin into
+	/// six small pictures; $envmap materials reflect the nearest one (or the one listing the face),
+	/// box-projected when it has a room box. They are drawn again a moment after the map changed,
+	/// a few faces per frame, and now with buildCubemaps() (Map > Build cubemaps).
+	void buildCubemaps();
+	/// Cubemaps in the map (up to the limit) and how many of them are drawn.
+	[[nodiscard]] int cubemapCount() const { return static_cast<int>(m_probes.size()); }
+	[[nodiscard]] int builtCubemapCount() const;
+	/// True while cubemaps wait to be drawn: the view should draw again after cubemapDelayMs().
+	[[nodiscard]] bool cubemapWorkPending() const { return m_probesDirty; }
+	[[nodiscard]] int cubemapDelayMs() const;
+	/// The cubemap a brush face reflects (index into the map's env_cubemaps), -1 for none.
+	[[nodiscard]] int cubemapOfSide(int sideId) const;
 	/// Infodecal and info_overlay polygons drawn on the brushes (counted per entity kind).
 	[[nodiscard]] int decalPolygonCount() const { return m_decalPolygons; }
 	[[nodiscard]] int overlayPolygonCount() const { return m_overlayPolygons; }
@@ -158,6 +175,11 @@ private:
 		bool isSky = false;
 		bool found = false;    ///< The VMT exists (otherwise the checkerboard is shown)
 		bool ready = false;
+		bool envmap = false;   ///< Reflections ($envmap), see MaterialInfo
+		QVector3D envTint{1, 1, 1};
+		float fresnel = 1;
+		int envMaskMode = 0;   ///< 0 none, 1 mask texture, 2 base alpha, 3 inverted base alpha
+		GLuint envMask = 0;
 	};
 	struct SpriteBatch {
 		QString material;
@@ -193,6 +215,22 @@ private:
 		QVector4D spot2;       ///< x = cos(inner cone), y = exponent
 	};
 
+	/// The surfaces in the lighting preview or unlit: brushes, models, entity boxes, sprites,
+	/// translucent faces. `probePass`: drawn into a cubemap (no boxes, no tint, no reflections).
+	void drawSurfaces(const Params& params, bool probePass);
+	/// Sets the reflection uniforms of one material.
+	void bindEnvmap(QOpenGLShaderProgram& program, const GpuTexture& tex, bool reflections);
+	// Cubemaps (renderer_cubemaps.cpp).
+	bool initCubemaps();
+	void releaseCubemaps();
+	/// After a rebuild: the probes of the map and the probe of every face.
+	void updateProbes(const MapDocument& doc, const std::vector<std::pair<int, Vec3>>& faceSides);
+	/// Draws up to `faces` cube faces that are waiting (all when the debounce is not over yet: none).
+	void buildProbeFaces(int faces);
+	void bindProbes(QOpenGLShaderProgram& program);
+	void uploadProbeData();
+	void uploadProbeFaces();
+	void drawProbeSpheres(const Params& params);
 	GpuTexture& texture(const QString& material);
 	void uploadTexture(GpuTexture& tex, const MaterialInfo& info);
 	void drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass);
@@ -242,6 +280,25 @@ private:
 	std::vector<const Light*> m_shadowLights;   ///< Casters the atlas was drawn for
 	QVector3D m_shadowSunDirection;
 	int m_shadowCasterCount = 0;
+
+	// Cubemap reflections: probes, their six faces in one atlas (8 probes per row), per probe
+	// origin and room box in a float texture, per face the probe it reflects (0 = none).
+	std::vector<CubemapProbe> m_probes;
+	std::vector<std::uint16_t> m_probeOfFace;
+	std::unordered_map<int, int> m_probeOfSide;   ///< side id -> probe index
+	std::vector<std::uint8_t> m_probeFacesDone;   ///< per probe: cube faces drawn since the last change
+	std::vector<char> m_probeEverBuilt;           ///< per probe: shown (an older picture is better than none)
+	std::vector<int> m_selectedProbes;
+	GLuint m_probeAtlas = 0, m_probeData = 0, m_probeFaceTexture = 0;
+	GLuint m_probeFbo = 0, m_probeColor = 0, m_probeDepth = 0;
+	GLuint m_sphereVao = 0, m_sphereVbo = 0;
+	GLsizei m_sphereVertices = 0;
+	int m_probeAtlasRows = 0;
+	bool m_probesDirty = false;
+	bool m_probesNow = false;                     ///< buildCubemaps(): no waiting
+	bool m_probesDrawing = false;                 ///< A cubemap face is being drawn
+	bool m_modelReflections = false;              ///< Reflections for the models of this pass
+	QElapsedTimer m_probesChanged;
 
 	GLuint m_vao = 0, m_vbo = 0;            // brush faces + entity boxes
 	GLuint m_edgeVao = 0, m_edgeVbo = 0;    // wireframe edges

@@ -167,6 +167,7 @@ Each view has a small menu in its top left corner, for example *3D · Lighting p
 - the camera: **3D**, **Top (X/Y)**, **Front (Y/Z)**, **Side (X/Z)**;
 - the look of the 3D view: **Lighting preview** (F6), **Textured (unlit)** (F5) or **Wireframe** (F8);
 - **Real-time shadows** (F7) in the lighting preview;
+- **Cubemap reflections** in the lighting preview (see [Cubemap reflections](texturing.html#cubemap-reflections));
 - **mapbase-fidelity look**: clouds and colour grading as the add-on shows them;
 - the **Show** list.
 
