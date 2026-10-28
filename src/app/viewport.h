@@ -231,6 +231,8 @@ private:
 	// Doors (viewport_doors.cpp): how the selected doors move, and the "Test open" animation.
 	[[nodiscard]] std::optional<DoorMotion> doorMotionOf(const Entity& door) const;
 	void drawDoorPreview(std::vector<LineVertex>& lines) const;
+	/// Ropes (viewport_ropes.cpp): move_rope chains drawn sagging, rebuilt only after a change.
+	void drawRopes(std::vector<LineVertex>& lines);
 	void startDoorTest(int doorId);
 	/// After a frame: keeps the animation going while it runs.
 	void advanceDoorTest();
@@ -335,6 +337,8 @@ private:
 	double m_polygonPlane = 0;
 
 	std::vector<Vec3> m_leak;
+	std::vector<LineVertex> m_ropeLines;   ///< Cached rope curves (drawRopes)
+	bool m_ropesDirty = true;
 
 	/// "Test open" of a door: which door, since when, how long its opening takes.
 	struct DoorTest {

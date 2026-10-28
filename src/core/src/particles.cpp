@@ -7,6 +7,7 @@
 #include <kvpp/DMX.h>
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <numbers>
 #include <sstream>
@@ -191,6 +192,154 @@ std::vector<ParticleDefinition> readParticleDefinitions(std::span<const std::byt
 		out.clear();   // broken file: nothing rather than half of it
 	}
 	return out;
+}
+
+// --- Writing ---------------------------------------------------------------------------------------
+
+namespace {
+
+/// Binary DMX version 2: attribute types as numbered then (DmAttributeType_t of the Orange Box).
+enum class DmxType : std::uint8_t { Element = 1, Int = 2, Float = 3, Bool = 4, String = 5, Color = 8, Vector3 = 10, ElementArray = 15 };
+
+class DmxWriter {
+public:
+	void byte(std::uint8_t v) { m_out.push_back(std::byte(v)); }
+	void u16(std::uint16_t v) {
+		byte(std::uint8_t(v & 0xff));
+		byte(std::uint8_t(v >> 8));
+	}
+	void i32(std::int32_t v) {
+		const auto u = static_cast<std::uint32_t>(v);
+		for (int i = 0; i < 4; ++i) byte(std::uint8_t((u >> (8 * i)) & 0xff));
+	}
+	void f32(float v) {
+		std::uint32_t u = 0;
+		std::memcpy(&u, &v, 4);
+		i32(static_cast<std::int32_t>(u));
+	}
+	void text(std::string_view v) {
+		for (const char c : v) byte(static_cast<std::uint8_t>(c));
+		byte(0);
+	}
+	[[nodiscard]] std::vector<std::byte> take() { return std::move(m_out); }
+
+private:
+	std::vector<std::byte> m_out;
+};
+
+/// One element to write: its type, name and attributes (element references by index).
+struct DmxElement {
+	std::string type, name;
+	PcfValues values;
+	std::vector<std::pair<std::string, std::vector<std::int32_t>>> arrays;   ///< element arrays, written after the values
+};
+
+} // namespace
+
+std::vector<std::byte> writeParticleFile(const std::vector<PcfSystem>& systems) {
+	// Elements: the root, then each system followed by its parts.
+	std::vector<DmxElement> elements(1);
+	elements[0].type = "DmElement";
+	elements[0].name = "untitled";
+	std::vector<std::int32_t> definitions;
+	for (const auto& system : systems) {
+		const auto index = std::int32_t(elements.size());
+		definitions.push_back(index);
+		elements.push_back({"DmeParticleSystemDefinition", system.name, system.properties, {}});
+		const std::pair<const char*, const std::vector<PcfFunction>*> lists[] = {{"renderers", &system.renderers},       {"operators", &system.operators},
+		                                                                          {"initializers", &system.initializers}, {"emitters", &system.emitters},
+		                                                                          {"forces", &system.forces},             {"constraints", &system.constraints}};
+		std::vector<std::pair<std::string, std::vector<std::int32_t>>> arrays;
+		for (const auto& [key, functions] : lists) {
+			std::vector<std::int32_t> refs;
+			for (const auto& function : *functions) {
+				refs.push_back(std::int32_t(elements.size()));
+				PcfValues values{{"functionName", function.functionName}};
+				values.insert(values.end(), function.values.begin(), function.values.end());
+				elements.push_back({"DmeParticleOperator", function.functionName, std::move(values), {}});
+			}
+			arrays.emplace_back(key, std::move(refs));
+		}
+		arrays.emplace_back("children", std::vector<std::int32_t>{});
+		elements[std::size_t(index)].arrays = std::move(arrays);
+	}
+	elements[0].arrays.emplace_back("particleSystemDefinitions", std::move(definitions));
+
+	// The string table: element types and attribute names (version 2 keeps element names and
+	// string values inline).
+	std::vector<std::string> strings;
+	const auto stringIndex = [&strings](const std::string& s) {
+		for (std::size_t i = 0; i < strings.size(); ++i) {
+			if (strings[i] == s) return std::uint16_t(i);
+		}
+		strings.push_back(s);
+		return std::uint16_t(strings.size() - 1);
+	};
+	for (const auto& e : elements) {
+		stringIndex(e.type);
+		for (const auto& [key, value] : e.values) stringIndex(key);
+		for (const auto& [key, refs] : e.arrays) stringIndex(key);
+	}
+
+	DmxWriter w;
+	w.text("<!-- dmx encoding binary 2 format pcf 1 -->\n");
+	w.u16(std::uint16_t(strings.size()));
+	for (const auto& s : strings) w.text(s);
+	w.i32(std::int32_t(elements.size()));
+	for (std::size_t i = 0; i < elements.size(); ++i) {
+		const auto& e = elements[i];
+		w.u16(stringIndex(e.type));
+		w.text(e.name);
+		// Id: FNV-1a of the index and name, spread over 16 bytes (stable between runs).
+		std::uint64_t hash = 1469598103934665603ull ^ i;
+		for (const char c : e.name) hash = (hash ^ std::uint8_t(c)) * 1099511628211ull;
+		for (int k = 0; k < 16; ++k) {
+			hash = (hash ^ std::uint64_t(k)) * 1099511628211ull;
+			w.byte(std::uint8_t(hash >> 56));
+		}
+	}
+	for (const auto& e : elements) {
+		w.i32(std::int32_t(e.values.size() + e.arrays.size()));
+		for (const auto& [key, value] : e.values) {
+			w.u16(stringIndex(key));
+			std::visit(
+				[&w](const auto& v) {
+					using T = std::decay_t<decltype(v)>;
+					if constexpr (std::is_same_v<T, int>) {
+						w.byte(std::uint8_t(DmxType::Int));
+						w.i32(v);
+					} else if constexpr (std::is_same_v<T, float>) {
+						w.byte(std::uint8_t(DmxType::Float));
+						w.f32(v);
+					} else if constexpr (std::is_same_v<T, bool>) {
+						w.byte(std::uint8_t(DmxType::Bool));
+						w.byte(v ? 1 : 0);
+					} else if constexpr (std::is_same_v<T, std::string>) {
+						w.byte(std::uint8_t(DmxType::String));
+						w.text(v);
+					} else if constexpr (std::is_same_v<T, PcfColor>) {
+						w.byte(std::uint8_t(DmxType::Color));
+						w.byte(v.r);
+						w.byte(v.g);
+						w.byte(v.b);
+						w.byte(v.a);
+					} else {
+						w.byte(std::uint8_t(DmxType::Vector3));
+						w.f32(float(v.x));
+						w.f32(float(v.y));
+						w.f32(float(v.z));
+					}
+				},
+				value);
+		}
+		for (const auto& [key, refs] : e.arrays) {
+			w.u16(stringIndex(key));
+			w.byte(std::uint8_t(DmxType::ElementArray));
+			w.i32(std::int32_t(refs.size()));
+			for (const auto ref : refs) w.i32(ref);
+		}
+	}
+	return w.take();
 }
 
 // --- Simulation --------------------------------------------------------------------------------

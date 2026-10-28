@@ -260,6 +260,10 @@ public:
 	/// Brushes > Make water: the selected brushes become water (edit::makeWater). The material is
 	/// the current one if it is water, else the first water material of `materialNames`.
 	void makeWaterFromSelection(const std::vector<std::string>& materialNames);
+	/// A rope (move_rope + keyframe_ropes) hanging between the selected objects (editor_helpers.cpp).
+	void makeRopeFromSelection();
+	/// A climbable HL2 ladder (func_useableladder + dismounts) for the selected ladder brush or model.
+	void makeLadderFromSelection();
 	/// Hammer's Flip Objects: mirrors the selection across its center (axis 0 X, 1 Y, 2 Z).
 	void flipSelection(int axis);
 	/// Hammer's Snap Selected to Grid: moves the selection so its box starts on the grid.

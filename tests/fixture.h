@@ -114,4 +114,7 @@ void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFil
 /// Creates an RGBA8888 VTF (solid color with a darker checker) of the given size.
 [[nodiscard]] std::vector<std::byte> makeVtf(unsigned size, unsigned char r, unsigned char g, unsigned char b, bool dxt = false);
 
+/// A .bsp with `samples` env_cubemap samples and a pakfile listing `names` (central directory only).
+[[nodiscard]] std::vector<std::byte> makeCubemapBsp(int samples, const std::vector<std::string>& names);
+
 } // namespace sme::test

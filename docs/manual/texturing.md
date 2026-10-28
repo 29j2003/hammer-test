@@ -85,6 +85,7 @@ material from a PNG, JPG, TGA or BMP: a texture (`.vtf`) and a material (`.vmt`)
   **Compress** (DXT) makes it 4-8 times smaller and a little blurry.
 - **Normal map**: a picture with the same name and `_normal` (or `_n`, `_nrm`, `_bump`) next to it becomes the bump map.
 - If a material with that name exists, **Replace** must be ticked; **Undo import** brings the old one back.
+- **Use a sample ...** opens Mapsmith's sample pictures (floor tiles with a normal map, a see-through grate).
 
 ## The Material Editor
 

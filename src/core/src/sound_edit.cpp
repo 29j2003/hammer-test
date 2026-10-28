@@ -290,6 +290,107 @@ std::vector<std::byte> encodeWav(const DecodedAudio& audio) {
 	return out;
 }
 
+namespace {
+
+/// Writes bits most significant first (FLAC's order).
+class BitWriter {
+public:
+	void bits(std::uint64_t value, int count) {
+		for (int i = count - 1; i >= 0; --i) {
+			m_byte = std::uint8_t((m_byte << 1) | ((value >> i) & 1));
+			if (++m_used == 8) {
+				m_out.push_back(std::byte(m_byte));
+				m_byte = 0;
+				m_used = 0;
+			}
+		}
+	}
+	void align() {
+		if (m_used > 0) bits(0, 8 - m_used);
+	}
+	std::vector<std::byte>& data() { return m_out; }
+
+private:
+	std::vector<std::byte> m_out;
+	std::uint8_t m_byte = 0;
+	int m_used = 0;
+};
+
+std::uint8_t crc8(const std::byte* data, std::size_t size) {
+	std::uint8_t crc = 0;
+	for (std::size_t i = 0; i < size; ++i) {
+		crc ^= std::uint8_t(data[i]);
+		for (int k = 0; k < 8; ++k) crc = std::uint8_t((crc & 0x80) ? (crc << 1) ^ 0x07 : crc << 1);
+	}
+	return crc;
+}
+
+std::uint16_t crc16(const std::byte* data, std::size_t size) {
+	std::uint16_t crc = 0;
+	for (std::size_t i = 0; i < size; ++i) {
+		crc ^= std::uint16_t(std::uint16_t(data[i]) << 8);
+		for (int k = 0; k < 8; ++k) crc = std::uint16_t((crc & 0x8000) ? (crc << 1) ^ 0x8005 : crc << 1);
+	}
+	return crc;
+}
+
+} // namespace
+
+std::vector<std::byte> encodeFlac(const DecodedAudio& audio) {
+	constexpr std::uint32_t BLOCK = 4096;
+	const int channels = std::clamp(audio.channels, 1, 8);
+	const auto rate = static_cast<std::uint32_t>(std::clamp(audio.sampleRate, 1, 655350));
+	const std::size_t frames = audio.samples.size() / std::size_t(channels);
+	BitWriter w;
+	w.bits(0x664C6143, 32);   // "fLaC"
+	// STREAMINFO, the only (last) metadata block.
+	w.bits(1, 1);
+	w.bits(0, 7);
+	w.bits(34, 24);
+	w.bits(BLOCK, 16);
+	w.bits(BLOCK, 16);
+	w.bits(0, 24);   // frame sizes unknown
+	w.bits(0, 24);
+	w.bits(rate, 20);
+	w.bits(std::uint64_t(channels - 1), 3);
+	w.bits(15, 5);   // 16 bits per sample
+	w.bits(frames, 36);
+	for (int i = 0; i < 16; ++i) w.bits(0, 8);   // MD5 unknown
+	std::uint64_t frameNumber = 0;
+	for (std::size_t start = 0; start < frames; start += BLOCK, ++frameNumber) {
+		const auto count = std::uint32_t(std::min<std::size_t>(BLOCK, frames - start));
+		const std::size_t frameStart = w.data().size();
+		w.bits(0x3FFE, 14);   // sync
+		w.bits(0, 1);
+		w.bits(0, 1);         // fixed block size
+		w.bits(7, 4);         // block size: 16 bits at the end of the header
+		w.bits(0, 4);         // sample rate from STREAMINFO
+		w.bits(std::uint64_t(channels - 1), 4);   // independent channels
+		w.bits(4, 3);         // 16 bits per sample
+		w.bits(0, 1);
+		// Frame number, UTF-8 coded.
+		if (frameNumber < 0x80) {
+			w.bits(frameNumber, 8);
+		} else {
+			int extra = 1;
+			while (extra < 6 && frameNumber >= (1ull << (6 + 5 * extra))) ++extra;
+			w.bits(std::uint64_t((0xFFu << (7 - extra)) & 0xFFu) | (frameNumber >> (6 * extra)), 8);
+			for (int k = extra - 1; k >= 0; --k) w.bits(0x80 | ((frameNumber >> (6 * k)) & 0x3F), 8);
+		}
+		w.bits(count - 1, 16);
+		w.bits(crc8(w.data().data() + frameStart, w.data().size() - frameStart), 8);
+		for (int c = 0; c < channels; ++c) {
+			w.bits(0, 1);
+			w.bits(1, 6);   // VERBATIM
+			w.bits(0, 1);
+			for (std::uint32_t i = 0; i < count; ++i) w.bits(std::uint16_t(audio.samples[(start + i) * std::size_t(channels) + std::size_t(c)]), 16);
+		}
+		w.align();
+		w.bits(crc16(w.data().data() + frameStart, w.data().size() - frameStart), 16);
+	}
+	return std::move(w.data());
+}
+
 bool isSourceSampleRate(int sampleRate) {
 	return sampleRate == 44100 || sampleRate == 22050 || sampleRate == 11025;
 }

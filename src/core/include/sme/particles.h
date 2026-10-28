@@ -14,6 +14,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include <sme/math.h>
@@ -61,6 +63,31 @@ struct ParticleDefinition {
 
 /// Every particle system in a .pcf file; empty for broken files.
 [[nodiscard]] std::vector<ParticleDefinition> readParticleDefinitions(std::span<const std::byte> pcf);
+
+/// A colour of a particle file (0..255 each).
+struct PcfColor {
+	std::uint8_t r = 255, g = 255, b = 255, a = 255;
+};
+/// A value to write into a particle file; its DMX type comes with it (the game reads each key
+/// with its own type: max_particles int, emission_rate float, color1 colour, gravity vector).
+using PcfValue = std::variant<int, float, bool, std::string, PcfColor, Vec3>;
+using PcfValues = std::vector<std::pair<std::string, PcfValue>>;
+/// A part of a system to write: functionName ("emit_continuously") and its values.
+struct PcfFunction {
+	std::string functionName;
+	PcfValues values;
+};
+/// A particle system to write.
+struct PcfSystem {
+	std::string name;
+	PcfValues properties;   ///< material, max_particles, radius, color, ...
+	std::vector<PcfFunction> emitters, initializers, operators, renderers, forces, constraints;
+};
+/// A .pcf with the systems, in the encoding of the game's own files (binary DMX version 2,
+/// "format pcf 1"): a DmElement "untitled" listing the DmeParticleSystemDefinitions in
+/// particleSystemDefinitions, each part a DmeParticleOperator. Element ids are derived from the
+/// names, so the same systems give the same bytes.
+[[nodiscard]] std::vector<std::byte> writeParticleFile(const std::vector<PcfSystem>& systems);
 
 /// One particle as the preview draws it.
 struct ParticleSprite {

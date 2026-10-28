@@ -68,6 +68,8 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   with how often.
 - **Lightmap density** (view menu, Ctrl+F6): every face coloured by its lightmap scale (red = fine and costly, green = 16,
   blue = coarse) with a checker of one luxel, and a colour key in the corner.
+- **Ropes and ladders** (Brushes menu): **Make rope** hangs a rope between the selected objects (drawn sagging in the
+  views); **Make ladder** makes a selected ladder climbable (func_useableladder and dismount points).
 - **Make water** (Brushes menu or right-click): the top face of the selected brushes gets a water material, the rest
   nodraw; a `water_lod_control` and an `env_cubemap` above the water are added if missing – one undo step.
 - **Map Budget** (bottom panel): brushes, brush sides, planes, entities, edicts, overlays, displacements, cubemaps,

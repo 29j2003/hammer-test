@@ -311,4 +311,42 @@ void createFixture(Fixture& f, const std::filesystem::path& dir) {
 	writeText(f.mod / "mapsrc/readme.txt", "maps go here");
 }
 
+std::vector<std::byte> makeCubemapBsp(int samples, const std::vector<std::string>& names) {
+	std::vector<std::byte> out(8 + 64 * 16 + 4);
+	const auto put32 = [](std::vector<std::byte>& v, std::size_t at, std::uint32_t value) {
+		for (int i = 0; i < 4; ++i) v[at + std::size_t(i)] = std::byte((value >> (8 * i)) & 0xff);
+	};
+	std::memcpy(out.data(), "VBSP", 4);
+	put32(out, 4, 20);
+	const std::size_t cubemapsAt = out.size();
+	out.resize(out.size() + std::size_t(samples) * 16);
+	put32(out, 8 + 42 * 16, std::uint32_t(cubemapsAt));
+	put32(out, 8 + 42 * 16 + 4, std::uint32_t(samples * 16));
+	std::vector<std::byte> zip;
+	const auto append16 = [&zip](std::uint16_t v) { zip.push_back(std::byte(v & 0xff)); zip.push_back(std::byte(v >> 8)); };
+	const auto append32 = [&](std::uint32_t v) { append16(std::uint16_t(v & 0xffff)); append16(std::uint16_t(v >> 16)); };
+	zip.resize(10);   // stands for the local entries
+	const std::size_t centralAt = zip.size();
+	for (const auto& name : names) {
+		append32(0x02014b50u);
+		for (int i = 0; i < 6; ++i) append16(0);   // versions, flags, method, time, date
+		append32(0); append32(0); append32(0);     // crc, sizes
+		append16(std::uint16_t(name.size()));
+		for (int i = 0; i < 4; ++i) append16(0);   // extra, comment, disk, internal attributes
+		append32(0); append32(0);                  // external attributes, local header offset
+		for (const char c : name) zip.push_back(std::byte(c));
+	}
+	const std::size_t centralSize = zip.size() - centralAt;
+	append32(0x06054b50u);
+	append16(0); append16(0);
+	append16(std::uint16_t(names.size())); append16(std::uint16_t(names.size()));
+	append32(std::uint32_t(centralSize)); append32(std::uint32_t(centralAt));
+	append16(0);
+	const std::size_t pakAt = out.size();
+	out.insert(out.end(), zip.begin(), zip.end());
+	put32(out, 8 + 40 * 16, std::uint32_t(pakAt));
+	put32(out, 8 + 40 * 16 + 4, std::uint32_t(zip.size()));
+	return out;
+}
+
 } // namespace sme::test

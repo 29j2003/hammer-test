@@ -35,7 +35,7 @@ add_library(smeapp STATIC
 	panels.cpp
 	particle_browser.cpp
 	properties_panel.cpp
-	class_picker.cpp wheel_guard.cpp import_dialog.cpp text_copy.cpp start_page.cpp
+	class_picker.cpp samples_folder.cpp wheel_guard.cpp import_dialog.cpp text_copy.cpp start_page.cpp
 	replace_materials_dialog.cpp
 	properties_instance.cpp
 	properties_door.cpp
@@ -56,6 +56,8 @@ add_library(smeapp STATIC
 	viewport.cpp
 	viewport_tools.cpp
 	viewport_doors.cpp
+	viewport_ropes.cpp
+	editor_helpers.cpp
 	viewport_displace.cpp
 	visgroups_panel.cpp)
 target_include_directories(smeapp PUBLIC .)

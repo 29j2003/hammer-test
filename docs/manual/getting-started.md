@@ -105,6 +105,24 @@ Mapsmith --steam demo/Steam --game sourcemods/mymod demo/Steam/steamapps/sourcem
 
 The screenshots in this manual are made with this demo.
 
+## Sample files to try the importers
+
+Mapsmith comes with a **samples** folder (next to `Mapsmith.exe`; in a build of your own: `build/samples`) with files
+to try each importer - all made by Mapsmith itself, free to use in your mods. Every import dialog has a
+**Use a sample ...** button that opens the right part of it; `README.txt` in the folder lists every file.
+
+| Folder | Files | Try it |
+|---|---|---|
+| `sounds` | `hum_loop.wav` (a seamless loop), `wind_loop.ogg`, `click.mp3` (one shot), `door_chime.flac` (stereo) | *Sounds* page › **Import ...** › **Use a sample ...** › `hum_loop.wav`, tick **Loops in the game**, **Import**; then drag it into the map: an `ambient_generic` that hums. |
+| `pictures` | `terracotta_tiles.png` with `terracotta_tiles_normal.png`, `rusty_grate.png` (see-through holes) | *Materials* page › **Import ...** › **Use a sample ...** › `terracotta_tiles.png`, **Import**; the normal map comes along. The grate becomes a cut-out (`$alphatest`). Put them on a floor and a window. |
+| `models` | `crate/crate.obj` (+ `.mtl`, `.png`), `hanging_sign/hanging_sign.smd` (+ `.png`, two bones) | *Models* page › **Import ...** › **Use a sample ...** › `crate.obj`: **Units** metres, **Y is up** on, **Kind** physics prop, **Import** (needs the SDK's `studiomdl`). The sign: `hanging_sign.smd`, **Units** inches, **Kind** dynamic prop - it keeps its two bones, so it can be animated. |
+| `animations` | `hanging_sign_swing.smd`, `hanging_sign_spin.smd`, `hl2_human_nod.smd`, `hl2_human_wave.smd` | *Animations* page: pick the imported `hanging_sign` model › **Use a sample ...** › `hanging_sign_swing.smd`, **Add and preview** - it swings at once; **Build into the mod** makes it part of the game. The `hl2_human` files work on Half-Life 2's people, e.g. `models/humans/group01/male_07.mdl`. |
+| `particles` | `mapsmith_samples.pcf`: `mapsmith_sample_sparks`, `mapsmith_sample_smoke` | *Particles* page › **Import ...** › **Use a sample ...** › `mapsmith_samples.pcf`, **Import**; the two systems appear in the list. Drag one into the map (an `info_particle_system`) and run the map. |
+
+The `hl2_human` animations move only a few bones and say so in their header (`// mapsmith: relative`): their values
+are added to the rest pose of the model you put them on, and every other bone keeps its rest pose. How exactly the
+arm moves depends on the model - they are there to try the importer, not as finished animations.
+
 ## Updates
 
 At every start Mapsmith asks GitHub whether a newer version is out. If there is one, it offers **Update now**,

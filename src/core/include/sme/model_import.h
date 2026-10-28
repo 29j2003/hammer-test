@@ -30,6 +30,8 @@ struct ImportMesh {
 		Vec3 position;
 		Vec3 normal;
 		double u = 0, v = 0;
+		int bone = 0;                                  ///< Parent bone (rigged .smd; else the one root bone)
+		std::vector<std::pair<int, double>> links;     ///< Bone weights of a rigged .smd (empty: all on `bone`)
 	};
 	struct Triangle {
 		std::array<Vertex, 3> corners;
@@ -39,6 +41,16 @@ struct ImportMesh {
 	std::vector<std::string> materials;              ///< In first-use order
 	std::map<std::string, std::string> textures;     ///< Material -> picture file named by the .mtl (map_Kd), as written there
 	std::map<std::string, Vec3> colors;              ///< Material -> diffuse colour 0..1 (Kd) for materials without a picture
+	/// The skeleton of a rigged reference .smd (bones that move, e.g. a hanging sign's board);
+	/// empty: the model gets one bone, "root". Positions in the file's units, rotations in
+	/// radians as the .smd has them (its first frame).
+	struct Bone {
+		std::string name;
+		int parent = -1;
+		Vec3 position;
+		Vec3 rotation;
+	};
+	std::vector<Bone> bones;
 
 	[[nodiscard]] Bounds bounds() const;
 };
@@ -48,7 +60,9 @@ struct ImportMesh {
 /// Reads an .obj (polygons become triangle fans; missing normals are computed per face) and its
 /// .mtl text (may be empty). nullopt if there are no triangles.
 [[nodiscard]] std::optional<ImportMesh> readObj(std::string_view obj, std::string_view mtl, std::string* error = nullptr);
-/// Reads the triangles of a reference .smd. nullopt if there are none.
+/// Reads the triangles of a reference .smd, with its skeleton and bone weights when it has more
+/// than one bone (then it is imported rigged: its animations can be added on the Animations
+/// page). nullopt if there are no triangles.
 [[nodiscard]] std::optional<ImportMesh> readSmd(std::string_view smd, std::string* error = nullptr);
 
 /// How a model comes into the mod.
@@ -66,7 +80,8 @@ struct ModelImportOptions {
 	Collision collision = Collision::Hull;
 };
 
-/// The mesh in Source space: turned, scaled and placed as the options say.
+/// The mesh in Source space: turned, scaled and placed as the options say. A rigged mesh is
+/// already in Source's orientation (.smd): it is scaled and placed, never turned.
 [[nodiscard]] ImportMesh placedMesh(const ImportMesh& mesh, const ModelImportOptions& options);
 /// The collision triangles for the options (hull, box or the mesh itself).
 [[nodiscard]] ImportMesh collisionMesh(const ImportMesh& placed, ModelImportOptions::Collision collision);
@@ -74,7 +89,8 @@ struct ModelImportOptions {
 [[nodiscard]] double meshVolume(const ImportMesh& mesh);
 /// Mass for a physics prop: the option, else from the hull's volume (wood-like), 1..2000 kg.
 [[nodiscard]] double importMass(const ImportMesh& placed, const ModelImportOptions& options);
-/// A reference SMD of the triangles (one bone, material names as the file names of the materials).
+/// A reference SMD of the triangles (its skeleton, or one bone "root"; material names as the file
+/// names of the materials).
 [[nodiscard]] std::string writeSmd(const ImportMesh& mesh);
 /// The .qc for the options and the source file names next to it.
 [[nodiscard]] std::string writeQc(const ModelImportOptions& options, std::string_view referenceSmd, std::string_view collisionSmd, double mass);

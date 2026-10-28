@@ -55,6 +55,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTabWidget>
+#include <QMessageBox>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QFrame>
@@ -66,12 +67,14 @@
 #include <sme/studio_anim.h>
 #include <sme/audio.h>
 #include <sme/sound_edit.h>
+#include <sme/samples.h>
 #include <sme/model_import.h>
 #include <sme/asset_import.h>
 #include <sme/asset_refs.h>
 #include <sme/brush.h>
 #include <sme/displacement.h>
 #include <sme/doors.h>
+#include <sme/map_helpers.h>
 #include <sme/entity_search.h>
 #include <sme/text.h>
 #include <sme/fidelity_effects.h>
@@ -87,6 +90,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <chrono>
 #include <fstream>
 #include <memory>
 #include <cstdio>
@@ -94,6 +98,7 @@
 
 #include "asset_browser.h"
 #include "import_dialog.h"
+#include "samples_folder.h"
 #include "class_picker.h"
 #include "autosaver.h"
 #include "find_dialog.h"
@@ -5389,6 +5394,8 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 	auto* page = window.animationsPage();
 	REQUIRE(page);
 	CHECK(page->isVisible());
+	// "Add a sample ..." opens the shipped samples (build/samples next to the test program).
+	CHECK(page->findChild<QPushButton*>("animationSample")->isEnabled());
 	// The map's animated models come first.
 	REQUIRE(page->modelList()->count() > 1);
 	CHECK_FALSE(page->modelList()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "In this map"
@@ -5731,6 +5738,7 @@ TEST_CASE("import: own sounds, pictures, models and particle files come into the
 		write(source("Engine Hum.wav"), encodeWav(tone));
 		auto* dialog = dialogFor("importSounds");
 		CHECK(dialog->kind() == ImportDialog::Kind::Sound);
+		CHECK(dialog->findChild<QPushButton*>("importSample")->isEnabled());
 		auto* importButton = dialog->findChild<QPushButton*>("importNow");
 		CHECK_FALSE(importButton->isEnabled());   // nothing chosen yet
 		REQUIRE(dialog->setSourceFile(source("Engine Hum.wav")));
@@ -5909,6 +5917,229 @@ TEST_CASE("import: own sounds, pictures, models and particle files come into the
 	CHECK(window.findChild<QMenu*>("importMenu"));
 }
 
+TEST_CASE("problems: shiny materials without env_cubemap get one, unbuilt cubemaps open the compile with Cubemaps on") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	test::writeText(f.mod / "materials/test/shiny_floor.vmt",
+	                "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"demo/concrete\"\n\t\"$envmap\" \"env_cubemap\"\n}\n");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+
+	auto [floor, floorRef] = edit::createBlock(editor.doc(), Bounds{{0, 0, 0}, {512, 512, 16}}, "TEST/SHINY_FLOOR");
+	editor.commit(std::move(floor));
+	auto [start, startId] = edit::placeEntity(editor.doc(), "info_player_start", {64, 64, 16}, editor.entities()->find("info_player_start"));
+	editor.commit(std::move(start));
+	(void)floorRef;
+	(void)startId;
+	const auto vmf = QDir(fromPath(f.mod)).filePath("mapsrc/shiny.vmf");
+	REQUIRE(editor.saveMap(vmf));
+
+	const auto button = [&](const QString& label) -> QPushButton* {
+		window.raiseDock("Problems");
+		window.problems()->runChecks();
+		settle();
+		for (auto* b : window.problems()->findChildren<QPushButton*>()) {
+			if (b->text() == label) return b;
+		}
+		return nullptr;
+	};
+	const auto cubemapCount = [&] {
+		return std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "env_cubemap"; });
+	};
+
+	// 1. Shiny floor, no env_cubemap: one click places it above the player start, undoable.
+	auto* place = button("Place env_cubemap");
+	REQUIRE(place);
+	CHECK(window.problems()->problemsText().contains("mirror the sky"));
+	QTest::mouseClick(place, Qt::LeftButton);
+	settle();
+	CHECK(cubemapCount() == 1);
+	CHECK_FALSE(button("Place env_cubemap"));
+	editor.undo();
+	settle();
+	CHECK(cubemapCount() == 0);
+	editor.redo();
+	settle();
+	CHECK(cubemapCount() == 1);
+	REQUIRE(editor.saveMap(vmf));
+
+	// 2. The compiled map in the game's maps folder has the env_cubemap but nothing built.
+	const auto bsp = f.mod / "maps/shiny.bsp";
+	std::filesystem::create_directories(bsp.parent_path());
+	{
+		const auto bytes = test::makeCubemapBsp(1, {"materials/maps/shiny/cubemapdefault.vtf"});
+		std::ofstream out(bsp, std::ios::binary);
+		out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+	}
+	std::filesystem::last_write_time(toPath(vmf), std::filesystem::last_write_time(bsp) - std::chrono::minutes(2));
+	auto* build = button("Build cubemaps");
+	REQUIRE(build);
+	CHECK(window.problems()->problemsText().contains("never built"));
+	CHECK_FALSE(loadCompileOptions(editor.gameKey()).cubemaps);
+	// The button opens the compile dialog with the Cubemaps step on (a question about errors or
+	// saving is answered first); the test cancels the dialog.
+	bool sawDialog = false, cubemapsOn = false;
+	QTimer watcher;
+	watcher.setInterval(50);
+	QObject::connect(&watcher, &QTimer::timeout, [&] {
+		QWidget* modal = QApplication::activeModalWidget();
+		if (auto* box = qobject_cast<QMessageBox*>(modal)) {
+			if (auto* yes = box->button(QMessageBox::Yes)) yes->click();
+			return;
+		}
+		if (auto* dialog = qobject_cast<CompileDialog*>(modal)) {
+			sawDialog = true;
+			if (auto* toggle = dialog->findChild<QCheckBox*>("cubemaps")) cubemapsOn = toggle->isChecked();
+			dialog->reject();
+		}
+	});
+	watcher.start();
+	QTest::mouseClick(build, Qt::LeftButton);
+	watcher.stop();
+	settle();
+	CHECK(sawDialog);
+	CHECK(cubemapsOn);
+	CHECK(loadCompileOptions(editor.gameKey()).cubemaps);
+	CHECK(loadCompileOptions(editor.gameKey()).copy);
+
+	// Built into the map: the problem is gone.
+	{
+		const auto bytes = test::makeCubemapBsp(1, {"materials/maps/shiny/cubemapdefault.vtf", "materials/maps/shiny/c64_64_80.vtf"});
+		std::ofstream out(bsp, std::ios::binary | std::ios::trunc);
+		out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+	}
+	std::filesystem::last_write_time(bsp, std::filesystem::last_write_time(toPath(vmf)) + std::chrono::minutes(5));
+	CHECK_FALSE(button("Build cubemaps"));
+}
+
+TEST_CASE("layout checks, ropes and ladders: player start in the floor, NPCs without nodes, a rope and a ladder from the menu") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+
+	// A floor and a wall; the player start sunk into the floor, an NPC without nodes.
+	{
+		Transaction t(editor.doc(), "Room");
+		Solid floor = makeBlock(editor.doc(), box({-512, -512, -16}, {512, 512, 0}), "DEMO/CONCRETE");
+		Solid wall = makeBlock(editor.doc(), box({-64, -128, 0}, {0, 128, 128}), "DEMO/CONCRETE");
+		t.touchSolid({0, floor.id});
+		t.touchSolid({0, wall.id});
+		editor.doc().world.solids.push_back(floor);
+		editor.doc().world.solids.push_back(wall);
+		editor.commit(t.finish());
+	}
+	auto [startMade, startId] = edit::placeEntity(editor.doc(), "info_player_start", {256, 0, -10}, editor.entities()->find("info_player_start"));
+	editor.commit(std::move(startMade));
+	auto [npcMade, npcId] = edit::placeEntity(editor.doc(), "npc_citizen", {200, 200, 0}, editor.entities()->find("npc_citizen"));
+	editor.commit(std::move(npcMade));
+	(void)npcId;
+
+	const auto clickFix = [&](const QString& label) {
+		window.raiseDock("Problems");
+		window.problems()->runChecks();
+		settle();
+		QPushButton* fix = nullptr;
+		for (auto* button : window.problems()->findChildren<QPushButton*>()) {
+			if (button->text() == label) fix = button;
+		}
+		REQUIRE_MESSAGE(fix, label.toStdString());
+		QTest::mouseClick(fix, Qt::LeftButton);
+		settle();
+	};
+	clickFix("Move onto the floor");
+	CHECK(editor.doc().findEntity(startId)->origin().z == doctest::Approx(1));
+	const auto nodesBefore = std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "info_node"; });
+	CHECK(nodesBefore == 0);
+	clickFix("Place nodes around the NPCs");
+	const auto nodes = std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "info_node"; });
+	CHECK(nodes >= 4);
+	editor.undo();   // one undo step for all of them
+	settle();
+	CHECK(std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [](const Entity& e) { return e.classname() == "info_node"; }) == 0);
+
+	const auto menuAction = [&](const char* name) -> QAction* {
+		for (auto* action : window.findChildren<QAction*>()) {
+			if (action->objectName() == name) return action;
+		}
+		return nullptr;
+	};
+	// A rope between two entities: a move_rope chain, selected afterwards.
+	auto [aMade, aId] = edit::placeEntity(editor.doc(), "info_target", {-200, 0, 200}, nullptr);
+	editor.commit(std::move(aMade));
+	auto [bMade, bId] = edit::placeEntity(editor.doc(), "info_target", {200, 0, 200}, nullptr);
+	editor.commit(std::move(bMade));
+	Selection pair;
+	pair.entities = {aId, bId};
+	editor.setSelection(pair);
+	auto* rope = menuAction("brushesMakeRope");
+	REQUIRE(rope);
+	rope->trigger();
+	settle();
+	REQUIRE(editor.selection().entities.size() == 2);
+	const auto* moveRope = editor.doc().findEntity(editor.selection().entities[0]);
+	CHECK(moveRope->classname() == "move_rope");
+	CHECK(moveRope->get("NextKey") == editor.doc().findEntity(editor.selection().entities[1])->get("targetname"));
+	CHECK(ropeCurves(editor.doc()).size() == 1);
+	window.view3D()->requestFrame();
+	settle();
+
+	// A ladder against the wall: the brush selected, then Make ladder.
+	Solid ladderBrush = makeBlock(editor.doc(), box({0, -16, 0}, {8, 16, 128}), "DEMO/CONCRETE");
+	{
+		Transaction t(editor.doc(), "Ladder brush");
+		t.touchSolid({0, ladderBrush.id});
+		editor.doc().world.solids.push_back(ladderBrush);
+		editor.commit(t.finish());
+	}
+	Selection ladderSel;
+	ladderSel.solids.push_back({0, ladderBrush.id});
+	editor.setSelection(ladderSel);
+	auto* ladder = menuAction("brushesMakeLadder");
+	REQUIRE(ladder);
+	ladder->trigger();
+	settle();
+	REQUIRE(editor.selection().entities.size() == 3);
+	const auto* useable = editor.doc().findEntity(editor.selection().entities[0]);
+	CHECK(useable->classname() == "func_useableladder");
+	CHECK(useable->get("point1") == "26 0 128");
+	// Nothing selected: a message instead of a ladder.
+	editor.clearSelection();
+	const auto count = editor.doc().entities.size();
+	ladder->trigger();
+	CHECK(editor.doc().entities.size() == count);
+}
+
 namespace {
 
 /// Watches for windows that pop up by accident: a widget shown before it is put into a layout is
@@ -5970,3 +6201,24 @@ int main(int argc, char** argv) {
 }
 
 #include "test_app.moc"
+
+TEST_CASE("samples: \"Use a sample\" points to the shipped sample files") {
+	// The build writes the samples to build/samples; the test program in build/tests finds them
+	// like Mapsmith.exe finds the samples folder next to it.
+	const QString root = samplesFolder();
+	REQUIRE_FALSE(root.isEmpty());
+	CHECK(QFileInfo(QDir(root).filePath("README.txt")).isFile());
+	const std::pair<ImportDialog::Kind, const char*> expected[] = {
+		{ImportDialog::Kind::Sound, "hum_loop.wav"},
+		{ImportDialog::Kind::Material, "terracotta_tiles.png"},
+		{ImportDialog::Kind::Model, "crate/crate.obj"},
+		{ImportDialog::Kind::Particles, "mapsmith_samples.pcf"},
+	};
+	for (const auto& [kind, file] : expected) {
+		const QString folder = ImportDialog::sampleFolder(kind);
+		CAPTURE(folder.toStdString());
+		CHECK(QFileInfo(folder).isDir());
+		CHECK(QFileInfo(QDir(folder).filePath(file)).isFile());
+	}
+	CHECK(QFileInfo(QDir(samplesFolder(SAMPLE_ANIMATIONS)).filePath("hl2_human_wave.smd")).isFile());
+}

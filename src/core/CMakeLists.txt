@@ -10,6 +10,8 @@ add_library(smecore STATIC
 	src/audio.cpp
 	src/brush.cpp
 	src/checks.cpp
+	src/layout_checks.cpp
+	src/map_helpers.cpp
 	src/compile_log.cpp
 	src/compile_options.cpp
 	src/csg.cpp
@@ -27,6 +29,7 @@ add_library(smecore STATIC
 	src/material_replace.cpp
 	src/soundscape.cpp
 	src/sound_categories.cpp
+	src/samples.cpp
 	src/sound_edit.cpp
 	src/shipping.cpp
 	src/visgroups.cpp

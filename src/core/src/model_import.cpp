@@ -205,11 +205,47 @@ std::optional<ImportMesh> readObj(std::string_view obj, std::string_view mtl, st
 std::optional<ImportMesh> readSmd(std::string_view smd, std::string* error) {
 	ImportMesh mesh;
 	const auto all = lines(smd);
-	bool inTriangles = false;
+	enum class Section { None, Nodes, Skeleton, Triangles } section = Section::None;
+	bool firstFrame = false;
 	for (std::size_t i = 0; i < all.size(); ++i) {
 		const auto line = trim(all[i]);
-		if (!inTriangles) {
-			inTriangles = line == "triangles";
+		if (section != Section::Triangles) {
+			if (line.empty() || line.starts_with("//")) continue;
+			const auto w = words(line);
+			if (section == Section::None) {
+				if (line == "nodes") section = Section::Nodes;
+				else if (line == "skeleton") section = Section::Skeleton;
+				else if (line == "triangles") section = Section::Triangles;
+				continue;
+			}
+			if (line == "end") {
+				section = Section::None;
+				continue;
+			}
+			if (section == Section::Nodes) {
+				// <id> "<name>" <parent>; ids in order, parents before their children.
+				const auto open = line.find('"'), close = line.rfind('"');
+				bool okId = false, okParent = false;
+				const double id = w.empty() ? -1 : toNumber(w[0], &okId);
+				const double parent = w.empty() ? -2 : toNumber(w.back(), &okParent);
+				if (!okId || !okParent || open == std::string_view::npos || close <= open || int(id) != int(mesh.bones.size()) || parent < -1 ||
+				    parent >= id || mesh.bones.size() >= 256) {
+					if (error) *error = "the .smd's bone list (nodes) is broken";
+					return std::nullopt;
+				}
+				mesh.bones.push_back({std::string(line.substr(open + 1, close - open - 1)), int(parent), {}, {}});
+			} else if (section == Section::Skeleton) {
+				if (w.size() >= 2 && w[0] == "time") {
+					firstFrame = toNumber(w[1]) == 0 && !firstFrame;
+					continue;
+				}
+				bool ok = true;
+				const double id = w.size() >= 7 ? toNumber(w[0], &ok) : -1;
+				if (!firstFrame || !ok || id < 0 || id >= double(mesh.bones.size())) continue;
+				auto& bone = mesh.bones[std::size_t(id)];
+				bone.position = {toNumber(w[1]), toNumber(w[2]), toNumber(w[3])};
+				bone.rotation = {toNumber(w[4]), toNumber(w[5]), toNumber(w[6])};
+			}
 			continue;
 		}
 		if (line == "end") break;
@@ -233,6 +269,17 @@ std::optional<ImportMesh> readSmd(std::string_view smd, std::string* error) {
 			v.u = toNumber(w[7]);
 			v.v = toNumber(w[8]);
 			ok = ok && good;
+			// Parent bone, then (optional) "<count> <bone> <weight> ...".
+			const int boneCount = int(mesh.bones.size());
+			const auto boneIndex = [boneCount](double b) { return b >= 0 && b < boneCount ? int(b) : 0; };
+			v.bone = boneIndex(toNumber(w[0]));
+			if (w.size() >= 10) {
+				const int count = std::clamp(int(toNumber(w[9])), 0, 8);
+				for (int k = 0; k < count && std::size_t(11 + 2 * k) < w.size() + 1 && std::size_t(10 + 2 * k + 1) < w.size(); ++k) {
+					const double weight = toNumber(w[std::size_t(11 + 2 * k)]);
+					if (weight > 0) v.links.emplace_back(boneIndex(toNumber(w[std::size_t(10 + 2 * k)])), weight);
+				}
+			}
 		}
 		i += 3;
 		if (!ok) continue;
@@ -243,13 +290,25 @@ std::optional<ImportMesh> readSmd(std::string_view smd, std::string* error) {
 		if (error) *error = "the .smd has no triangles";
 		return std::nullopt;
 	}
+	if (mesh.bones.size() <= 1) {
+		// One bone: a plain mesh (the import writes its own "root" bone).
+		mesh.bones.clear();
+		for (auto& t : mesh.triangles) {
+			for (auto& c : t.corners) {
+				c.bone = 0;
+				c.links.clear();
+			}
+		}
+	}
 	return mesh;
 }
 
 ImportMesh placedMesh(const ImportMesh& mesh, const ModelImportOptions& options) {
 	ImportMesh out = mesh;
 	const double scale = options.scale > 0 && std::isfinite(options.scale) ? options.scale : 1.0;
-	const auto turn = [&options](const Vec3& p) { return options.yUp ? Vec3{p.x, -p.z, p.y} : p; };
+	const bool rigged = !mesh.bones.empty();   // an .smd's skeleton: already Source's orientation
+	const auto turn = [&options, rigged](const Vec3& p) { return options.yUp && !rigged ? Vec3{p.x, -p.z, p.y} : p; };
+	for (auto& bone : out.bones) bone.position = bone.position * scale;
 	for (auto& t : out.triangles) {
 		for (auto& c : t.corners) {
 			c.position = turn(c.position) * scale;
@@ -263,6 +322,9 @@ ImportMesh placedMesh(const ImportMesh& mesh, const ModelImportOptions& options)
 			for (auto& t : out.triangles) {
 				for (auto& c : t.corners) c.position += shift;
 			}
+			for (auto& bone : out.bones) {
+				if (bone.parent < 0) bone.position += shift;   // children follow their parents
+			}
 		}
 	}
 	return out;
@@ -271,10 +333,19 @@ ImportMesh placedMesh(const ImportMesh& mesh, const ModelImportOptions& options)
 ImportMesh collisionMesh(const ImportMesh& placed, ModelImportOptions::Collision collision) {
 	ImportMesh out;
 	const std::string material = "phys";
+	const auto triangle = [&material](const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& n) {
+		ImportMesh::Triangle t;
+		t.material = material;
+		t.corners[0].position = a;
+		t.corners[1].position = b;
+		t.corners[2].position = c;
+		for (auto& corner : t.corners) corner.normal = n;
+		return t;
+	};
 	const auto addQuad = [&](const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d) {
 		const Vec3 n = faceNormal(a, b, c);
-		out.triangles.push_back({{{{a, n}, {b, n}, {c, n}}}, material});
-		out.triangles.push_back({{{{a, n}, {c, n}, {d, n}}}, material});
+		out.triangles.push_back(triangle(a, b, c, n));
+		out.triangles.push_back(triangle(a, c, d, n));
 	};
 	if (collision == ModelImportOptions::Collision::Parts) {
 		out = placed;
@@ -290,7 +361,7 @@ ImportMesh collisionMesh(const ImportMesh& placed, ModelImportOptions::Collision
 			if (geometry.valid) {
 				for (const auto& face : geometry.faces) {
 					for (std::size_t i = 1; i + 1 < face.vertices.size(); ++i) {
-						out.triangles.push_back({{{{face.vertices[0], face.normal}, {face.vertices[i], face.normal}, {face.vertices[i + 1], face.normal}}}, material});
+						out.triangles.push_back(triangle(face.vertices[0], face.vertices[i], face.vertices[i + 1], face.normal));
 					}
 				}
 			}
@@ -314,6 +385,9 @@ ImportMesh collisionMesh(const ImportMesh& placed, ModelImportOptions::Collision
 		addQuad(p[3], p[0], p[4], p[7]);
 	}
 	out.materials = {material};
+	// A rigged model keeps its skeleton: studiomdl needs the collision on bones the model has
+	// (every collision vertex on the first bone; without collision joints it is one solid).
+	out.bones = placed.bones;
 	return out;
 }
 
@@ -343,13 +417,36 @@ std::vector<std::string> modelMaterialNames(const ImportMesh& mesh) {
 }
 
 std::string writeSmd(const ImportMesh& mesh) {
-	std::string out = "version 1\nnodes\n0 \"root\" -1\nend\nskeleton\ntime 0\n0 0 0 0 0 0 0\nend\ntriangles\n";
+	std::string out = "version 1\nnodes\n";
+	if (mesh.bones.empty()) {
+		out += "0 \"root\" -1\nend\nskeleton\ntime 0\n0 0 0 0 0 0 0\n";
+	} else {
+		for (std::size_t b = 0; b < mesh.bones.size(); ++b) {
+			std::string name = mesh.bones[b].name;
+			std::replace(name.begin(), name.end(), '"', '\'');
+			out += std::to_string(b) + " \"" + name + "\" " + std::to_string(mesh.bones[b].parent) + "\n";
+		}
+		out += "end\nskeleton\ntime 0\n";
+		for (std::size_t b = 0; b < mesh.bones.size(); ++b) {
+			const auto& bone = mesh.bones[b];
+			out += std::to_string(b) + " " + number(bone.position.x) + " " + number(bone.position.y) + " " + number(bone.position.z) + " " + number(bone.rotation.x) +
+			       " " + number(bone.rotation.y) + " " + number(bone.rotation.z) + "\n";
+		}
+	}
+	out += "end\ntriangles\n";
+	const int boneCount = std::max<int>(1, int(mesh.bones.size()));
 	for (const auto& t : mesh.triangles) {
 		std::string material = importName(t.material);
 		out += (material.empty() ? std::string("default") : material) + "\n";
 		for (const auto& c : t.corners) {
-			out += "0 " + number(c.position.x) + " " + number(c.position.y) + " " + number(c.position.z) + " " + number(c.normal.x) + " " + number(c.normal.y) +
-			       " " + number(c.normal.z) + " " + number(c.u) + " " + number(c.v) + "\n";
+			const int parent = c.bone >= 0 && c.bone < boneCount ? c.bone : 0;
+			out += std::to_string(parent) + " " + number(c.position.x) + " " + number(c.position.y) + " " + number(c.position.z) + " " + number(c.normal.x) + " " +
+			       number(c.normal.y) + " " + number(c.normal.z) + " " + number(c.u) + " " + number(c.v);
+			if (!c.links.empty() && !mesh.bones.empty()) {
+				out += " " + std::to_string(c.links.size());
+				for (const auto& [bone, weight] : c.links) out += " " + std::to_string(bone >= 0 && bone < boneCount ? bone : 0) + " " + number(weight);
+			}
+			out += "\n";
 		}
 	}
 	out += "end\n";

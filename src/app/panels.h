@@ -72,6 +72,9 @@ signals:
 	void frameRequested();
 	/// "Make report" was pressed (something looked wrong in the game).
 	void reportRequested();
+	/// A problem's button asks for an app action instead of a map edit (Problem::action,
+	/// "buildCubemaps").
+	void actionRequested(const QString& action);
 
 private:
 	void showProblems();

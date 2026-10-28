@@ -57,6 +57,7 @@ file into the mod as a WAV the game plays (16 bit; Source cannot play OGG or FLA
 - **Sound script entry**: a name like `Custom.Hum` with volume, pitch and how far it is heard; it goes into
   `scripts/game_sounds_mapsmith.txt`, which is added to the mod's sound list (the game's own list is copied first, so
   no sound of the game goes missing).
+- **Use a sample ...** opens Mapsmith's sample sounds (a loop, an Ogg, an MP3, a FLAC - see *Getting started*).
 - **▶ Listen** plays it as it will be imported. **Goes to** shows where; if something with that name exists,
   **Replace** must be ticked. After importing, **Undo import** takes it back.
 
@@ -165,7 +166,8 @@ exact: parts it does not know are listed but have no effect, and sprite-sheet an
 **Import ...** next to the search box brings a particle file (`.pcf`, made with the game's particle editor or taken
 from another mod) into `particles/` and lists it in `particles/particles_manifest.txt` (made from the game's list if
 the mod has none). **Load with every map** puts a `!` in front, which effects started by code need. The dialog lists
-the systems in the file; files without any are refused.
+the systems in the file; files without any are refused. **Use a sample ...** opens Mapsmith's sample particle file
+(`mapsmith_samples.pcf`: falling sparks and a slow smoke column).
 
 **Drag** a system into the map (from the page or the bottom panel's *Particles* tab) for an `info_particle_system`
 that plays it. In the map views, particle effects are not drawn; they only show in the game.

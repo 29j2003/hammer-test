@@ -41,7 +41,13 @@ struct SmdAnimation {
 	/// frames[f][node] = position and Euler rotation (radians, x y z as in the file); a node
 	/// missing in a frame keeps its value from the frame before.
 	std::vector<std::vector<std::pair<AnimVec, AnimVec>>> frames;
+	/// The file holds changes on top of the model's rest pose, not whole poses: its header has
+	/// the comment "// mapsmith: relative" (Mapsmith's samples; see completedAnimationSmd).
+	bool relative = false;
 };
+
+/// The header comment that marks an .smd as relative to the model's rest pose.
+inline constexpr std::string_view RELATIVE_SMD_MARKER = "mapsmith: relative";
 
 /// Reads the nodes and skeleton frames of an .smd (triangles are skipped). nullopt + error on
 /// broken files.
@@ -64,6 +70,15 @@ struct ImportedAnimation {
 	bool loop = false;
 	std::string activity;      ///< "ACT_IDLE" or empty
 };
+
+/// The animation as a complete .smd for the model: every bone of the model, in its order, in
+/// every frame. Bones the file does not move keep the model's rest pose (so a file may move only
+/// a few bones, e.g. the head); a relative file's values are added to the rest pose (position
+/// plus offset, rest rotation then the file's rotation). studiomdl gets this file, so it never
+/// has to guess missing bones.
+[[nodiscard]] std::string completedAnimationSmd(const SmdAnimation& smd, const std::vector<StudioBone>& bones);
+/// Whether completedAnimationSmd changes anything (a relative file, or model bones it lacks).
+[[nodiscard]] bool animationNeedsCompleting(const SmdAnimation& smd, const std::vector<StudioBone>& bones);
 
 /// Adds the .smd's frames to the model as a sequence for the preview (turned like studiomdl does).
 /// Returns its index.
