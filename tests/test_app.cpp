@@ -106,6 +106,7 @@
 #include "models_page.h"
 #include "map_look_panel.h"
 #include "material_preview.h"
+#include "material_cache.h"
 #include "material_editor.h"
 #include "panels.h"
 #include "particle_browser.h"
@@ -4837,6 +4838,117 @@ TEST_CASE("features: the mod's features as one checklist, offered once, fresh in
 		CHECK(features->isOn("ssao"));
 		CHECK(offer->isHidden());
 	}
+}
+
+TEST_CASE("relief: the bricks found in the texture, whole bricks as zones, changes live in the views") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	REQUIRE(editor.fidelityLook());   // the views show the relief
+	auto [made, wallRef] = edit::createBlock(editor.doc(), box({0, 0, 0}, {256, 16, 256}), "DEMO/BRICKWALL001");
+	editor.commit(std::move(made));
+	settle();
+	auto* cache = window.findChild<MaterialCache*>();
+	REQUIRE(cache);
+	const auto shown = [&]() -> std::shared_ptr<const MaterialInfo> {
+		std::shared_ptr<const MaterialInfo> info;
+		for (int i = 0; i < 300 && !(info = cache->get("demo/brickwall001")); ++i) QTest::qWait(20);
+		return info;
+	};
+	const auto waitFor = [&](const std::function<bool(const MaterialInfo&)>& condition) {
+		for (int i = 0; i < 300; ++i) {
+			if (const auto info = cache->get("demo/brickwall001"); info && condition(*info)) return true;
+			QTest::qWait(20);
+		}
+		return false;
+	};
+	REQUIRE(shown());
+	CHECK(shown()->shader.compare("LightmappedGeneric", Qt::CaseInsensitive) == 0);
+
+	// Relief on in the material editor: the bricks are found in the texture and stand up, whatever their colour.
+	auto* materials = window.materialEditor();
+	QSignalSpy previewed(materials, &MaterialEditor::previewUpdated);
+	QSignalSpy heightsReady(materials, &MaterialEditor::heightsReady);
+	materials->openMaterial("demo/brickwall001");
+	REQUIRE(previewed.wait(10000));
+	materials->findChild<QCheckBox*>("relief")->setChecked(true);
+	REQUIRE(heightsReady.wait(10000));
+	const ReliefLayout& layout = materials->reliefLayout();
+	REQUIRE(layout.found());
+	CHECK(layout.kind == ReliefLayout::Kind::RunningBond);
+	CHECK(layout.courses() == 8);
+	const auto heights = materials->currentHeights();
+	REQUIRE(heights);
+	CHECK(materials->findChild<QPushButton*>("heightFromPattern")->isVisibleTo(materials));
+
+	// The views show it at once, before Save: the editor's shader, its height map, its depth.
+	REQUIRE(waitFor([](const MaterialInfo& info) { return info.shader == "Fidelity_Parallax" && !info.height.isNull(); }));
+	CHECK(shown()->parallaxDepth == doctest::Approx(0.02f));
+	CHECK(shown()->height.width() == int(heights->width));
+	auto* depth = materials->findChild<QSlider*>("$parallaxdepth");
+	REQUIRE(depth);
+	depth->setValue(600);
+	REQUIRE(waitFor([](const MaterialInfo& info) { return std::abs(info.parallaxDepth - 0.06f) < 1e-4f; }));
+	CHECK_FALSE(editor.game()->files.readText("materials/demo/brickwall001.vmt")->find("Fidelity") != std::string::npos);   // nothing written yet
+
+	// Whole bricks as zones: a click sets the brick under it, a right click takes it back.
+	QImage texture(256, 256, QImage::Format_RGB32);
+	texture.fill(Qt::darkRed);
+	HeightZonePainter painter(texture, heights->width, heights->height, std::vector<std::uint8_t>(std::size_t(heights->width) * heights->height, 0));
+	painter.setLayout(&layout);
+	painter.setUnitMode(true);
+	CHECK(painter.unitMode());
+	painter.resize(264, 264);   // the picture: 256 x 256 with a 4 pixel border
+	painter.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&painter));
+	// The middle of a brick: away from every joint.
+	QPoint inBrick;
+	for (int y = 8; y < 248 && inBrick.isNull(); y += 4) {
+		for (int x = 8; x < 248 && inBrick.isNull(); x += 4) {
+			const int lx = x * int(layout.width) / 256, ly = y * int(layout.height) / 256;
+			bool inner = true;
+			for (int d = -6; d <= 6 && inner; d += 3) inner = layout.unitAt(lx + d, ly) >= 0 && layout.unitAt(lx, ly + d) >= 0;
+			if (inner) inBrick = QPoint(x + 4, y + 4);
+		}
+	}
+	REQUIRE_FALSE(inBrick.isNull());
+	const auto unit = layout.unitAt((inBrick.x() - 4) * int(layout.width) / 256, (inBrick.y() - 4) * int(layout.height) / 256);
+	QTest::mouseClick(&painter, Qt::LeftButton, {}, inBrick);
+	int marked = 0, others = 0;
+	for (unsigned y = 0; y < heights->height; ++y) {
+		for (unsigned x = 0; x < heights->width; ++x) {
+			if (painter.zones()[std::size_t(y) * heights->width + x] != std::uint8_t(HeightZone::Flat)) continue;
+			++marked;
+			others += layout.unitAt(int(x * layout.width / heights->width), int(y * layout.height / heights->height)) != unit ? 1 : 0;
+		}
+	}
+	CHECK(marked > int(heights->width * heights->height / 64));   // a whole brick, not a dot
+	CHECK(others == 0);
+	QTest::mouseClick(&painter, Qt::RightButton, {}, inBrick);
+	CHECK(std::count(painter.zones().begin(), painter.zones().end(), std::uint8_t(HeightZone::Flat)) == 0);
+	painter.hide();
+
+	// The zones go into the views too; leaving the material without saving shows the file again.
+	std::vector<std::uint8_t> zones(std::size_t(heights->width) * heights->height, std::uint8_t(HeightZone::Flat));
+	materials->setHeightZones(zones, heights->width, heights->height);
+	REQUIRE(waitFor([](const MaterialInfo& info) { return !info.height.isNull() && QColor(info.height.pixel(5, 5)).red() == 255; }));
+	materials->openMaterial("demo/concretewall001");
+	REQUIRE(waitFor([](const MaterialInfo& info) { return info.shader.compare("LightmappedGeneric", Qt::CaseInsensitive) == 0; }));
 }
 
 namespace {

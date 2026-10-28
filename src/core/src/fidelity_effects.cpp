@@ -8,6 +8,7 @@
 #include <sme/filesystem.h>
 #include <sme/keyvalues.h>
 #include <sme/material.h>
+#include <sme/relief_pattern.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -29,6 +30,13 @@ const std::regex BUSH_NAMES("(bush|shrub|hedge|fern|ivy|plant|flower|grass|weed|
 constexpr float TINTED_BRIGHTNESS = 0.15f;   // texture brightness (linear) below which glass counts as dark
 
 const char* const CRLF = "\r\n";
+
+// deploy.ps1's relief rules (Get-ParallaxSource): $NotParallax, $ReliefNames, $MinimalNames (wood
+// stays without relief unless -ParallaxWood) and Get-ParallaxBlocker.
+const std::regex NOT_PARALLAX("^materials/(models|skybox|tools|decals|overlays|effects|sprites|console|vgui|dev|editor|particle|water|glass|liquids|nature/water)(/|$)",
+                              ICASE);
+const std::regex RELIEF_NAMES("(brick|stone|cobble|rock|tile|block|cinder|paver|slate|plank|roof|shingle|wood|board)", ICASE);
+const std::regex WOOD_NAMES("(wood|plank|board)", ICASE);
 
 /// Remove-VmtComments: without byte order mark and // comments, line ends \n.
 std::string clean(std::string_view text) {
@@ -242,7 +250,7 @@ const std::vector<GameEffectInfo>& gameEffects() {
 		{GameEffect::Liquid, "liquid", "Liquid inside", "Bottles, jars and vials hold liquid that sloshes, bubbles and pours out when tipped over.", true},
 		{GameEffect::Wind, "wind", "Sway in the wind", "Leaves, bushes and plants move in the wind (only the leaves of trees).", true},
 		{GameEffect::Water, "water", "Sun glint and foam", "The water reflects the sun and gets foam where it meets the shore.", false},
-		{GameEffect::Relief, "relief", "Relief (real depth)", "Bricks, stones and planks stand out of the wall as you walk past.", false},
+		{GameEffect::Relief, "relief", "Relief (real depth)", "Bricks, stones and tiles stand out of the wall as you walk past - not windows, signs or metal sheets.", false},
 	};
 	return effects;
 }
@@ -295,6 +303,33 @@ bool effectApplies(GameEffect effect, std::string_view path, std::string_view vm
 	return false;
 }
 
+namespace {
+
+/// Get-ParallaxSource for a wall material (not the bullet hole decals): deploy.ps1 gives it relief
+/// from its single bump map, or - without one - from its base texture when its path tells of
+/// bricks, stones, tiles ...; never to see-through or otherwise blended walls, never to wood.
+bool reliefByDeploy(const std::string& path, std::string_view vmt) {
+	if (std::regex_search(path, NOT_PARALLAX)) return false;
+	static const std::regex wall("^(SDK_)?(LightmappedGeneric|WorldVertexTransition)$", ICASE);
+	if (!std::regex_match(shaderOf(vmt), wall)) return false;
+	const std::string c = clean(vmt);
+	static const std::regex blocker(R"re("?\$(alphatest|translucent|additive|decal|nodiffusebumplighting)"?\s+"?1)re", ICASE);
+	static const std::regex blending(R"re(("?\$seamless_scale"?\s)|("?\$maskedblending"?\s+"?1))re", ICASE);
+	static const std::regex detail(R"re("?\$detailblendmode"?\s+"?([2-9]|[1-9][0-9]))re", ICASE);
+	static const std::regex bump(R"re("?\$bumpmap"?\s+"?([^"\s]+)"?)re", ICASE);
+	static const std::regex base(R"re("?\$basetexture"?\s+"?([^"\s]+)"?)re", ICASE);
+	const auto count = [&c](const std::regex& re) { return std::distance(std::sregex_iterator(c.begin(), c.end(), re), std::sregex_iterator()); };
+	if (std::regex_search(c, blocker) || std::regex_search(c, blending) || std::regex_search(c, detail)) return false;
+	std::smatch m;
+	const std::string texture = std::regex_search(c, m, base) ? m[1].str() : std::string();
+	if (std::regex_search(texture.empty() ? path : texture, WOOD_NAMES)) return false;   // Test-Wood
+	const auto bumps = count(bump);
+	if (bumps > 0) return bumps == 1;
+	return std::regex_search(path, RELIEF_NAMES) && count(base) == 1;
+}
+
+} // namespace
+
 bool deployWouldApply(GameEffect effect, std::string_view path, std::string_view vmt) {
 	const std::string p = lowerPath(path);
 	switch (effect) {
@@ -306,7 +341,7 @@ bool deployWouldApply(GameEffect effect, std::string_view path, std::string_view
 		return std::regex_search(p, BUSH_NAMES) || leafMaterial(p, clean(vmt));
 	}
 	case GameEffect::Water: return waterMaterial(p, vmt, DEPLOY_MARKER).has_value();
-	case GameEffect::Relief: return false;   // deploy.ps1's relief rules need the textures (see material_cache)
+	case GameEffect::Relief: return reliefByDeploy(p, vmt);
 	}
 	return false;
 }
@@ -464,7 +499,7 @@ bool saveEnhancementSettings(const std::filesystem::path& modDir, const Enhancem
 // --- Making the materials --------------------------------------------------------------------
 
 const std::vector<GameEffect>& automaticEffects() {
-	static const std::vector<GameEffect> effects = {GameEffect::Liquid, GameEffect::Wind, GameEffect::Water};
+	static const std::vector<GameEffect> effects = {GameEffect::Liquid, GameEffect::Wind, GameEffect::Water, GameEffect::Relief};
 	return effects;
 }
 
@@ -485,13 +520,19 @@ std::vector<std::string> effectCandidates(const GameFileSystem& fs, const std::f
 			if (!path.starts_with("materials/models/") && !path.starts_with("materials/skybox/")) paths.push_back(std::move(path));
 		}
 		break;
-	case GameEffect::Relief: return out;
+	case GameEffect::Relief:
+		for (auto& path : fs.list("materials", ".vmt")) {
+			if (!std::regex_search(path, NOT_PARALLAX)) paths.push_back(std::move(path));
+		}
+		break;
 	}
 	static const std::regex waterShader(R"re(^\s*(?:\xEF\xBB\xBF)?\s*"?(?:SDK_)?Water"?\s*\{)re", ICASE);
+	static const std::regex wallShader(R"re(^\s*(?:\xEF\xBB\xBF)?\s*(//[^\n]*\n\s*)*"?(?:SDK_)?(LightmappedGeneric|WorldVertexTransition)"?\s*\{)re", ICASE);
 	for (const auto& path : paths) {
 		const auto original = fs.readOriginal(path, modDir);
 		if (!original) continue;   // only in the mod: its own material
 		if (effect == GameEffect::Water && !std::regex_search(*original, waterShader)) continue;   // quick check first
+		if (effect == GameEffect::Relief && !std::regex_search(*original, wallShader)) continue;
 		if (deployWouldApply(effect, path, *original)) out.push_back(normalizeMaterialName(path));
 	}
 	return out;
@@ -549,7 +590,29 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			const bool want = settings.enabled(effect) && !settings.isExcluded(effect, material) &&
 			                  !(skipped != excluded.end() && skipped->second.count(material));
 			std::string text;
-			if (want) {
+			if (effect == GameEffect::Relief) {
+				// deploy.bat makes the relief (it needs the height maps); Mapsmith only keeps it off where it
+				// is switched off or makes no sense (windows, signs, metal sheets ... - relief_pattern).
+				// By name, flags and the texture's look - as the viewport decides (relief_pattern).
+				const auto parsed = parseMaterial(*original, material);
+				const ReliefFit fit = parsed ? reliefFitInGame(fs, material, *parsed) : reliefFitByName(material, baseTexture(clean(*original)));
+				if (want && fit.suits) {
+					++plan.active[effect];
+					if (own && std::string_view(*own).starts_with(MAPSMITH_MARKER)) {
+						EffectChange change;   // the copy that kept it off goes: deploy.bat makes the relief again
+						change.effect = effect;
+						change.material = material;
+						change.file = file;
+						change.remove = true;
+						plan.changes.push_back(std::move(change));
+					}
+					continue;
+				}
+				text = std::string(MAPSMITH_MARKER) + " off (relief) from " + path +
+				       (fit.suits ? std::string(" (Mapsmith > Project > Game enhancements switches it on again)")
+				                  : " - no depth for a " + fit.reason + " (Mapsmith decides; the material editor can still give it relief)") +
+				       CRLF + *original;
+			} else if (want) {
 				ContainerKind kind = containerKind(path);
 				if (effect == GameEffect::Liquid && kind == ContainerKind::Drink) {
 					// Dark glass from the texture's average colour (deploy.ps1 reads the .vtf header too).

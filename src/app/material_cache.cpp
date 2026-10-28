@@ -14,6 +14,7 @@
 #include <sme/filesystem.h>
 #include <sme/heightmap.h>
 #include <sme/material.h>
+#include <sme/relief_pattern.h>
 #include <sme/text.h>
 #include <sme/visibility.h>
 #include <sme/texture.h>
@@ -48,7 +49,7 @@ QImage reliefHeights(const GameFileSystem& fs, const ReliefSource& source) {
 			case ReliefSource::Kind::HeightMap: map = heightFromImage(*image); break;
 			case ReliefSource::Kind::NormalMap: map = heightFromNormalMap(*image, false); break;
 			case ReliefSource::Kind::SSBump: map = heightFromNormalMap(*image, true); break;
-			case ReliefSource::Kind::Color: map = heightFromColor(*image); break;
+			case ReliefSource::Kind::Color: map = heightFromTexture(*image); break;   // its layout (bricks, tiles), else the brightness
 		}
 		if (map) result = toQImage(heightImage(*map));
 	}
@@ -114,13 +115,15 @@ void readEnvmap(const GameFileSystem& fs, const Material& material, MaterialInfo
 	}
 }
 
-std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& name, unsigned maxSize, bool relief) {
+/// `live`: the material editor's text instead of the file, with its height map (see MaterialCache::setLive).
+std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& name, unsigned maxSize, bool relief, const QString* liveVmt = nullptr,
+                                       const QImage& liveHeights = {}) {
 	auto info = std::make_shared<MaterialInfo>();
 	info->name = name;
 	// Sky by name too: the sky shows even where the game's toolsskybox material is missing.
 	info->isSky = isSkyMaterialName(name.toStdString());
 	std::string error;
-	const auto material = loadMaterial(fs, name.toStdString(), &error);
+	const auto material = liveVmt ? parseMaterial(liveVmt->toStdString(), name.toStdString(), &error) : loadMaterial(fs, name.toStdString(), &error);
 	if (!material) {
 		info->error = QString::fromStdString(error);
 		return info;
@@ -159,8 +162,20 @@ std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& 
 	if (maxSize > 128) {
 		readEnvmap(fs, *material, *info);
 	}
-	if (relief) {
-		if (const auto source = fidelityReliefSource(name.toStdString(), *material)) {
+	if (relief && liveVmt) {
+		// The editor's own height map (not saved yet), at the depth it has now.
+		const std::string shader = toLower(material->shader);
+		if (!liveHeights.isNull() && (shader == "fidelity_parallax" || shader == "fidelity_worldvertextransition")) {
+			info->height = liveHeights;
+			const auto depth = QString::fromStdString(material->param("$parallaxdepth"));
+			info->parallaxDepth = depth.isEmpty() ? 0.02f : depth.toFloat();
+		}
+	} else if (relief) {
+		// Where Mapsmith keeps relief off (windows, signs, smooth surfaces - Game enhancements writes the
+		// same into the mod), the view shows none either; a material already on the shader shows its own.
+		auto source = fidelityReliefSource(name.toStdString(), *material);
+		if (source && source->kind != ReliefSource::Kind::HeightMap && !reliefFitInGame(fs, name.toStdString(), *material).suits) source.reset();
+		if (source) {
 			info->height = reliefHeights(fs, *source);
 			info->parallaxDepth = info->height.isNull() ? 0.f : float(source->depth);
 		}
@@ -197,6 +212,7 @@ void MaterialCache::setFileSystem(const GameFileSystem* fs) {
 		QMutexLocker lock(&g_heightsMutex);
 		g_heights.clear();
 	}
+	m_live.clear();   // the material editor's changes belong to the old game
 	clear();
 }
 
@@ -218,6 +234,17 @@ void MaterialCache::setRelief(bool on) {
 		m_loaded.remove(name);
 		(void)get(name);
 	}
+}
+
+void MaterialCache::setLive(const QString& rawName, const QString& vmt, const QImage& heights) {
+	const QString name = normalizedMaterialName(rawName);
+	m_live.insert(name, {vmt, heights});
+	reload(name);
+}
+
+void MaterialCache::clearLive(const QString& rawName) {
+	const QString name = normalizedMaterialName(rawName);
+	if (m_live.remove(name) > 0) reload(name);
 }
 
 void MaterialCache::reload(const QString& rawName) {
@@ -250,19 +277,24 @@ std::shared_ptr<const MaterialInfo> MaterialCache::get(const QString& rawName) {
 		const unsigned maxSize = m_size == Size::Thumbnail ? 128 : 1024;
 		const quint64 generation = m_generation;
 		const bool relief = m_relief && m_size == Size::Viewport;
+		const auto live = m_live.constFind(name);
+		const std::optional<Live> shown = live != m_live.constEnd() ? std::optional<Live>(*live) : std::nullopt;
 		// Decoded on a pool thread; the result is handed back to the GUI thread. The generation
 		// number drops results that were started before clear() (game changed).
-		m_pool.start([this, fs, name, maxSize, generation, relief] {
-			auto info = loadInfo(*fs, name, maxSize, relief);
-			QMetaObject::invokeMethod(this, [this, name, info, generation] { finished(name, info, generation); }, Qt::QueuedConnection);
+		// The ticket drops an older read of the same material that finishes after a newer one (live edits).
+		const quint64 ticket = ++m_ticket;
+		m_tickets.insert(name, ticket);
+		m_pool.start([this, fs, name, maxSize, generation, relief, shown, ticket] {
+			auto info = shown ? loadInfo(*fs, name, maxSize, relief, &shown->vmt, shown->heights) : loadInfo(*fs, name, maxSize, relief);
+			QMetaObject::invokeMethod(this, [this, name, info, generation, ticket] { finished(name, info, generation, ticket); }, Qt::QueuedConnection);
 		});
 	}
 	return nullptr;
 }
 
-void MaterialCache::finished(const QString& name, std::shared_ptr<MaterialInfo> info, quint64 generation) {
-	if (generation != m_generation) {
-		return; // game changed meanwhile
+void MaterialCache::finished(const QString& name, std::shared_ptr<MaterialInfo> info, quint64 generation, quint64 ticket) {
+	if (generation != m_generation || m_tickets.value(name) != ticket) {
+		return; // game changed meanwhile, or read again since
 	}
 	m_pending.remove(name);
 	m_loaded.insert(name, std::move(info));

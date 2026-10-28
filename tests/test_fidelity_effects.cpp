@@ -231,6 +231,91 @@ TEST_CASE("game enhancements: on by default, off for the mod or one model") {
 	CHECK(readAll(milkFile) == handmade);
 }
 
+TEST_CASE("game enhancements: relief stays off where it makes no sense, also in the game") {
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "relief/hl2";
+	const auto mod = f.root / "relief/mymod";
+	const auto wall = [&](const char* name, const char* params) {
+		test::writeText(game / "materials" / (std::string(name) + ".vmt"), std::string("\"LightmappedGeneric\"\n{\n") + params + "}\n");
+	};
+	wall("brick/brickwall001a", "\t\"$basetexture\" \"brick/brickwall001a\"\n");                                // relief from the texture
+	wall("concrete/concretewall011a", "\t\"$basetexture\" \"concrete/concretewall011a\"\n\t\"$bumpmap\" \"concrete/n\"\n");   // from its bump map
+	wall("building_template/buildingset040a_window", "\t\"$basetexture\" \"building_template/b40\"\n\t\"$bumpmap\" \"building_template/n\"\n");
+	wall("metal/metalwall021a", "\t\"$basetexture\" \"metal/metalwall021a\"\n\t\"$bumpmap\" \"metal/n\"\n");
+	wall("wood/woodwall009a", "\t\"$basetexture\" \"wood/woodwall009a\"\n\t\"$bumpmap\" \"wood/n\"\n");                // wood: deploy.bat leaves it
+	wall("brick/brickfence", "\t\"$basetexture\" \"brick/brickfence\"\n\t\"$alphatest\" 1\n");                  // see-through: never
+	wall("concrete/concretefloor001a", "\t\"$basetexture\" \"concrete/concretefloor001a\"\n");                  // no bump map, no name for it
+	std::filesystem::create_directories(mod / "materials");
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+
+	// deploy.ps1's choices (Get-ParallaxSource), from the material text alone.
+	const auto deploy = [&](const char* name) { return deployWouldApply(GameEffect::Relief, std::string("materials/") + name + ".vmt", *fs.readText(std::string("materials/") + name + ".vmt")); };
+	CHECK(deploy("brick/brickwall001a"));
+	CHECK(deploy("concrete/concretewall011a"));
+	CHECK(deploy("building_template/buildingset040a_window"));
+	CHECK(deploy("metal/metalwall021a"));
+	CHECK_FALSE(deploy("wood/woodwall009a"));
+	CHECK_FALSE(deploy("brick/brickfence"));
+	CHECK_FALSE(deploy("concrete/concretefloor001a"));
+	const auto candidates = effectCandidates(fs, mod, GameEffect::Relief);
+	CHECK(candidates == std::vector<std::string>{"brick/brickwall001a", "building_template/buildingset040a_window", "concrete/concretewall011a",
+	                                             "metal/metalwall021a"});
+
+	const auto apply = [&](const EnhancementPlan& plan) {
+		for (const auto& change : plan.changes) {
+			if (change.remove) {
+				std::filesystem::remove(change.file);
+				fs.noteRemovedFile(change.file);
+			} else {
+				std::filesystem::create_directories(change.file.parent_path());
+				test::writeText(change.file, change.text);
+				fs.noteWrittenFile(change.file);
+			}
+		}
+	};
+	// On: the window and the metal sheet get copies that keep them off (deploy.bat leaves the mod's
+	// own materials alone); the bricks and the concrete are left to deploy.bat.
+	EnhancementSettings settings;
+	EffectCandidates only{{GameEffect::Relief, candidates}};
+	auto plan = planEnhancements(fs, mod, settings, {}, &only);
+	CHECK(plan.active[GameEffect::Relief] == 2);
+	REQUIRE(plan.changes.size() == 2);
+	apply(plan);
+	const auto window = readAll(mod / "materials/building_template/buildingset040a_window.vmt");
+	CHECK(window.starts_with(std::string(MAPSMITH_MARKER) + " off (relief) from materials/building_template/buildingset040a_window.vmt - no depth for a window"));
+	CHECK(isGeneratedMaterial(window));
+	CHECK_FALSE(effectIsOn(GameEffect::Relief, window));
+	CHECK(readAll(mod / "materials/metal/metalwall021a.vmt").find("metal sheet") != std::string::npos);
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a.vmt"));
+	CHECK(planEnhancements(fs, mod, settings, {}, &only).changes.empty());
+
+	// Switched off for the mod: every wall keeps the game's look; on again: the copies go, deploy.bat makes the relief.
+	settings.off.insert(GameEffect::Relief);
+	plan = planEnhancements(fs, mod, settings, {}, &only);
+	CHECK(plan.changes.size() == 2);
+	apply(plan);
+	CHECK(readAll(mod / "materials/brick/brickwall001a.vmt").starts_with(std::string(MAPSMITH_MARKER) + " off (relief) from materials/brick/brickwall001a.vmt (Mapsmith"));
+	settings.off.erase(GameEffect::Relief);
+	plan = planEnhancements(fs, mod, settings, {}, &only);
+	REQUIRE(plan.changes.size() == 2);
+	for (const auto& change : plan.changes) CHECK(change.remove);
+	apply(plan);
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a.vmt"));
+	CHECK(std::filesystem::exists(mod / "materials/building_template/buildingset040a_window.vmt"));   // still no sense
+
+	// deploy.bat's own relief material of a window is replaced by the copy; the mapper's own is kept.
+	test::writeText(mod / "materials/metal/metalwall021a.vmt", DEPLOY + " (parallax) from materials/metal/metalwall021a.vmt\r\n\"Fidelity_Parallax\"\n{\n}\n");
+	const std::string mine = "\"Fidelity_Parallax\"\n{\n\t\"$basetexture\" \"brick/brickwall001a\"\n}\n";
+	test::writeText(mod / "materials/building_template/buildingset040a_window.vmt", mine);
+	plan = planEnhancements(fs, mod, settings, {}, &only);
+	REQUIRE(plan.changes.size() == 1);
+	CHECK(plan.changes[0].material == "metal/metalwall021a");
+	CHECK(plan.keptOwn == std::vector<std::string>{"building_template/buildingset040a_window"});
+}
+
 TEST_CASE("game enhancements: the settings file") {
 	EnhancementSettings settings;
 	CHECK(writeEnhancementSettings(settings).find("\"enabled\" \"1\"") != std::string::npos);

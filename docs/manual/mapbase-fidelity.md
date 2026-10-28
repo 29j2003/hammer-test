@@ -134,7 +134,11 @@ switches then say so (*a material is shared with a model that is left out*).
   The status line under the switches says how many were kept (*kept (your own material)*); hover over it for the list.
 - The choices are stored in the mod, in `cfg/mapsmith_enhancements.txt`, so they travel with it (and with Git).
 
-Relief (walls with real depth) is not part of this: switch it per material in the Material Editor. The bottle models
+**Relief** (walls with real depth) is made by `deploy.bat` (it needs height maps). Here Mapsmith only keeps it **off**
+where depth makes no sense - windows and glass, signs, grates and fences, doors, metal sheets, plaster, cloth, lights,
+and textures that look like a big flat pane or a smooth surface - with the same kind of copy as above (its first line
+says why). Switching *Relief* off here keeps it off on every wall. To give one material relief Mapsmith would leave
+out, or a better height map, turn it on in the Material Editor and save. The bottle models
 `deploy.bat` copies for dark glass are also left to `deploy.bat`.
 
 ## Tips

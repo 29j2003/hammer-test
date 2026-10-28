@@ -3,6 +3,7 @@
 #include <sme/heightmap.h>
 
 #include <sme/material.h>
+#include <sme/relief_pattern.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -335,6 +336,8 @@ std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, 
 	// Wood keeps its own look (deploy.bat without -ParallaxWood).
 	const std::string base = material.param("$basetexture");
 	if (containsAnyI(base.empty() ? path : base, {"wood", "plank", "board"})) return std::nullopt;
+	// Windows, signs, grates, metal sheets, plaster ...: depth there makes no sense (relief_pattern).
+	if (!reliefFitByName(materialName, base).suits) return std::nullopt;
 	if (const auto bump = material.param("$bumpmap"); !bump.empty()) {
 		ReliefSource source;
 		source.kind = material.flag("$ssbump") ? ReliefSource::Kind::SSBump : ReliefSource::Kind::NormalMap;

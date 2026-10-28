@@ -30,6 +30,7 @@
 
 #include <sme/heightmap.h>
 #include <sme/material.h>
+#include <sme/relief_pattern.h>
 
 class QCheckBox;
 class QComboBox;
@@ -40,6 +41,7 @@ class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QSlider;
+class QTimer;
 class QTableWidget;
 class QVBoxLayout;
 
@@ -58,6 +60,11 @@ public:
 	/// Zone painted with the left mouse button, and the brush size in texels.
 	void setZone(HeightZone zone) { m_zone = zone; }
 	void setBrush(int texels) { m_brush = texels; }
+	/// The bricks (tiles, boards) of the texture: their joints are drawn over it, and in unit mode
+	/// a click or a drag sets whole bricks instead of a round brush. Null: none found.
+	void setLayout(const ReliefLayout* layout);
+	void setUnitMode(bool on) { m_unitMode = on && m_layout; }
+	[[nodiscard]] bool unitMode() const { return m_unitMode; }
 	/// Removes all zones; zones() holds one HeightZone per texel.
 	void clear();
 	[[nodiscard]] const std::vector<std::uint8_t>& zones() const { return m_zones; }
@@ -77,6 +84,9 @@ private:
 	std::vector<std::uint8_t> m_zones;
 	HeightZone m_zone = HeightZone::Flat;
 	int m_brush = 12;
+	const ReliefLayout* m_layout = nullptr;
+	QImage m_joints;                      ///< The layout's joints, drawn over the texture
+	bool m_unitMode = false;
 };
 
 /// The Materials page: edits one VMT with a live preview (see the file comment).
@@ -99,10 +109,15 @@ public:
 	bool save(const QString& asName = {});
 	/// The mod has mapbase-fidelity's shaders (relief, water, liquid switches work).
 	[[nodiscard]] bool fidelityShaders() const;
-	/// Relief on/off (Fidelity_Parallax). On without a height map makes one (normal map, else texture).
+	/// Relief on/off (Fidelity_Parallax). On without a height map makes one (HeightFrom::Auto).
 	void setRelief(bool on);
-	/// Makes the height map again: from the normal map (`fromNormalMap`) or the texture's brightness.
-	void makeHeightMap(bool fromNormalMap);
+	/// Where a height map comes from: Auto takes the texture's pattern (bricks, tiles, boards - see
+	/// relief_pattern.h) when it has a clear one, else the normal map, else the brightness.
+	enum class HeightFrom { Auto, Pattern, NormalMap, Brightness };
+	/// Makes the height map again (in the background; heightsReady() when done).
+	void makeHeightMap(HeightFrom from);
+	/// The layout found in the base texture (for the whole-brick zone tool), if any.
+	[[nodiscard]] const ReliefLayout& reliefLayout() const { return m_layout; }
 	void setHeightInverted(bool inverted);
 	/// Zones painted onto the height map (HeightZone per texel of `width` x `height`).
 	void setHeightZones(std::vector<std::uint8_t> zones, unsigned width, unsigned height);
@@ -118,6 +133,11 @@ signals:
 	void previewUpdated();
 	/// A height map was made or read.
 	void heightsReady();
+	/// The open material changed (not saved yet): the views show it so (`vmt`: the material as it is
+	/// now, `heights`: its relief height map, null when none). Comes a moment after the change.
+	void liveChanged(const QString& name, const QString& vmt, const QImage& heights);
+	/// The views show the material as saved again (it was saved, or left without saving).
+	void liveReverted(const QString& name);
 
 private:
 	enum class Kind { Wall, Blend, Model, Water, Unlit, Other };
@@ -141,6 +161,10 @@ private:
 	void loadHeightSource();
 	void fillOtherTable();
 	void paintZones();
+	/// The views follow the changes a moment later (liveChanged); emitLive sends them.
+	void scheduleLive();
+	void emitLive();
+	void revertLive();
 	void rememberRecent(const QString& name);
 
 	Editor* m_editor;
@@ -163,6 +187,9 @@ private:
 	unsigned m_zonesWidth = 0, m_zonesHeight = 0;
 	bool m_heightDirty = false;           ///< Save writes a new height map
 	int m_heightGeneration = 0;
+	ReliefLayout m_layout;                ///< Bricks, tiles, boards found in the base texture
+	QTimer* m_liveTimer = nullptr;
+	QString m_liveName;                   ///< The material the views show unsaved (empty: none)
 
 	QWidget* m_browserHolder;           ///< Takes the Asset Browser while the page is shown
 	QListWidget* m_recent;
@@ -200,6 +227,7 @@ private:
 	QCheckBox* m_relief;
 	QLabel* m_heightLabel;
 	QCheckBox* m_invert;
+	QPushButton* m_fromPattern;
 	QPushButton* m_fromNormals;
 	QPushButton* m_fromTexture;
 	QPushButton* m_zonesButton;

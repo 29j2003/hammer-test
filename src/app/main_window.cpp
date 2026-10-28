@@ -588,6 +588,11 @@ void MainWindow::createDocks() {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
 	});
+	// Changes in the material editor show in the views at once, before they are saved.
+	connect(m_materialEditor, &MaterialEditor::liveChanged, this, [this](const QString& name, const QString& vmt, const QImage& heights) {
+		m_materials->setLive(name, vmt, heights);
+	});
+	connect(m_materialEditor, &MaterialEditor::liveReverted, this, [this](const QString& name) { m_materials->clearLive(name); });
 	connect(m_materialEditor, &MaterialEditor::materialSaved, this, [this](const QString& name) {
 		m_materials->reload(name);
 		m_assets->materialChanged(name);

@@ -32,6 +32,7 @@
 #include <QSplitter>
 #include <QStringListModel>
 #include <QTableWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
@@ -120,6 +121,26 @@ QSize HeightZonePainter::sizeHint() const {
 	return {520, 520};
 }
 
+void HeightZonePainter::setLayout(const ReliefLayout* layout) {
+	m_layout = layout && layout->found() ? layout : nullptr;
+	m_unitMode = m_unitMode && m_layout;
+	m_joints = QImage();
+	if (m_layout) {
+		// The joints as thin light lines, the parts without a pattern dimmed a little.
+		m_joints = QImage(int(m_layout->width), int(m_layout->height), QImage::Format_ARGB32_Premultiplied);
+		for (unsigned y = 0; y < m_layout->height; ++y) {
+			auto* line = reinterpret_cast<QRgb*>(m_joints.scanLine(int(y)));
+			for (unsigned x = 0; x < m_layout->width; ++x) {
+				const auto unit = m_layout->unitAt(int(x), int(y));
+				line[x] = unit == ReliefLayout::JOINT ? qPremultiply(qRgba(255, 255, 255, 90))
+				          : unit == ReliefLayout::OUTSIDE ? qPremultiply(qRgba(0, 0, 0, 70))
+				                                          : qRgba(0, 0, 0, 0);
+			}
+		}
+	}
+	update();
+}
+
 void HeightZonePainter::clear() {
 	std::fill(m_zones.begin(), m_zones.end(), 0);
 	update();
@@ -137,6 +158,7 @@ void HeightZonePainter::paintEvent(QPaintEvent*) {
 	p.fillRect(rect(), QColor(24, 26, 31));
 	const QRectF area = imageRect();
 	p.drawImage(area, m_texture);
+	if (!m_joints.isNull()) p.drawImage(area, m_joints);
 	// Zones as colour over the texture: blue = no relief, orange = inverted.
 	QImage overlay(int(m_width), int(m_height), QImage::Format_ARGB32_Premultiplied);
 	overlay.fill(Qt::transparent);
@@ -157,6 +179,11 @@ void HeightZonePainter::paintAt(const QPointF& pos, HeightZone zone) {
 	const QRectF area = imageRect();
 	if (!area.contains(pos) || m_width == 0) return;
 	const double u = (pos.x() - area.left()) / area.width(), v = (pos.y() - area.top()) / area.height();
+	if (m_unitMode && m_layout) {
+		// The whole brick (tile, board) under the mouse.
+		if (setUnitZone(*m_layout, m_zones, m_width, m_height, int(u * m_layout->width), int(v * m_layout->height), zone)) update();
+		return;
+	}
 	const int cx = int(u * m_width), cy = int(v * m_height);
 	const int r = std::max(1, m_brush / 2);
 	for (int y = cy - r; y <= cy + r; ++y) {
@@ -382,6 +409,10 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 			save(name.trimmed());
 		}
 	});
+	m_liveTimer = new QTimer(this);
+	m_liveTimer->setSingleShot(true);
+	m_liveTimer->setInterval(120);
+	connect(m_liveTimer, &QTimer::timeout, this, &MaterialEditor::emitLive);
 	connect(&m_textureWatcher, &QFutureWatcherBase::finished, this, [this] {
 		if (m_textureWatcher.future().resultCount() == 0) return;
 		const auto images = m_textureWatcher.result();
@@ -702,11 +733,16 @@ void MaterialEditor::buildFields() {
 	hl->addWidget(m_heightLabel);
 	auto* makeRow = new QHBoxLayout;
 	makeRow->setSpacing(6);
+	m_fromPattern = new QPushButton(tr("From the pattern"));
+	m_fromPattern->setObjectName("heightFromPattern");
+	m_fromPattern->setToolTip(tr("Finds the bricks, tiles or boards in the texture: each one stands up, the joints go in - "
+	                             "whatever their colour. Textures without a regular pattern use the brightness."));
 	m_fromNormals = new QPushButton(tr("From the normal map"));
 	m_fromNormals->setObjectName("heightFromNormals");
-	m_fromTexture = new QPushButton(tr("From the texture"));
+	m_fromTexture = new QPushButton(tr("From the brightness"));
 	m_fromTexture->setObjectName("heightFromTexture");
-	m_fromTexture->setToolTip(tr("Bright parts high, dark joints low - for walls without a normal map"));
+	m_fromTexture->setToolTip(tr("Bright parts high, dark parts low - for stone, plaster and rock without a pattern"));
+	makeRow->addWidget(m_fromPattern);
 	makeRow->addWidget(m_fromNormals);
 	makeRow->addWidget(m_fromTexture);
 	hl->addLayout(makeRow);
@@ -717,14 +753,15 @@ void MaterialEditor::buildFields() {
 	m_invert->setToolTip(tr("What sticks out goes in and the other way round"));
 	m_zonesButton = new QPushButton(tr("Paint zones ..."));
 	m_zonesButton->setObjectName("paintZones");
-	m_zonesButton->setToolTip(tr("Paint where the surface stays flat or is turned upside down"));
+	m_zonesButton->setToolTip(tr("Paint where the surface stays flat or is turned upside down - a whole brick at a click"));
 	adjustRow->addWidget(m_invert);
 	adjustRow->addStretch(1);
 	adjustRow->addWidget(m_zonesButton);
 	hl->addLayout(adjustRow);
 	relief->addRow(tr("Height map"), heightRow);
-	connect(m_fromNormals, &QPushButton::clicked, this, [this] { makeHeightMap(true); });
-	connect(m_fromTexture, &QPushButton::clicked, this, [this] { makeHeightMap(false); });
+	connect(m_fromPattern, &QPushButton::clicked, this, [this] { makeHeightMap(HeightFrom::Pattern); });
+	connect(m_fromNormals, &QPushButton::clicked, this, [this] { makeHeightMap(HeightFrom::NormalMap); });
+	connect(m_fromTexture, &QPushButton::clicked, this, [this] { makeHeightMap(HeightFrom::Brightness); });
 	connect(m_invert, &QCheckBox::toggled, this, [this](bool on) {
 		if (!m_loading) setHeightInverted(on);
 	});
@@ -951,47 +988,82 @@ void MaterialEditor::setRelief(bool on) {
 	setShader(k == Kind::Blend ? "Fidelity_WorldVertexTransition" : "Fidelity_Parallax");
 	if (value("$parallaxdepth").isEmpty()) setValue("$parallaxdepth", "0.02");
 	if (!m_heightSource) {
-		// A height map is needed: from the normal map when there is one, else from the texture.
-		makeHeightMap(!value("$bumpmap").isEmpty());
+		// A height map is needed: from the texture's pattern, else the normal map, else the brightness.
+		makeHeightMap(HeightFrom::Auto);
 	}
 	loadValuesIntoFields();
 }
 
-void MaterialEditor::makeHeightMap(bool fromNormalMap) {
+void MaterialEditor::makeHeightMap(HeightFrom from) {
 	auto* game = m_editor->game();
-	const QString source = fromNormalMap ? value("$bumpmap") : value("$basetexture");
-	if (!game || source.isEmpty()) {
-		m_status->setText(fromNormalMap ? tr("This material has no normal map - make the height map from the texture") : tr("This material has no texture"));
+	const QString base = value("$basetexture"), bump = value("$bumpmap");
+	if (from == HeightFrom::NormalMap && bump.isEmpty()) {
+		m_status->setText(tr("This material has no normal map - make the height map from the pattern or the brightness"));
+		return;
+	}
+	if (!game || (base.isEmpty() && bump.isEmpty())) {
+		m_status->setText(tr("This material has no texture"));
 		return;
 	}
 	const bool ssbump = value("$ssbump") == "1";
 	const GameFileSystem* fs = &game->files;
-	const std::string name = source.toStdString();
 	const int generation = ++m_heightGeneration;
 	m_heightLabel->setText(tr("Making the height map ..."));
-	auto* watcher = new QFutureWatcher<std::pair<std::optional<HeightMap>, QString>>(this);
-	connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, generation, fromNormalMap, source] {
+	// Made on a pool thread: the layout of the base texture (also for the whole-brick tool), then the
+	// heights from what was asked for.
+	struct Made {
+		std::optional<HeightMap> map;
+		ReliefLayout layout;
+		HeightFrom used = HeightFrom::Brightness;
+		QString error;
+	};
+	auto* watcher = new QFutureWatcher<Made>(this);
+	connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, generation, bump] {
 		watcher->deleteLater();
 		if (generation != m_heightGeneration) return;
-		const auto [map, error] = watcher->result();
-		if (!map) {
-			m_heightLabel->setText(tr("Could not make one: %1").arg(error));
+		Made made = watcher->result();
+		m_layout = std::move(made.layout);
+		if (!made.map) {
+			m_heightLabel->setText(tr("Could not make one: %1").arg(made.error));
 			return;
 		}
-		m_heightSource = map;
-		m_heightOrigin = fromNormalMap ? tr("made from the normal map %1").arg(source) : tr("made from the texture's brightness");
+		m_heightSource = std::move(made.map);
+		switch (made.used) {
+			case HeightFrom::Pattern: m_heightOrigin = tr("made from the pattern: %1").arg(QString::fromStdString(m_layout.describe())); break;
+			case HeightFrom::NormalMap: m_heightOrigin = tr("made from the normal map %1").arg(bump); break;
+			default:
+				m_heightOrigin = m_layout.found() ? tr("made from the texture's brightness")
+				                                  : tr("made from the texture's brightness (no regular pattern of bricks or tiles in it)");
+				break;
+		}
 		m_heightDirty = true;
 		m_save->setEnabled(!m_name.isEmpty());
 		m_status->setText(tr("Changed - Save writes it into the mod"));
 		refreshHeights();
 		emit heightsReady();
 	});
-	watcher->setFuture(QtConcurrent::run([fs, name, fromNormalMap, ssbump]() -> std::pair<std::optional<HeightMap>, QString> {
+	watcher->setFuture(QtConcurrent::run([fs, from, ssbump, base = base.toStdString(), bump = bump.toStdString()]() -> Made {
+		Made made;
 		std::string error;
-		const auto image = loadTexture(*fs, name, 512, &error);
-		if (!image) return {std::nullopt, QString::fromStdString(error)};
-		auto map = fromNormalMap ? heightFromNormalMap(*image, ssbump, &error) : heightFromColor(*image, &error);
-		return {std::move(map), QString::fromStdString(error)};
+		const auto baseImage = base.empty() ? std::nullopt : loadTexture(*fs, base, 512, &error);
+		if (baseImage) made.layout = detectReliefLayout(*baseImage);
+		// Auto: a clear pattern wins (the units up, whatever their colour), else the normal map, else the brightness.
+		HeightFrom use = from;
+		if (use == HeightFrom::Auto) {
+			use = made.layout.found() && made.layout.confidence >= 0.5 ? HeightFrom::Pattern : !bump.empty() ? HeightFrom::NormalMap : HeightFrom::Brightness;
+		}
+		if (use == HeightFrom::NormalMap) {
+			if (const auto image = loadTexture(*fs, bump, 512, &error)) made.map = heightFromNormalMap(*image, ssbump, &error);
+		} else if (baseImage) {
+			if (use == HeightFrom::Pattern && made.layout.found()) made.map = heightFromLayout(made.layout, *baseImage);
+			if (!made.map) {
+				use = HeightFrom::Brightness;
+				made.map = heightFromColor(*baseImage, &error);
+			}
+		}
+		made.used = use;
+		made.error = QString::fromStdString(error);
+		return made;
 	}));
 }
 
@@ -1042,6 +1114,7 @@ void MaterialEditor::loadHeightSource() {
 	m_zones.clear();
 	m_zonesWidth = m_zonesHeight = 0;
 	m_heightDirty = false;
+	m_layout = {};
 	auto* game = m_editor->game();
 	const QString name = value("$parallaxmap");
 	if (!game || name.isEmpty()) {
@@ -1051,19 +1124,24 @@ void MaterialEditor::loadHeightSource() {
 	const GameFileSystem* fs = &game->files;
 	const std::string path = name.toStdString();
 	const int generation = ++m_heightGeneration;
-	auto* watcher = new QFutureWatcher<std::optional<HeightMap>>(this);
+	// The base texture's layout comes along (the whole-brick zone tool).
+	using Loaded = std::pair<std::optional<HeightMap>, ReliefLayout>;
+	auto* watcher = new QFutureWatcher<Loaded>(this);
 	connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, generation, name] {
 		watcher->deleteLater();
 		if (generation != m_heightGeneration) return;
-		m_heightSource = watcher->result();
+		auto [heights, layout] = watcher->result();
+		m_heightSource = std::move(heights);
+		m_layout = std::move(layout);
 		m_heightOrigin = name.endsWith("_fidh") ? tr("%1 (made by deploy.bat)").arg(name) : name;
 		refreshHeights();
 		emit heightsReady();
 	});
-	watcher->setFuture(QtConcurrent::run([fs, path]() -> std::optional<HeightMap> {
-		const auto image = loadTexture(*fs, path, 512);
-		if (!image) return std::nullopt;
-		return heightFromImage(*image);
+	watcher->setFuture(QtConcurrent::run([fs, path, base = value("$basetexture").toStdString()]() -> Loaded {
+		Loaded loaded;
+		if (const auto image = loadTexture(*fs, path, 512)) loaded.first = heightFromImage(*image);
+		if (const auto image = base.empty() ? std::nullopt : loadTexture(*fs, base, 512)) loaded.second = detectReliefLayout(*image);
+		return loaded;
 	}));
 }
 
@@ -1080,10 +1158,16 @@ void MaterialEditor::paintZones() {
 	auto* v = new QVBoxLayout(&dialog);
 	v->setContentsMargins(12, 12, 12, 12);
 	v->setSpacing(10);
-	v->addWidget(hint(tr("Left mouse paints, right mouse erases. Blue: no relief there (stays flat). Orange: upside down. "
-	                     "The texture repeats, so painting over an edge goes on at the other side.")));
+	v->addWidget(hint(m_layout.found()
+	                      ? tr("Found %1. With \"Whole bricks\" a click (or a drag) sets the whole brick, tile or board; right "
+	                           "click takes it back. Blue: no relief there (stays flat). Orange: upside down.")
+	                            .arg(QString::fromStdString(m_layout.describe()))
+	                      : tr("Left mouse paints, right mouse erases. Blue: no relief there (stays flat). Orange: upside down. "
+	                           "The texture repeats, so painting over an edge goes on at the other side.")));
 	const QImage background = m_baseImage.isNull() && heights ? toImage(heightImage(*heights)) : m_baseImage;
 	auto* painter = new HeightZonePainter(background, w, h, zones);
+	painter->setLayout(&m_layout);
+	painter->setUnitMode(m_layout.found());
 	v->addWidget(painter, 1);
 	auto* tools = new QHBoxLayout;
 	tools->setSpacing(10);
@@ -1103,8 +1187,19 @@ void MaterialEditor::paintZones() {
 	connect(brush, &QSlider::valueChanged, painter, &HeightZonePainter::setBrush);
 	auto* clear = new QPushButton(tr("Clear"));
 	connect(clear, &QPushButton::clicked, painter, &HeightZonePainter::clear);
+	auto* units = new QCheckBox(tr("Whole bricks"));
+	units->setObjectName("zoneUnits");
+	units->setToolTip(tr("A click sets a whole brick, tile or board (as found in the texture) instead of a round brush"));
+	units->setEnabled(m_layout.found());
+	units->setChecked(painter->unitMode());
+	brush->setEnabled(!painter->unitMode());
+	connect(units, &QCheckBox::toggled, painter, [painter, brush](bool on) {
+		painter->setUnitMode(on);
+		brush->setEnabled(!on);
+	});
 	tools->addWidget(flat);
 	tools->addWidget(inverted);
+	tools->addWidget(units);
 	tools->addStretch(1);
 	tools->addWidget(new QLabel(tr("Brush")));
 	tools->addWidget(brush);
@@ -1123,6 +1218,7 @@ void MaterialEditor::paintZones() {
 void MaterialEditor::openMaterial(const QString& rawName) {
 	auto* game = m_editor->game();
 	if (!game) return;
+	revertLive();   // what was not saved goes from the views too
 	const QString name = QString::fromStdString(normalizeMaterialName(rawName.toStdString()));
 	std::string error;
 	const auto material = loadMaterial(game->files, name.toStdString(), &error);
@@ -1296,7 +1392,33 @@ void MaterialEditor::fillOtherTable() {
 	m_loading = false;
 }
 
+void MaterialEditor::scheduleLive() {
+	const bool changed = !m_edits.empty() || m_shaderChanged || m_heightDirty;
+	if (!m_name.isEmpty() && changed) m_liveTimer->start();
+}
+
+void MaterialEditor::emitLive() {
+	if (m_name.isEmpty()) return;
+	// The whole material as it is now (the views need no proxies or comments).
+	std::vector<MaterialEdit> params;
+	for (const auto& [key, val] : m_values) params.push_back({key.toStdString(), val.toStdString()});
+	const QString text = QString::fromStdString(newMaterialText(m_shader.toStdString(), params));
+	const bool relief = m_shader.compare("Fidelity_Parallax", Qt::CaseInsensitive) == 0 || m_shader.compare("Fidelity_WorldVertexTransition", Qt::CaseInsensitive) == 0;
+	const auto heights = relief ? currentHeights() : std::nullopt;
+	m_liveName = m_name;
+	emit liveChanged(m_name, text, heights ? toImage(heightImage(*heights)) : QImage());
+}
+
+void MaterialEditor::revertLive() {
+	m_liveTimer->stop();
+	if (m_liveName.isEmpty()) return;
+	const QString name = m_liveName;
+	m_liveName.clear();
+	emit liveReverted(name);
+}
+
 void MaterialEditor::refreshPreview(bool reloadTextures) {
+	scheduleLive();
 	MaterialPreview::Settings s;
 	const Kind k = kind();
 	s.mode = k == Kind::Water ? MaterialPreview::Mode::Water
@@ -1412,6 +1534,7 @@ bool MaterialEditor::save(const QString& asName) {
 	if (!writeFile(path, text.data(), qint64(text.size()))) {
 		return false;
 	}
+	revertLive();   // the views read the saved file now
 	emit materialSaved(name);
 	openMaterial(name);   // read back what the game will read
 	m_status->setText(tr("Saved %1").arg(QDir::toNativeSeparators(path)));

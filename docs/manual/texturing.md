@@ -145,14 +145,30 @@ an angle.
 | **Depth** | how deep the relief goes |
 | **Darker in the depths** | shading in the grooves |
 | **Fades out from** | distance after which the surface is flat again (saves performance) |
-| **Height map** | where the depth comes from: **From the normal map** or **From the texture** (bright parts high, dark joints low) |
+| **Height map** | where the depth comes from: **From the pattern**, **From the normal map** or **From the brightness** (see below) |
 | **Upside down** | swaps high and low |
-| **Paint zones ...** | paint where the surface stays flat (blue) or is turned upside down (orange) |
+| **Paint zones ...** | mark where the surface stays flat (blue) or is turned upside down (orange) - a whole brick at a click |
 
-Saving writes `<material>_relief.vtf` next to the material.
+Turning relief on makes the height map for you. Mapsmith first looks for a **pattern** in the texture: bricks in a
+bond, tiles or blocks in a grid, boards in rows. When it finds one, every brick (tile, board) stands up as a flat face
+with a crisp edge and the joints go in - whatever colour the bricks have, so a dark brick no longer sinks and light
+mortar no longer sticks out. The label under the buttons says what was found ("bricks in a running bond: 12 courses
+of 4, light joints"). Parts of the texture that are no bricks - a window's glass, a smooth panel - stay flat.
+Without a clear pattern (rough stone, plaster, rock) the normal map is used, else the texture's brightness.
+
+**Paint zones ...** shows the joints that were found over the texture. With **Whole bricks** ticked, a click sets the
+whole brick under the mouse (drag over several to set them all), a right click takes it back; untick it to paint with
+a round brush.
+
+Every change shows in the map views at once - relief on or off, depth, zones, any other setting - before you save.
+Leaving the material without saving shows it as saved again. Saving writes `<material>_relief.vtf` next to the
+material; the game uses it from then on (`deploy.bat` leaves your own materials alone).
 
 In the map views, the lighting preview shows the relief on walls automatically when the mapbase-fidelity look is on
-(view menu), using the same rules as the add-on's `deploy.bat`.
+(view menu), using the same rules as the add-on's `deploy.bat` - except where depth makes no sense: **windows and
+glass, signs and posters, grates and fences, doors, metal sheets, plaster, paint, cloth and lights** get none (by the
+material's name, and by its look: a large flat pane, a smooth surface without any structure, see-through texels).
+**Game enhancements** keeps the relief off for these materials in the game too.
 
 ### Water
 

@@ -100,9 +100,10 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `map_budget` | Zählt die Karte gegen die Grenzen der Engine (`MAX_MAP_*` aus `bspfile.h`, Edicts 2048; `budgetLimitsForApp`: 16384 Entities ab L4D2-Zweig); Ebenen als Paare wie VBSP, Edicts ohne weg-kompilierte Entities; Dock *Map Budget* (`BudgetPanel` in `panels`, zählt 250 ms nach einer Änderung und nur sichtbar) |
 | `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
-| `heightmap` | Höhenkarten fürs Relief: aus der Normal-Map (Frankot-Chellappa) oder der Helligkeit, Zonen, VTF schreiben, `fidelityReliefSource` (Regeln von `deploy.ps1`) |
+| `heightmap` | Höhenkarten fürs Relief: aus der Normal-Map (Frankot-Chellappa) oder der Helligkeit, Zonen, VTF schreiben, `fidelityReliefSource` (Regeln von `deploy.ps1` plus `reliefFitByName`) |
+| `relief_pattern` | Mustererkennung fürs Relief: `detectReliefLayout` (Läuferverband, Raster, Reihen ohne Stoßfugen; auch hochkant), `heightFromLayout` (Steine oben mit scharfer Fase, Fugen unten, Fenster/Flächen ohne Muster flach), `heightFromTexture` (Muster, sonst Helligkeit), `setUnitZone` (ganzer Stein als Zone); `reliefFitByName`/`reliefFitByLook`/`reliefFitInGame`: wo Relief keinen Sinn hat (Fenster, Glas, Schilder, Gitter, Türen, Blech, Putz, Stoff, Lampen; große glatte Scheibe, strukturlose Fläche, durchsichtig) |
 | `fidelity_look` | Look-Werte von mapbase-fidelity pro Karte (Liste, `cfg/fidelity.cfg` lesen, in der Karte lesen/schreiben) |
-| `fidelity_effects` | Game enhancements: Effekte von mapbase-fidelity (Liquid, Wind, Water; Relief nur Info) nach den Regeln und mit dem Text von `deploy.ps1` (`deployWouldApply`, `makeEffectMaterial`, Marker `DEPLOY_MARKER`), Einstellungen der Mod in `cfg/mapsmith_enhancements.txt` (`EnhancementSettings`: Effekt aus, Modelle/Materialien ausgenommen), Kandidaten aus den Original-Materialien des Spiels (`GameFileSystem::readOriginal` überspringt den Mod-Ordner), `planEnhancements` (an = Text wie deploy, aus = Kopie des Originals mit `MAPSMITH_MARKER`, damit `deploy.bat` sie als eigene Datei stehen lässt; Dateien der Mod ohne Marker nie anfassen → `keptOwn`); Ausschluss wirkt pro Material, also für alle Modelle mit diesem Material |
+| `fidelity_effects` | Game enhancements: Effekte von mapbase-fidelity (Liquid, Wind, Water; Relief nur „aus“: Kopien, wo Mapsmith keins will oder es ausgeschaltet ist, an macht `deploy.bat`) nach den Regeln und mit dem Text von `deploy.ps1` (`deployWouldApply`, `makeEffectMaterial`, Marker `DEPLOY_MARKER`), Einstellungen der Mod in `cfg/mapsmith_enhancements.txt` (`EnhancementSettings`: Effekt aus, Modelle/Materialien ausgenommen), Kandidaten aus den Original-Materialien des Spiels (`GameFileSystem::readOriginal` überspringt den Mod-Ordner), `planEnhancements` (an = Text wie deploy, aus = Kopie des Originals mit `MAPSMITH_MARKER`, damit `deploy.bat` sie als eigene Datei stehen lässt; Dateien der Mod ohne Marker nie anfassen → `keptOwn`); Ausschluss wirkt pro Material, also für alle Modelle mit diesem Material |
 | `sky_presets` | Licht passend zum Himmel (`applySky`, Tabelle der Himmel) |
 | `material_replace` | Material ersetzen (ganze Karte, Auswahl oder gewählte Flächen; exakt oder Platzhalter; Ausrichtung behalten oder an der Welt ausrichten; Overlays/Decals), `countMaterialMatches` für die Vorschau |
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
@@ -257,8 +258,17 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Shader, Ausschlüsse, Holz, Tiefe 0,02 / Ziegel 0,01); `MaterialCache::setRelief` macht die Höhenkarten im Hintergrund
   (`reliefHeights`, geteilt pro Quelltextur); der Welt-Shader läuft per Parallax Occlusion Mapping hinein (24 Schritte,
   Tangentenraum aus `dFdx`/`dFdy`, Normale aus der Höhe, Abdunkeln 0,35, Ausblenden 600–1000 Einheiten) – nur im
-  Lighting-Preview und mit dem Look-Schalter. Fassaden-Vermessung (`courses7` von `height_map.cs`) ist nicht nachgebaut:
-  Ziegel ohne Normal-Map nehmen die Helligkeit.
+  Lighting-Preview und mit dem Look-Schalter. Ziegel ohne Normal-Map nehmen im Viewport `heightFromTexture` (Muster aus
+  `relief_pattern`, sonst Helligkeit) – im Spiel macht sie weiter `height_map.cs` (`courses7` mit vermessenen Fassaden),
+  solange das Material nicht im Material-Editor gespeichert wird. Wo Mapsmith kein Relief will (`reliefFitInGame`: Name,
+  Flags, Aussehen der Textur in 128 px, pro Texturdatei gemerkt), zeigt der Viewport keins.
+  Wer was entscheidet: (1) `deploy.ps1` (`Get-ParallaxSource`) macht Relief für alle passenden Wände der Mod; Mapsmith
+  bildet das in `deployWouldApply(Relief)` nach (`fidelity_effects`). (2) Game enhancements (Effekt `Relief` in
+  `automaticEffects`) schreibt nur „aus“-Kopien mit `MAPSMITH_MARKER` („off (relief) … - no depth for a window“) für
+  Materialien, die Mapsmith nicht will oder die ausgeschaltet sind; `deploy.ps1` lässt Dateien ohne seinen Marker stehen
+  (Kopf von `deploy.ps1`: „The mod's own materials … are never overwritten“). Wieder an → Kopie wird gelöscht, das nächste
+  *Update mod* macht das Relief. (3) Im Material-Editor gespeicherte Materialien sind eigene Materialien der Mod: ihre
+  Höhenkarte `<name>_relief.vtf` (Muster/Normal-Map/Helligkeit + Zonen) nutzt das Spiel so.
   Hammer-Funktionen: `edit::mirror` (Spiegeln, Windung der Ebenenpunkte umdrehen, Texturachsen gespiegelt, Winkel
   über M·R·diag(1,−1,1)), `edit::similarObjects`, `edit::objectWithId`; `Editor::snapSelectionToGrid`,
   `transformSelection` (Teile mit `commitMerged` zu einem Undo-Schritt „Transform“). Werkzeug-Panel: `ToolPanel::showKeys`
@@ -395,8 +405,14 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Beim Umschalten fallen die Parameter der anderen Variante weg (`RELIEF_KEYS`, `WATER_KEYS`, `LIQUID_KEYS`).
   Höhenkarte: Kern-Modul `heightmap` (ohne Qt) – aus der Normal-Map per Frankot-Chellappa wie `fidelity/height_map.cs`
   der Mod, sonst aus der Helligkeit; `invertHeights`, `applyHeightZones` (`HeightZone::Flat` = 1, `Inverted` = 1 − h),
-  `encodeHeightVtf` (I8 mit Mips). Zonen malt `HeightZonePainter` (links malen, rechts löschen, Kacheln laufen über den
-  Rand). Speichern schreibt `<name>_relief.vtf` und setzt `$parallaxmap`. Materialien von `deploy.bat` (erste Zeile
+  `encodeHeightVtf` (I8 mit Mips). `MaterialEditor::makeHeightMap(HeightFrom)`: Auto = Muster (`relief_pattern`, ab
+  Sicherheit 0,5), sonst Normal-Map, sonst Helligkeit; das gefundene Layout (`reliefLayout()`) kommt auch beim Laden
+  einer vorhandenen Höhenkarte mit. Zonen malt `HeightZonePainter` (links malen, rechts löschen, Kacheln laufen über den
+  Rand; mit Layout: Fugen eingeblendet, „Whole bricks“ setzt per `setUnitZone` ganze Steine).
+  Live in den Ansichten: jede Änderung (`refreshPreview` → `scheduleLive`, 120 ms) schickt `liveChanged` (ganzer Text
+  per `newMaterialText` + aktuelle Höhenkarte); `MaterialCache::setLive` liest das Material daraus statt aus der Datei
+  (`loadInfo` mit `liveVmt`), `clearLive` beim Speichern oder Wechseln (`liveReverted`). `m_tickets` verwirft ältere
+  Ladevorgänge desselben Materials, die nach einem neueren fertig werden. Speichern schreibt `<name>_relief.vtf` und setzt `$parallaxmap`. Materialien von `deploy.bat` (erste Zeile
   `// mapbase-fidelity: generated by deploy.ps1 (…)`) werden markiert; Speichern lässt die Marker-Zeile weg, damit
   `deploy.bat` sie nicht mehr überschreibt.
   `MaterialPreview` hat drei Modi: Oberfläche (mit Relief als Parallax Occlusion Mapping, 32 Schritte), Wasser (Wellen
