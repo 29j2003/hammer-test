@@ -214,9 +214,11 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   after the mod's `deploy.bat` ran once)
   - *Relief*: *Give this surface real depth* turns a wall or blended ground into `Fidelity_Parallax` /
     `Fidelity_WorldVertexTransition`. Set the depth, the darkening in the depths and the fade distance. The height map
-    is made for you from the normal map (or from the texture's brightness); tick *Upside down* to swap high and low, or
-    *Paint zones ...* to mark places that stay flat (blue) or are turned upside down (orange). Saving writes
-    `<material>_relief.vtf` next to the material.
+    is made for you: Mapsmith finds the bricks, tiles or boards in the texture (each one up, the joints down,
+    whatever their colour), else it uses the normal map or the brightness; tick *Upside down* to swap high and low, or
+    *Paint zones ...* to mark places that stay flat (blue) or are turned upside down (orange) - a whole brick at a click.
+    The map views show every change at once, before you save. Saving writes `<material>_relief.vtf` next to the
+    material. Windows, signs, grates, metal sheets and plaster get no relief (also in the game, through Game enhancements).
   - *Water*: *Sun glint and foam at the shore* makes it `Water_Fidelity`, with sliders for glint and foam.
   - *Liquid inside*: for glass props (`Fidelity_Liquid`): liquid and glass colour, fill level (fixed or different in
     every prop), how it sways and how thick it is, splashing and pouring out.

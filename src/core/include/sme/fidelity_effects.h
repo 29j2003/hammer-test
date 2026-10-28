@@ -29,7 +29,7 @@ enum class GameEffect {
 	Liquid,   ///< Fidelity_Liquid: liquid inside see-through containers (bottles, jars, vials)
 	Wind,     ///< Mapbase $treesway: foliage and other models sway in the wind
 	Water,    ///< Water_Fidelity: the game's water with the sun's glint and foam at the shore
-	Relief,   ///< Fidelity_Parallax: walls with real depth (made by the material editor)
+	Relief,   ///< Fidelity_Parallax: walls with real depth (deploy.bat makes it; Mapsmith keeps it off where it makes no sense)
 };
 
 /// What the UI shows for an effect.
@@ -99,7 +99,8 @@ struct EnhancementSettings {
 /// Writes them; false if the file could not be written.
 bool saveEnhancementSettings(const std::filesystem::path& modDir, const EnhancementSettings& settings);
 
-/// Effects that are made automatically (Liquid, Wind, Water; Relief comes from the material editor).
+/// Effects that are made automatically. Relief: deploy.bat makes it (it needs height maps); the plan
+/// only keeps it off where switched off or where it makes no sense (reliefFitByName: windows, signs ...).
 [[nodiscard]] const std::vector<GameEffect>& automaticEffects();
 
 /// The materials ("models/props_junk/glassbottle01a") an effect gets by itself, as deploy.ps1

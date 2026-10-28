@@ -43,6 +43,7 @@ add_library(smecore STATIC
 	src/git_status.cpp
 	src/hammer_config.cpp
 	src/heightmap.cpp
+	src/relief_pattern.cpp
 	src/history.cpp
 	src/keyvalues.cpp
 	src/map.cpp

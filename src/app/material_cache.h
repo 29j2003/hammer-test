@@ -76,13 +76,18 @@ public:
 	void reload(const QString& name);
 	/// The material was asked for (loaded or loading).
 	[[nodiscard]] bool isKnown(const QString& name) const;
+	/// Shows a material as the material editor has it now, not saved yet: `vmt` stands for its file,
+	/// `heights` (may be null) for its relief height map. Read again at once; materialReady follows.
+	void setLive(const QString& name, const QString& vmt, const QImage& heights);
+	/// Back to the material's file.
+	void clearLive(const QString& name);
 
 signals:
 	/// A material finished loading (on the GUI thread).
 	void materialReady(const QString& name);
 
 private:
-	void finished(const QString& name, std::shared_ptr<MaterialInfo> info, quint64 generation);
+	void finished(const QString& name, std::shared_ptr<MaterialInfo> info, quint64 generation, quint64 ticket);
 
 	Size m_size;
 	const GameFileSystem* m_fs = nullptr;
@@ -91,6 +96,13 @@ private:
 	QThreadPool m_pool;
 	quint64 m_generation = 0;
 	bool m_relief = false;
+	struct Live {
+		QString vmt;
+		QImage heights;
+	};
+	QHash<QString, Live> m_live;   ///< Materials shown as the material editor has them (unsaved)
+	QHash<QString, quint64> m_tickets;   ///< The newest read per material
+	quint64 m_ticket = 0;
 };
 
 /// "Concrete\\Wall01.vmt" -> "concrete/wall01".
