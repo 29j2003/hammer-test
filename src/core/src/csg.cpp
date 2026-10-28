@@ -238,6 +238,84 @@ std::pair<std::optional<Solid>, std::optional<Solid>> splitSolid(MapDocument& do
 	return {std::move(frontPart), std::move(backPart)};
 }
 
+namespace {
+
+/// One brush around all the given brushes (their convex hull) with textures taken from the
+/// sides facing the same way; nullopt if they span no volume.
+std::optional<Solid> hullSolid(MapDocument& doc, const std::vector<Solid>& solids) {
+	std::vector<Vec3> points;
+	for (const auto& solid : solids) {
+		for (const auto& face : buildBrushGeometry(solid).faces) {
+			points.insert(points.end(), face.vertices.begin(), face.vertices.end());
+		}
+	}
+	const auto hull = convexHull(points);
+	if (hull.empty()) {
+		return std::nullopt;
+	}
+	Solid result;
+	result.id = solids.front().id;
+	result.extra = solids.front().extra;
+	for (const auto& plane : hull) {
+		// Texture from a side in the same plane, else from the side facing the most similar way.
+		const Side* best = nullptr;
+		double bestScore = -2;
+		for (const auto& solid : solids) {
+			for (const auto& side : solid.sides) {
+				const Plane p = side.plane();
+				const double score = dot(p.normal, plane.plane.normal) + (samePlane(p, plane.plane) ? 10 : 0);
+				if (score > bestScore) {
+					bestScore = score;
+					best = &side;
+				}
+			}
+		}
+		Side side;
+		side.id = doc.newSideId();
+		side.planePoints = plane.points;
+		if (best) {
+			copyTexture(side, *best);
+		} else {
+			side.material = "TOOLS/TOOLSNODRAW";
+			alignToWorld(side);
+		}
+		result.sides.push_back(std::move(side));
+	}
+	if (!usable(result)) {
+		return std::nullopt;
+	}
+	return result;
+}
+
+/// Joins pieces whose union is itself convex (two halves of a slab), so a carve leaves as few
+/// brushes as it can.
+void joinConvexPieces(MapDocument& doc, std::vector<Solid>& pieces) {
+	bool joined = true;
+	while (joined && pieces.size() > 1) {
+		joined = false;
+		for (std::size_t i = 0; i < pieces.size() && !joined; ++i) {
+			for (std::size_t j = i + 1; j < pieces.size() && !joined; ++j) {
+				const auto a = buildBrushGeometry(pieces[i]).bounds, b = buildBrushGeometry(pieces[j]).bounds;
+				bool touch = true;
+				for (int k = 0; k < 3; ++k) {
+					touch = touch && a.min[k] <= b.max[k] + EPS && b.min[k] <= a.max[k] + EPS;
+				}
+				if (!touch) continue;
+				auto hull = hullSolid(doc, {pieces[i], pieces[j]});
+				if (!hull) continue;
+				// The pieces never overlap, so the hull is their union exactly when the volumes add up.
+				if (std::abs(solidVolume(*hull) - solidVolume(pieces[i]) - solidVolume(pieces[j])) < 0.5) {
+					pieces[i] = std::move(*hull);
+					pieces.erase(pieces.begin() + std::ptrdiff_t(j));
+					joined = true;
+				}
+			}
+		}
+	}
+}
+
+} // namespace
+
 std::vector<Solid> subtractSolid(MapDocument& doc, const Solid& solid, const Solid& cutter) {
 	const auto a = buildBrushGeometry(solid).bounds, b = buildBrushGeometry(cutter).bounds;
 	for (int i = 0; i < 3; ++i) {
@@ -245,31 +323,60 @@ std::vector<Solid> subtractSolid(MapDocument& doc, const Solid& solid, const Sol
 			return {solid};   // boxes do not overlap
 		}
 	}
+	// Cut with the cutter's planes, each time with the plane whose cut through the brush is the
+	// largest: a window in a wall leaves full-width slabs above and below and two short pieces at
+	// the sides, as a mapper would build it, not pieces in the order the cutter lists its sides.
+	std::vector<const Side*> planes;
+	for (const auto& side : cutter.sides) planes.push_back(&side);
 	std::vector<Solid> out;
-	std::optional<Solid> remaining = solid;
+	Solid remaining = solid;
 	bool cut = false;
-	for (const auto& side : cutter.sides) {
-		auto [front, back] = splitSolid(doc, *remaining, side.plane(), side);
-		if (front && back) {
-			cut = true;
-		}
-		if (front && !back) {
-			// The rest lies outside the cutter: nothing to take away.
-			if (!cut) {
-				return {solid};
+	while (!planes.empty()) {
+		std::size_t best = 0;
+		bool found = false;
+		double bestVolume = -1;
+		std::optional<Solid> bestFront, bestBack;
+		for (std::size_t i = 0; i < planes.size();) {
+			auto [front, back] = splitSolid(doc, remaining, planes[i]->plane(), *planes[i]);
+			if (front && !back) {
+				// The rest lies outside the cutter: nothing more to take away.
+				if (!cut) return {solid};
+				out.push_back(std::move(*front));
+				joinConvexPieces(doc, out);
+				return out;
 			}
-			out.push_back(std::move(*front));
-			return out;
+			if (!front) {
+				planes.erase(planes.begin() + std::ptrdiff_t(i));   // all of it behind: this plane cuts nothing
+				continue;
+			}
+			double section = 0;   // area of the cut: the front piece's face in the plane
+			const Plane plane = planes[i]->plane();
+			for (const auto& face : buildBrushGeometry(*front).faces) {
+				if (dot(face.normal, plane.normal) < -0.999 && !face.vertices.empty() &&
+				    std::abs(dot(plane.normal, face.vertices[0]) - plane.dist) < 0.5) {
+					for (std::size_t k = 2; k < face.vertices.size(); ++k) {
+						section += 0.5 * length(cross(face.vertices[k - 1] - face.vertices[0], face.vertices[k] - face.vertices[0]));
+					}
+				}
+			}
+			if (section > bestVolume) {
+				bestVolume = section;
+				best = i;
+				found = true;
+				bestFront = std::move(front);
+				bestBack = std::move(back);
+			}
+			++i;
 		}
-		if (front) {
-			out.push_back(std::move(*front));
-		}
-		if (!back) {
-			return out;
-		}
-		remaining = std::move(back);
+		if (!found) break;
+		cut = true;
+		out.push_back(std::move(*bestFront));
+		remaining = std::move(*bestBack);
+		planes.erase(planes.begin() + std::ptrdiff_t(best));
 	}
-	return out;   // what remains is inside the cutter
+	// What remains is inside the cutter.
+	joinConvexPieces(doc, out);
+	return out;
 }
 
 std::vector<Solid> hollowSolid(MapDocument& doc, const Solid& solid, double thickness) {
@@ -299,47 +406,12 @@ std::optional<MergeResult> mergeSolids(MapDocument& doc, const std::vector<Solid
 	if (solids.size() < 2) {
 		return std::nullopt;
 	}
-	std::vector<Vec3> points;
-	for (const auto& solid : solids) {
-		for (const auto& face : buildBrushGeometry(solid).faces) {
-			points.insert(points.end(), face.vertices.begin(), face.vertices.end());
-		}
-	}
-	const auto hull = convexHull(points);
-	if (hull.empty()) {
+	auto hull = hullSolid(doc, solids);
+	if (!hull) {
 		return std::nullopt;
 	}
 	MergeResult result;
-	result.solid.id = solids.front().id;
-	result.solid.extra = solids.front().extra;
-	for (const auto& plane : hull) {
-		// Texture from a side in the same plane, else from the side facing the most similar way.
-		const Side* best = nullptr;
-		double bestScore = -2;
-		for (const auto& solid : solids) {
-			for (const auto& side : solid.sides) {
-				const Plane p = side.plane();
-				const double score = dot(p.normal, plane.plane.normal) + (samePlane(p, plane.plane) ? 10 : 0);
-				if (score > bestScore) {
-					bestScore = score;
-					best = &side;
-				}
-			}
-		}
-		Side side;
-		side.id = doc.newSideId();
-		side.planePoints = plane.points;
-		if (best) {
-			copyTexture(side, *best);
-		} else {
-			side.material = "TOOLS/TOOLSNODRAW";
-			alignToWorld(side);
-		}
-		result.solid.sides.push_back(std::move(side));
-	}
-	if (!usable(result.solid)) {
-		return std::nullopt;
-	}
+	result.solid = std::move(*hull);
 	// Exact when the brushes fill the hull: nothing is left after taking them all away.
 	std::vector<Solid> rest{result.solid};
 	for (const auto& solid : solids) {

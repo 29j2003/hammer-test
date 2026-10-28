@@ -137,6 +137,30 @@ TEST_CASE("split, carve and hollow") {
 	CHECK(pieces.size() == 4);
 	CHECK(totalVolume(pieces) == doctest::Approx(128.0 * 128 * 128 - 64.0 * 64 * 128));
 	for (const auto& piece : pieces) CHECK(isConvexValid(piece));
+	{
+		// A window in a wall: full-width slabs above and below, two short pieces at the sides
+		// (whatever order the cutter lists its sides in).
+		const Solid wall = makeBlock(doc, box({0, 0, 0}, {256, 16, 128}), "BRICK");
+		Solid window = makeBlock(doc, box({96, -8, 32}, {160, 24, 96}), "NODRAW");
+		std::reverse(window.sides.begin(), window.sides.end());
+		const auto parts = subtractSolid(doc, wall, window);
+		REQUIRE(parts.size() == 4);
+		int fullWidth = 0;
+		for (const auto& part : parts) {
+			const auto bounds = buildBrushGeometry(part).bounds;
+			if (bounds.max.x - bounds.min.x > 255) ++fullWidth;
+		}
+		CHECK(fullWidth == 2);
+		CHECK(totalVolume(parts) == doctest::Approx(256.0 * 16 * 128 - 64.0 * 16 * 64));
+		// A notch cut out of a corner: two pieces, not three.
+		const Solid notch = makeBlock(doc, box({192, -8, 64}, {300, 24, 200}), "NODRAW");
+		const auto corner = subtractSolid(doc, wall, notch);
+		CHECK(corner.size() == 2);
+		CHECK(totalVolume(corner) == doctest::Approx(256.0 * 16 * 128 - 64.0 * 16 * 64));
+		// A cut straight across: the two halves stay two (they are not one convex brush).
+		const Solid slot = makeBlock(doc, box({120, -8, -8}, {136, 24, 200}), "NODRAW");
+		CHECK(subtractSolid(doc, wall, slot).size() == 2);
+	}
 	const Solid far = makeBlock(doc, box({500, 0, 0}, {600, 64, 64}), "X");
 	const auto untouched = subtractSolid(doc, cube, far);
 	REQUIRE(untouched.size() == 1);
