@@ -1626,6 +1626,9 @@ void Viewport::updateGhost(const QPointF* pos) {
 		const auto* catalog = m_editor->entities();
 		Entity probe;
 		probe.set("classname", classname.toStdString());
+		for (const auto& [key, value] : m_editor->currentEntityKeys()) {
+			probe.set(key, value);   // an armed model shows itself, not the class's box
+		}
 		probe.setOrigin({0, 0, 0});
 		const Bounds local = edit::entityBounds(probe, catalog);
 		if (const auto origin = restingPlace(*pos, local)) {
@@ -1655,7 +1658,7 @@ void Viewport::placeEntity(const QPointF& pos) {
 		emit m_editor->message(tr("Nothing armed: pick an entity class in the Tool panel first"));
 		return;
 	}
-	placeEntityAt(pos, m_editor->currentEntityClass().toStdString());
+	placeEntityAt(pos, m_editor->currentEntityClass().toStdString(), m_editor->currentEntityKeys());
 }
 
 std::optional<Vec3> Viewport::restingPlace(const QPointF& pos, const Bounds& local) const {

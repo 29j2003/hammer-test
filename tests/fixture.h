@@ -53,6 +53,24 @@ struct StudioModelFiles {
 /// Builds the model files (see StudioModelFiles).
 [[nodiscard]] StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes, const std::vector<std::string>& sequences,
                                                const std::string& include, const std::string& texture, const std::string& cdmaterials);
+
+/// A test model with body groups, skins and prop settings (for the Models page).
+struct StudioModelSpec {
+	/// One body group: options by name, each made of boxes (no boxes = "blank", draws nothing).
+	struct Group {
+		std::string name;
+		std::vector<std::pair<std::string, std::vector<std::array<float, 6>>>> options;
+	};
+	std::vector<Group> groups;
+	std::vector<std::string> sequences{"idle"};
+	std::string include;
+	std::vector<std::string> textures{"crate"};   ///< Skin family i shows textures[i]
+	std::string cdmaterials = "models/props/";
+	bool staticProp = false;                      ///< $staticprop
+	float mass = 0;                               ///< $collisionmodel mass
+	std::string keyValues;                        ///< $keyvalues text
+};
+[[nodiscard]] StudioModelFiles makeStudioModel(const StudioModelSpec& spec);
 /// Writes the three files next to each other ("models/x.mdl" -> x.mdl, x.vvd, x.dx90.vtx).
 void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFiles& files);
 

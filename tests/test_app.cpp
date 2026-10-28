@@ -36,6 +36,7 @@
 #include <QProcess>
 #include <QStackedWidget>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QPushButton>
 #include <QSlider>
 #include <QSettings>
@@ -83,6 +84,8 @@
 #include "editor.h"
 #include "main_window.h"
 #include "mod_page.h"
+#include "model_viewer.h"
+#include "models_page.h"
 #include "map_look_panel.h"
 #include "material_preview.h"
 #include "material_editor.h"
@@ -1080,7 +1083,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		window.raiseDock("Sounds");
 		CHECK(window.currentPage() == MainWindow::Page::Map);
 		CHECK(window.sounds()->isVisible());
-		CHECK(window.sounds()->parentWidget() != window.pages()->widget(2));
+		CHECK(window.sounds()->parentWidget() != window.pages()->widget(3));
 		// Project page, Overview tab: the game's maps, search paths and FGDs.
 		window.showPage(MainWindow::Page::Project);
 		auto* mounts = window.modPage()->findChild<QTreeWidget*>("modMounts");
@@ -2532,6 +2535,151 @@ TEST_CASE("maps panel: map list with compile state, new map, batch compile; a ne
 	}
 	REQUIRE(create);
 	CHECK_FALSE(create->isEnabled());
+}
+
+TEST_CASE("models page: folders, search, 3D view with skins and body groups, place in map") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+
+	// The page lists every model at once (no empty page while a game is loaded).
+	window.showPage(MainWindow::Page::Models);
+	CHECK(window.currentPage() == MainWindow::Page::Models);
+	auto* page = window.modelsPage();
+	REQUIRE(page);
+	for (int i = 0; i < 200 && page->list()->model()->rowCount() == 0; ++i) QTest::qWait(50);
+	const int all = page->list()->model()->rowCount();
+	CHECK(all >= 5);
+	// Folders with their counts; picking one shows only its models.
+	QTreeWidgetItem* demoFolder = nullptr;
+	for (QTreeWidgetItemIterator it(page->folders()); *it; ++it) {
+		if ((*it)->text(0) == "props_demo") demoFolder = *it;
+	}
+	REQUIRE(demoFolder);
+	CHECK(demoFolder->text(1) == "3");
+	page->folders()->setCurrentItem(demoFolder);
+	CHECK(page->list()->model()->rowCount() == 3);
+	page->search()->setText("supply");
+	CHECK(page->list()->model()->rowCount() == 1);
+	page->search()->clear();
+	page->folders()->setCurrentItem(page->folders()->topLevelItem(0));
+	CHECK(page->list()->model()->rowCount() == all);
+
+	// A model in 3D with its skins, body groups and what it is made of.
+	const QString crate = "models/props_demo/supply_crate.mdl";
+	page->selectModel(crate);
+	CHECK(page->currentModel() == crate);
+	auto* viewer = page->viewer();
+	for (int i = 0; i < 200 && !viewer->model(); ++i) QTest::qWait(20);
+	REQUIRE(viewer->model());
+	CHECK(viewer->model()->triangleCount() == 24);   // crate and closed lid
+	CHECK(page->info().skinCount == 2);
+	CHECK(page->info().staticProp);
+	CHECK(page->skins()->count() == 2);
+	REQUIRE(page->bodyGroupBoxes().size() == 1);
+	CHECK(page->bodyGroupBoxes()[0]->objectName() == "bodygroup:lid");
+	CHECK(page->placeClass() == "prop_static");
+	REQUIRE(page->materialList()->count() == 1);
+	CHECK(page->materialList()->item(0)->text() == "demo/wood001");
+	const QString details = page->findChild<QLabel*>("modelDetails")->text();
+	CHECK(details.contains("42 x 30 x 30"));
+	CHECK(details.contains("Wooden.Medium"));
+	CHECK(details.contains("40.0 kg"));
+	// The view draws the model (not only the background).
+	settle();
+	const QImage shot = viewer->grabFramebuffer();
+	const QColor background = shot.pixelColor(2, 2);
+	const QColor middle = shot.pixelColor(shot.width() / 2, shot.height() / 2);
+	CHECK(std::abs(middle.red() - background.red()) + std::abs(middle.green() - background.green()) + std::abs(middle.blue() - background.blue()) > 30);
+	// Turning keeps the model; the wireframe goes on top.
+	const float yaw = viewer->yaw();
+	const QPoint c = viewer->rect().center();
+	QTest::mousePress(viewer, Qt::LeftButton, {}, c);
+	QTest::mouseMove(viewer, c + QPoint(40, 0));
+	QTest::mouseRelease(viewer, Qt::LeftButton, {}, c + QPoint(40, 0));
+	CHECK(viewer->yaw() != doctest::Approx(yaw));
+	page->findChild<QCheckBox*>("modelWireframe")->setChecked(true);
+	CHECK(viewer->wireframe());
+	// Lid off (body group "nothing") and the metal skin load in the background.
+	page->bodyGroupBoxes()[0]->setCurrentIndex(1);
+	for (int i = 0; i < 200 && viewer->model()->triangleCount() != 12; ++i) QTest::qWait(20);
+	CHECK(viewer->model()->triangleCount() == 12);
+	page->skins()->setCurrentIndex(1);
+	for (int i = 0; i < 200 && page->materialList()->item(0)->text() != "demo/metal001"; ++i) QTest::qWait(20);
+	CHECK(page->materialList()->item(0)->text() == "demo/metal001");
+
+	// Place in map: arms the entity tool with the model and its skin and shows the map.
+	page->findChild<QPushButton*>("modelPlace")->click();
+	CHECK(window.currentPage() == MainWindow::Page::Map);
+	CHECK(editor.tool() == Editor::Tool::Entity);
+	CHECK(editor.currentEntityClass() == "prop_static");
+	const auto& keys = editor.currentEntityKeys();
+	CHECK(std::find(keys.begin(), keys.end(), std::pair<std::string, std::string>{"model", crate.toStdString()}) != keys.end());
+	CHECK(std::find(keys.begin(), keys.end(), std::pair<std::string, std::string>{"skin", "1"}) != keys.end());
+	CHECK(std::none_of(keys.begin(), keys.end(), [](const auto& kv) { return kv.first == "body"; }));   // prop_static has none
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(0, -500, 300);
+	view->camera().yaw = 90;
+	view->camera().pitch = -30;
+	view->update();
+	settle();
+	const std::size_t before = editor.doc().entities.size();
+	QTest::mouseMove(view, view->rect().center());
+	settle();
+	QTest::mouseClick(view, Qt::LeftButton, {}, view->rect().center());
+	settle();
+	REQUIRE(editor.doc().entities.size() == before + 1);
+	const auto& placed = editor.doc().entities.back();
+	CHECK(placed.get("classname") == "prop_static");
+	CHECK(placed.get("model") == crate.toStdString());
+	CHECK(placed.get("skin") == "1");
+	// Another class from the Tool panel arms it without the model.
+	editor.setCurrentEntityClass("info_player_start");
+	CHECK(editor.currentEntityKeys().empty());
+
+	// prop_dynamic keeps the body group.
+	window.showPage(MainWindow::Page::Models);
+	page->findChild<QComboBox*>("modelPlaceAs")->setCurrentText("prop_dynamic");
+	const auto dynamicKeys = page->placeKeys();
+	CHECK(std::find(dynamicKeys.begin(), dynamicKeys.end(), std::pair<std::string, std::string>{"body", "1"}) != dynamicKeys.end());
+
+	// A material of the model opens in the material editor.
+	auto* materials = page->materialList();
+	QTest::mouseClick(materials->viewport(), Qt::LeftButton, {}, materials->visualItemRect(materials->item(0)).center());
+	CHECK(window.currentPage() == MainWindow::Page::Materials);
+
+	// Dragging a model onto the Map button opens the map, so the drag goes on into a view.
+	window.showPage(MainWindow::Page::Models);
+	QWidget* mapButton = nullptr;
+	for (auto* a : window.findChildren<QAction*>()) {
+		if (a->objectName() == "page:Map") {
+			for (auto* w : a->associatedObjects()) {
+				if (auto* button = qobject_cast<QToolButton*>(w)) mapButton = button;
+			}
+		}
+	}
+	REQUIRE(mapButton);
+	QMimeData mime;
+	mime.setData("application/x-sme-model", crate.toUtf8());
+	QDragEnterEvent enter(mapButton->rect().center(), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+	QApplication::sendEvent(mapButton, &enter);
+	CHECK(window.currentPage() == MainWindow::Page::Map);
+	CHECK(enter.isAccepted());
 }
 
 TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's files") {

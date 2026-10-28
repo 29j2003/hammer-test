@@ -28,6 +28,7 @@ Each button fills the window with one page:
 |---|---|
 | **Map** | Building the map: the views, tools and panels. |
 | **Materials** | The Material Editor. See [Texturing and materials](texturing.html#the-material-editor). |
+| **Models** | Every model in 3D, with skins and body groups. See [Models](entities.html#the-models-page). |
 | **Sounds** | Sounds, sound scripts and soundscapes. See [Sounds](sounds-particles.html). |
 | **Particles** | The particle viewer. See [Particles](sounds-particles.html#particles). |
 | **Project** | Your mod: *Overview*, *Maps*, *Menu*, *Source control* and *Ship*. See [The Project page](project.html). |

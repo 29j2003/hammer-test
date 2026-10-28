@@ -2,7 +2,8 @@
 //
 // Reads the three files the engine uses: .mdl (body parts, meshes, skins, material folders),
 // .vvd (vertex positions, normals, texture coordinates) and .dx90.vtx (triangle lists per
-// mesh, LOD 0). The model is shown in its reference pose (no animation). All files are
+// mesh, LOD 0). The model is shown in its reference pose (no animation), with one chosen model
+// per body group (the defaults unless a "body" number says otherwise). All files are
 // untrusted: every offset and count is checked, broken files give an error, never a crash.
 
 #pragma once
@@ -54,11 +55,13 @@ struct ModelFiles {
 };
 
 /// Builds the geometry from the file contents. `materialExists("models/props/crate01")` picks
-/// the $cdmaterials folder that holds a texture (empty function: the first folder).
+/// the $cdmaterials folder that holds a texture (empty function: the first folder). `body` is the
+/// engine's body number choosing one model per body group (ModelInfo::bodyValue; 0 = defaults).
 [[nodiscard]] std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int skin, std::string* error = nullptr,
-                                                              const std::function<bool(const std::string&)>& materialExists = {});
+                                                              const std::function<bool(const std::string&)>& materialExists = {}, int body = 0);
 
 /// Loads "models/x.mdl" (+ .vvd, .dx90.vtx / .vtx) from the game's file system.
-[[nodiscard]] std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::string_view modelPath, int skin = 0, std::string* error = nullptr);
+[[nodiscard]] std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::string_view modelPath, int skin = 0, std::string* error = nullptr,
+                                                             int body = 0);
 
 } // namespace sme

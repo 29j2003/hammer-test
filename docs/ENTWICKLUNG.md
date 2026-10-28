@@ -29,7 +29,7 @@ dünn. Jede Datei beginnt mit einem Kopfkommentar, öffentliche Klassen und Funk
 Undo/Redo spielen die gespeicherten Zustände zurück und senden dieselben Signale. `doc()` nie ohne `Transaction` ändern.
 
 **Fenster (`MainWindow`):** Die Seitenleiste links schaltet ganze Seiten um: **Map** (Ansichten + Docks), **Materials**
-(`MaterialEditor`), **Sounds** (`SoundBrowser`), **Particles** (`ParticleBrowser`) und **Project** mit den Tabs Overview
+(`MaterialEditor`), **Models** (`ModelsPage`), **Sounds** (`SoundBrowser`), **Particles** (`ParticleBrowser`) und **Project** mit den Tabs Overview
 (`ModPage`), Maps (`MapsPanel`), Menu (`MenuEditor`), Source control (`SourceControlPanel`) und Ship (`ShipPanel`).
 Docks der Map-Seite: links Tool, Outliner, VisGroups, Map Look (als Tabs); unten Asset Browser, Sounds, Particles,
 Compile, Problems und History (als Tabs) sowie Log; rechts Object Properties. Sounds und Particles wandern zwischen Dock
@@ -115,6 +115,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `material_cache` | Materialien/Texturen im Hintergrund laden (auch Relief-Höhen) |
 | `model_cache`, `model_thumbnails` | Modelle im Hintergrund laden; Vorschaubilder per CPU-Rasterizer |
 | `asset_browser` | Dock Asset Browser: Materialien und Modelle, Indizierung im Hintergrund |
+| `models_page`, `model_viewer` | Seite Models: Ordnerbaum + Suche + Vorschaubilder, 3D-Ansicht (OpenGL, Skins, Bodygroups, Drahtgitter), Infos, „Place in map“ |
 | `material_editor`, `material_preview` | Seite Materials: VMT bearbeiten, Live-Vorschau (OpenGL), Schalter für die mapbase-fidelity-Shader |
 | `sound_browser`, `sound_player`, `soundscape_editor` | Seite/Dock Sounds: Liste, Wiedergabe (QAudioSink, optional), Soundscript- und Soundscape-Editor |
 | `particle_browser` | Seite/Dock Particles: Liste, Vorschau (`ParticlePreview`), Teile als Karten |
@@ -246,12 +247,23 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   (`Viewport::drawConnections`, Ziele auch mit `*` am Ende).
 - Seitenleiste: `MainWindow` hat links die Werkzeugleiste „Pages“ (vor den Werkzeugen) und in der Mitte
   einen `QStackedWidget` (`workspacePages`) mit den Seiten aus `MainWindow::Page`: Map (die Views), Materials
-  (`MaterialEditor`), Sounds, Particles, Project (`QTabWidget` „projectTabs“: Overview = `ModPage`, Maps, Menu,
+  (`MaterialEditor`), Models (`ModelsPage`), Sounds, Particles, Project (`QTabWidget` „projectTabs“: Overview = `ModPage`, Maps, Menu,
   Source control, Ship). Sound- und Partikel-Browser sind beim Mappen
   Docks; `showPage()` hängt sie in ihre Seite um und beim Zurückgehen wieder ins Dock. Solange nicht „Map“ vorn ist,
   blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
   der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Project")` zeigt die Seite ("Mod" geht
   weiterhin), jeder andere Dock-Name die Karte mit dem Dock. Screenshots: `--page project|sounds|…`, `--pick-edge` (Kante gewählt).
+- Seite Models (`ModelsPage`): nutzt die Modell-Liste des Asset Browsers (`modelNames()`, nach `materialsIndexed`) und
+  dessen `ModelThumbnails`; Ordnerbaum mit Anzahl je Ordner (inkl. Unterordnern), Filter `ModelFolderFilter`
+  (Ordner-Präfix + Suchwörter). Gewähltes Modell wird in einem eigenen `QThreadPool` (ein Thread, Generationszähler)
+  geladen: `readModelInfo` (Skins, Bodygroups mit Optionen, `$staticprop`, Masse, `$keyvalues`), `modelSequences`,
+  `.phy` vorhanden?, `loadModelGeometry(fs, path, skin, …, body)`. `body` = `ModelInfo::bodyValue(Auswahl je Gruppe)`
+  wie die Engine (Summe Auswahl × Produkt der Optionen davor); `buildModelGeometry` nimmt pro Body Part das Modell
+  `(body / base) % nummodels`. `ModelViewer` (QOpenGLWidget) zeichnet nur bei Änderung: Textur je Material aus dem
+  `MaterialCache` der Ansichten, Halb-Lambert-Licht, Bodengitter, Drahtgitter mit Polygon-Offset. „Place in map“ →
+  `Editor::setCurrentEntity(Klasse, {model, skin, body})` (prop_static ohne body), Seite Map, Werkzeug Entity; der
+  Geist und `placeEntity` übernehmen diese Keyvalues, `setCurrentEntityClass` leert sie. Ziehen auf den Map-Knopf der
+  Seitenleiste öffnet die Map (`PageDropSwitch`), damit das Ziehen in einer Ansicht enden kann.
 - Karten-Übersicht: `MapsPanel` (`maps_panel.cpp`, eigenständiges Widget mit `(Editor*, CompileRunner*)`, die
   Project-Seite des Hauptfensters zeigt es). Liste aller `.vmf` im Kartenordner (`GameSettings::mapDir`, rekursiv,
   ohne `*_cordon.vmf`); `bspState` vergleicht die BSP in `<mod>/maps` (sonst neben der VMF) mit der VMF. Letztes

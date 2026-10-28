@@ -733,7 +733,12 @@ void Editor::setCurrentMaterial(const QString& material) {
 }
 
 void Editor::setCurrentEntityClass(const QString& classname) {
+	setCurrentEntity(classname, {});
+}
+
+void Editor::setCurrentEntity(const QString& classname, std::vector<std::pair<std::string, std::string>> keys) {
 	m_currentEntityClass = classname;
+	m_currentEntityKeys = std::move(keys);
 	emit settingsChanged();
 }
 

@@ -94,6 +94,26 @@ fires at it. Names ending in `*` match every entity whose name starts that way, 
 
 See [Source mapping basics](mapping-basics.html#outputs-and-inputs) for examples.
 
+## The Models page
+
+The **Models** button in the side bar shows every model of the game and its mods.
+
+- **Folders** on the left (`props_c17`, `props_junk` ...) with the number of models in each; **All models** shows
+  everything. The search box finds models by words in their path, in any order (`bench wood`).
+- **Pick a model** to see it in 3D on the right: left drag turns it, right drag moves it, the wheel zooms, a
+  double-click frames it again. **Wireframe** shows its triangles. The grid under it has squares of 16 units (64 for
+  big models), so you can judge its size.
+- **Skin** and the **body group** boxes (a lid, a helmet, a sign ...) change the model as it will look in the map.
+- Below: its size in units, triangles, animations, surface, whether it was made as a **static prop** and its
+  **physics** (collision model, mass, breakable settings). **Materials** lists what it is painted with; click one to
+  open it in the Material Editor. Missing ones are shown in red - the game draws them as a checkerboard.
+- **Place in map** (or a double-click in the list) switches to the map with the entity tool ready: every click places
+  the model. **Place as** picks the entity: `prop_static` for models made as static props, `prop_physics` for models
+  with a collision model, `prop_dynamic` otherwise - change it if you need something else. The skin goes with it (and
+  the body groups, except for `prop_static`, which has none in the map file).
+- You can also **drag** a model onto the **Map** button of the side bar; the map opens and you drop the model into a
+  view. **Copy path** puts `models/.../name.mdl` on the clipboard.
+
 ## NPCs and animated models
 
 Select an NPC or a `prop_dynamic`. The **Animation / pose** box (**Animation** for props) lists the model's
