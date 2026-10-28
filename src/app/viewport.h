@@ -13,6 +13,7 @@
 #include <optional>
 
 class QMenu;
+class QLabel;
 class QToolButton;
 
 #include "camera.h"
@@ -245,6 +246,7 @@ private:
 	Camera m_camera;
 	bool m_glReady = false;
 	QToolButton* m_viewButton = nullptr;   ///< "3D · Lighting preview ▾" in the corner
+	QLabel* m_densityLegend = nullptr;     ///< Colour key of the lightmap density view (bottom left)
 	bool m_blockForEntity = false;   ///< The block drag belongs to the entity tool (brush entity)
 	bool m_needsRebuild = true;
 	bool m_selectionDirty = true;

@@ -1,4 +1,4 @@
-// panels.h - Smaller docks: Outliner (all objects), Problems (checks with autofix) and the log.
+// panels.h - Smaller docks: Outliner (all objects), Problems (checks with autofix), Map Budget and the log.
 
 #pragma once
 
@@ -9,11 +9,14 @@
 #include <vector>
 
 #include <sme/checks.h>
+#include <sme/map_budget.h>
 
 class QLineEdit;
 class QTreeWidget;
 class QListWidget;
 class QLabel;
+class QGridLayout;
+class QProgressBar;
 
 namespace sme::app {
 
@@ -74,6 +77,34 @@ private:
 	QLabel* m_summary;
 	std::vector<Problem> m_problems;
 	std::vector<Problem> m_leaks;
+	CheckCache m_cache;            ///< Models and sounds read by the checks (cleared with the game or "Check map")
+};
+
+/// The Map Budget dock: live counts of brushes, sides, planes, entities, edicts, ... against the
+/// engine limits of the current game (map_budget.h). Counts again shortly after a change, and
+/// only while the dock is visible.
+class BudgetPanel : public QWidget {
+	Q_OBJECT
+
+public:
+	explicit BudgetPanel(Editor* editor, QWidget* parent = nullptr);
+
+	/// Counts now (also for tests).
+	void refresh();
+	[[nodiscard]] const std::vector<BudgetItem>& items() const { return m_items; }
+
+protected:
+	void showEvent(QShowEvent* event) override;
+
+private:
+	void scheduleRefresh();
+
+	Editor* m_editor;
+	QGridLayout* m_grid;
+	QLabel* m_summary;
+	std::vector<BudgetItem> m_items;
+	bool m_dirty = true;
+	bool m_scheduled = false;
 };
 
 /// The Log dock: messages and compile output in colour.

@@ -12,12 +12,14 @@
 #include <QMouseEvent>
 #include <QMenu>
 #include <QPainter>
+#include <QLabel>
 #include <QToolButton>
 #include <QRandomGenerator>
 #include <QWheelEvent>
 
 #include <cmath>
 
+#include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/csg.h>
 #include <sme/decals.h>
@@ -211,6 +213,20 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	connect(menu, &QMenu::aboutToShow, this, [this, menu] { fillViewMenu(menu); });
 	connect(editor, &Editor::settingsChanged, this, &Viewport::updateViewButton);
 	connect(editor, &Editor::viewFilterChanged, this, &Viewport::updateViewButton);
+	// Colour key of the lightmap density view: luxel size in units per colour.
+	m_densityLegend = new QLabel(this);
+	m_densityLegend->setObjectName("densityLegend");
+	m_densityLegend->setTextFormat(Qt::RichText);
+	m_densityLegend->setAttribute(Qt::WA_TransparentForMouseEvents);
+	m_densityLegend->setStyleSheet("QLabel { background: rgba(20, 22, 26, 200); color: #e0e0e0; border-radius: 4px; padding: 4px 8px; }");
+	QStringList keys;
+	for (const auto& [scale, color] : {std::pair{4, "#f22626"}, std::pair{8, "#ff991a"}, std::pair{16, "#4dd94d"}, std::pair{32, "#33ccd9"},
+	                                   std::pair{64, "#4066ff"}, std::pair{128, "#994de6"}}) {
+		keys << QStringLiteral("<span style='color:%1'>■</span> %2").arg(QLatin1String(color)).arg(scale);
+	}
+	m_densityLegend->setText(tr("Lightmap scale (units per luxel): %1 · grey = no lightmap").arg(keys.join(QStringLiteral("  "))));
+	m_densityLegend->adjustSize();
+	m_densityLegend->hide();
 	updateViewButton();
 }
 
@@ -221,6 +237,7 @@ void Viewport::updateViewButton() {
 			case Editor::RenderMode::Lit: text += tr("  ·  Lighting preview") + (m_editor->shadows() ? tr(" + shadows") : QString()); break;
 			case Editor::RenderMode::Unlit: text += tr("  ·  Textured (unlit)"); break;
 			case Editor::RenderMode::Wireframe: text += tr("  ·  Wireframe"); break;
+			case Editor::RenderMode::LightmapDensity: text += tr("  ·  Lightmap density"); break;
 		}
 	}
 	if (const int hiddenKinds = std::popcount(m_editor->hiddenKinds()); hiddenKinds > 0) {
@@ -228,6 +245,10 @@ void Viewport::updateViewButton() {
 	}
 	m_viewButton->setText(text + QStringLiteral("  ▾"));
 	m_viewButton->adjustSize();
+	if (m_densityLegend) {
+		m_densityLegend->setVisible(!m_camera.is2D() && m_editor->renderMode() == Editor::RenderMode::LightmapDensity);
+		m_densityLegend->move(6, height() - m_densityLegend->height() - 6);
+	}
 }
 
 void Viewport::fillViewMenu(QMenu* menu) {
@@ -248,7 +269,8 @@ void Viewport::fillViewMenu(QMenu* menu) {
 	menu->addSection(tr("Look (3D)"));
 	for (const auto& [mode, name, key] : {std::tuple{Editor::RenderMode::Lit, tr("Lighting preview"), QStringLiteral("F6")},
 	                                      std::tuple{Editor::RenderMode::Unlit, tr("Textured (unlit)"), QStringLiteral("F5")},
-	                                      std::tuple{Editor::RenderMode::Wireframe, tr("Wireframe"), QStringLiteral("F8")}}) {
+	                                      std::tuple{Editor::RenderMode::Wireframe, tr("Wireframe"), QStringLiteral("F8")},
+	                                      std::tuple{Editor::RenderMode::LightmapDensity, tr("Lightmap density"), QStringLiteral("Ctrl+F6")}}) {
 		auto* action = menu->addAction(QStringLiteral("%1\t%2").arg(name, key));
 		action->setCheckable(true);
 		action->setChecked(m_editor->renderMode() == mode);
@@ -375,7 +397,9 @@ void Viewport::initializeGL() {
 	m_needsRebuild = true;
 }
 
-void Viewport::resizeGL(int, int) {}
+void Viewport::resizeGL(int, int) {
+	if (m_densityLegend) m_densityLegend->move(6, height() - m_densityLegend->height() - 6);
+}
 
 Ray Viewport::rayAt(const QPointF& pos) const {
 	return m_camera.rayAt(pos.x(), pos.y(), width(), height());
@@ -498,6 +522,7 @@ void Viewport::paintGL() {
 			case Editor::RenderMode::Lit: params.mode = SceneRenderer::Mode::Lit; break;
 			case Editor::RenderMode::Unlit: params.mode = SceneRenderer::Mode::Unlit; break;
 			case Editor::RenderMode::Wireframe: params.mode = SceneRenderer::Mode::Wireframe; break;
+			case Editor::RenderMode::LightmapDensity: params.mode = SceneRenderer::Mode::LightmapDensity; break;
 		}
 	}
 	const QMatrix4x4 viewProj = params.projection * params.view;
@@ -2566,12 +2591,18 @@ void Viewport::dropEvent(QDropEvent* event) {
 		return;
 	}
 	if (mime->hasFormat("application/x-sme-model")) {
-		// A model becomes a prop_static standing on the surface (change the class in Object Properties).
-		std::vector<std::pair<std::string, std::string>> keys{{"model", QString::fromUtf8(mime->data("application/x-sme-model")).toStdString()}};
+		// A model stands on the surface as the prop class it is made for: prop_static for static
+		// prop models, prop_physics with a collision model, else prop_dynamic.
+		const std::string model = QString::fromUtf8(mime->data("application/x-sme-model")).toStdString();
+		std::vector<std::pair<std::string, std::string>> keys{{"model", model}};
 		if (dropYaw != 0 || (!m_camera.is2D() && m_editor->randomYaw())) {
 			keys.emplace_back("angles", "0 " + std::to_string(dropYaw) + " 0");   // the turn the preview showed
 		}
-		placeEntityAt(event->position(), "prop_static", keys, dropOrigin);
+		std::string classname = "prop_static";
+		if (const auto* game = m_editor->game()) {
+			if (const auto flags = readPropModelFlags(game->files, model)) classname = recommendedPropClass(*flags);
+		}
+		placeEntityAt(event->position(), classname, keys, dropOrigin);
 		event->acceptProposedAction();
 		return;
 	}

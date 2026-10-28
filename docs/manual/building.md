@@ -214,6 +214,14 @@ Example: a spiral of 12 pillars. Copy one pillar, *Number of copies* 11, *Offset
   center, as one undo step.
 - **Drop to floor** (Ctrl+Shift+F) lets the selected objects fall straight down onto what is below them.
 
+## Make water
+
+Build a block where the water should be (its top is the surface), select it and choose **Brushes > Make water**
+(also in the right-click menu). The top face gets the current material if it is water, else the game's first water
+material; all other faces get `tools/toolsnodraw`. If the map has no `water_lod_control`, one is added, and an
+`env_cubemap` 64 units above the middle of the water (its *Brush faces* list names the water) unless a cubemap is
+already near. All of it is one undo step.
+
 ## Hiding
 
 - **H** hides the selection, **Ctrl+H** hides everything else, **U** shows everything again.

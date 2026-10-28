@@ -31,7 +31,8 @@ Press **Shift+E**. The **Tool** tab lists every entity class of the game, with i
 - **Random yaw (3D placement)** turns every new prop to a random direction, so a row of barrels does not look copied.
 - You can also **drag** a model from the Asset Browser's *Models* tab into the view. While you drag, the model itself
   follows the mouse as a see-through preview, standing on the surface under the cursor, with its name and size next to
-  it; it lands exactly there as a `prop_static`. The model's box is centred on the cursor, so even map pieces whose
+  it; it lands exactly there as the prop class the model is made for: `prop_static` for static prop models,
+  `prop_physics` with a collision model, otherwise `prop_dynamic`. The model's box is centred on the cursor, so even map pieces whose
   origin lies far away from what they show end up where you point. With *Random yaw* on, the preview already shows
   the turn the prop gets. Likewise you can drag a
   sound from the Sounds browser (an `ambient_generic`, or an `env_soundscape` for a soundscape) or a particle system

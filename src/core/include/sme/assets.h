@@ -32,6 +32,12 @@ struct MaterialCategory {
 /// Sorts a material into the browser's categories (brush, blend, model, tool, see-through, water, decal, sky).
 [[nodiscard]] MaterialCategory classifyMaterial(const Material& material);
 
+/// Whether the material is water (Water shader or %compilewater).
+[[nodiscard]] bool isWaterMaterial(const GameFileSystem& fs, std::string_view name);
+/// The material "Make water" uses: `current` if it is water, else the first water material of
+/// `names` (names with "water" in them are tried first). Empty if there is none.
+[[nodiscard]] std::string pickWaterMaterial(const GameFileSystem& fs, std::string_view current, const std::vector<std::string>& names);
+
 /// What the editor needs from a .mdl file.
 struct ModelInfo {
 	std::string name;                       ///< Name stored in the model
@@ -63,6 +69,25 @@ struct ModelInfo {
 
 /// Sequences of a model including all its $includemodel files (as the engine merges them).
 [[nodiscard]] std::vector<std::string> modelSequences(const GameFileSystem& fs, std::string_view modelPath, std::string* error = nullptr);
+
+/// What decides the prop class a model can be placed as.
+struct PropModelFlags {
+	bool staticProp = false;   ///< Compiled with $staticprop (VBSP deletes a prop_static without it)
+	bool collision = false;    ///< Has a collision model (.phy); a prop_physics without one is removed at spawn
+	bool operator==(const PropModelFlags&) const = default;
+};
+
+/// The flags of a model in the game (nullopt if it is missing or not a readable .mdl).
+[[nodiscard]] std::optional<PropModelFlags> readPropModelFlags(const GameFileSystem& fs, std::string_view modelPath);
+
+/// The class a model is made for: prop_static for $staticprop models, prop_physics for models
+/// with a collision model, prop_dynamic for the rest.
+[[nodiscard]] std::string recommendedPropClass(const PropModelFlags& flags);
+
+/// The class that fits better than `classname` (prop_static / prop_physics), or empty when the
+/// class works with the model: a prop_static needs $staticprop, a prop_physics a collision model.
+/// The other prop classes and non-props are always fine.
+[[nodiscard]] std::string betterPropClass(std::string_view classname, const PropModelFlags& flags);
 
 /// Sound names from all sound scripts listed in scripts/game_sounds_manifest.txt (sorted, unique).
 [[nodiscard]] std::vector<std::string> soundScriptNames(const GameFileSystem& fs);
@@ -119,6 +144,16 @@ struct ParticleSystem {
 
 /// Removes the leading sound characters of a wave name (")weapons/x.wav" -> "weapons/x.wav").
 [[nodiscard]] std::string stripSoundChars(std::string_view wave);
+
+/// The file a sound name plays: a wave name ("ambient/hum.wav", sound characters allowed) or the
+/// first wave of a sound script entry from `scripts` (may be null). Path below sound/, empty if unknown.
+[[nodiscard]] std::string soundFileOf(std::string_view sound, const std::vector<SoundScriptEntry>* scripts);
+/// Whether the sound loops in the engine (cue point or sampler loop in the WAV, see
+/// soundFileLoops); nullopt if the file is missing or unknown.
+[[nodiscard]] std::optional<bool> soundLoops(const GameFileSystem& fs, std::string_view sound, const std::vector<SoundScriptEntry>* scripts);
+
+/// ambient_generic spawnflag "Is NOT Looped": the entity treats its sound as playing once.
+constexpr int AMBIENT_NOT_LOOPED = 32;
 
 /// Levenshtein distance (case-insensitive), used for "did you mean" fixes.
 [[nodiscard]] std::size_t editDistance(std::string_view a, std::string_view b);

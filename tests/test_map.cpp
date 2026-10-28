@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <sme/brush.h>
+#include <sme/editing.h>
 #include <sme/history.h>
 #include <sme/map.h>
 
@@ -290,6 +291,73 @@ TEST_CASE("VMF parses and round-trips without losing data") {
 TEST_CASE("broken VMF reports a line number") {
 	CHECK_THROWS_WITH_AS((void)MapDocument::parse("world\n{\n\"id\" \"1\"\n"), "line 4: missing '}'", std::runtime_error);
 	CHECK_THROWS((void)MapDocument::parse("versioninfo { }"));
+}
+
+TEST_CASE("damaged VMF loads with a report") {
+	const char* damaged = R"vmf(world
+{
+	"id" "1"
+	"classname" "worldspawn"
+	"message" "say "hi" to me"
+	solid
+	{
+		"id" "2"
+		side
+		{
+			"id" "1"
+			"material" "TOOLS/TOOLSNODRAW"
+		}
+	}
+	solid
+	{
+		"id" "3"
+		side
+		{
+			"id" "2"
+			"plane" "(-64 64 64) (64 64 64) (64 -64 64)"
+			"material" "DEV/DEV_MEASUREGENERIC01"
+		}
+	}
+}
+entity
+{
+	"id" "4"
+	"classname" "info_player_start"
+	"origin" "0 0 8"
+}
+)vmf";
+	VmfLoadReport report;
+	const auto doc = MapDocument::parse(damaged, &report);
+	CHECK(report.repairedLines == 1);
+	CHECK(report.skippedSolids == 1);
+	CHECK(report.notes.size() == 2);
+	CHECK_FALSE(report.clean());
+	CHECK(doc.world.get("message") == "say 'hi' to me");
+	REQUIRE(doc.world.solids.size() == 1);
+	CHECK(doc.world.solids[0].id == 3);
+	REQUIRE(doc.entities.size() == 1);
+	CHECK(doc.entities[0].classname() == "info_player_start");
+	// The repaired map writes back clean.
+	VmfLoadReport second;
+	(void)MapDocument::parse(doc.serialize(), &second);
+	CHECK(second.clean());
+	// Without a report the same file loads too; a clean file reports nothing.
+	CHECK(MapDocument::parse(damaged).world.solids.size() == 1);
+	VmfLoadReport clean;
+	(void)MapDocument::parse(SAMPLE_VMF, &clean);
+	CHECK(clean.clean());
+}
+
+TEST_CASE("typed quotes never break the VMF") {
+	auto doc = MapDocument::parse(SAMPLE_VMF);
+	(void)edit::setKeyValue(doc, {0}, "message", std::string("The \"best\" map"));
+	CHECK(doc.world.get("message") == "The 'best' map");
+	// Even a value set directly is written without the quote.
+	doc.world.set("comment", "a\"b");
+	VmfLoadReport report;
+	const auto again = MapDocument::parse(doc.serialize(), &report);
+	CHECK(report.clean());
+	CHECK(again.world.get("comment") == "a'b");
 }
 
 TEST_CASE("brush geometry from Hammer planes") {

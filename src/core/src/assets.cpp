@@ -2,6 +2,7 @@
 
 #include <sme/assets.h>
 
+#include <sme/audio.h>
 #include <sme/filesystem.h>
 #include <sme/keyvalues.h>
 #include <sme/text.h>
@@ -131,6 +132,28 @@ MaterialCategory classifyMaterial(const Material& m) {
 	// materials/editor/ holds the editor's own sprites and helpers, not wall textures.
 	c.brush = !c.model && !c.sky && !c.decal && !m.name.starts_with("editor/") && shader != "sprite" && shader != "spritecard" && shader != "refract" && shader != "unlittwotexture";
 	return c;
+}
+
+bool isWaterMaterial(const GameFileSystem& fs, std::string_view name) {
+	const auto material = loadMaterial(fs, name);
+	// VBSP treats every shader whose name starts with "Water" as water (Water, Water_DX60, mod shaders).
+	return material && (classifyMaterial(*material).water || startsWithI(material->shader, "water"));
+}
+
+std::string pickWaterMaterial(const GameFileSystem& fs, std::string_view current, const std::vector<std::string>& names) {
+	if (!current.empty() && isWaterMaterial(fs, current)) {
+		return std::string(current);
+	}
+	// Names with "water" first; then the others, but not every material of a big game (each is a file read).
+	std::size_t budget = 2000;
+	for (const bool named : {true, false}) {
+		for (const auto& name : names) {
+			if ((toLower(name).find("water") != std::string::npos) != named) continue;
+			if (!named && budget-- == 0) return {};
+			if (isWaterMaterial(fs, name)) return name;
+		}
+	}
+	return {};
 }
 
 std::optional<ModelInfo> readModelInfo(std::span<const std::byte> data, std::string* error) {
@@ -267,6 +290,71 @@ std::string stripSoundChars(std::string_view wave) {
 		wave.remove_prefix(1);
 	}
 	return normalizePath(wave);
+}
+
+std::string soundFileOf(std::string_view sound, const std::vector<SoundScriptEntry>* scripts) {
+	const auto name = stripSoundChars(trim(sound));
+	if (name.empty()) {
+		return {};
+	}
+	if (endsWithI(name, ".wav") || endsWithI(name, ".mp3") || endsWithI(name, ".ogg")) {
+		return name;
+	}
+	if (scripts) {
+		for (const auto& entry : *scripts) {
+			if (iequals(entry.name, trim(sound)) && !entry.waves.empty()) {
+				return entry.waves.front();
+			}
+		}
+	}
+	return {};
+}
+
+std::optional<bool> soundLoops(const GameFileSystem& fs, std::string_view sound, const std::vector<SoundScriptEntry>* scripts) {
+	const auto file = soundFileOf(sound, scripts);
+	if (file.empty()) {
+		return std::nullopt;
+	}
+	const auto data = fs.read("sound/" + file);
+	if (!data) {
+		return std::nullopt;
+	}
+	return soundFileLoops(*data);
+}
+
+std::optional<PropModelFlags> readPropModelFlags(const GameFileSystem& fs, std::string_view modelPath) {
+	if (!endsWithI(modelPath, ".mdl")) {
+		return std::nullopt;
+	}
+	const auto data = fs.read(modelPath);
+	if (!data) {
+		return std::nullopt;
+	}
+	const auto info = readModelInfo(*data);
+	if (!info) {
+		return std::nullopt;
+	}
+	PropModelFlags flags;
+	flags.staticProp = info->staticProp;
+	flags.collision = fs.exists(std::string(modelPath.substr(0, modelPath.size() - 4)) + ".phy");
+	return flags;
+}
+
+std::string recommendedPropClass(const PropModelFlags& flags) {
+	if (flags.staticProp) {
+		return "prop_static";
+	}
+	return flags.collision ? "prop_physics" : "prop_dynamic";
+}
+
+std::string betterPropClass(std::string_view classname, const PropModelFlags& flags) {
+	if (iequals(classname, "prop_static") && !flags.staticProp) {
+		return "prop_dynamic";   // stays where it was put, like the prop_static was meant to
+	}
+	if ((iequals(classname, "prop_physics") || iequals(classname, "prop_physics_multiplayer")) && !flags.collision) {
+		return flags.staticProp ? "prop_static" : "prop_dynamic";
+	}
+	return {};
 }
 
 namespace {

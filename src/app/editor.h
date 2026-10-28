@@ -47,7 +47,7 @@ class Editor : public QObject {
 public:
 	enum class Tool { Select, Move, Rotate, Scale, Block, Entity, Clip, Vertex, Polygon, Displace };
 	enum class SelectMode { Object, Face };
-	enum class RenderMode { Lit, Unlit, Wireframe };
+	enum class RenderMode { Lit, Unlit, Wireframe, LightmapDensity };
 
 	explicit Editor(QObject* parent = nullptr);
 	~Editor() override;
@@ -257,6 +257,9 @@ public:
 	/// Polygon tool: a brush from a convex base (points) extruded by `height`.
 	void createPolygonBrush(const std::vector<Vec3>& base, const Vec3& extrude);
 	void dropSelectionToFloor();
+	/// Brushes > Make water: the selected brushes become water (edit::makeWater). The material is
+	/// the current one if it is water, else the first water material of `materialNames`.
+	void makeWaterFromSelection(const std::vector<std::string>& materialNames);
 	/// Hammer's Flip Objects: mirrors the selection across its center (axis 0 X, 1 Y, 2 Z).
 	void flipSelection(int axis);
 	/// Hammer's Snap Selected to Grid: moves the selection so its box starts on the grid.

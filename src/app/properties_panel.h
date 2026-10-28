@@ -22,6 +22,7 @@ class QAbstractItemModel;
 class QStringListModel;
 
 #include <map>
+#include <optional>
 
 #include <functional>
 #include <memory>
@@ -29,6 +30,7 @@ class QStringListModel;
 #include <utility>
 #include <vector>
 
+#include <sme/assets.h>
 #include <sme/entity_catalog.h>
 #include <sme/map.h>
 
@@ -116,6 +118,8 @@ private:
 	/// Doors: how it opens (swing with hinge side and direction, or slide), speed, closing, locked,
 	/// sounds with play buttons, Test open, and the areaportal in its doorway (properties_door.cpp).
 	void buildDoorBox(QVBoxLayout* layout, const Entity& door);
+	/// ambient_generic: whether its sound file loops, against the "Is NOT Looped" flag, with a fix.
+	void buildSoundLoopBox(QVBoxLayout* layout, const Entity& ambient);
 	void buildBrushes(QVBoxLayout* layout);
 	QWidget* makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed);
 	void setKey(const std::vector<int>& ids, const std::string& key, const QString& value);
@@ -154,6 +158,9 @@ private:
 	std::vector<std::pair<QString, QImage>> m_skies;
 	QString m_skiesGame;                   ///< Game the sky list belongs to
 	QFutureWatcher<std::vector<std::pair<QString, QImage>>> m_skyWatcher;
+	// Sound scripts for the loop check of ambient_generic, read on first need per game.
+	std::optional<std::vector<SoundScriptEntry>> m_soundScripts;
+	const void* m_soundScriptsGame = nullptr;
 };
 
 /// First sentence of an FGD description, shortened for the line under each field.

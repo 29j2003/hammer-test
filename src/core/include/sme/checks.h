@@ -6,10 +6,13 @@
 
 #pragma once
 
+#include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <sme/assets.h>
 #include <sme/editing.h>
 #include <sme/entity_catalog.h>
 #include <sme/history.h>
@@ -38,6 +41,9 @@ struct Problem {
 		MissingModel,
 		DoorAreaportalNotLinked,   ///< objects.entities = {door, areaportal}
 		Leak,
+		PropClassMismatch,      ///< prop_static without $staticprop, prop_physics without collision model
+		SoundLoopMismatch,      ///< ambient_generic "Is NOT Looped" does not match the WAV
+		MultipleSkyCameras,
 	};
 
 	Severity severity = Severity::Warning;
@@ -54,12 +60,22 @@ struct Problem {
 	std::vector<Vec3> line;     ///< Leak line
 };
 
+/// What the checks read from game files, kept between runs so a model or sound is read once per
+/// game (the Problems panel keeps one and clears it when the game changes).
+struct CheckCache {
+	std::map<std::string, std::optional<PropModelFlags>> models;   ///< By lower-case model path
+	std::map<std::string, std::optional<bool>> soundLoops;         ///< By lower-case sound name
+	std::optional<std::vector<SoundScriptEntry>> soundScripts;     ///< Read on first use
+};
+
 /// What the checks may look at besides the map (all optional: without them some checks are skipped).
 struct CheckContext {
 	const EntityCatalog* entities = nullptr;
 	const GameFileSystem* files = nullptr;
 	/// All material names of the game ("concrete/wall01"), for "did you mean" suggestions. Optional.
 	const std::vector<std::string>* materialNames = nullptr;
+	/// Cache for model and sound lookups; without one every run reads the files again.
+	CheckCache* cache = nullptr;
 };
 
 /// Runs every check on the map (invalid brushes, missing materials/models, unknown classes, broken outputs, ...).

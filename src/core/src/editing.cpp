@@ -797,12 +797,17 @@ Change setKeyValue(MapDocument& doc, const std::vector<int>& entityIds, const st
 		}
 		t.touchEntity(id);
 		if (value) {
-			entity->set(key, *value);
+			entity->set(key, withoutQuotes(*value));
 		} else {
 			entity->erase(key);
 		}
 	}
 	return t.finish();
+}
+
+std::string withoutQuotes(std::string text) {
+	std::replace(text.begin(), text.end(), '"', '\'');
+	return text;
 }
 
 Change setConnections(MapDocument& doc, int entityId, const std::vector<Connection>& connections) {

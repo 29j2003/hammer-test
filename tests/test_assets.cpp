@@ -1021,3 +1021,129 @@ TEST_CASE("particle systems in full and their preview simulation") {
 	// Unknown system: nothing to simulate.
 	CHECK_FALSE(ParticleSimulation(sparks, "nope").valid());
 }
+
+namespace {
+
+void writeBytes(const std::filesystem::path& path, const std::vector<std::byte>& data) {
+	std::filesystem::create_directories(path.parent_path());
+	std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+}
+
+} // namespace
+
+TEST_CASE("loop detection, prop class and sound loop checks with autofix") {
+	constexpr int RATE = 22050;
+	std::vector<std::byte> pcm;
+	for (const int v : sine(500, 440, RATE)) put16(pcm, v);
+	const auto looped = wavFile(fmtChunk(1, 1, RATE, 2, 16), pcm, 100u);
+	const auto once = wavFile(fmtChunk(1, 1, RATE, 2, 16), pcm);
+	CHECK(soundFileLoops(looped) == true);
+	CHECK(soundFileLoops(once) == false);
+	{
+		// A sampler loop ("smpl" with one loop) counts as well.
+		std::vector<std::byte> smpl(once.begin(), once.begin() + 12);
+		putTag(smpl, "smpl");
+		put32(smpl, 60);
+		for (int i = 0; i < 7; ++i) put32(smpl, 0);   // manufacturer ... SMPTE offset
+		put32(smpl, 1);                                // one loop
+		put32(smpl, 0);                                // no sampler data
+		for (std::uint32_t v : {0u, 0u, 50u, 400u, 0u, 0u}) put32(smpl, v);
+		smpl.insert(smpl.end(), once.begin() + 12, once.end());
+		CHECK(soundFileLoops(smpl) == true);
+	}
+	const std::vector<std::byte> ogg{std::byte('O'), std::byte('g'), std::byte('g'), std::byte('S')};
+	CHECK_FALSE(soundFileLoops(ogg).has_value());
+	CHECK(soundFileLoops(std::vector<std::byte>(16, std::byte(0xff))) == false);   // MP3 frames never loop
+
+	CHECK(recommendedPropClass({true, false}) == "prop_static");
+	CHECK(recommendedPropClass({false, true}) == "prop_physics");
+	CHECK(recommendedPropClass({false, false}) == "prop_dynamic");
+	CHECK(betterPropClass("prop_static", {false, true}) == "prop_dynamic");
+	CHECK(betterPropClass("prop_physics", {true, false}) == "prop_static");
+	CHECK(betterPropClass("prop_physics", {false, true}).empty());
+	CHECK(betterPropClass("prop_dynamic", {false, false}).empty());
+
+	const auto dir = std::filesystem::temp_directory_path() / "sme_prop_sound_checks";
+	std::filesystem::remove_all(dir);
+	test::StudioModelSpec spec;
+	spec.groups = {{"body", {{"box", {{-8, -8, 0, 8, 8, 16}}}}}};
+	spec.staticProp = true;
+	test::writeStudioModel(dir / "models/props/static_crate.mdl", test::makeStudioModel(spec));
+	spec.staticProp = false;
+	spec.mass = 20;
+	test::writeStudioModel(dir / "models/props/barrel.mdl", test::makeStudioModel(spec));
+	test::writeText(dir / "models/props/barrel.phy", "collision");
+	writeBytes(dir / "sound/ambient/hum_loop.wav", looped);
+	writeBytes(dir / "sound/ambient/bell.wav", once);
+	test::writeText(dir / "scripts/game_sounds_manifest.txt", "game_sounds_manifest\n{\n\t\"precache_file\" \"scripts/game_sounds_test.txt\"\n}\n");
+	test::writeText(dir / "scripts/game_sounds_test.txt", "\"Test.Hum\"\n{\n\t\"wave\" \")ambient/hum_loop.wav\"\n}\n");
+	GameFileSystem fs;
+	fs.addDirectory(dir, {"game"});
+	CHECK(readPropModelFlags(fs, "models/props/static_crate.mdl") == PropModelFlags{true, false});
+	CHECK(readPropModelFlags(fs, "models/props/barrel.mdl") == PropModelFlags{false, true});
+	CHECK_FALSE(readPropModelFlags(fs, "models/props/missing.mdl"));
+	CHECK(soundFileOf("#ambient/bell.wav", nullptr) == "ambient/bell.wav");
+	CHECK(soundLoops(fs, "Test.Hum", nullptr) == std::nullopt);   // needs the sound scripts
+	const auto scripts = soundScripts(fs);
+	CHECK(soundLoops(fs, "Test.Hum", &scripts) == true);
+
+	MapDocument doc;
+	const auto add = [&](std::vector<std::pair<std::string, std::string>> keys) {
+		Entity e;
+		e.id = doc.newEntityId();
+		e.keyValues = std::move(keys);
+		e.set("origin", "0 0 0");
+		doc.entities.push_back(e);
+		return e.id;
+	};
+	const int physicsStatic = add({{"classname", "prop_physics"}, {"model", "models/props/static_crate.mdl"}});
+	const int staticBarrel = add({{"classname", "prop_static"}, {"model", "models/props/barrel.mdl"}});
+	const int goodBarrel = add({{"classname", "prop_physics"}, {"model", "models/props/barrel.mdl"}});
+	const int loopFlagged = add({{"classname", "ambient_generic"}, {"message", "ambient/hum_loop.wav"}, {"spawnflags", "33"}});
+	const int bellLooping = add({{"classname", "ambient_generic"}, {"message", "ambient/bell.wav"}, {"spawnflags", "0"}});
+	const int scriptOk = add({{"classname", "ambient_generic"}, {"message", "Test.Hum"}, {"spawnflags", "1"}});
+	add({{"classname", "sky_camera"}});
+	add({{"classname", "sky_camera"}});
+	add({{"classname", "info_player_start"}});
+
+	CheckCache cache;
+	CheckContext context;
+	context.files = &fs;
+	context.cache = &cache;
+	auto problems = checkMap(doc, context);
+	const auto about = [&](Problem::Kind kind, int entityId) -> const Problem* {
+		for (const auto& p : problems) {
+			if (p.kind == kind && (entityId == 0 || p.entityId == entityId)) return &p;
+		}
+		return nullptr;
+	};
+	REQUIRE(about(Problem::Kind::PropClassMismatch, physicsStatic));
+	CHECK(about(Problem::Kind::PropClassMismatch, physicsStatic)->to == "prop_static");
+	REQUIRE(about(Problem::Kind::PropClassMismatch, staticBarrel));
+	CHECK(about(Problem::Kind::PropClassMismatch, staticBarrel)->fixLabel == "Make prop_dynamic");
+	CHECK_FALSE(about(Problem::Kind::PropClassMismatch, goodBarrel));
+	REQUIRE(about(Problem::Kind::SoundLoopMismatch, loopFlagged));
+	CHECK(about(Problem::Kind::SoundLoopMismatch, loopFlagged)->to == "1");
+	REQUIRE(about(Problem::Kind::SoundLoopMismatch, bellLooping));
+	CHECK(about(Problem::Kind::SoundLoopMismatch, bellLooping)->to == "32");
+	CHECK_FALSE(about(Problem::Kind::SoundLoopMismatch, scriptOk));
+	REQUIRE(about(Problem::Kind::MultipleSkyCameras, 0));
+	CHECK(about(Problem::Kind::MultipleSkyCameras, 0)->objects.entities.size() == 2);
+	CHECK(cache.models.size() == 2);
+	CHECK(cache.soundLoops.size() == 3);
+
+	History history;
+	for (int round = 0; round < 10; ++round) {
+		const auto fixable = std::find_if(problems.begin(), problems.end(), [](const Problem& p) { return !p.fixLabel.empty(); });
+		if (fixable == problems.end()) break;
+		history.push(applyFix(doc, *fixable, nullptr));
+		problems = checkMap(doc, context);
+	}
+	CHECK(doc.findEntity(physicsStatic)->classname() == "prop_static");
+	CHECK(doc.findEntity(staticBarrel)->classname() == "prop_dynamic");
+	CHECK(doc.findEntity(loopFlagged)->get("spawnflags") == "1");
+	CHECK(doc.findEntity(bellLooping)->get("spawnflags") == "32");
+	CHECK_FALSE(about(Problem::Kind::PropClassMismatch, 0));
+	CHECK_FALSE(about(Problem::Kind::SoundLoopMismatch, 0));
+	std::filesystem::remove_all(dir);
+}

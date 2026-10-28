@@ -56,7 +56,7 @@ The right panel then shows:
 | **Scale U / V** | texture size; 0.25 is the usual value (one texture pixel = a quarter unit) |
 | **Shift U / V** | moves the texture along the face |
 | **Rotation** | turns the texture |
-| **Lightmap scale** | detail of the baked light; smaller means sharper shadows but a bigger map. 16 is the default; 32–64 for big plain walls |
+| **Lightmap scale** | detail of the baked light; smaller means sharper shadows but a bigger map. 16 is the default; 32–64 for big plain walls. The view menu's **Lightmap density** look (Ctrl+F6) colours every face by it: red 4, orange 8, green 16, cyan 32, blue 64, purple 128, grey = no lightmap; the checker shows one luxel |
 | **World align**, **Face align**, **Reset** | how the texture is laid on the face |
 
 ### Justify

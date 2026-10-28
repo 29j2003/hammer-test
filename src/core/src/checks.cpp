@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <set>
@@ -152,6 +153,9 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 
 	// Entities.
 	bool playerStart = false, lights = false;
+	CheckCache localCache;
+	CheckCache& cache = context.cache ? *context.cache : localCache;
+	Selection skyCameras;
 	std::vector<std::string> classNames;
 	if (context.entities) {
 		for (const auto* e : context.entities->placeable()) {
@@ -213,7 +217,67 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 				p.message = describeEntity(entity) + " uses the model \"" + model + "\" which does not exist.";
 				p.howToFix = "Pick a model in the model browser (or add it to the mod).";
 				problems.push_back(std::move(p));
+			} else if (!model.empty() && startsWithI(classname, "prop_")) {
+				const auto key = toLower(model);
+				auto it = cache.models.find(key);
+				if (it == cache.models.end()) {
+					it = cache.models.emplace(key, readPropModelFlags(*context.files, model)).first;
+				}
+				if (it->second) {
+					if (const auto better = betterPropClass(classname, *it->second); !better.empty()) {
+						Problem p;
+						p.kind = Problem::Kind::PropClassMismatch;
+						p.severity = Problem::Severity::Error;
+						p.entityId = entity.id;
+						p.objects.entities.push_back(entity.id);
+						p.from = classname;
+						p.to = better;
+						p.message = iequals(classname, "prop_static")
+						                ? describeEntity(entity) + ": \"" + model + "\" is not a static prop model - VBSP deletes this prop_static."
+						                : describeEntity(entity) + ": \"" + model + "\" has no collision model - the game removes this prop_physics at spawn.";
+						p.howToFix = "Use " + better + " (the class this model is made for).";
+						p.fixLabel = "Make " + better;
+						problems.push_back(std::move(p));
+					}
+				}
 			}
+			// A looping WAV needs "Is NOT Looped" off and a one-shot WAV needs it on, else the
+			// sound cannot be stopped or never plays again.
+			if (iequals(classname, "ambient_generic")) {
+				if (const auto sound = entity.get("message"); !sound.empty()) {
+					const auto key = toLower(sound);
+					auto it = cache.soundLoops.find(key);
+					if (it == cache.soundLoops.end()) {
+						if (!cache.soundScripts) {
+							cache.soundScripts = soundScripts(*context.files);
+						}
+						it = cache.soundLoops.emplace(key, soundLoops(*context.files, sound, &*cache.soundScripts)).first;
+					}
+					const int flags = std::atoi(entity.get("spawnflags", "0").c_str());
+					const bool notLooped = (flags & AMBIENT_NOT_LOOPED) != 0;
+					if (it->second && *it->second == notLooped) {
+						Problem p;
+						p.kind = Problem::Kind::SoundLoopMismatch;
+						p.severity = Problem::Severity::Warning;
+						p.entityId = entity.id;
+						p.objects.entities.push_back(entity.id);
+						p.to = std::to_string(flags ^ AMBIENT_NOT_LOOPED);
+						if (*it->second) {
+							p.message = describeEntity(entity) + ": \"" + sound + "\" loops, but \"Is NOT Looped\" is on - the sound plays forever and cannot be stopped.";
+							p.howToFix = "Turn \"Is NOT Looped\" off, or use a sound without a loop point.";
+							p.fixLabel = "Turn \"Is NOT Looped\" off";
+						} else {
+							p.message = describeEntity(entity) + ": \"" + sound + "\" plays once, but \"Is NOT Looped\" is off - it plays only the first time.";
+							p.howToFix = "Turn \"Is NOT Looped\" on, or use a sound with a loop point.";
+							p.fixLabel = "Turn \"Is NOT Looped\" on";
+						}
+						problems.push_back(std::move(p));
+					}
+				}
+			}
+		}
+		if (iequals(classname, "sky_camera")) {
+			skyCameras.entities.push_back(entity.id);
 		}
 		// Outputs.
 		for (const auto& c : entity.connections) {
@@ -312,6 +376,16 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		p.howToFix = "Add a light_environment (for outdoor areas) or light entities.";
 		problems.push_back(std::move(p));
 	}
+	if (skyCameras.entities.size() > 1) {
+		Problem p;
+		p.kind = Problem::Kind::MultipleSkyCameras;
+		p.severity = Problem::Severity::Warning;
+		p.objects = skyCameras;
+		p.message = "The map has " + std::to_string(skyCameras.entities.size()) +
+		            " sky_camera entities - the engine uses only one, the 3D skybox may show the wrong one.";
+		p.howToFix = "Keep one sky_camera in the 3D skybox and delete the others.";
+		problems.push_back(std::move(p));
+	}
 	return problems;
 }
 
@@ -352,6 +426,19 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 				return {};
 			}
 			return edit::setKeyValue(doc, {problem.entityId}, "classname", problem.to);
+		case Problem::Kind::PropClassMismatch: {
+			if (problem.to.empty()) {
+				return {};
+			}
+			auto change = edit::setKeyValue(doc, {problem.entityId}, "classname", problem.to);
+			change.name = "Make " + problem.to;
+			return change;
+		}
+		case Problem::Kind::SoundLoopMismatch: {
+			auto change = edit::setKeyValue(doc, {problem.entityId}, "spawnflags", problem.to);
+			change.name = "Fix \"Is NOT Looped\"";
+			return change;
+		}
 		case Problem::Kind::BrushEntityWithoutBrushes: {
 			Selection sel;
 			sel.entities.push_back(problem.entityId);

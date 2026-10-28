@@ -32,6 +32,11 @@ struct DecodedAudio {
 /// Decodes by content (RIFF/WAVE, Ogg, MP3 frames); `name` only helps to guess. Never throws.
 [[nodiscard]] std::optional<DecodedAudio> decodeAudio(std::span<const std::byte> data, std::string_view name = {}, std::string* error = nullptr);
 
+/// Whether the engine plays the file as a loop: a WAV with a cue point or a sampler loop
+/// ("cue " / "smpl" chunk) loops, a WAV without them and an MP3 play once; nullopt for Ogg (Source 1
+/// cannot play it). Reads only the chunk headers.
+[[nodiscard]] std::optional<bool> soundFileLoops(std::span<const std::byte> data);
+
 /// Waveform for drawing: per bucket the lowest and highest sample (-1..1) over all channels.
 [[nodiscard]] std::vector<std::pair<float, float>> waveformPeaks(const DecodedAudio& audio, int buckets);
 

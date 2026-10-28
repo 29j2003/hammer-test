@@ -411,6 +411,7 @@ void MainWindow::createDocks() {
 	});
 	m_outliner = new Outliner(m_editor);
 	m_problems = new ProblemsPanel(m_editor, m_assets);
+	m_budget = new BudgetPanel(m_editor);
 	m_log = new LogPanel;
 	m_toolPanel = new ToolPanel(m_editor);
 	m_toolPanel->entityPicker()->setMaterialCache(m_materials);
@@ -499,11 +500,13 @@ void MainWindow::createDocks() {
 	m_particlesDock = particles;
 	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
 	auto* problems = addDock(tr("Problems"), m_problems, Qt::BottomDockWidgetArea);
+	auto* budget = addDock(tr("Map Budget"), m_budget, Qt::BottomDockWidgetArea);
 	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, sounds);
 	tabifyDockWidget(assets, particles);
 	tabifyDockWidget(assets, compile);
 	tabifyDockWidget(assets, problems);
+	tabifyDockWidget(assets, budget);
 	// Every undo step, next to the log (click one to go back or forward to it).
 	auto* history = addDock(tr("History"), new HistoryPanel(m_editor), Qt::BottomDockWidgetArea);
 	tabifyDockWidget(assets, history);
@@ -839,6 +842,9 @@ void MainWindow::createActions() {
 	brushes->addAction(carve);
 	brushes->addAction(mergeAction);
 	brushes->addAction(round);
+	auto* water = action(tr("Make water"), QKeySequence(), [this] { m_editor->makeWaterFromSelection(m_assets->materialNames()); });
+	water->setToolTip(tr("Top face water, the other faces nodraw; adds a water_lod_control and a cubemap above the water if missing"));
+	brushes->addAction(water);
 	brushes->addSeparator();
 	m_doorMenu = brushes->addMenu(tr("Make door"));
 	m_doorMenu->setObjectName("brushesMakeDoor");
@@ -860,7 +866,7 @@ void MainWindow::createActions() {
 	auto* track = action(tr("Select whole path"), QKeySequence("Ctrl+Shift+P"), [this] { m_editor->selectTrackChain(); });
 	track->setToolTip(tr("Selects every path_track / path_corner of the selected path"));
 	brushes->addAction(track);
-	m_contextActions = {hollow, carve, mergeAction, round, drop, track, nullptr};
+	m_contextActions = {hollow, carve, mergeAction, round, water, drop, track, nullptr};
 	for (auto* a : editMenu->actions()) {
 		if (a->text().startsWith(tr("Tie to entity")) || a->text() == tr("Move to world") || a->text() == tr("Duplicate") || a->text() == tr("Delete") ||
 		    a->text() == tr("Hide selection") || a->text() == tr("Apply current material")) {
@@ -1117,6 +1123,8 @@ void MainWindow::createActions() {
 	renderAction(tr("Lit"), QKeySequence("F6"), Editor::RenderMode::Lit, tr("Lighting preview from the light entities"))->setChecked(true);
 	renderAction(tr("Unlit"), QKeySequence("F5"), Editor::RenderMode::Unlit, tr("Textures without lighting"));
 	renderAction(tr("Wire"), QKeySequence("F8"), Editor::RenderMode::Wireframe, tr("Wireframe"));
+	renderAction(tr("Lightmap density"), QKeySequence("Ctrl+F6"), Editor::RenderMode::LightmapDensity,
+	             tr("Each face coloured by its lightmap scale, with a checker of the luxel size"));
 	auto* shadows = new QAction(tr("Shadows"), this);
 	addAction(shadows);
 	shadows->setObjectName("Shadows");

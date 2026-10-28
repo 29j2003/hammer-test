@@ -50,6 +50,7 @@
 #include <QTabBar>
 #include <QtConcurrentRun>
 
+#include <cstdlib>
 #include <cstring>
 #include <set>
 
@@ -753,6 +754,9 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	if (entityIds.size() == 1 && isDoor(*first)) {
 		buildDoorBox(layout, *first);
 	}
+	if (entityIds.size() == 1 && iequals(classname, "ambient_generic")) {
+		buildSoundLoopBox(layout, *first);
+	}
 
 	// Tabs: Keyvalues / Outputs / Inputs with their counts (outputs and inputs for one entity).
 	const bool single = entityIds.size() == 1 && !world;
@@ -1099,6 +1103,53 @@ void PropertiesPanel::buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap
 	row->addWidget(select);
 	row->addWidget(remove);
 	v->addLayout(row);
+	layout->addWidget(box);
+}
+
+void PropertiesPanel::buildSoundLoopBox(QVBoxLayout* layout, const Entity& ambient) {
+	const auto* game = m_editor->game();
+	const std::string sound = ambient.get("message");
+	if (!game || sound.empty()) {
+		return;
+	}
+	const std::vector<SoundScriptEntry>* scripts = nullptr;
+	if (soundFileOf(sound, nullptr).empty()) {
+		// A sound script name: the scripts are read once per game, on the first such sound.
+		if (m_soundScriptsGame != game || !m_soundScripts) {
+			m_soundScripts = soundScripts(game->files);
+			m_soundScriptsGame = game;
+		}
+		scripts = &*m_soundScripts;
+	}
+	const auto loops = soundLoops(game->files, sound, scripts);
+	if (!loops) {
+		return;   // file missing or not a WAV/MP3: nothing to compare
+	}
+	const int flags = std::atoi(ambient.get("spawnflags", "0").c_str());
+	const bool notLooped = (flags & AMBIENT_NOT_LOOPED) != 0;
+	auto* box = new QGroupBox(tr("Loop"));
+	box->setObjectName("soundLoop");
+	auto* v = new QVBoxLayout(box);
+	auto* state = new QLabel(*loops ? tr("The sound file loops (it has a loop point).") : tr("The sound file plays once (no loop point)."));
+	state->setObjectName("soundLoopState");
+	state->setWordWrap(true);
+	v->addWidget(state);
+	if (*loops == notLooped) {
+		auto* warn = new QLabel(*loops ? tr("\"Is NOT Looped\" is on: the sound plays forever and cannot be stopped.")
+		                               : tr("\"Is NOT Looped\" is off: the sound plays only the first time."));
+		warn->setProperty("role", "warning");
+		warn->setWordWrap(true);
+		v->addWidget(warn);
+		auto* fix = new QPushButton(*loops ? tr("Turn \"Is NOT Looped\" off") : tr("Turn \"Is NOT Looped\" on"));
+		fix->setObjectName("soundLoopFix");
+		fix->setProperty("accent", true);
+		const int id = ambient.id;
+		const int fixed = flags ^ AMBIENT_NOT_LOOPED;
+		connect(fix, &QPushButton::clicked, this, [this, id, fixed] { setKey({id}, "spawnflags", QString::number(fixed)); });
+		v->addWidget(fix);
+	} else {
+		v->addWidget(descriptionLabel(tr("\"Is NOT Looped\" matches the file.")));
+	}
 	layout->addWidget(box);
 }
 

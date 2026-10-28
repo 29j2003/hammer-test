@@ -57,7 +57,7 @@ struct PickResult {
 /// Draws the map in one view (see the file comment); every Viewport owns one.
 class SceneRenderer : protected QOpenGLFunctions_3_3_Core {
 public:
-	enum class Mode { Lit, Unlit, Wireframe, Flat2D };
+	enum class Mode { Lit, Unlit, Wireframe, Flat2D, LightmapDensity };
 
 	SceneRenderer();
 	~SceneRenderer();
@@ -238,6 +238,8 @@ private:
 	void bindSky(QOpenGLShaderProgram& program, const Params& params);
 	void setCommonUniforms(QOpenGLShaderProgram& program, const Params& params, const QMatrix4x4& model);
 	void ensureFlagTexture();
+	/// Uploads m_faceLightmap (one byte per face, same layout as the flags).
+	void uploadLightmapScales();
 	GpuModel* gpuModel(const QString& path);
 	// Shadows (renderer_shadows.cpp): a sun map over the whole map and an atlas of 16 tiles for
 	// the nearest spot lights (one tile) and point lights (six tiles, one per cube side).
@@ -308,6 +310,8 @@ private:
 	std::vector<Batch> m_previewBatches;
 	GLsizei m_previewEdgeCount = 0;
 	GLuint m_flagTexture = 0;
+	GLuint m_lightmapTexture = 0;           ///< Per face: lightmap scale (0 = no lightmap), for the density view
+	std::vector<std::uint8_t> m_faceLightmap;
 	GLuint m_whiteTexture = 0;
 
 	std::vector<Batch> m_batches;

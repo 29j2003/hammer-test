@@ -97,7 +97,8 @@ sort. Double-click goes to the entity.
 - **Outliner** tab (left panel): every object by class, with a filter. Click to select.
 - **Go to ID ...** (Ctrl+Shift+G): select a brush or entity by its number, as named in compile errors.
 - **Select similar** (Ctrl+Alt+O): select everything like the selection.
-- **Used in this map** in the Asset Browser: every material the map uses.
+- **Used in this map** in the Asset Browser: every material the map uses; on the *Models* tab (and the Models page)
+  every model the map uses, with how often (`crate01 · 3×`).
 - The [Problems](compiling.html#problems-and-leaks) tab: **Select** on any problem selects the objects concerned.
 
 ## Export for other programs

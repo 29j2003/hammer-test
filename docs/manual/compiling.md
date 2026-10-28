@@ -115,6 +115,9 @@ selects the objects in the map, and often a button that fixes it right away. The
 | A brush entity without brushes | **Delete entity** |
 | A point entity with brushes | — |
 | A prop with a model that does not exist | — |
+| A `prop_static` whose model is not a static prop (VBSP deletes it), or a `prop_physics` without a collision model (the game removes it) | **Make prop_…** (the class the model is made for) |
+| An `ambient_generic` whose *Is NOT Looped* flag does not match the sound: a looping WAV (cue point) with the flag on cannot be stopped, a one-shot WAV with it off plays only once | **Turn "Is NOT Looped" on/off** |
+| More than one `sky_camera` (the 3D skybox may show the wrong one) | — |
 | An output the entity's class does not have | **Use …** when it looks like a typo |
 | An output to a target name no entity has | **Remove output** |
 | An output to an input the target does not have | **Use …** when it looks like a typo |
@@ -123,6 +126,18 @@ selects the objects in the map, and often a button that fixes it right away. The
 | The map leaks | — |
 
 Every fix is one undo step.
+
+**Damaged files.** A VMF with quotes typed inside a value (`"message" "say "hi""`) or a brush face without a valid
+plane opens anyway: the inner quotes become `'`, the broken brush is left out, and the Log lists every repair. Saving
+writes a clean file. Typed quotes in a value are always written as `'`, so this cannot happen again.
+
+## Map budget
+
+The **Map Budget** tab counts the map against the engine's limits while you work: brushes (8192), brush sides
+(65536), planes (65536), map entities (8192; 16384 in Left 4 Dead 2, Portal 2, Alien Swarm and CS:GO), edicts (2048),
+overlays (512), displacements (2048), cubemaps (1024), lights (8192) and static props. A `~` marks an estimate
+(VBSP adds bevel sides and plane pairs; the game spawns more edicts than the map has). Counts turn orange above 80 %.
+The limits are the `MAX_MAP_*` values of the engine's `bspfile.h`.
 
 ### Leaks
 

@@ -66,8 +66,15 @@ void ModelFolderFilter::setFilter(const QString& folder, const QString& words) {
 	invalidateFilter();
 }
 
+void ModelFolderFilter::setUsedOnly(bool usedOnly) {
+	m_usedOnly = usedOnly;
+	invalidateFilter();
+}
+
 bool ModelFolderFilter::filterAcceptsRow(int row, const QModelIndex& parent) const {
-	const QString path = sourceModel()->index(row, 0, parent).data(Qt::UserRole).toString();
+	const QModelIndex index = sourceModel()->index(row, 0, parent);
+	if (m_usedOnly && index.data(ModelListModel::UsageRole).toInt() == 0) return false;
+	const QString path = index.data(Qt::UserRole).toString();
 	if (!m_folder.isEmpty() && !path.startsWith(m_folder, Qt::CaseInsensitive)) return false;
 	for (const auto& word : m_words) {
 		if (!path.contains(word, Qt::CaseInsensitive)) return false;
@@ -114,7 +121,13 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_search->setObjectName("modelSearch");
 	m_search->setPlaceholderText(tr("Search models (words: props_c17 bench) ..."));
 	m_search->setClearButtonEnabled(true);
-	middleLayout->addWidget(m_search);
+	m_usedOnly = new QCheckBox(tr("Used in this map"));
+	m_usedOnly->setObjectName("modelsPageUsedOnly");
+	m_usedOnly->setToolTip(tr("Only the models the open map uses (the number after a name says how often)"));
+	auto* searchRow = new QHBoxLayout;
+	searchRow->addWidget(m_search, 1);
+	searchRow->addWidget(m_usedOnly);
+	middleLayout->addLayout(searchRow);
 	m_model = new ModelListModel(assets->modelThumbnails(), this);
 	m_filter = new ModelFolderFilter(this);
 	m_filter->setSourceModel(m_model);
@@ -233,6 +246,16 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 
 	// Wiring.
 	connect(m_search, &QLineEdit::textChanged, this, &ModelsPage::applyFilter);
+	connect(m_usedOnly, &QCheckBox::toggled, this, [this](bool on) {
+		m_filter->setUsedOnly(on);
+		applyFilter();
+	});
+	// How often the map uses each model: the counts behind the names and the "Used in this map" filter.
+	connect(editor, &Editor::documentChanged, this, [this] {
+		m_model->setUsage(modelUsageOf(m_editor->doc()));
+		if (m_usedOnly->isChecked()) applyFilter();
+		if (!m_current.isEmpty() && isVisible()) updateDetails();
+	});
 	connect(m_folders, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* item) {
 		m_folder = item ? item->data(0, Qt::UserRole).toString() : QString();
 		applyFilter();
@@ -456,9 +479,8 @@ void ModelsPage::loaded(const Loaded& result) {
 			m_skin->setEnabled(m_skin->count() > 1);
 		}
 		rebuildBodyGroups();
-		// The class the model is made for: static props as prop_static, models with a collision
-		// model as prop_physics, everything else as prop_dynamic.
-		m_placeAs->setCurrentIndex(m_info.staticProp ? 0 : (m_hasPhysics ? 1 : 2));
+		// The class the model is made for (same rule as dropping it into the map).
+		m_placeAs->setCurrentText(QString::fromStdString(recommendedPropClass({m_info.staticProp, m_hasPhysics})));
 	}
 	if (result.geometry) {
 		m_viewer->setModel(result.geometry, result.withInfo);
@@ -510,6 +532,8 @@ void ModelsPage::updateDetails() {
 		row(tr("Size"), tr("%1 x %2 x %3 units").arg(s.x, 0, 'f', 0).arg(s.y, 0, 'f', 0).arg(s.z, 0, 'f', 0));
 		row(tr("Triangles"), tr("%L1 (%L2 vertices)").arg(geometry->triangleCount()).arg(geometry->vertices.size()));
 	}
+	const int used = m_model->usage(m_current);
+	row(tr("In this map"), used > 0 ? tr("used %1×").arg(used) : tr("not used"));
 	row(tr("Skins"), QString::number(std::max(1, m_info.skinCount)));
 	int groups = 0;
 	for (const auto& group : m_info.bodyGroups) groups += group.options.size() > 1 ? 1 : 0;

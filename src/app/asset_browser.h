@@ -94,9 +94,16 @@ class ModelListModel : public QAbstractListModel {
 	Q_OBJECT
 
 public:
+	/// Role with the number of entities of the open map using the model (int).
+	static constexpr int UsageRole = Qt::UserRole + 1;
+
 	ModelListModel(ModelThumbnails* thumbnails, QObject* parent = nullptr);
 	/// Replaces the whole list (after indexing).
 	void setModels(const QStringList& models);
+	/// How often the map uses each model (lower-case path -> count, see modelUsage()); repaints
+	/// only when the counts changed.
+	void setUsage(QHash<QString, int> usage);
+	[[nodiscard]] int usage(const QString& path) const { return m_usage.value(path.toLower()); }
 	/// Qt list model interface: rows, name and preview per row, drag and drop into the views.
 	[[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
 	[[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
@@ -110,6 +117,26 @@ private:
 	ModelThumbnails* m_thumbnails;
 	QStringList m_models;
 	QHash<QString, int> m_rows;
+	QHash<QString, int> m_usage;
+};
+
+/// The usage counts of the open map's models (for ModelListModel::setUsage).
+[[nodiscard]] QHash<QString, int> modelUsageOf(const MapDocument& doc);
+
+/// Filters the model list by search words and "Used in this map".
+class ModelSearchFilter : public QSortFilterProxyModel {
+public:
+	using QSortFilterProxyModel::QSortFilterProxyModel;
+	void setWords(const QString& words);
+	void setUsedOnly(bool usedOnly);
+	[[nodiscard]] bool usedOnly() const { return m_usedOnly; }
+
+protected:
+	[[nodiscard]] bool filterAcceptsRow(int row, const QModelIndex& parent) const override;
+
+private:
+	QStringList m_words;
+	bool m_usedOnly = false;
 };
 
 /// Result of the background indexing of a game's assets.
@@ -153,6 +180,8 @@ public:
 	void materialChanged(const QString& name);
 	[[nodiscard]] ModelThumbnails* modelThumbnails() const { return m_modelThumbnails; }
 	[[nodiscard]] QListView* modelView() const { return m_modelView; }
+	/// "Used in this map" of the model tab.
+	[[nodiscard]] QCheckBox* modelsUsedOnly() const { return m_modelsUsedOnly; }
 
 signals:
 	/// Background indexing finished (the name lists are filled).
@@ -190,6 +219,8 @@ private:
 	ModelListModel* m_modelModel;
 	QListView* m_modelView;
 	QLineEdit* m_modelSearch;
+	QCheckBox* m_modelsUsedOnly;
+	ModelSearchFilter* m_modelFilter;
 	QLabel* m_modelInfo;
 };
 

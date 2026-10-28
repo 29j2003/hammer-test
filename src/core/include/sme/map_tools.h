@@ -62,6 +62,22 @@ namespace edit {
 /// (brushes, entity boxes; unselected only). Objects with nothing below stay.
 [[nodiscard]] Change dropToFloor(MapDocument& doc, const Selection& selection, const EntityCatalog* catalog);
 
+/// What makeWater() did.
+struct WaterResult {
+	Change change;
+	int brushes = 0;          ///< Brushes made into water (0: nothing selected that could be)
+	int lodControlId = 0;     ///< The water_lod_control it added (0: the map had one)
+	int cubemapId = 0;        ///< The env_cubemap it added (0: one was close enough)
+};
+
+/// Hammer's water recipe in one undo step: the top face of every selected brush (world brushes,
+/// brushes of selected brush entities, brushes of selected faces) gets `waterMaterial`, all other
+/// faces tools/toolsnodraw; a water_lod_control is added if the map has none, and an env_cubemap
+/// 64 units above the middle of the surface if no cubemap is within `cubemapRange`; its "sides"
+/// names the water faces so they reflect that cubemap.
+[[nodiscard]] WaterResult makeWater(MapDocument& doc, const Selection& selection, const std::string& waterMaterial, const EntityCatalog* catalog,
+                                    double cubemapRange = 512);
+
 } // namespace edit
 
 } // namespace sme

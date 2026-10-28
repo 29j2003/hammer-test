@@ -158,6 +158,7 @@ key/value list. At the bottom of the panel, a help area explains the key you are
 | **Particles** | The particle browser (also its own page). |
 | **Compile** | The steps, warnings and errors of the last compile. |
 | **Problems** | The problem check with Select and fix buttons. |
+| **Map Budget** | Brushes, sides, planes, entities, edicts and more against the engine limits (see Compiling). |
 | **Log** | Messages of the editor. |
 
 ## The views
