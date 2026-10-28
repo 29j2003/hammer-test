@@ -1506,7 +1506,7 @@ void SceneRenderer::drawSprites(const Params& params) {
 	glBindVertexArray(0);
 }
 
-void SceneRenderer::drawGhostModel(const Params& params, const QString& path, const QMatrix4x4& transform) {
+void SceneRenderer::drawGhostModel(const Params& params, const QString& path, const QMatrix4x4& transform, float opacity) {
 	if (!m_initialized) {
 		return;
 	}
@@ -1526,12 +1526,17 @@ void SceneRenderer::drawGhostModel(const Params& params, const QString& path, co
 	m_program->setUniformValue("u_useColor", 0);
 	m_program->setUniformValue("u_hasTex2", 0);
 	m_program->setUniformValue("u_fullbright", 0);
-	m_program->setUniformValue("u_opacity", 1.f);
+	m_program->setUniformValue("u_opacity", opacity);
 	m_program->setUniformValue("u_texSize", QVector2D(1, 1));
 	m_program->setUniformValue("u_mode", 1);
 	m_program->setUniformValue("u_flatColor", flat ? QVector4D(0.85f, 0.75f, 1.0f, 1) : QVector4D(0, 0, 0, 0));
 	if (flat) {
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+	}
+	const bool blend = opacity < 1.f;
+	if (blend) {
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	}
 	glBindVertexArray(model->vao);
 	for (const auto& mesh : model->meshes) {
@@ -1543,6 +1548,10 @@ void SceneRenderer::drawGhostModel(const Params& params, const QString& path, co
 		++m_drawCalls;
 	}
 	glBindVertexArray(0);
+	if (blend) {
+		glDisable(GL_BLEND);
+		m_program->setUniformValue("u_opacity", 1.f);
+	}
 	if (flat) {
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	}

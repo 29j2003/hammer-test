@@ -5,6 +5,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QPixmap>
 #include <QFutureWatcher>
 #include <QSortFilterProxyModel>
 #include <QStringList>
@@ -26,6 +27,10 @@ namespace sme::app {
 
 class Editor;
 class MaterialCache;
+
+/// The picture that follows the mouse while an asset is dragged: a rounded, semi-transparent card
+/// with the preview, the name and a smaller second line (e.g. the path).
+[[nodiscard]] QPixmap assetDragCard(const QPixmap& preview, const QString& title, const QString& subtitle, qreal devicePixelRatio);
 
 /// All materials of the game with their categories (filled in the background).
 class MaterialListModel : public QAbstractListModel {

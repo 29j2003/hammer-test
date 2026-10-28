@@ -99,6 +99,7 @@
 #include "menu_editor.h"
 #include "tool_panel.h"
 #include "updater.h"
+#include "model_cache.h"
 #include "viewport.h"
 
 using namespace sme;
@@ -1434,6 +1435,78 @@ TEST_CASE("editing with the mouse in the real window") {
 		editor.undo();
 		editor.undo();
 		CHECK(editor.doc().entities.size() == 1);
+	}
+	{
+		// A model dragged in follows the mouse as a see-through preview resting on the surface under
+		// it, centred on its box: map pieces have their origin far away from their geometry.
+		test::writeStudioModel(f.mod / "models/props_demo/far_piece.mdl",
+		                       test::makeStudioModel({{936, 1960, 40, 1064, 2040, 120}}, {"idle"}, "", "metal001", "demo/"));
+		for (const char* ext : {".mdl", ".vvd", ".dx90.vtx"}) {
+			editor.game()->files.noteWrittenFile(f.mod / (std::string("models/props_demo/far_piece") + ext));
+		}
+		const QString farPiece = "models/props_demo/far_piece.mdl";
+		QSignalSpy ready(editor.models(), &ModelCache::modelReady);
+		for (int i = 0; i < 100 && !editor.models()->get(farPiece); ++i) {
+			ready.wait(100);
+		}
+		INFO(editor.models()->error(farPiece).toStdString());
+		REQUIRE(editor.models()->get(farPiece));
+		camera.position = QVector3D(0, -420, 330);
+		camera.yaw = 90;
+		camera.pitch = -32;
+		view->update();
+		settle();
+		const Bounds top = boundsOf(editor, block);
+		const std::size_t before = editor.doc().entities.size();
+		QMimeData mime;
+		mime.setData("application/x-sme-model", farPiece.toUtf8());
+		const Vec3 middle{top.center().x + 16, top.min.y + 24, top.max.z};   // on the top, clear of the player start
+		const QPoint at = screen(view, middle);
+		QDragEnterEvent enter(at, Qt::CopyAction, &mime, Qt::LeftButton, {});
+		QApplication::sendEvent(view, &enter);
+		const QPoint over = screen(view, middle + Vec3{8, 8, 0});
+		QDragMoveEvent move(over, Qt::CopyAction, &mime, Qt::LeftButton, {});
+		QApplication::sendEvent(view, &move);
+		settle();
+		REQUIRE(view->ghostBox());
+		CHECK(view->ghostModel() == farPiece);
+		const Bounds ghost = *view->ghostBox();
+		CHECK(ghost.min.z == doctest::Approx(top.max.z));          // standing on the block
+		CHECK(ghost.size().x == doctest::Approx(128));             // the model's own size, not a default box
+		CHECK(std::abs(ghost.center().x - middle.x - 8) <= 8.5);   // under the cursor (origin on the grid)
+		CHECK(std::abs(ghost.center().y - middle.y - 8) <= 8.5);
+		view->grabFramebuffer().save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/model_drag.png");
+		// The card that follows the mouse while dragging from the browser.
+		QPixmap thumb(96, 96);
+		thumb.fill(QColor(120, 90, 60));
+		const QPixmap card = assetDragCard(thumb, "far_piece", farPiece, 1.0);
+		CHECK(card.size() == QSize(260, 72));
+		CHECK(card.toImage().pixelColor(0, 0).alpha() == 0);       // rounded corner
+		CHECK(card.toImage().pixelColor(36, 36) == QColor(120, 90, 60));
+		card.save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/model_drag_card.png");
+		QDropEvent dropped(QPointF(over), Qt::CopyAction, &mime, Qt::LeftButton, {});
+		QApplication::sendEvent(view, &dropped);
+		settle();
+		CHECK_FALSE(view->ghostBox());
+		REQUIRE(editor.doc().entities.size() == before + 1);
+		const auto& placed = editor.doc().entities.back();
+		CHECK(placed.classname() == "prop_static");
+		CHECK(placed.get("model") == farPiece.toStdString());
+		// Exactly where the preview stood.
+		CHECK(placed.origin().x == doctest::Approx(ghost.min.x - 936));
+		CHECK(placed.origin().y == doctest::Approx(ghost.min.y - 1960));
+		CHECK(placed.origin().z == doctest::Approx(top.max.z - 40));
+		REQUIRE(editor.selection().entities.size() == 1);
+		CHECK(editor.selection().entities.front() == placed.id);
+		// Leaving the view without dropping takes the preview away.
+		QDragEnterEvent again(at, Qt::CopyAction, &mime, Qt::LeftButton, {});
+		QApplication::sendEvent(view, &again);
+		CHECK(view->ghostBox());
+		QDragLeaveEvent leave;
+		QApplication::sendEvent(view, &leave);
+		CHECK_FALSE(view->ghostBox());
+		editor.undo();
+		CHECK(editor.doc().entities.size() == before);
 	}
 
 	// Rotation follows the rotation snap: the entity turns by 45°, the brush stays on the grid.
