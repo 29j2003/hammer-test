@@ -5,6 +5,8 @@
 #include <sme/fidelity_effects.h>
 
 #include <sme/assets.h>
+#include <sme/heightmap.h>
+#include <sme/texture.h>
 #include <sme/filesystem.h>
 #include <sme/keyvalues.h>
 #include <sme/material.h>
@@ -12,6 +14,8 @@
 #include <sme/text.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <regex>
@@ -346,6 +350,153 @@ bool deployWouldApply(GameEffect effect, std::string_view path, std::string_view
 	return false;
 }
 
+bool modHasShaderDll(const std::filesystem::path& modDir) {
+	std::error_code ec;
+	return !modDir.empty() && std::filesystem::is_regular_file(modDir / std::filesystem::path(std::string(MOD_SHADER_DLL)), ec);
+}
+
+bool shaderNeedsModDll(std::string_view shader) {
+	return startsWithI(shader, "Fidelity_") || iequals(shader, "Water_Fidelity");
+}
+
+bool effectNeedsShaderDll(GameEffect effect) {
+	return effect != GameEffect::Wind;
+}
+
+std::vector<std::string> ownMaterialsNeedingShaderDll(const std::filesystem::path& modDir) {
+	std::vector<std::string> out;
+	const auto root = modDir / "materials";
+	std::error_code ec;
+	if (!std::filesystem::is_directory(root, ec)) return out;
+	for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec), end; !ec && it != end;
+	     it.increment(ec)) {
+		if (!it->is_regular_file(ec) || !iequals(it->path().extension().string(), ".vmt")) continue;
+		const auto text = readFile(it->path());
+		if (!text || isGeneratedMaterial(*text) || !shaderNeedsModDll(shaderOf(*text))) continue;
+		auto name = it->path().lexically_relative(root).generic_string();
+		name = toLower(name.substr(0, name.size() - 4));
+		out.push_back(std::move(name));
+	}
+	std::sort(out.begin(), out.end());
+	return out;
+}
+
+namespace {
+
+/// Bumped when the pattern relief changes (the hash makes the walls new).
+constexpr std::string_view PATTERN_RULES = "pattern1";
+/// deploy.ps1: -ParallaxDepth 0.02 x $CourseDepth 0.5 for walls laid in courses.
+constexpr const char* PATTERN_DEPTH = "0.01";
+
+std::string hexHash(std::uint64_t h) {
+	char text[17];
+	std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(h));
+	return text;
+}
+
+void fnv(std::uint64_t& h, const void* data, std::size_t size) {
+	const auto* bytes = static_cast<const unsigned char*>(data);
+	for (std::size_t i = 0; i < size; ++i) {
+		h ^= bytes[i];
+		h *= 1099511628211ull;
+	}
+}
+
+/// The base texture of a plain wall that can carry a pattern relief, or "" - LightmappedGeneric
+/// only (blends keep deploy's two-layer relief), no texture transforms (the height map lies in
+/// the base texture's coordinates, the shader reads it in the bump map's), relief that fits.
+std::string patternWallTexture(std::string_view material, std::string_view originalVmt) {
+	static const std::regex plain("^(SDK_)?LightmappedGeneric$", ICASE);
+	if (!std::regex_match(shaderOf(originalVmt), plain)) return {};
+	const std::string c = clean(originalVmt);
+	static const std::regex moved(R"re("?\$(basetexturetransform|bumptransform|basetexture2|seamless_scale)"?\s)re", ICASE);
+	if (std::regex_search(c, moved)) return {};
+	const auto parsed = parseMaterial(originalVmt, material);
+	if (!parsed) return {};
+	const std::string base = baseTexture(c);
+	if (!fidelityReliefSource(material, *parsed)) {
+		// Also walls whose name tells nothing (a concrete floor laid in slabs): there the pattern
+		// decides - with the same blockers as everywhere else (see-through, decals, wood ...).
+		if (base.empty() || std::regex_search(vmtPath(toLower(std::string(material))), NOT_PARALLAX)) return {};
+		for (const char* flag : {"$alphatest", "$translucent", "$additive", "$decal", "$nodiffusebumplighting", "$maskedblending"}) {
+			if (parsed->flag(flag)) return {};
+		}
+		if (const auto mode = parsed->param("$detailblendmode"); !mode.empty() && std::atoi(mode.c_str()) >= 2) return {};
+		if (std::regex_search(base, WOOD_NAMES) || !reliefFitByName(material, base).suits) return {};
+	}
+	return base;
+}
+
+} // namespace
+
+std::string patternReliefHash(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt) {
+	const std::string texture = patternWallTexture(material, originalVmt);
+	if (texture.empty()) return {};
+	const auto bytes = fs.read("materials/" + toLower(texture) + ".vtf");
+	if (!bytes) return {};
+	std::uint64_t h = 1469598103934665603ull;
+	fnv(h, PATTERN_RULES.data(), PATTERN_RULES.size());
+	fnv(h, originalVmt.data(), originalVmt.size());
+	fnv(h, bytes->data(), bytes->size());
+	return hexHash(h);
+}
+
+std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt) {
+	const std::string hash = patternReliefHash(fs, material, originalVmt);
+	if (hash.empty()) return std::nullopt;
+	const auto image = loadTexture(fs, patternWallTexture(material, originalVmt), 512);
+	if (!image) return std::nullopt;
+	ReliefLayout layout;
+	auto heights = heightFromTexture(*image, &layout);
+	if (!heights || !layout.found() || layout.confidence < 0.5) return std::nullopt;   // deploy's relief stays
+	PatternRelief out;
+	out.hash = hash;
+	out.heightName = toLower(material) + std::string(PATTERN_RELIEF_SUFFIX);
+	out.heightVtf = encodeHeightVtf(*heights);
+	if (out.heightVtf.empty()) return std::nullopt;
+	// deploy.ps1's New-ParallaxMaterial: the shader's name swapped, the relief keys first in the
+	// block, the rest of the material as it was (without comments).
+	const std::string c = clean(originalVmt);
+	static const std::regex head(R"re(^\s*"?[A-Za-z0-9_]+"?(\s*\{))re");
+	std::smatch m;
+	if (!std::regex_search(c, m, head)) return std::nullopt;
+	std::vector<std::string> lines{param("$parallaxmap", out.heightName), param("$parallaxdepth", PATTERN_DEPTH)};
+	static const std::regex envmap(R"re("?\$envmap"?\s)re", ICASE);
+	if (!std::regex_search(c, envmap)) {
+		// As deploy.bat: the map's cubemap, shown only where the wall is wet from rain.
+		lines.push_back(param("$envmap", "env_cubemap"));
+		lines.push_back(param("$envmapwetonly", "1"));
+	}
+	// Exactly as there: the brace with what stood before it, CRLF, the keys joined by CRLF, then the
+	// rest of the cleaned text (its own line ends).
+	std::string body = m[1].str() + CRLF;
+	for (std::size_t i = 0; i < lines.size(); ++i) body += lines[i] + (i + 1 < lines.size() ? CRLF : "");
+	out.text = std::string(PATTERN_RELIEF_MARKER) + " (relief) from " + vmtPath(toLower(std::string(material))) + " hash " + hash + " " +
+	           layout.describe() + " (Mapsmith > Project > Game enhancements)" + CRLF + "\"Fidelity_Parallax\"" + body +
+	           c.substr(std::size_t(m.position(0) + m.length(0)));
+	return out;
+}
+
+std::set<std::string> vmfMaterialNames(const std::vector<std::filesystem::path>& vmfFiles) {
+	std::set<std::string> out;
+	static const std::regex line(R"re(^\s*"material"\s+"([^"]+)")re", ICASE);
+	for (const auto& file : vmfFiles) {
+		std::ifstream stream(file, std::ios::binary);
+		if (!stream) continue;
+		std::string text;
+		std::smatch m;
+		while (std::getline(stream, text)) {
+			if (text.find("aterial") == std::string::npos) continue;   // cheap test before the regex
+			if (std::regex_search(text, m, line)) {
+				std::string name = toLower(m[1].str());
+				std::replace(name.begin(), name.end(), '\\', '/');
+				out.insert(std::move(name));
+			}
+		}
+	}
+	return out;
+}
+
 ContainerKind containerKind(std::string_view path, const float* reflectivity) {
 	if (std::regex_search(std::string(path), MEDICAL_NAMES)) return ContainerKind::Medical;
 	if (reflectivity) {
@@ -565,81 +716,171 @@ std::map<GameEffect, std::set<std::string>> excludedMaterials(const GameFileSyst
 }
 
 EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem::path& modDir, const EnhancementSettings& settings,
-                                 const std::map<GameEffect, std::set<std::string>>& excluded, const EffectCandidates* candidates) {
+                                 const std::map<GameEffect, std::set<std::string>>& excluded, const EffectCandidates* candidates,
+                                 const EnhancementOptions& options) {
 	EnhancementPlan plan;
 	std::set<std::string> kept;
 	const EffectCandidates found = candidates ? EffectCandidates{} : findEffectCandidates(fs, modDir);
-	for (const auto& [effect, materials] : candidates ? *candidates : found) {
+	const EffectCandidates& all = candidates ? *candidates : found;
+	const auto heightFileOf = [&modDir](const std::string& material) {
+		return modDir / "materials" / std::filesystem::path(toLower(material) + std::string(PATTERN_RELIEF_SUFFIX) + ".vtf");
+	};
+	const auto isPattern = [](const std::optional<std::string>& own) { return own && std::string_view(*own).starts_with(PATTERN_RELIEF_MARKER); };
+	// One material of one effect: what its file in the mod should be. `deployMakes`: deploy.bat
+	// gives it the effect by itself (a candidate); a wall only of the maps gets nothing but the
+	// pattern relief.
+	const auto plan1 = [&](GameEffect effect, const std::string& material, bool deployMakes) {
+		const std::string path = vmtPath(material);
+		const auto file = modDir / "materials" / std::filesystem::path(material + ".vmt");
+		std::optional<std::string> own;
+		{
+			std::error_code ec;
+			if (std::filesystem::exists(file, ec)) own = readFile(file);
+		}
+		if (own && !isGeneratedMaterial(*own)) {
+			// The mapper's own version: never touched.
+			if (kept.insert(material).second) plan.keptOwn.push_back(material);
+			if (effectIsOn(effect, *own)) ++plan.active[effect];
+			return;
+		}
+		const auto original = fs.readOriginal(path, modDir);
+		if (!original) return;
 		const auto skipped = excluded.find(effect);
-		for (const auto& material : materials) {
-			const std::string path = vmtPath(material);
-			const auto file = modDir / "materials" / std::filesystem::path(material + ".vmt");
-			std::optional<std::string> own;
-			{
-				std::error_code ec;
-				if (std::filesystem::exists(file, ec)) own = readFile(file);
-			}
-			if (own && !isGeneratedMaterial(*own)) {
-				// The mapper's own version: never touched.
-				if (kept.insert(material).second) plan.keptOwn.push_back(material);
-				if (effectIsOn(effect, *own)) ++plan.active[effect];
-				continue;
-			}
-			const auto original = fs.readOriginal(path, modDir);
-			if (!original) continue;
-			const bool want = settings.enabled(effect) && !settings.isExcluded(effect, material) &&
-			                  !(skipped != excluded.end() && skipped->second.count(material));
-			std::string text;
-			if (effect == GameEffect::Relief) {
-				// deploy.bat makes the relief (it needs the height maps); Mapsmith only keeps it off where it
-				// is switched off or makes no sense (windows, signs, metal sheets ... - relief_pattern).
-				// By name, flags and the texture's look - as the viewport decides (relief_pattern).
-				const auto parsed = parseMaterial(*original, material);
-				const ReliefFit fit = parsed ? reliefFitInGame(fs, material, *parsed) : reliefFitByName(material, baseTexture(clean(*original)));
-				if (want && fit.suits) {
-					++plan.active[effect];
-					if (own && std::string_view(*own).starts_with(MAPSMITH_MARKER)) {
-						EffectChange change;   // the copy that kept it off goes: deploy.bat makes the relief again
-						change.effect = effect;
-						change.material = material;
-						change.file = file;
-						change.remove = true;
-						plan.changes.push_back(std::move(change));
-					}
-					continue;
-				}
-				text = std::string(MAPSMITH_MARKER) + " off (relief) from " + path +
-				       (fit.suits ? std::string(" (Mapsmith > Project > Game enhancements switches it on again)")
-				                  : " - no depth for a " + fit.reason + " (Mapsmith decides; the material editor can still give it relief)") +
-				       CRLF + *original;
-			} else if (want) {
-				ContainerKind kind = containerKind(path);
-				if (effect == GameEffect::Liquid && kind == ContainerKind::Drink) {
-					// Dark glass from the texture's average colour (deploy.ps1 reads the .vtf header too).
-					const std::string texture = baseTexture(clean(*original));
-					if (!texture.empty()) {
-						if (const auto vtf = fs.read("materials/" + texture + ".vtf")) {
-							const std::string_view bytes(reinterpret_cast<const char*>(vtf->data()), std::min<std::size_t>(vtf->size(), 64));
-							if (const auto r = vtfReflectivity(bytes)) kind = containerKind(path, r->data());
-						}
-					}
-				}
-				auto made = makeEffectMaterial(effect, path, *original, kind, DEPLOY_MARKER);
-				if (!made) continue;
-				text = std::move(*made);
-				++plan.active[effect];
-			} else {
-				// A copy of the original keeps it off, also when deploy.bat runs again.
-				text = std::string(MAPSMITH_MARKER) + " off (" + gameEffectInfo(effect).id + ") from " + path +
-				       " (Mapsmith > Project > Game enhancements switches it on again)" + CRLF + *original;
-			}
-			if (own && *own == text) continue;   // already so
+		const bool want = settings.enabled(effect) && !settings.isExcluded(effect, material) &&
+		                  !(skipped != excluded.end() && skipped->second.count(material));
+		const auto removeOwn = [&] {
+			EffectChange change;
+			change.effect = effect;
+			change.material = material;
+			change.file = file;
+			change.remove = true;
+			if (isPattern(own)) change.heightFile = heightFileOf(material);
+			plan.changes.push_back(std::move(change));
+		};
+		const auto write = [&](std::string text, std::vector<std::byte> heightVtf = {}) {
+			if (own && *own == text && (heightVtf.empty() || std::filesystem::exists(heightFileOf(material)))) return;   // already so
 			EffectChange change;
 			change.effect = effect;
 			change.material = material;
 			change.file = file;
 			change.text = std::move(text);
+			if (!heightVtf.empty() || isPattern(own)) change.heightFile = heightFileOf(material);
+			change.heightVtf = std::move(heightVtf);
 			plan.changes.push_back(std::move(change));
+		};
+		std::string text;
+		if (want && effectNeedsShaderDll(effect) && !options.shaderDll) {
+			// Without the mod's shader DLL the game draws these as wireframes (see shaderNeedsModDll):
+			// nothing gets the effect, and what was generated with it goes (deploy.ps1 does the same).
+			if (deployMakes) ++plan.heldBack;
+			if (own && effectIsOn(effect, *own)) removeOwn();
+			return;
+		}
+		if (effect == GameEffect::Relief) {
+			// By name, flags and the texture's look - as the viewport decides (relief_pattern).
+			const auto parsed = parseMaterial(*original, material);
+			const ReliefFit fit = parsed ? reliefFitInGame(fs, material, *parsed) : reliefFitByName(material, baseTexture(clean(*original)));
+			if (want && fit.suits) {
+				// Walls of the mod's maps: the relief from the texture's pattern (bricks up, joints
+				// down), where one is found clearly; else deploy.bat makes it (from the normal map
+				// or the brightness).
+				if (options.mapMaterials && options.mapMaterials->count(toLower(material))) {
+					if (isPattern(own)) {
+						const std::string hash = patternReliefHash(fs, material, *original);
+						if (!hash.empty() && own->find(" hash " + hash + " ") != std::string::npos && std::filesystem::exists(heightFileOf(material))) {
+							++plan.active[effect];
+							++plan.patternRelief;
+							return;   // made from this texture and these rules already
+						}
+					}
+					if (auto pattern = makePatternRelief(fs, material, *original)) {
+						++plan.active[effect];
+						++plan.patternRelief;
+						write(std::move(pattern->text), std::move(pattern->heightVtf));
+						return;
+					}
+				}
+				if (deployMakes) ++plan.active[effect];
+				// The copy that kept it off (or an old pattern relief) goes: deploy.bat makes the relief again.
+				if (own && std::string_view(*own).starts_with(MAPSMITH_MARKER)) removeOwn();
+				return;
+			}
+			if (!deployMakes) {
+				if (isPattern(own)) removeOwn();   // switched off: the wall is as in the game again
+				return;
+			}
+			text = std::string(MAPSMITH_MARKER) + " off (relief) from " + path +
+			       (fit.suits ? std::string(" (Mapsmith > Project > Game enhancements switches it on again)")
+			                  : " - no depth for a " + fit.reason + " (Mapsmith decides; the material editor can still give it relief)") +
+			       CRLF + *original;
+		} else if (want) {
+			ContainerKind kind = containerKind(path);
+			if (effect == GameEffect::Liquid && kind == ContainerKind::Drink) {
+				// Dark glass from the texture's average colour (deploy.ps1 reads the .vtf header too).
+				const std::string texture = baseTexture(clean(*original));
+				if (!texture.empty()) {
+					if (const auto vtf = fs.read("materials/" + texture + ".vtf")) {
+						const std::string_view bytes(reinterpret_cast<const char*>(vtf->data()), std::min<std::size_t>(vtf->size(), 64));
+						if (const auto r = vtfReflectivity(bytes)) kind = containerKind(path, r->data());
+					}
+				}
+			}
+			auto made = makeEffectMaterial(effect, path, *original, kind, DEPLOY_MARKER);
+			if (!made) return;
+			text = std::move(*made);
+			++plan.active[effect];
+		} else {
+			// A copy of the original keeps it off, also when deploy.bat runs again.
+			text = std::string(MAPSMITH_MARKER) + " off (" + gameEffectInfo(effect).id + ") from " + path +
+			       " (Mapsmith > Project > Game enhancements switches it on again)" + CRLF + *original;
+		}
+		write(std::move(text));
+	};
+	for (const auto& [effect, materials] : all) {
+		for (const auto& material : materials) plan1(effect, material, true);
+	}
+	// Walls of the maps deploy.bat does not choose by itself (no bump map, a name without bricks
+	// or stones) get the pattern relief too, when their texture shows one.
+	if (options.mapMaterials) {
+		std::set<std::string> done;
+		if (const auto it = all.find(GameEffect::Relief); it != all.end()) {
+			for (const auto& material : it->second) done.insert(toLower(material));
+		}
+		const bool reliefOn = std::any_of(all.begin(), all.end(), [](const auto& entry) { return entry.first == GameEffect::Relief; });
+		if (reliefOn) {
+			for (const auto& material : *options.mapMaterials) {
+				if (done.count(material)) continue;
+				const auto original = fs.readOriginal(vmtPath(material), modDir);
+				if (!original || patternWallTexture(material, *original).empty()) continue;
+				plan1(GameEffect::Relief, material, false);
+			}
+		}
+	}
+	if (!options.shaderDll) {
+		// Every other generated material that needs the DLL goes as well (a pattern relief of a
+		// map no longer opened, a material of an effect switched off since): deploy.ps1 does so.
+		std::set<std::filesystem::path> planned;
+		for (const auto& change : plan.changes) planned.insert(change.file);
+		const auto root = modDir / "materials";
+		std::error_code ec;
+		if (std::filesystem::is_directory(root, ec)) {
+			for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec), end;
+			     !ec && it != end; it.increment(ec)) {
+				if (!it->is_regular_file(ec) || !iequals(it->path().extension().string(), ".vmt") || planned.count(it->path())) continue;
+				const auto text = readFile(it->path());
+				if (!text || !isGeneratedMaterial(*text) || !shaderNeedsModDll(shaderOf(*text))) continue;
+				auto name = it->path().lexically_relative(root).generic_string();
+				name = name.substr(0, name.size() - 4);
+				EffectChange change;
+				change.effect = startsWithI(shaderOf(*text), "Fidelity_Liquid") ? GameEffect::Liquid
+				                : iequals(shaderOf(*text), "Water_Fidelity")    ? GameEffect::Water
+				                                                                : GameEffect::Relief;
+				change.material = name;
+				change.file = it->path();
+				change.remove = true;
+				if (std::string_view(*text).starts_with(PATTERN_RELIEF_MARKER)) change.heightFile = heightFileOf(name);
+				plan.changes.push_back(std::move(change));
+			}
 		}
 	}
 	return plan;

@@ -507,6 +507,13 @@ void MainWindow::createDocks() {
 		showPage(Page::Project);
 		m_projectPage->setCurrentWidget(m_features);
 	});
+	// "Install features" where an effect needs the mod's shaders (Game enhancements, the material
+	// editor): to the Features tab and install them right away.
+	connect(m_editor->enhancements(), &GameEnhancements::installFeaturesRequested, this, [this] {
+		showPage(Page::Project);
+		m_projectPage->setCurrentWidget(m_features);
+		m_features->installNow();
+	});
 	connect(m_features, &FeaturesPanel::modCodeRequested, this, [this] {
 		showPage(Page::Project);
 		m_projectPage->setCurrentWidget(m_modCode);

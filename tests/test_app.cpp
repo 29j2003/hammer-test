@@ -3982,6 +3982,74 @@ TEST_CASE("game enhancements: on by default, off for one model or the whole mod"
 	CHECK(bottleText() == own);
 	CHECK(enhancements->keptOwn() == QStringList{"models/props_junk/glassbottle01a"});
 	CHECK(status->text().contains("1 kept (your own material)"));
+	std::filesystem::remove(modFile);
+	editor.game()->files.noteRemovedFile(modFile);
+
+	// Walls of the open map get their relief from the texture's pattern - in the game too: a
+	// brick wall of the base game (the demo's bricks) on a block, a moment after the edit.
+	const auto baseGame = f.sdkBase / "hl2";   // a folder the mod mounts (the base game's own files)
+	std::filesystem::create_directories(baseGame / "materials/brick");
+	std::filesystem::copy_file(f.mod / "materials/demo/brickwall001.vtf", baseGame / "materials/brick/testwall.vtf",
+	                           std::filesystem::copy_options::overwrite_existing);
+	test::writeText(baseGame / "materials/brick/testwall.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"brick/testwall\"\n}\n");
+	editor.game()->files.noteWrittenFile(baseGame / "materials/brick/testwall.vmt");
+	editor.game()->files.noteWrittenFile(baseGame / "materials/brick/testwall.vtf");
+	auto [wall, wallRef] = edit::createBlock(editor.doc(), Bounds{{3000, 0, 0}, {3064, 64, 64}}, "BRICK/TESTWALL");
+	editor.commit(std::move(wall));
+	for (int i = 0; i < 200 && !std::filesystem::exists(f.mod / "materials/brick/testwall.vmt"); ++i) QTest::qWait(25);
+	waitIdle();
+	const auto wallText = readFileText(f.mod / "materials/brick/testwall.vmt").value_or(std::string());
+	CHECK(wallText.starts_with(std::string(PATTERN_RELIEF_MARKER)));
+	CHECK(effectIsOn(GameEffect::Relief, wallText));
+	CHECK(std::filesystem::exists(f.mod / "materials/brick/testwall_mapsmith_relief.vtf"));
+	CHECK(enhancements->patternReliefCount() >= 1);
+	CHECK(status->text().contains("of your maps with relief from their pattern"));
+
+	// Without the mod's shader DLL: nothing that the game would draw as a wireframe stays, the
+	// Overview says why and offers Install features; the material editor will not save such a shader.
+	enhancements->setEffectEnabled(GameEffect::Liquid, true);
+	waitIdle();
+	CHECK(effectIsOn(GameEffect::Liquid, bottleText()));
+	auto* dllBox = section->findChild<QWidget*>("enhancementDllMissing");
+	REQUIRE(dllBox);
+	CHECK_FALSE(dllBox->isVisible());
+	std::filesystem::remove(f.mod / "bin/game_shader_dx6.dll");
+	enhancements->sync();
+	waitIdle();
+	CHECK_FALSE(enhancements->shaderDll());
+	CHECK_FALSE(std::filesystem::exists(f.mod / "materials/brick/testwall.vmt"));
+	CHECK_FALSE(std::filesystem::exists(f.mod / "materials/brick/testwall_mapsmith_relief.vtf"));
+	CHECK_FALSE(effectIsOn(GameEffect::Liquid, bottleText()));
+	CHECK(enhancements->heldBackCount() >= 1);
+	CHECK(dllBox->isVisibleTo(section));
+	// (the main window would install them from the bundle: not in this test)
+	QObject::disconnect(enhancements, &GameEnhancements::installFeaturesRequested, nullptr, nullptr);
+	QSignalSpy installAsked(enhancements, &GameEnhancements::installFeaturesRequested);
+	auto* install = section->findChild<QPushButton*>("enhancementInstallFeatures");
+	REQUIRE(install);
+	QTest::mouseClick(install, Qt::LeftButton);
+	CHECK(installAsked.count() == 1);
+
+	auto* materials = window.materialEditor();
+	window.showPage(MainWindow::Page::Materials);
+	materials->openMaterial("demo/brickwall001");
+	settle();
+	CHECK_FALSE(materials->fidelityShaders());
+	auto* relief = materials->findChild<QCheckBox*>("relief");
+	REQUIRE(relief);
+	relief->setChecked(true);
+	settle();
+	auto* materialWarning = materials->findChild<QWidget*>("materialDllMissing");
+	REQUIRE(materialWarning);
+	CHECK(materialWarning->isVisibleTo(materials));
+	const std::string before = readFileText(f.mod / "materials/demo/brickwall001.vmt").value_or(std::string());
+	CHECK_FALSE(materials->save());
+	CHECK(readFileText(f.mod / "materials/demo/brickwall001.vmt").value_or(std::string()) == before);   // not written: it would be a see-through wireframe
+	CHECK_FALSE(std::filesystem::exists(f.mod / "materials/demo/brickwall001_relief.vtf"));
+	relief->setChecked(false);
+	settle();
+	CHECK_FALSE(materialWarning->isVisibleTo(materials));
+	test::writeText(f.mod / "bin/game_shader_dx6.dll", "stand-in for the test\n");
 }
 
 TEST_CASE("doors and connections: make door, Door box, test open, sounds, areaportal, connect by clicking") {

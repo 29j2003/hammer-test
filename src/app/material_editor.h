@@ -203,6 +203,7 @@ private:
 	QLabel* m_notice;
 	QComboBox* m_kindBox;
 	QLabel* m_shaderName;
+	QWidget* m_dllWarning = nullptr;   ///< The mod's shader DLL is missing for the chosen shader
 	std::map<QString, QLineEdit*> m_textureFields;
 	std::map<QString, QLabel*> m_thumbs;  ///< Small pictures in front of the texture fields
 	std::map<QString, QLineEdit*> m_colorFields;

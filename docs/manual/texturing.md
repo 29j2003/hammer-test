@@ -163,7 +163,14 @@ a round brush.
 
 Every change shows in the map views at once - relief on or off, depth, zones, any other setting - before you save.
 Leaving the material without saving shows it as saved again. Saving writes `<material>_relief.vtf` next to the
-material; the game uses it from then on (`deploy.bat` leaves your own materials alone).
+material (byte for byte in the form `deploy.bat` writes its height maps); the game uses it from then on (`deploy.bat`
+leaves your own materials alone). The depth starts where `deploy.bat` would put it: 0.02, bricks and tiles laid in
+courses 0.01.
+
+{: .warning }
+Relief needs the mod's shaders (**Project › Features**). Without them the game draws the surface as a see-through
+wireframe - the sky shows through a floor. The editor then shows a warning with **Install features** and does not save
+the material until they are installed.
 
 In the map views, the lighting preview shows the relief on walls automatically when the mapbase-fidelity look is on
 (view menu), using the same rules as the add-on's `deploy.bat` - except where depth makes no sense: **windows and

@@ -3,6 +3,7 @@
 #include "material_editor.h"
 
 #include "editor.h"
+#include "enhancements.h"
 #include "material_preview.h"
 
 #include <QButtonGroup>
@@ -573,7 +574,7 @@ QWidget* MaterialEditor::sliderField(const QString& key, double minimum, double 
 void MaterialEditor::buildFields() {
 	// Under each mapbase-fidelity switch while the mod does not have the shaders yet.
 	const auto fidelityNote = [this] {
-		auto* label = hint(tr("The game shows this after deploy.bat (mapbase-fidelity's shaders). Here you see it already."));
+		auto* label = hint(tr("The game shows this once the mod's features are installed (Project › Features). Here you see it already."));
 		m_fidelityNotes.push_back(label);
 		return label;
 	};
@@ -617,6 +618,26 @@ void MaterialEditor::buildFields() {
 	kindLayout->setSpacing(2);
 	kindLayout->addWidget(m_kindBox);
 	kindLayout->addWidget(m_shaderName);
+	// A shader of the mod (relief, liquid, the new water) without the mod's shader DLL: the game
+	// would draw the surface as a wireframe - say so, and offer to install the features.
+	m_dllWarning = new QWidget;
+	m_dllWarning->setObjectName("materialDllMissing");
+	auto* dllRow = new QVBoxLayout(m_dllWarning);
+	dllRow->setContentsMargins(0, 4, 0, 0);
+	dllRow->setSpacing(4);
+	auto* dllText = hint(tr("The mod's shaders are not installed (bin\\game_shader_dx6.dll): in the game this surface would be a "
+	                        "see-through wireframe. Install the features first - then Save writes it."));
+	dllText->setStyleSheet(QStringLiteral("color: #ffc070;"));
+	dllRow->addWidget(dllText);
+	auto* install = new QPushButton(tr("Install features"));
+	install->setObjectName("materialInstallFeatures");
+	install->setProperty("accent", true);
+	connect(install, &QPushButton::clicked, this, [this] {
+		if (auto* enhancements = m_editor->enhancements()) enhancements->requestInstallFeatures();
+	});
+	dllRow->addWidget(install, 0, Qt::AlignLeft);
+	m_dllWarning->setVisible(false);
+	kindLayout->addWidget(m_dllWarning);
 	kindForm->addRow(tr("Kind"), kindRow);
 	auto* texture = textureField("$basetexture", tr("folder/texture (without .vtf)"));
 	kindForm->addRow(tr("Texture"), texture);
@@ -924,12 +945,10 @@ QString MaterialEditor::baseShader() const {
 }
 
 bool MaterialEditor::fidelityShaders() const {
-	const auto* game = m_editor->game();
-	if (!game) return false;
-	// deploy.bat copies the shaders' .vcs files and game_shader_dx6.dll into the mod.
-	const auto* entry = m_editor->gameEntry();
-	return game->files.exists("shaders/fxc/fidelity_parallax_ps30.vcs") ||
-	       (entry && QFileInfo::exists(fromPath(entry->gameDir) + "/bin/game_shader_dx6.dll"));
+	// The engine knows the mod's shaders only from its DLL (the .vcs files alone are not enough:
+	// without the DLL a Fidelity_* material is drawn as a wireframe).
+	const auto* entry = m_editor->game() ? m_editor->gameEntry() : nullptr;
+	return entry && modHasShaderDll(entry->gameDir);
 }
 
 QString MaterialEditor::value(const QString& key) const {
@@ -986,7 +1005,14 @@ void MaterialEditor::setRelief(bool on) {
 		return;
 	}
 	setShader(k == Kind::Blend ? "Fidelity_WorldVertexTransition" : "Fidelity_Parallax");
-	if (value("$parallaxdepth").isEmpty()) setValue("$parallaxdepth", "0.02");
+	if (value("$parallaxdepth").isEmpty()) {
+		// deploy.bat's depth for this wall: 0.02, bricks and tiles in courses at half of it.
+		double depth = 0.02;
+		if (const auto original = parseMaterial(m_originalText, m_name.toStdString())) {
+			if (const auto source = fidelityReliefSource(m_name.toStdString(), *original)) depth = source->depth;
+		}
+		setValue("$parallaxdepth", QString::number(depth, 'g', 3));
+	}
 	if (!m_heightSource) {
 		// A height map is needed: from the texture's pattern, else the normal map, else the brightness.
 		makeHeightMap(HeightFrom::Auto);
@@ -1316,6 +1342,7 @@ void MaterialEditor::updateSections() {
 	// mapbase-fidelity: usable also before the mod has the shaders (the note says so).
 	const bool fidelity = fidelityShaders();
 	for (auto* label : m_fidelityNotes) label->setVisible(!fidelity);
+	m_dllWarning->setVisible(open && !fidelity && shaderNeedsModDll(m_shader.toStdString()));
 	m_fromNormals->setEnabled(!value("$bumpmap").isEmpty());
 	m_zonesButton->setEnabled(m_heightSource.has_value());
 	m_invert->setEnabled(m_heightSource.has_value());
@@ -1485,6 +1512,12 @@ bool MaterialEditor::save(const QString& asName) {
 		return false;
 	}
 	const QString gameDir = fromPath(m_editor->gameEntry()->gameDir);
+	if (shaderNeedsModDll(m_shader.toStdString()) && !fidelityShaders()) {
+		// The surface would be a see-through wireframe in the game (Julius' floor): not written.
+		m_status->setText(tr("Not saved: %1 needs the mod's shaders - press Install features first").arg(m_shader));
+		m_dllWarning->setVisible(true);
+		return false;
+	}
 	const auto writeFile = [&](const QString& path, const char* data, qint64 size) {
 		QDir().mkpath(QFileInfo(path).absolutePath());
 		QFile file(path);

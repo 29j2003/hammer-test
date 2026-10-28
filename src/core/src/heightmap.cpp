@@ -11,7 +11,7 @@
 #include <complex>
 #include <numbers>
 
-#include <vtfpp/VTF.h>
+#include <cstring>
 
 namespace sme {
 
@@ -278,15 +278,66 @@ ImageRgba heightImage(const HeightMap& map) {
 }
 
 std::vector<std::byte> encodeHeightVtf(const HeightMap& map) {
-	if (map.width == 0 || map.height == 0 || !powerOfTwo(map.width) || !powerOfTwo(map.height)) {
+	if (map.width == 0 || map.height == 0 || map.width > 65535 || map.height > 65535 || !powerOfTwo(map.width) || !powerOfTwo(map.height) ||
+	    map.values.size() != std::size_t(map.width) * map.height) {
 		return {};
 	}
-	const ImageRgba image = heightImage(map);
-	vtfpp::VTF::CreationOptions options;
-	options.outputFormat = vtfpp::ImageFormat::I8;
-	options.computeReflectivity = false;
-	options.computeThumbnail = false;
-	return vtfpp::VTF::create(image.pixels, vtfpp::ImageFormat::RGBA8888, image.width, image.height, options).bake();
+	// Byte for byte what deploy.ps1's height_map.cs writes (WriteI8): VTF 7.2, 80-byte header,
+	// no thumbnail, no flags, I8 with every mip level box-filtered, smallest level first. The game
+	// loads both alike; a different layout (7.4 with resources, another reflectivity) gave the
+	// editor's relief no advantage and made it harder to compare with deploy's in a report.
+	const unsigned w = map.width, h = map.height;
+	std::vector<std::vector<std::uint8_t>> levels(1);
+	levels[0].resize(std::size_t(w) * h);
+	for (std::size_t i = 0; i < levels[0].size(); ++i) {
+		levels[0][i] = static_cast<std::uint8_t>(std::clamp(map.values[i], 0.f, 1.f) * 255.f + 0.5f);
+	}
+	unsigned mips = 1;
+	while ((w >> mips) > 0 || (h >> mips) > 0) ++mips;
+	for (unsigned l = 1; l < mips; ++l) {
+		const unsigned pw = std::max(w >> (l - 1), 1u), ph = std::max(h >> (l - 1), 1u);
+		const unsigned lw = std::max(w >> l, 1u), lh = std::max(h >> l, 1u);
+		const auto& prev = levels[l - 1];
+		std::vector<std::uint8_t> cur(std::size_t(lw) * lh);
+		for (unsigned y = 0; y < lh; ++y) {
+			for (unsigned x = 0; x < lw; ++x) {
+				const unsigned x0 = std::min(x * 2, pw - 1), x1 = std::min(x * 2 + 1, pw - 1);
+				const unsigned y0 = std::min(y * 2, ph - 1), y1 = std::min(y * 2 + 1, ph - 1);
+				cur[std::size_t(y) * lw + x] = static_cast<std::uint8_t>(
+					(prev[std::size_t(y0) * pw + x0] + prev[std::size_t(y0) * pw + x1] + prev[std::size_t(y1) * pw + x0] + prev[std::size_t(y1) * pw + x1] + 2) / 4);
+			}
+		}
+		levels.push_back(std::move(cur));
+	}
+	std::size_t total = 80;
+	for (const auto& level : levels) total += level.size();
+	std::vector<std::byte> out(total, std::byte(0));
+	const auto put = [&out](std::size_t at, const void* data, std::size_t size) { std::memcpy(out.data() + at, data, size); };
+	const auto put32 = [&put](std::size_t at, std::int32_t v) { put(at, &v, 4); };   // little endian like the game
+	const auto put16 = [&put](std::size_t at, std::uint16_t v) { put(at, &v, 2); };
+	const auto putF = [&put](std::size_t at, float v) { put(at, &v, 4); };
+	put(0, "VTF", 4);
+	put32(4, 7);
+	put32(8, 2);
+	put32(12, 80);
+	put16(16, std::uint16_t(w));
+	put16(18, std::uint16_t(h));
+	put32(20, 0);              // flags
+	put16(24, 1);              // frames
+	putF(32, 0.5f);            // reflectivity
+	putF(36, 0.5f);
+	putF(40, 0.5f);
+	putF(48, 1.0f);            // bump scale
+	put32(52, 5);              // IMAGE_FORMAT_I8
+	out[56] = std::byte(mips);
+	put32(57, -1);             // no thumbnail
+	put16(63, 1);              // depth
+	std::size_t at = 80;
+	for (unsigned l = mips; l-- > 0;) {
+		put(at, levels[l].data(), levels[l].size());
+		at += levels[l].size();
+	}
+	return out;
 }
 
 } // namespace sme

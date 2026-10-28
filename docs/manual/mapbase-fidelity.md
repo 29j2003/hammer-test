@@ -135,12 +135,29 @@ switches then say so (*a material is shared with a model that is left out*).
   The status line under the switches says how many were kept (*kept (your own material)*); hover over it for the list.
 - The choices are stored in the mod, in `cfg/mapsmith_enhancements.txt`, so they travel with it (and with Git).
 
-**Relief** (walls with real depth) is made by `deploy.bat` (it needs height maps). Here Mapsmith only keeps it **off**
-where depth makes no sense - windows and glass, signs, grates and fences, doors, metal sheets, plaster, cloth, lights,
-and textures that look like a big flat pane or a smooth surface - with the same kind of copy as above (its first line
-says why). Switching *Relief* off here keeps it off on every wall. To give one material relief Mapsmith would leave
-out, or a better height map, turn it on in the Material Editor and save. The bottle models
+**Relief** (walls with real depth): on the walls of **your maps** (the open map and every `.vmf` in the mod's map
+folder) Mapsmith makes the relief itself from the texture's **pattern** - every brick, tile or board stands up, the
+joints go in, whatever their colour - and writes it into the mod: the material (first line
+`// mapsmith: game enhancement pattern relief ...`) and its height map `<material>_mapsmith_relief.vtf`, in the same
+form `deploy.bat` uses. It is made again when the texture changes, and goes when you switch relief off. The status line
+says how many walls have it (*... wall(s) of your maps with relief from their pattern*). Walls without a clear pattern
+(stone, plaster, rock) and walls of other maps keep the relief `deploy.bat` makes.
+
+Depth never goes where it makes no sense - windows and glass, signs, grates and fences, doors, metal sheets, plaster,
+cloth, lights, and textures that look like a big flat pane or a smooth surface: those get the same kind of copy as above
+(its first line says why). Switching *Relief* off here keeps it off on every wall. To give one material relief Mapsmith
+would leave out, or to change a height map by hand, turn it on in the Material Editor and save. The bottle models
 `deploy.bat` copies for dark glass are also left to `deploy.bat`.
+
+### The mod's shaders must be installed
+
+Relief, liquid and the new water use **shaders of the mod** (`bin/game_shader_dx6.dll`, installed with
+**Project › Features**). Without that file the game does not know them and draws such a material as a bare
+**wireframe**: a floor turns see-through and you look at the sky below it, bottles disappear and the console says
+*does not support vertex format used by the mesh*. So while the file is missing, Mapsmith writes none of these
+materials, takes away those it made, and the Game enhancements box says so with an **Install features** button. The
+Material Editor will not save a material with one of these shaders then either. *Sway in the wind* is Mapbase's own
+and works without it.
 
 ## Tips
 
