@@ -2,6 +2,8 @@
 
 #include <sme/material.h>
 
+#include <algorithm>
+
 #include <sme/keyvalues.h>
 
 #include <sme/filesystem.h>
@@ -173,6 +175,36 @@ std::string newMaterialText(std::string_view shader, const std::vector<MaterialE
 	root.children.push_back(KvNode::makeBlock(shader.empty() ? "LightmappedGeneric" : std::string(shader)));
 	for (const auto& edit : params) {
 		if (edit.value) root.children.back().set(edit.key, *edit.value);
+	}
+	return writeKeyValues(root);
+}
+
+std::string setMaterialProxy(std::string_view vmt, std::string_view proxy, bool on) {
+	KvNode root = parseKeyValues(vmt);
+	KvNode* material = nullptr;
+	for (auto& child : root.children) {
+		if (child.block) {
+			material = &child;
+			break;
+		}
+	}
+	if (!material || iequals(material->key, "patch")) return std::string(vmt);
+	KvNode* proxies = nullptr;
+	for (auto& child : material->children) {
+		if (child.block && iequals(child.key, "Proxies")) proxies = &child;
+	}
+	if (on) {
+		if (!proxies) {
+			material->children.push_back(KvNode::makeBlock("Proxies"));
+			proxies = &material->children.back();
+		}
+		const bool has = std::any_of(proxies->children.begin(), proxies->children.end(), [&](const KvNode& p) { return iequals(p.key, proxy); });
+		if (!has) proxies->children.push_back(KvNode::makeBlock(std::string(proxy)));
+	} else if (proxies) {
+		std::erase_if(proxies->children, [&](const KvNode& p) { return iequals(p.key, proxy); });
+		if (proxies->children.empty()) {
+			std::erase_if(material->children, [](const KvNode& c) { return c.block && iequals(c.key, "Proxies") && c.children.empty(); });
+		}
 	}
 	return writeKeyValues(root);
 }

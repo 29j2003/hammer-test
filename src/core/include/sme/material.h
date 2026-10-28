@@ -46,6 +46,9 @@ struct MaterialEdit {
 
 /// A new VMT with the given shader and parameters (removals are ignored).
 [[nodiscard]] std::string newMaterialText(std::string_view shader, const std::vector<MaterialEdit>& params);
+/// The VMT with the material proxy `proxy` (e.g. "FidelityLiquid") in its Proxies block (`on`) or
+/// without it (an empty Proxies block goes too). Other proxies and keys stay as they are.
+[[nodiscard]] std::string setMaterialProxy(std::string_view vmt, std::string_view proxy, bool on);
 
 /// "materials/concrete/wall.vmt", "concrete\\Wall" and "concrete/wall.vmt" all become "concrete/wall".
 [[nodiscard]] std::string normalizeMaterialName(std::string_view name);

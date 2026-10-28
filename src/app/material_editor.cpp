@@ -1405,6 +1405,9 @@ bool MaterialEditor::save(const QString& asName) {
 		m_status->setText(tr("The material could not be read: %1").arg(QString::fromUtf8(e.what())));
 		return false;
 	}
+	// Fidelity_Liquid only fills its container with the mod's FidelityLiquid proxy (what
+	// deploy.bat writes too); switching back to an ordinary shader takes it away again.
+	text = setMaterialProxy(text, "FidelityLiquid", m_shader.compare("Fidelity_Liquid", Qt::CaseInsensitive) == 0);
 	const QString path = savePath(name);
 	if (!writeFile(path, text.data(), qint64(text.size()))) {
 		return false;

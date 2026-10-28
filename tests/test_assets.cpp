@@ -795,6 +795,20 @@ TEST_CASE("material editing keeps the rest of the VMT") {
 	CHECK(edited.find("$BaseTexture") != std::string::npos);   // the spelling of the key stays
 	CHECK(edited.find("\"env_cubemap\" [$WIN32]") != std::string::npos);
 
+	// Proxies: the liquid shader's proxy is added next to the others and taken away again.
+	const auto liquid = setMaterialProxy(edited, "FidelityLiquid", true);
+	const auto proxies = parseKeyValues(liquid).children.back().find("Proxies");
+	REQUIRE(proxies);
+	CHECK(proxies->children.size() == 2);
+	CHECK(proxies->find("FidelityLiquid"));
+	CHECK(setMaterialProxy(liquid, "fidelityliquid", true) == liquid);   // never twice
+	const auto plain = setMaterialProxy(liquid, "FidelityLiquid", false);
+	CHECK(plain.find("FidelityLiquid") == std::string::npos);
+	CHECK(plain.find("AnimatedTexture") != std::string::npos);
+	const auto alone = setMaterialProxy("\"Fidelity_Liquid\"\n{\n}\n", "FidelityLiquid", true);
+	CHECK(parseKeyValues(alone).children.front().find("Proxies")->find("FidelityLiquid"));
+	CHECK(setMaterialProxy(alone, "FidelityLiquid", false).find("Proxies") == std::string::npos);   // the empty block goes too
+
 	// Patch materials: keys of the included material go to "replace", new ones to "insert".
 	Material base;
 	base.params["$basetexture"] = "brick/wall";
