@@ -87,7 +87,10 @@ While the tools run, the **Compile** tab in the bottom panel shows:
 - a table of the steps with **State** (*waiting*, *▶ running*, *✔ done*, *✖ failed*, *– skipped*), **Time** and
   **Progress**;
 - **Warnings and errors**: each message of the tools in plain words, with what it means and how to fix it. Known
-  harmless messages (such as a missing optional `lights.rad`) are marked as harmless;
+  harmless messages (such as a missing optional `lights.rad`) are marked as harmless. Common errors are explained, among
+  them *Texture axis perpendicular to face*, *Bad surface extents*, *MAX_POINTS_ON_WINDING*, an areaportal that
+  *doesn't touch two areas*, *Too many light styles*, a displacement on a face without 4 corners and VVIS's missing
+  portal file (*LoadPortals*: the map leaks);
 - **Full output of the compile tools**: the complete text, for the cases the summary does not cover.
 
 At the end a line says **Finished** or **Stopped**, with the time and the number of errors and warnings.
@@ -122,6 +125,10 @@ selects the objects in the map, and often a button that fixes it right away. The
 | An output to a target name no entity has | **Remove output** |
 | An output to an input the target does not have | **Use …** when it looks like a typo |
 | No `info_player_start` | **Add player start** |
+| An `info_player_start` inside a brush (the player needs 32 × 32 × 72 units free above it, else he spawns stuck or falls through the floor) | **Move onto the floor** |
+| A point entity outside the map, in the void (VBSP reports a leak from it) | — |
+| Faces with a lightmap scale below 4 (very costly light) or above 128 (very blurry light); tool faces do not count | **Set to 16** / **Set to 64** |
+| NPCs that walk, but no `info_node` in the map (they cannot find paths: they stand still or walk into walls) | **Place nodes around the NPCs** (a few on the free floor around each NPC - add more along the ways they should walk) |
 | No light entities (hint) | — |
 | The map leaks | — |
 

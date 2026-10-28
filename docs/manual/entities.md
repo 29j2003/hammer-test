@@ -280,6 +280,19 @@ The 3D view shows props and NPCs with their real model and textures.
 
 ![An NPC in the 3D view](images/npc.png)
 
+## Ropes and ladders
+
+**Make rope** (Brushes menu): select two or more objects - entities or brushes - and a rope hangs between them, in the
+order you selected them: a `move_rope` at the first, `keyframe_rope`s at the others, linked by their *Next KeyFrame*
+names. The views draw each rope sagging the way it hangs in the game; **Slack** (in Object Properties) is the extra
+length that makes it hang lower, **Width** its thickness. Ropes hide with the other helper entities (Show menu).
+
+**Make ladder** (Brushes menu, Half-Life 2 and Mapbase): select the ladder - a thin brush or a ladder model standing
+against a wall - and it becomes climbable. Mapsmith places a `func_useableladder` (the line the player climbs, just
+in front of the ladder, from its bottom to its top) and two `info_ladder_dismount`s: one at the top, on the ledge
+behind the ladder, and one a step back at the bottom, where the player gets off. The front is the side of the ladder
+that has room for the player. Move the dismounts if the player should get off somewhere else.
+
 ## Lights and the lighting preview
 
 The 3D view's **Lighting preview** (F6) lights the map from its light entities: `light`, `light_spot` and
