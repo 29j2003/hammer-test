@@ -35,6 +35,7 @@ struct MaterialInfo {
 	QImage image2;             ///< $basetexture2 for blended displacements
 	QImage height;             ///< Relief heights (mapbase-fidelity, see setRelief), null without
 	float parallaxDepth = 0;   ///< Relief depth in texture units
+	float decalScale = 1;      ///< $decalscale: an infodecal is texture size x this (units)
 	QString error;
 };
 

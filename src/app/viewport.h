@@ -68,6 +68,8 @@ public:
 	/// Where pasted objects with this box go: their center under the mouse (resting on the
 	/// surface in 3D), or nothing when the mouse is not over this view.
 	[[nodiscard]] std::optional<Vec3> pasteCenter(const Bounds& box) const;
+	/// The view's renderer (numbers about what it draws, for tests and the status bar).
+	[[nodiscard]] const SceneRenderer& renderer() const { return m_renderer; }
 	/// Asks for a frame, at most as often as Editor::maxFps() allows (use instead of update()).
 	void requestFrame();
 	/// Line from a compile leak (.lin pointfile); empty clears it.

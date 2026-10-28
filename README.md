@@ -200,6 +200,9 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Parallax-corrected cubemaps (Mapbase)**: select an env_cubemap and press *Add room box*: the box is fitted to the
   walls around it; drag the squares on its sides in the view to change it. The editor creates and names the
   parallax_obb and links it to the cubemap.
+- **Decals and overlays**: `infodecal` and `info_overlay` show on the brushes as the game shows them (overlays cut to
+  the faces they list, see-through parts included). Pick a material, arm `info_overlay` or `infodecal` and click a face:
+  the overlay gets its basis, face and size from there.
 - **Soundscape areas**: select an env_soundscape and its *Soundscape area* box shows which soundscape plays (*Edit
   soundscape* opens it on the Sounds page) and where it is heard. *Sphere*: a pink sphere in the views; drag its squares
   or use the radius field and slider; *Whole map* sets radius -1. *Block*: puts a trigger_soundscape around the entity

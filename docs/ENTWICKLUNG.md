@@ -82,6 +82,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei) |
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
 | `displacement` | Displacements: `dispinfo` lesen/schreiben wie Hammer (normals, distances, offsets, offset_normals, alphas, triangle_tags, allowed_verts), anlegen (`makeDisplacement`, Power 2–4, Elevation in den Distanzen), Formen (`sculpt`: Raise/Smooth/Flatten/Noise/Alpha mit Kosinus-Abfall in der Flächenebene), Nähen (`sewDisplacements`), Undo-Schritte in `edit::` |
+| `decals` | Infodecals und info_overlay auf den Brushes: Flächen der Karte (`collectSurfaceFaces`), Decal-Achsen wie die Engine (Boden: S entlang +X, Wand: S waagerecht, T nach unten; aufrecht, nicht gespiegelt), Decal auf der nächsten Fläche und Flächen derselben Ebene (`decalPatches`, Größe = Textur × `$decalscale`, `decalSize` liest VMT + VTF-Kopf), Overlay aus Basis + uv0..uv3 mit VBSPs Eckreihenfolge der Texturkoordinaten, entlang der Normalen auf jede Fläche in `sides` projiziert und an ihr beschnitten (`overlayPatches`, `clipToPolygon`), Keys für ein neues Overlay auf einer Fläche (`overlayKeysOnFace`) |
 | `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Keil/Fase an einer Kante (`cutEdge`), Vertex verschieben (bleibt konvex) |
 | `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
 | `editing`, `history` | Operationen als Undo-Schritte (`Transaction` merkt sich nur berührte Objekte) |
@@ -527,7 +528,10 @@ mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo un
 - Sound-Wiedergabe über QAudioSink ist unter Windows noch nicht von Hand geprüft (unter Linux ohne Audiogerät nur die
   Decoder getestet; diese gegen FFmpeg verglichen).
 - Modelle: VTX-Layout (25/33 Byte) wird ausprobiert; mit echten HL2-/Mapbase-Modellen prüfen (`sme-probe model GAME PATH`).
-  Overlays/Decals werden noch nicht gezeichnet.
+- Decals/Overlays (`decals`): Infodecals landen auf der nächsten Fläche und Flächen derselben Ebene; um Ecken legt die
+  Engine sie zusätzlich, der Editor nicht. Overlays auf Displacements nutzen die flache Grundfläche. Die Eckreihenfolge
+  der Texturkoordinaten folgt VBSP (uv0: StartU/StartV, uv1: StartU/EndV, uv2: EndU/EndV, uv3: EndU/StartV); nicht im
+  Spiel gegen echte Karten verglichen.
 - Material-Vorschau ist eine Annäherung an die Shader der Engine (kein HDR, Cubemap = einfacher Himmel).
 - Menü-Editor: nicht im Spiel getestet. Offen: ob die Kapiteltitel-Tokens bei jeder Mod-Basis gefunden werden (der
   Ordnername wird groß geschrieben; die Engine vergleicht ohne Groß-/Kleinschreibung), das Logo-Bild bei `gamelogo 1`
@@ -542,6 +546,6 @@ mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo un
 
 1. Rückmeldung von echten Installationen (Probe-Bericht, `sme-probe model`), Fehler beheben.
 2. ~~Displacement-Malen~~ (Werkzeug Displacement, Shift+D); offen: einzelne Displacement-Punkte mit dem Vertex-Werkzeug ziehen, Nähen über verschiedene Power (T-Stellen).
-3. Overlays/Decals im Viewport zeichnen.
+3. ~~Overlays/Decals im Viewport zeichnen~~ (Kern `decals`, Renderer zeichnet sie gemischt über den Brushes); offen: Ecken eines Overlays im Viewport ziehen, Decals um Ecken.
 4. Mesh-Modus (Variante B): freie Meshes → beim Kompilieren konvex zerlegen bzw. als Static Prop + Nodraw-Hülle.
 5. Echte Physik-Simulation, VRAD-Schnellvorschau.

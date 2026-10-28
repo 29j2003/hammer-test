@@ -10,6 +10,7 @@
 #include <tuple>
 
 #include <sme/brush.h>
+#include <sme/decals.h>
 #include <sme/studio_model.h>
 #include <sme/text.h>
 
@@ -1013,6 +1014,71 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		m_sunDirection = QVector3D(-0.4f, -0.3f, -0.85f).normalized();
 	}
 
+	// Infodecals and overlays: textured polygons on the brushes, drawn blended after them, a
+	// little in front so they never flicker with the surface. Their faces belong to the entity
+	// (selection, hiding) and their box stays for picking.
+	std::unordered_map<QString, std::vector<float>> decalsByMaterial;
+	std::unordered_map<QString, std::vector<int>> decalFacesByMaterial;
+	m_decalPolygons = 0;
+	m_overlayPolygons = 0;
+	m_decalsWaiting.clear();
+	{
+		const bool any = std::any_of(doc.entities.begin(), doc.entities.end(), [](const Entity& e) {
+			return iequals(e.classname(), "infodecal") || iequals(e.classname(), "info_overlay");
+		});
+		const std::vector<SurfaceFace> surfaces = any ? collectSurfaceFaces(doc) : std::vector<SurfaceFace>{};
+		for (const auto& entity : doc.entities) {
+			if (!any) break;
+			const bool decal = iequals(entity.classname(), "infodecal");
+			if (!decal && !iequals(entity.classname(), "info_overlay")) continue;
+			const QString material = normalizedMaterialName(QString::fromStdString(entity.get(decal ? "texture" : "material")));
+			if (material.isEmpty()) continue;
+			std::vector<SurfacePatch> patches;
+			if (decal) {
+				// Texture size x $decalscale, as the engine sizes it; a stand-in until the material is loaded.
+				double width = 64, height = 64;
+				if (const auto info = m_materials ? m_materials->get(material) : nullptr) {
+					if (!info->image.isNull()) {
+						width = info->image.width() * double(info->decalScale);
+						height = info->image.height() * double(info->decalScale);
+					}
+				} else {
+					m_decalsWaiting.insert(material);
+				}
+				patches = decalPatches(surfaces, entity.origin(), width, height);				m_decalPolygons += static_cast<int>(patches.size());
+			} else if (const auto overlay = readOverlay(entity)) {
+				patches = overlayPatches(surfaces, *overlay);
+				m_overlayPolygons += static_cast<int>(patches.size());
+			}
+			if (patches.empty()) continue;
+			auto& vertices = decalsByMaterial[material];
+			const int id = faceIndex++;
+			m_entityFaces[entity.id].push_back(id);
+			m_faceToSide.emplace_back(SolidRef{entity.id, 0}, 0);
+			faceVertexOffset.push_back(static_cast<int>(vertices.size() / FLOATS_PER_VERTEX));
+			faceMaterial.push_back(material);
+			decalFacesByMaterial[material].push_back(id);
+			PickItem pick;
+			pick.entityId = entity.id;
+			for (const auto& patch : patches) {
+				const Vec3 lift = patch.normal * 0.15;
+				for (std::size_t i = 1; i + 1 < patch.vertices.size(); ++i) {
+					for (const std::size_t k : {std::size_t{0}, i, i + 1}) {
+						pushVertex(vertices, patch.vertices[k] + lift, patch.normal, float(patch.uv[k][0]), float(patch.uv[k][1]), 0.f, id);
+					}
+					++m_triangleCount;
+				}
+				for (std::size_t i = 0; i < patch.vertices.size(); ++i) {
+					pushEdge(edges, patch.vertices[i] + lift, patch.vertices[(i + 1) % patch.vertices.size()] + lift, QVector3D(0.95f, 0.75f, 0.3f), id);
+					pick.bounds.add(patch.vertices[i] + lift * 2);
+					pick.bounds.add(patch.vertices[i]);
+				}
+			}
+			// Clicking the drawn decal or overlay selects it, as clicking its box does.
+			m_pickItems.push_back(std::move(pick));
+		}
+	}
+
 	// Room boxes of cubemaps (parallax_obb) would cover whole rooms: only their outline unless selected.
 	m_volumeFaces.clear();
 	for (const auto& entity : doc.entities) {
@@ -1110,6 +1176,28 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		all.insert(all.end(), vertices.begin(), vertices.end());
 		m_batches.push_back(batch);
 		texture(name); // request loading early
+	}
+	// Decal and overlay batches after the brushes they lie on.
+	std::vector<QString> decalMaterials;
+	for (const auto& [name, vertices] : decalsByMaterial) decalMaterials.push_back(name);
+	std::sort(decalMaterials.begin(), decalMaterials.end());
+	for (const auto& name : decalMaterials) {
+		const auto& vertices = decalsByMaterial[name];
+		Batch batch;
+		batch.material = name;
+		batch.decal = true;
+		batch.first = static_cast<GLint>(all.size() / FLOATS_PER_VERTEX);
+		batch.count = static_cast<GLsizei>(vertices.size() / FLOATS_PER_VERTEX);
+		const auto& faces = decalFacesByMaterial[name];
+		for (std::size_t k = 0; k < faces.size(); ++k) {
+			const int face = faces[k];
+			const int start = faceVertexOffset[static_cast<std::size_t>(face)];
+			const int end = k + 1 < faces.size() ? faceVertexOffset[static_cast<std::size_t>(faces[k + 1])] : batch.count;
+			m_rangesByFace[static_cast<std::size_t>(face)] = {batch.first + start, end - start};
+		}
+		all.insert(all.end(), vertices.begin(), vertices.end());
+		m_batches.push_back(batch);
+		texture(name);
 	}
 	m_entityFirst = static_cast<GLint>(all.size() / FLOATS_PER_VERTEX);
 	m_entityCount = static_cast<GLsizei>(entityVertices.size() / FLOATS_PER_VERTEX);
@@ -1209,10 +1297,11 @@ void SceneRenderer::setSelection(const MapDocument& doc, const Selection& select
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
-void SceneRenderer::materialReady(const QString& name) {
+bool SceneRenderer::materialReady(const QString& name) {
 	if (m_textures.contains(name)) {
 		m_dirtyTextures.insert(name);
 	}
+	return m_decalsWaiting.contains(name);
 }
 
 SceneRenderer::GpuTexture& SceneRenderer::texture(const QString& material) {
@@ -1324,7 +1413,7 @@ void SceneRenderer::bindSky(QOpenGLShaderProgram& program, const Params& params)
 void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass) {
 	for (const auto& batch : m_batches) {
 		auto& tex = texture(batch.material);
-		const bool translucent = tex.kind == MaterialInfo::Kind::Translucent || tex.kind == MaterialInfo::Kind::Additive;
+		const bool translucent = tex.kind == MaterialInfo::Kind::Translucent || tex.kind == MaterialInfo::Kind::Additive || batch.decal;
 		if (translucent != translucentPass || (!params.showToolTextures && tex.isTool)) {
 			continue;
 		}
@@ -1333,7 +1422,8 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 		glActiveTexture(GL_TEXTURE1);
 		glBindTexture(GL_TEXTURE_2D, tex.id2 ? tex.id2 : m_whiteTexture);
 		glActiveTexture(GL_TEXTURE0);
-		program.setUniformValue("u_texSize", QVector2D(float(tex.size.width()), float(tex.size.height())));
+		// Decals and overlays come with texture coordinates 0..1.
+		program.setUniformValue("u_texSize", batch.decal ? QVector2D(1, 1) : QVector2D(float(tex.size.width()), float(tex.size.height())));
 		program.setUniformValue("u_hasTex2", tex.id2 ? 1 : 0);
 		program.setUniformValue("u_alphaTest", tex.kind == MaterialInfo::Kind::AlphaTest ? 1 : 0);
 		program.setUniformValue("u_fullbright", (tex.isTool || tex.isSky) ? 1 : 0);
@@ -1657,7 +1747,7 @@ void SceneRenderer::drawPreview(const Params& params, const QMatrix4x4& model, b
 	for (const auto& batch : m_batches) {
 		auto& tex = texture(batch.material);
 		glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
-		m_program->setUniformValue("u_texSize", QVector2D(float(tex.size.width()), float(tex.size.height())));
+		m_program->setUniformValue("u_texSize", batch.decal ? QVector2D(1, 1) : QVector2D(float(tex.size.width()), float(tex.size.height())));
 		m_program->setUniformValue("u_useColor", 0);
 		m_program->setUniformValue("u_hasTex2", 0);
 		m_program->setUniformValue("u_opacity", 1.f);

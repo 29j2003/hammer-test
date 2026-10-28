@@ -3048,6 +3048,105 @@ TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's 
 	}
 }
 
+TEST_CASE("decals and overlays: placed on a face with the current material, drawn on the brushes, picked") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+
+	auto [made, ref] = edit::createBlock(editor.doc(), box({0, 0, 0}, {256, 256, 64}), "DEMO/CONCRETEWALL001");
+	editor.commit(std::move(made));
+	const auto topSideId = [&] {
+		const Solid* solid = editor.doc().findSolid(ref);
+		for (const auto& face : buildBrushGeometry(*solid).faces) {
+			if (face.normal.z > 0.9) return solid->sides[static_cast<std::size_t>(face.sideIndex)].id;
+		}
+		return 0;
+	}();
+	REQUIRE(topSideId != 0);
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(128, -220, 360);
+	view->camera().yaw = 90;
+	view->camera().pitch = -55;
+	view->update();
+	settle();
+
+	const auto findClass = [&](const char* classname) -> const Entity* {
+		for (const auto& entity : editor.doc().entities) {
+			if (entity.classname() == classname) return &entity;
+		}
+		return nullptr;
+	};
+	// The arrow material (128 x 128, $decalscale 0.5) loads first, so sizes are known.
+	editor.setCurrentMaterial("DECALS/DEMO_ARROW");
+	editor.setTool(Editor::Tool::Entity);
+	editor.setCurrentEntityClass("info_overlay");
+	QTest::mouseMove(view, screen(view, {128, 128, 64}));
+	for (int i = 0; i < 20; ++i) settle();
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {128, 128, 64}));
+	settle();
+	const Entity* overlay = findClass("info_overlay");
+	REQUIRE(overlay);
+	const int overlayId = overlay->id;
+	CHECK(overlay->get("material") == "decals/demo_arrow");
+	CHECK(overlay->get("sides") == std::to_string(topSideId));
+	CHECK(overlay->get("BasisNormal") == "0 0 1");
+	CHECK(overlay->get("BasisU") == "1 0 0");
+	CHECK(overlay->origin().z == doctest::Approx(64));
+	Vec3 corner;
+	REQUIRE(parseVec3(overlay->get("uv2"), corner));
+	CHECK(corner.x == doctest::Approx(32));   // half of 128 x 0.5
+	view->update();
+	settle();
+	CHECK(view->renderer().overlayPolygonCount() == 2);
+
+	// An infodecal on the same face: drawn with the texture's size.
+	editor.setCurrentEntityClass("infodecal");
+	QTest::mouseMove(view, screen(view, {48, 200, 64}));
+	settle();
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {48, 200, 64}));
+	settle();
+	const Entity* decal = findClass("infodecal");
+	REQUIRE(decal);
+	CHECK(decal->get("texture") == "decals/demo_arrow");
+	CHECK(decal->origin().z == doctest::Approx(64));
+	view->update();
+	settle();
+	CHECK(view->renderer().decalPolygonCount() == 1);
+	CHECK(view->renderer().overlayPolygonCount() == 2);
+
+	// Clicking the drawn overlay (away from its entity box) selects the overlay.
+	editor.setTool(Editor::Tool::Select);
+	editor.clearSelection();
+	settle();
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {152, 140, 64}));
+	settle();
+	CHECK(editor.selection().entities == std::vector<int>{overlayId});
+
+	// Undo takes the decal away again.
+	editor.undo();
+	view->update();
+	settle();
+	CHECK(view->renderer().decalPolygonCount() == 0);
+	CHECK(view->renderer().overlayPolygonCount() == 2);
+}
+
 TEST_CASE("texts: the mod's localization and captions, edited, translated, saved and compiled") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());
