@@ -678,6 +678,9 @@ void MainWindow::createDocks() {
 	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
 	connect(m_compileWindow, &CompileWindow::reportRequested, this, &MainWindow::makeReport);
 	connect(m_problems, &ProblemsPanel::reportRequested, this, &MainWindow::makeReport);
+	connect(m_problems, &ProblemsPanel::actionRequested, this, [this](const QString& action) {
+		if (action == QLatin1String("buildCubemaps")) buildCubemapsInCompile();
+	});
 	connect(m_compileWindow, &CompileWindow::showLeak, this, [this] {
 		for (auto* view : m_views) {
 			view->setLeakLine(m_lastLeak);
@@ -1802,6 +1805,17 @@ void MainWindow::makeReport() {
 	showPage(Page::Project);
 	m_projectPage->setCurrentWidget(m_modCode);
 	m_modCode->start(ModCodeAction::Report);
+}
+
+void MainWindow::buildCubemapsInCompile() {
+	// The compile dialog opens with the Cubemaps step on (it needs the copy into the game's maps).
+	if (!m_editor->gameKey().isEmpty()) {
+		auto options = loadCompileOptions(m_editor->gameKey());
+		options.cubemaps = true;
+		options.copy = true;
+		saveCompileOptions(m_editor->gameKey(), options);
+	}
+	compile();
 }
 
 void MainWindow::compile() {

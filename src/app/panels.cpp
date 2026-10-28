@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -177,6 +178,12 @@ void ProblemsPanel::runChecks() {
 	context.files = m_editor->game() ? &m_editor->game()->files : nullptr;
 	context.materialNames = names.empty() ? nullptr : &names;
 	context.cache = &m_cache;
+	// The compiled map the game loads (Compile copies it to <game>/maps/<name>.bsp).
+	if (m_editor->game() && !m_editor->filePath().isEmpty()) {
+		const QFileInfo vmf(m_editor->filePath());
+		context.mapSource = toPath(vmf.absoluteFilePath());
+		context.compiledMap = m_editor->game()->entry.gameDir / "maps" / toPath(vmf.completeBaseName() + ".bsp");
+	}
 	m_problems = checkMap(m_editor->doc(), context);
 	showProblems();
 }
@@ -238,6 +245,10 @@ void ProblemsPanel::showProblems() {
 			fixButton->setProperty("accent", true);
 			const Problem copy = *problem;
 			connect(fixButton, &QPushButton::clicked, this, [this, copy] {
+				if (!copy.action.empty()) {
+					emit actionRequested(QString::fromStdString(copy.action));   // not a map edit (Build cubemaps)
+					return;
+				}
 				m_editor->commit(applyFix(m_editor->doc(), copy, m_editor->entities()));
 				QTimer::singleShot(0, this, &ProblemsPanel::runChecks);
 			});

@@ -151,6 +151,8 @@ private:
 	bool maybeSave();
 	bool save(bool saveAs);
 	void compile();
+	/// Compile with the Cubemaps step switched on (Problems: "Build cubemaps").
+	void buildCubemapsInCompile();
 	void showContextMenu(const QPoint& globalPos);
 	void roundEdgeDialog();
 	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).

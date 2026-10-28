@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <set>
@@ -20,6 +21,44 @@
 namespace sme {
 
 namespace {
+
+/// Whether a material reflects the nearest env_cubemap ("$envmap" "env_cubemap"), read once per material.
+bool isReflective(const GameFileSystem& files, CheckCache& cache, const std::string& name) {
+	if (const auto it = cache.reflective.find(name); it != cache.reflective.end()) return it->second;
+	const auto material = loadMaterial(files, name);
+	const bool reflective = material && iequals(trim(material->param("$envmap")), "env_cubemap");
+	cache.reflective.emplace(name, reflective);
+	return reflective;
+}
+
+/// The cubemaps of the compiled map, when it exists and is not older than the .vmf; read again
+/// only when the file changed.
+std::optional<BspCubemaps> compiledMapCubemaps(const CheckContext& context, CheckCache& cache) {
+	namespace fs = std::filesystem;
+	std::error_code ec;
+	if (context.compiledMap.empty() || !fs::is_regular_file(context.compiledMap, ec)) return std::nullopt;
+	const auto time = fs::last_write_time(context.compiledMap, ec);
+	if (ec) return std::nullopt;
+	if (!context.mapSource.empty()) {
+		const auto sourceTime = fs::last_write_time(context.mapSource, ec);
+		if (!ec && sourceTime > time) return std::nullopt;   // changed since: the next compile tells
+	}
+	const auto size = fs::file_size(context.compiledMap, ec);
+	if (ec) return std::nullopt;
+	if (cache.compiledPath == context.compiledMap && cache.compiledTime == time && cache.compiledSize == size) {
+		return cache.compiledCubemaps;
+	}
+	cache.compiledPath = context.compiledMap;
+	cache.compiledTime = time;
+	cache.compiledSize = size;
+	cache.compiledCubemaps.reset();
+	std::ifstream in(context.compiledMap, std::ios::binary);
+	std::vector<std::byte> data(static_cast<std::size_t>(size));
+	if (in && in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()))) {
+		cache.compiledCubemaps = readBspCubemaps(data, displayPath(context.compiledMap.stem()));
+	}
+	return cache.compiledCubemaps;
+}
 
 bool isPlayerStart(const std::string& classname) {
 	return startsWithI(classname, "info_player_");
@@ -84,8 +123,13 @@ std::string formatPoint(const Vec3& p) {
 std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& context) {
 	std::vector<Problem> problems;
 
+	CheckCache localCache;
+	CheckCache& cache = context.cache ? *context.cache : localCache;
+
 	// Brushes: geometry and texture scale.
 	std::map<std::string, Problem> missingMaterials;
+	Selection reflectiveFaces;      // faces whose material reflects the nearest env_cubemap
+	std::string reflectiveExample;
 	std::set<std::string> checkedMaterials;
 	Problem badScale;
 	badScale.kind = Problem::Kind::BadTextureScale;
@@ -137,6 +181,9 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 			}
 			if (const auto it = missingMaterials.find(name); it != missingMaterials.end()) {
 				it->second.objects.faces.push_back({ref, side.id});
+			} else if (isReflective(*context.files, cache, name)) {
+				reflectiveFaces.faces.push_back({ref, side.id});
+				if (reflectiveExample.empty()) reflectiveExample = side.material;
 			}
 		}
 	});
@@ -153,8 +200,7 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 
 	// Entities.
 	bool playerStart = false, lights = false;
-	CheckCache localCache;
-	CheckCache& cache = context.cache ? *context.cache : localCache;
+	int cubemaps = 0;
 	Selection skyCameras;
 	std::vector<std::string> classNames;
 	if (context.entities) {
@@ -165,6 +211,7 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 	for (const auto& entity : doc.entities) {
 		const auto classname = entity.classname();
 		playerStart |= isPlayerStart(classname);
+		cubemaps += iequals(classname, "env_cubemap") ? 1 : 0;
 		lights |= isLight(classname);
 		const EntityClass* definition = context.entities ? context.entities->find(classname) : nullptr;
 		if (context.entities && !definition) {
@@ -378,6 +425,31 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		p.howToFix = "Add a light_environment (for outdoor areas) or light entities.";
 		problems.push_back(std::move(p));
 	}
+	// Reflections: shiny materials show the nearest env_cubemap's picture. Without any they show the
+	// sky's default cubemap (a sunset sky turns a shiny floor pink and hides its texture).
+	if (cubemaps == 0 && !reflectiveFaces.faces.empty()) {
+		Problem p;
+		p.kind = Problem::Kind::NoCubemap;
+		p.severity = Problem::Severity::Warning;
+		p.objects = reflectiveFaces;
+		p.message = std::to_string(reflectiveFaces.faces.size()) + " face(s) use shiny materials (like \"" + reflectiveExample +
+		            "\") that reflect the nearest env_cubemap, but the map has none - in the game they mirror the sky instead "
+		            "(a shiny floor turns pink at sunset and its texture is hard to see).";
+		p.howToFix = "Place an env_cubemap at eye height in each room with shiny surfaces, then build the cubemaps after compiling.";
+		p.fixLabel = "Place env_cubemap";
+		problems.push_back(std::move(p));
+	}
+	if (const auto compiled = compiledMapCubemaps(context, cache); compiled && compiled->samples > 0 && compiled->built == 0) {
+		Problem p;
+		p.kind = Problem::Kind::CubemapsNotBuilt;
+		p.severity = Problem::Severity::Warning;
+		p.action = "buildCubemaps";
+		p.message = "The compiled map (maps/" + displayPath(context.compiledMap.filename()) + ") has " + std::to_string(compiled->samples) +
+		            " env_cubemap(s), but their reflections were never built - shiny floors and walls mirror the sky in the game.";
+		p.howToFix = "Build the cubemaps: compile with the Cubemaps step on (the game starts once, builds them into the map and closes).";
+		p.fixLabel = "Build cubemaps";
+		problems.push_back(std::move(p));
+	}
 	if (skyCameras.entities.size() > 1) {
 		Problem p;
 		p.kind = Problem::Kind::MultipleSkyCameras;
@@ -475,6 +547,32 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 				return {};
 			}
 			return edit::linkAreaportal(doc, problem.objects.entities[0], problem.objects.entities[1]);
+		}
+		case Problem::Kind::NoCubemap: {
+			// At eye height above the player start, else in the middle of the world brushes.
+			Vec3 spot;
+			bool found = false;
+			for (const auto& entity : doc.entities) {
+				if (isPlayerStart(entity.classname())) {
+					spot = entity.origin() + Vec3{0, 0, 64};
+					found = true;
+					break;
+				}
+			}
+			if (!found) {
+				Bounds box;
+				for (const auto& solid : doc.world.solids) {
+					for (const auto& face : buildBrushGeometry(solid).faces) {
+						for (const auto& v : face.vertices) box.add(v);
+					}
+				}
+				if (box.empty()) return {};
+				spot = (box.min + box.max) * 0.5;
+			}
+			const auto* definition = entities ? entities->find("env_cubemap") : nullptr;
+			auto change = edit::placeEntity(doc, "env_cubemap", snap(spot, 1), definition).first;
+			change.name = "Place env_cubemap";
+			return change;
 		}
 		case Problem::Kind::NoPlayerStart: {
 			// On top of the brush with the largest upward-facing area.
