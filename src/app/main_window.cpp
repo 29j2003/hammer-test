@@ -32,6 +32,7 @@
 #include "tool_panel.h"
 #include "updater.h"
 #include "viewport.h"
+#include "wheel_guard.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -239,6 +240,11 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	: QMainWindow(parent), m_editor(editor), m_materials(new MaterialCache(MaterialCache::Size::Viewport, this)) {
 	setDockNestingEnabled(true);
 	setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::AllowNestedDocks);
+	// The mouse wheel scrolls panels instead of switching tabs or changing fields (once per app).
+	if (!qApp->property("smeWheelGuard").toBool()) {
+		qApp->installEventFilter(new WheelGuard(qApp));
+		qApp->setProperty("smeWheelGuard", true);
+	}
 
 	// Viewports: [3D | Top] over [Front | Side]; single layout shows only the 3D view.
 	m_views[0] = new Viewport(editor, m_materials, Camera::Kind::Perspective);

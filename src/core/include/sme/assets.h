@@ -62,6 +62,8 @@ struct ModelInfo {
 
 	/// The engine's "body" number for one chosen option per body group (missing entries: 0).
 	[[nodiscard]] int bodyValue(const std::vector<int>& choices) const;
+	/// The option of each body group in a body number (the reverse of bodyValue; one per group).
+	[[nodiscard]] std::vector<int> bodyChoices(int body) const;
 };
 
 /// Parses a Source 1 .mdl header (versions 44-49). Never reads outside the buffer.
@@ -74,19 +76,25 @@ struct ModelInfo {
 struct PropModelFlags {
 	bool staticProp = false;   ///< Compiled with $staticprop (VBSP deletes a prop_static without it)
 	bool collision = false;    ///< Has a collision model (.phy); a prop_physics without one is removed at spawn
+	bool door = false;         ///< Made for prop_door_rotating (see isDoorPropModel)
 	bool operator==(const PropModelFlags&) const = default;
 };
+
+/// Whether a model is made for prop_door_rotating: it has the "door_options" the door reads from
+/// the model's $keyvalues, or a door name with a handle/hardware body group.
+[[nodiscard]] bool isDoorPropModel(std::string_view modelPath, const ModelInfo& info);
 
 /// The flags of a model in the game (nullopt if it is missing or not a readable .mdl).
 [[nodiscard]] std::optional<PropModelFlags> readPropModelFlags(const GameFileSystem& fs, std::string_view modelPath);
 
-/// The class a model is made for: prop_static for $staticprop models, prop_physics for models
-/// with a collision model, prop_dynamic for the rest.
+/// The class a model is made for: prop_door_rotating for door models, prop_static for
+/// $staticprop models, prop_physics for models with a collision model, prop_dynamic for the rest.
 [[nodiscard]] std::string recommendedPropClass(const PropModelFlags& flags);
 
 /// The class that fits better than `classname` (prop_static / prop_physics), or empty when the
-/// class works with the model: a prop_static needs $staticprop, a prop_physics a collision model.
-/// The other prop classes and non-props are always fine.
+/// class works with the model: a prop_static needs $staticprop, a prop_physics a collision model,
+/// and a door model as prop_physics falls over (prop_door_rotating). The other prop classes and
+/// non-props are always fine.
 [[nodiscard]] std::string betterPropClass(std::string_view classname, const PropModelFlags& flags);
 
 /// Sound names from all sound scripts listed in scripts/game_sounds_manifest.txt (sorted, unique).

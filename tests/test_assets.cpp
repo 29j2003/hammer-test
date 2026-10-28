@@ -8,6 +8,7 @@
 #include <sme/audio.h>
 #include <sme/scene_export.h>
 #include <sme/soundscape.h>
+#include <sme/editing.h>
 #include <sme/studio_model.h>
 #include <sme/brush.h>
 #include <sme/checks.h>
@@ -337,6 +338,37 @@ TEST_CASE("model body groups, skins and prop settings") {
 	const auto metal = buildModelGeometry({files.mdl, files.vvd, files.vtx}, 1, &error);
 	REQUIRE(metal);
 	CHECK(metal->meshes[0].material == "models/props/metal");
+	// The reverse: a body number back to one option per group.
+	CHECK(info->bodyChoices(5) == std::vector<int>{0, 1, 2});
+	CHECK(info->bodyChoices(0) == std::vector<int>{0, 0, 0});
+	for (int body = 0; body < 6; ++body) CHECK(info->bodyValue(info->bodyChoices(body)) == body);
+	// Variants (what the views draw for an entity): keys round-trip, groups go on top of "body".
+	CHECK(modelVariantKey({"models/props/box.mdl"}) == "models/props/box.mdl");
+	const ModelVariant variant{"models/props/box.mdl", 1, 1, {{2, 2}}};
+	CHECK(modelVariantKey(variant) == "models/props/box.mdl#s=1;b=1;g2=2");
+	const auto parsed = parseModelVariant(modelVariantKey(variant));
+	CHECK(parsed.path == variant.path);
+	CHECK(parsed.skin == 1);
+	CHECK(parsed.body == 1);
+	CHECK(parsed.groups == variant.groups);
+	CHECK(parseModelVariant("models/x.mdl#s=x;g=;=3;b=-4").body == 0);   // broken parts are skipped
+	CHECK(parseModelVariant("models/x.mdl#s=x;g=;=3;b=-4").path == "models/x.mdl");
+	{
+		const auto dir = std::filesystem::temp_directory_path() / "sme_model_variant";
+		std::filesystem::remove_all(dir);
+		test::writeStudioModel(dir / "models/props/box.mdl", files);
+		GameFileSystem fs;
+		fs.addDirectory(dir, {"game"});
+		const auto both = loadModelVariant(fs, {"models/props/box.mdl", 0, 1, {{2, 2}}}, &error);   // lid off + both handles
+		REQUIRE_MESSAGE(both, error);
+		CHECK(both->bounds.min.x == doctest::Approx(-20));
+		CHECK(both->bounds.max.x == doctest::Approx(20));
+		const auto right = loadModelVariant(fs, {"models/props/box.mdl", 0, 0, {{2, 1}, {7, 3}}}, &error);   // unknown group 7: ignored
+		REQUIRE(right);
+		CHECK(right->bounds.min.x == doctest::Approx(-16));
+		CHECK(right->bounds.max.x == doctest::Approx(20));
+		std::filesystem::remove_all(dir);
+	}
 	// Every body number gives a model (or a clean error), never a crash.
 	for (int body = -3; body < 40; ++body) {
 		(void)buildModelGeometry({files.mdl, files.vvd, files.vtx}, 0, nullptr, {}, body);
@@ -1063,6 +1095,32 @@ TEST_CASE("loop detection, prop class and sound loop checks with autofix") {
 	CHECK(betterPropClass("prop_physics", {true, false}) == "prop_static");
 	CHECK(betterPropClass("prop_physics", {false, true}).empty());
 	CHECK(betterPropClass("prop_dynamic", {false, false}).empty());
+	// Door models: prop_door_rotating; a door as prop_physics falls over, as prop_dynamic it is a fixed door.
+	CHECK(recommendedPropClass({false, true, true}) == "prop_door_rotating");
+	CHECK(betterPropClass("prop_physics", {false, true, true}) == "prop_door_rotating");
+	CHECK(betterPropClass("prop_dynamic", {false, true, true}).empty());
+	CHECK(betterPropClass("prop_door_rotating", {false, true, true}).empty());
+	{
+		ModelInfo door;
+		CHECK_FALSE(isDoorPropModel("models/props_c17/door01_left.mdl", door));   // a door name alone is not enough
+		door.keyValues = "\"door_options\" { \"defaults\" { } }";
+		CHECK(isDoorPropModel("models/props/anything.mdl", door));
+		ModelInfo handled;
+		handled.bodyGroups = {{"studio", {"door"}}, {"handle", {"none", "lever"}}};
+		CHECK(isDoorPropModel("models/props_c17/door01_left.mdl", handled));
+		CHECK_FALSE(isDoorPropModel("models/props_c17/door_frame01.mdl", handled));
+		CHECK_FALSE(isDoorPropModel("models/props_lab/elevatordoor.mdl", handled));
+		// What the views draw: the skin and body keys, a door with its hardware as body group 1.
+		Entity prop;
+		prop.keyValues = {{"classname", "prop_door_rotating"}, {"model", "models/props_c17/door01_left.mdl"}, {"hardware", "2"}};
+		CHECK(edit::entityModelKey(prop, nullptr) == "models/props_c17/door01_left.mdl#g1=2");
+		prop.set("hardware", "");
+		CHECK(edit::entityModelKey(prop, nullptr) == "models/props_c17/door01_left.mdl#g1=1");   // the FGD's default: lever
+		prop.keyValues = {{"classname", "prop_dynamic"}, {"model", "models/props/box.mdl"}, {"skin", "1"}, {"body", "x"}};
+		CHECK(edit::entityModelKey(prop, nullptr) == "models/props/box.mdl#s=1");
+		prop.keyValues = {{"classname", "info_target"}};
+		CHECK(edit::entityModelKey(prop, nullptr).empty());
+	}
 
 	const auto dir = std::filesystem::temp_directory_path() / "sme_prop_sound_checks";
 	std::filesystem::remove_all(dir);

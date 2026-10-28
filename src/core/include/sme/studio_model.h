@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -63,5 +64,21 @@ struct ModelFiles {
 /// Loads "models/x.mdl" (+ .vvd, .dx90.vtx / .vtx) from the game's file system.
 [[nodiscard]] std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::string_view modelPath, int skin = 0, std::string* error = nullptr,
                                                              int body = 0);
+
+/// A model drawn with a skin and body group choices, e.g. a door with its handle. The model
+/// cache keys it as "models/x.mdl#s=1;b=0;g1=2" (plain path: the defaults).
+struct ModelVariant {
+	std::string path;                             ///< "models/x.mdl"
+	int skin = 0;
+	int body = 0;                                 ///< The engine's body number (the "body" key)
+	std::vector<std::pair<int, int>> groups;      ///< Body group index -> option, applied on top of `body`
+};
+/// The cache key of a variant (just the path when it shows the defaults).
+[[nodiscard]] std::string modelVariantKey(const ModelVariant& variant);
+/// Reads a key made by modelVariantKey (a plain path gives the defaults).
+[[nodiscard]] ModelVariant parseModelVariant(std::string_view key);
+/// Loads a variant: its skin, and the body number with the group choices set (as the engine's
+/// SetBodygroup does - prop_door_rotating sets group 1 to its "hardware").
+[[nodiscard]] std::optional<ModelGeometry> loadModelVariant(const GameFileSystem& fs, const ModelVariant& variant, std::string* error = nullptr);
 
 } // namespace sme

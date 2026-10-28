@@ -79,7 +79,6 @@ signals:
 
 protected:
 	/// Sends wheel turns over unfocused boxes to the scroll area (see rebuild()).
-	bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
 	/// Gives a field or label naming an asset the "Show in ..." entries in its right-click menu.

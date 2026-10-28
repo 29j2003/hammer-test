@@ -259,8 +259,16 @@ void PropertiesPanel::buildDoorBox(QVBoxLayout* layout, const Entity& door) {
 		hardware->addItems({tr("None"), tr("Lever"), tr("Push bar"), tr("Keypad")});
 		hardware->setCurrentIndex(std::clamp(current.hardware, 0, 3));
 		connect(hardware, &QComboBox::activated, this, [apply](int index) { apply([index](DoorSettings& s) { s.hardware = index; }); });
+		hardware->setItemData(0, tr("No handle: opens with +use on the door itself"), Qt::ToolTipRole);
+		hardware->setItemData(1, tr("A lever on both faces, at the free edge (away from the hinge)"), Qt::ToolTipRole);
+		hardware->setItemData(2, tr("A push bar across the door, at the free edge"), Qt::ToolTipRole);
+		hardware->setItemData(3, tr("A keypad beside the free edge"), Qt::ToolTipRole);
 		modelForm->addRow(tr("Handle"), hardware);
 		v->addLayout(modelForm);
+		auto* handleHint = new QLabel(tr("The 3D view shows the door with this handle, so you see where it sits."));
+		handleHint->setWordWrap(true);
+		handleHint->setStyleSheet(QStringLiteral("color: #9aa3ad;"));
+		v->addWidget(handleHint);
 	}
 
 	// Sounds: door sound scripts first in the lists, each with a play button.

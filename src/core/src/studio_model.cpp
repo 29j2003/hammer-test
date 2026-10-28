@@ -5,6 +5,7 @@
 
 #include <sme/studio_model.h>
 
+#include <sme/assets.h>
 #include <sme/filesystem.h>
 #include <sme/text.h>
 
@@ -315,8 +316,15 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 			}
 		}
 		if (ok) {
-			for (const auto& v : geometry.vertices) {
+			// The box of what is drawn: other body group options (another handle, a lid) do not count.
+			for (const auto index : geometry.indices) {
+				const auto& v = geometry.vertices[index];
 				geometry.bounds.add({v.position[0], v.position[1], v.position[2]});
+			}
+			if (geometry.indices.empty()) {
+				for (const auto& v : geometry.vertices) {
+					geometry.bounds.add({v.position[0], v.position[1], v.position[2]});
+				}
 			}
 			// Merge meshes that share a material: fewer draw calls.
 			std::stable_sort(geometry.meshes.begin(), geometry.meshes.end(), [](const auto& a, const auto& b) { return a.material < b.material; });
@@ -345,6 +353,65 @@ std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::st
 	const std::vector<std::byte> empty;
 	const std::function<bool(const std::string&)> exists = [&](const std::string& material) { return fs.exists("materials/" + material + ".vmt"); };
 	return buildModelGeometry({*mdl, vvd ? *vvd : empty, vtx ? *vtx : empty}, skin, error, exists, body);
+}
+
+std::string modelVariantKey(const ModelVariant& variant) {
+	std::string key = variant.path;
+	std::string extra;
+	if (variant.skin != 0) extra += "s=" + std::to_string(variant.skin) + ";";
+	if (variant.body != 0) extra += "b=" + std::to_string(variant.body) + ";";
+	for (const auto& [group, option] : variant.groups) extra += "g" + std::to_string(group) + "=" + std::to_string(option) + ";";
+	if (!extra.empty()) {
+		extra.pop_back();
+		key += "#" + extra;
+	}
+	return key;
+}
+
+ModelVariant parseModelVariant(std::string_view key) {
+	ModelVariant variant;
+	const auto hash = key.find('#');
+	variant.path = std::string(key.substr(0, hash));
+	if (hash == std::string_view::npos) return variant;
+	for (const auto& part : splitTrimmed(key.substr(hash + 1), ';')) {
+		const auto eq = part.find('=');
+		if (eq == std::string::npos || eq == 0) continue;
+		const std::string name = part.substr(0, eq);
+		int value = 0;
+		try {
+			value = std::stoi(part.substr(eq + 1));
+		} catch (...) {
+			continue;
+		}
+		if (name == "s") variant.skin = std::max(0, value);
+		else if (name == "b") variant.body = std::max(0, value);
+		else if (name.size() > 1 && name[0] == 'g') {
+			try {
+				variant.groups.emplace_back(std::stoi(name.substr(1)), std::max(0, value));
+			} catch (...) {
+			}
+		}
+	}
+	return variant;
+}
+
+std::optional<ModelGeometry> loadModelVariant(const GameFileSystem& fs, const ModelVariant& variant, std::string* error) {
+	int body = variant.body;
+	if (!variant.groups.empty()) {
+		// The body number with the chosen groups replaced, like CBaseAnimating::SetBodygroup.
+		if (const auto mdl = fs.read(normalizePath(variant.path))) {
+			if (const auto info = readModelInfo(*mdl)) {
+				auto choices = info->bodyChoices(body);
+				for (const auto& [group, option] : variant.groups) {
+					if (group >= 0 && group < int(info->bodyGroups.size())) {
+						choices[std::size_t(group)] = std::min(option, std::max(0, int(info->bodyGroups[std::size_t(group)].options.size()) - 1));
+					}
+				}
+				body = info->bodyValue(choices);
+			}
+		}
+	}
+	return loadModelGeometry(fs, variant.path, variant.skin, error, body);
 }
 
 } // namespace sme

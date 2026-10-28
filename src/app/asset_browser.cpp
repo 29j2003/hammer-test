@@ -24,6 +24,8 @@
 #include <QListView>
 #include <QListWidget>
 #include <QMimeData>
+#include <QResizeEvent>
+#include <QStyle>
 #include <QPainter>
 #include <QRegularExpression>
 #include <QTabBar>
@@ -36,12 +38,16 @@
 #include <sme/game.h>
 #include <sme/text.h>
 
+#include <algorithm>
+
 namespace sme::app {
 
 namespace {
 
 constexpr int THUMB = 96;
 constexpr int RECENT_THUMB = 48;
+/// Below this height the browser drops the row of recent materials (the grid needs the room).
+constexpr int RECENT_MIN_HEIGHT = 250;
 
 /// Strip of recently used materials; items can be dragged like browser items.
 class RecentList : public QListWidget {
@@ -71,12 +77,31 @@ QString categoryText(const MaterialCategory& c) {
 	return parts.join(", ");
 }
 
-/// Icon grid whose drags show a card with the preview and name instead of the bare tile.
+/// Icon grid whose drags show a card with the preview and name instead of the bare tile. The
+/// tiles shrink with the view's height, so a low dock still shows whole tiles with their names
+/// (at least one row) instead of cut-off tops.
 class AssetIconView : public QListView {
 public:
 	using QListView::QListView;
 
+	/// Thumbnail edge that fits the view's height (between 40 and THUMB pixels).
+	[[nodiscard]] int fittingThumb() const {
+		const int label = fontMetrics().height() * 2 + 4;   // two lines of name under the picture
+		const int room = viewport()->height() - label - 14;
+		return std::clamp(room, 40, THUMB);
+	}
+	void fitTiles() {
+		const int thumb = fittingThumb();
+		if (thumb == iconSize().width()) return;
+		setIconSize(QSize(thumb, thumb));
+		setGridSize(QSize(thumb + 18, thumb + fontMetrics().height() * 2 + 10));
+	}
+
 protected:
+	void resizeEvent(QResizeEvent* event) override {
+		QListView::resizeEvent(event);
+		fitTiles();
+	}
 	void startDrag(Qt::DropActions actions) override {
 		const QModelIndexList indexes = selectedIndexes();
 		if (indexes.isEmpty()) return;
@@ -98,7 +123,8 @@ QListView* makeIconView(QWidget* parent) {
 	auto* view = new AssetIconView(parent);
 	view->setViewMode(QListView::IconMode);
 	view->setIconSize(QSize(THUMB, THUMB));
-	view->setGridSize(QSize(THUMB + 18, THUMB + 34));
+	view->setGridSize(QSize(THUMB + 18, THUMB + view->fontMetrics().height() * 2 + 10));
+	view->setTextElideMode(Qt::ElideMiddle);
 	view->setResizeMode(QListView::Adjust);
 	view->setMovement(QListView::Static);
 	view->setUniformItemSizes(true);
@@ -393,7 +419,12 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_recent->setFlow(QListView::LeftToRight);
 		m_recent->setWrapping(false);
 		m_recent->setIconSize(QSize(RECENT_THUMB, RECENT_THUMB));
-		m_recent->setFixedHeight(RECENT_THUMB + 24);
+		// Room for the picture and one line of name (cut in the middle), and the scroll bar.
+		m_recent->setTextElideMode(Qt::ElideMiddle);
+		m_recent->setUniformItemSizes(true);
+		m_recent->setGridSize(QSize(RECENT_THUMB + 44, RECENT_THUMB + m_recent->fontMetrics().height() + 10));
+		m_recent->setFixedHeight(m_recent->gridSize().height() + 2 * m_recent->frameWidth() +
+		                         m_recent->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, m_recent) + 2);
 		m_recent->setDragEnabled(true);
 		m_recent->setDragDropMode(QAbstractItemView::DragOnly);
 		m_recent->setToolTip(tr("Recently used - click to make current, double-click to apply, drag onto a face"));
@@ -711,9 +742,18 @@ void AssetBrowser::reload() {
 	}));
 }
 
+void AssetBrowser::resizeEvent(QResizeEvent* event) {
+	QWidget::resizeEvent(event);
+	const bool room = height() >= RECENT_MIN_HEIGHT;
+	if (room != m_recentRoom) {
+		m_recentRoom = room;
+		updateRecent();
+	}
+}
+
 void AssetBrowser::updateRecent() {
 	m_recent->clear();
-	m_recent->setVisible(!m_pageMode && !m_editor->recentMaterials().isEmpty());
+	m_recent->setVisible(!m_pageMode && !m_editor->recentMaterials().isEmpty() && height() >= RECENT_MIN_HEIGHT);
 	for (const auto& name : m_editor->recentMaterials()) {
 		auto* item = new QListWidgetItem(name.section('/', -1).toLower(), m_recent);
 		item->setData(Qt::UserRole, name);

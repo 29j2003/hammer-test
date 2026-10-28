@@ -262,6 +262,17 @@ int ModelInfo::bodyValue(const std::vector<int>& choices) const {
 	return body;
 }
 
+std::vector<int> ModelInfo::bodyChoices(int body) const {
+	std::vector<int> choices;
+	body = std::max(0, body);
+	for (const auto& group : bodyGroups) {
+		const int options = std::max<int>(1, static_cast<int>(group.options.size()));
+		choices.push_back(body % options);
+		body /= options;
+	}
+	return choices;
+}
+
 std::vector<std::string> modelSequences(const GameFileSystem& fs, std::string_view modelPath, std::string* error) {
 	std::vector<std::string> out;
 	std::set<std::string> seen;
@@ -337,10 +348,31 @@ std::optional<PropModelFlags> readPropModelFlags(const GameFileSystem& fs, std::
 	PropModelFlags flags;
 	flags.staticProp = info->staticProp;
 	flags.collision = fs.exists(std::string(modelPath.substr(0, modelPath.size() - 4)) + ".phy");
+	flags.door = isDoorPropModel(modelPath, *info);
 	return flags;
 }
 
+bool isDoorPropModel(std::string_view modelPath, const ModelInfo& info) {
+	if (toLower(info.keyValues).find("door_options") != std::string::npos) {
+		return true;
+	}
+	const std::string name = toLower(std::string(modelPath.substr(modelPath.find_last_of('/') + 1)));
+	if (name.find("door") == std::string::npos) {
+		return false;
+	}
+	for (const std::string_view word : {"frame", "gib", "chunk", "break", "elevator", "garage", "slide", "blast"}) {
+		if (name.find(word) != std::string::npos) return false;
+	}
+	return std::any_of(info.bodyGroups.begin(), info.bodyGroups.end(), [](const ModelInfo::BodyGroup& group) {
+		const std::string lower = toLower(group.name);
+		return lower.find("handle") != std::string::npos || lower.find("hardware") != std::string::npos || lower.find("knob") != std::string::npos;
+	});
+}
+
 std::string recommendedPropClass(const PropModelFlags& flags) {
+	if (flags.door && !flags.staticProp) {
+		return "prop_door_rotating";
+	}
 	if (flags.staticProp) {
 		return "prop_static";
 	}
@@ -350,6 +382,9 @@ std::string recommendedPropClass(const PropModelFlags& flags) {
 std::string betterPropClass(std::string_view classname, const PropModelFlags& flags) {
 	if (iequals(classname, "prop_static") && !flags.staticProp) {
 		return "prop_dynamic";   // stays where it was put, like the prop_static was meant to
+	}
+	if ((iequals(classname, "prop_physics") || iequals(classname, "prop_physics_multiplayer")) && flags.door && !flags.staticProp) {
+		return "prop_door_rotating";   // a door that falls over when the map starts
 	}
 	if ((iequals(classname, "prop_physics") || iequals(classname, "prop_physics_multiplayer")) && !flags.collision) {
 		return flags.staticProp ? "prop_static" : "prop_dynamic";

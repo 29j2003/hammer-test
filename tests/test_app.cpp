@@ -14,6 +14,10 @@
 #include <QClipboard>
 #include <QTableWidget>
 #include <QTabBar>
+#include <QAbstractSpinBox>
+#include <QEnterEvent>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QLabel>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
@@ -2412,6 +2416,122 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		settle();
 		CHECK(grip->isVisible());
 	}
+}
+
+TEST_CASE("panels: the wheel scrolls instead of switching, low docks show whole tiles, the panel keeps its place") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QSignalSpy indexed(window.assets(), &AssetBrowser::materialsIndexed);
+	window.resize(1400, 700);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	REQUIRE((indexed.count() > 0 || indexed.wait(10000)));
+	settle();
+
+	const auto wheelOn = [](QWidget* target, int delta) {
+		QWheelEvent wheel(QPointF(5, 5), target->mapToGlobal(QPointF(5, 5)), {}, {0, delta}, Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+		QApplication::sendEvent(target, &wheel);
+	};
+	auto* scroll = window.properties()->findChild<QScrollArea*>();
+	REQUIRE(scroll);
+
+	// Two props: picking the second keeps the panel where it was scrolled to.
+	int ids[2] = {0, 0};
+	for (int i = 0; i < 2; ++i) {
+		auto [place, id] = edit::placeEntity(editor.doc(), "prop_static", {double(i) * 64, 0, 0}, editor.entities()->find("prop_static"),
+		                                     {{"model", "models/props_demo/crate01.mdl"}});
+		editor.commit(std::move(place));
+		ids[i] = id;
+	}
+	Selection first;
+	first.entities.push_back(ids[0]);
+	editor.setSelection(first);
+	settle();
+	REQUIRE(scroll->verticalScrollBar()->maximum() > 0);
+	const int scrolled = scroll->verticalScrollBar()->maximum() / 2;
+	scroll->verticalScrollBar()->setValue(scrolled);
+	Selection second;
+	second.entities.push_back(ids[1]);
+	editor.setSelection(second);
+	settle();
+	CHECK(std::abs(scroll->verticalScrollBar()->value() - scrolled) <= 4);
+	editor.setSelection(first);
+	settle();
+	CHECK(std::abs(scroll->verticalScrollBar()->value() - scrolled) <= 4);
+
+	// The wheel over the Keyvalues/Outputs/Inputs tabs scrolls the panel, it never switches the tab.
+	auto* tabs = window.properties()->findChild<QTabBar*>("propertyTabs");
+	REQUIRE(tabs);
+	const int tab = tabs->currentIndex();
+	for (int i = 0; i < 3; ++i) wheelOn(tabs, -120);
+	CHECK(tabs->currentIndex() == tab);
+	// Tab bars elsewhere (the docks) do not switch by the wheel either.
+	for (auto* bar : window.findChildren<QTabBar*>()) {
+		if (bar == tabs || !bar->isVisible() || bar->count() < 2) continue;
+		const int before = bar->currentIndex();
+		wheelOn(bar, -120);
+		CHECK(bar->currentIndex() == before);
+	}
+	// A number box without focus does not change either (no wheel focus).
+	if (auto* spin = window.properties()->findChild<QAbstractSpinBox*>()) {
+		CHECK(spin->focusPolicy() == Qt::StrongFocus);
+	}
+
+	// The sky drop-down: resting the mouse on it lets the wheel go through the skies.
+	editor.clearSelection();
+	settle();
+	{
+		QPointer<QComboBox> sky = window.properties()->findChild<QComboBox*>("skyPicker");
+		REQUIRE(sky);
+		sky->blockSignals(true);
+		while (sky->count() < 3) sky->addItem(QStringLiteral("test_sky_%1").arg(sky->count()));
+		sky->setCurrentIndex(0);
+		sky->blockSignals(false);
+		const QString next = sky->itemText(1);
+		QTest::qWait(700);   // the panel is not being scrolled any more
+		QEnterEvent enter(QPointF(5, 5), QPointF(5, 5), sky->mapToGlobal(QPointF(5, 5)));
+		QApplication::sendEvent(sky, &enter);
+		wheelOn(sky, -120);
+		CHECK(sky->currentIndex() == 0);   // just arrived: it scrolls the panel
+		QTest::qWait(700);
+		wheelOn(sky, -120);   // rested, the panel still: the wheel picks the next sky
+		settle();
+		CHECK(editor.doc().world.get("skyname") == next.toStdString());
+	}
+
+	// Asset browser in a low dock: whole tiles with their names, one row at least; the recent
+	// row makes room.
+	auto* list = window.assets()->findChild<QListView*>("materialList");
+	REQUIRE(list);
+	QDockWidget* dock = nullptr;
+	for (QWidget* w = window.assets(); w && !dock; w = w->parentWidget()) dock = qobject_cast<QDockWidget*>(w);
+	REQUIRE(dock);
+	editor.setCurrentMaterial("demo/concrete");
+	editor.applyMaterialToSelection("demo/concrete");
+	window.resizeDocks({dock}, {150}, Qt::Vertical);
+	settle();
+	const int low = list->iconSize().height();
+	CHECK(low < 96);
+	CHECK(low >= 40);
+	CHECK((list->gridSize().height() <= list->viewport()->height() || low == 40));
+	auto* recent = window.assets()->findChild<QListWidget*>();
+	if (recent && window.assets()->height() < 250) CHECK_FALSE(recent->isVisible());
+	window.resizeDocks({dock}, {420}, Qt::Vertical);
+	settle();
+	CHECK(list->iconSize().height() > low);
 }
 
 TEST_CASE("update check: release information and the version button") {

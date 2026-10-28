@@ -234,6 +234,8 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 						p.to = better;
 						p.message = iequals(classname, "prop_static")
 						                ? describeEntity(entity) + ": \"" + model + "\" is not a static prop model - VBSP deletes this prop_static."
+						            : better == "prop_door_rotating"
+						                ? describeEntity(entity) + ": \"" + model + "\" is a door model - as a prop_physics it falls over instead of opening."
 						                : describeEntity(entity) + ": \"" + model + "\" has no collision model - the game removes this prop_physics at spawn.";
 						p.howToFix = "Use " + better + " (the class this model is made for).";
 						p.fixLabel = "Make " + better;

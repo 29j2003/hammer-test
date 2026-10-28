@@ -11,6 +11,7 @@
 #include "enhancements.h"
 #include "material_cache.h"
 #include "toggle_switch.h"
+#include "wheel_guard.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -47,6 +48,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QScrollBar>
 #include <QTabBar>
 #include <QtConcurrentRun>
 
@@ -305,17 +307,6 @@ QStringList PropertiesPanel::sequencesFor(const Entity& entity) const {
 	return out;
 }
 
-bool PropertiesPanel::eventFilter(QObject* watched, QEvent* event) {
-	if (event->type() == QEvent::Wheel) {
-		auto* field = qobject_cast<QWidget*>(watched);
-		if (field && !field->hasFocus()) {
-			QApplication::sendEvent(m_scroll->viewport(), event);   // scroll the panel instead
-			return true;
-		}
-	}
-	return QWidget::eventFilter(watched, event);
-}
-
 QAbstractItemModel* PropertiesPanel::sharedNames(const QString& kind, const QStringList& names) {
 	auto& [model, count] = m_sharedNames[kind];
 	if (!model) model = new QStringListModel(this);
@@ -374,16 +365,39 @@ void PropertiesPanel::rebuild() {
 		buildEntity(layout, {0});
 	}
 	layout->addStretch(1);
-	// The wheel scrolls the panel; it only changes a box or number that has the keyboard focus
-	// (scrolling past a drop-down must not change a key by accident).
-	for (auto* field : content->findChildren<QWidget*>()) {
-		if (qobject_cast<QComboBox*>(field) || qobject_cast<QAbstractSpinBox*>(field) || qobject_cast<QSlider*>(field)) {
-			field->setFocusPolicy(Qt::StrongFocus);
-			field->installEventFilter(this);
+	// (The wheel scrolls the panel past drop-downs and number boxes: WheelGuard.)
+	// The panel stays where it was scrolled to: the same group stays at the same height, so
+	// picking another object keeps the place one was editing.
+	const int oldScroll = m_scroll->verticalScrollBar()->value();
+	QString anchorName;
+	int anchorOffset = 0;
+	if (m_content && oldScroll > 0) {
+		for (auto* header : m_content->findChildren<QPushButton*>()) {
+			if (!header->objectName().startsWith(QStringLiteral("group:")) || !header->isVisibleTo(m_content)) continue;
+			const int y = header->mapTo(m_content, QPoint(0, 0)).y() - oldScroll;
+			if (y >= 0 || anchorName.isEmpty()) {
+				anchorName = header->objectName();
+				anchorOffset = y;
+				if (y >= 0) break;
+			}
 		}
 	}
 	m_scroll->setWidget(content);   // deletes the previous content
 	m_content = content;
+	if (oldScroll > 0 && m_focusConnection < 0) {
+		const auto restore = [this, content, oldScroll, anchorName, anchorOffset] {
+			if (m_content != content) return;
+			int target = oldScroll;
+			if (auto* header = anchorName.isEmpty() ? nullptr : content->findChild<QPushButton*>(anchorName); header && header->isVisibleTo(content)) {
+				target = header->mapTo(content, QPoint(0, 0)).y() - anchorOffset;
+			}
+			m_scroll->verticalScrollBar()->setValue(target);
+		};
+		content->layout()->activate();
+		content->resize(m_scroll->viewport()->width(), std::max(content->sizeHint().height(), m_scroll->viewport()->height()));
+		restore();
+		QTimer::singleShot(0, this, restore);   // again once the scroll area knows the new height
+	}
 	if (m_focusConnection >= 0) {
 		if (auto* card = content->findChild<QWidget*>(QStringLiteral("outputCard:%1").arg(m_focusConnection))) {
 			QPointer<QWidget> target(card);
@@ -651,6 +665,7 @@ QWidget* PropertiesPanel::makeSkyPicker(const QString& value) {
 	loadSkies();
 	auto* combo = new QComboBox;
 	combo->setObjectName("skyPicker");
+	WheelGuard::setWheelWhenResting(combo);   // rest the mouse on it, then wheel through the skies
 	combo->setMaxVisibleItems(16);
 	combo->setEditable(true);
 	combo->setInsertPolicy(QComboBox::NoInsert);

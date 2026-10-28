@@ -153,7 +153,7 @@ key/value list. At the bottom of the panel, a help area explains the key you are
 
 | Tab | What it is |
 |---|---|
-| **Asset Browser** | Materials and models: search, filters and pictures. Drag a material onto a face or a model into the view. |
+| **Asset Browser** | Materials and models: search, filters and pictures. Drag a material onto a face or a model into the view. In a low dock the pictures get smaller so whole tiles with their names fit, and the row of recent materials makes room. |
 | **Sounds** | The sound browser (also its own page). |
 | **Particles** | The particle browser (also its own page). |
 | **Compile** | The steps, warnings and errors of the last compile. |

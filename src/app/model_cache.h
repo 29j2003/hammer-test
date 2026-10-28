@@ -31,6 +31,7 @@ public:
 	/// Game files to load from (nullptr: none). `catalog` learns the model sizes (entity boxes).
 	void setFileSystem(const GameFileSystem* fs, const EntityCatalog* catalog);
 	/// The model if it is loaded; otherwise starts loading it (modelReady follows) and returns nullptr.
+	/// `path` may be a variant key (modelVariantKey: skin and body groups).
 	[[nodiscard]] std::shared_ptr<const ModelGeometry> get(const QString& path);
 	/// Loading failed (missing or broken files).
 	[[nodiscard]] bool failed(const QString& path) const;

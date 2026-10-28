@@ -1060,7 +1060,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		const auto box = edit::entityBounds(entity, catalog);
 		m_sceneBounds.add(box);
 		// Loaded model: drawn with its own triangles; picked by its (turned) box.
-		const auto modelPath = QString::fromStdString(edit::entityModel(entity, catalog));
+		const auto modelPath = QString::fromStdString(edit::entityModelKey(entity, catalog));
 		const auto geometry = m_models && !modelPath.isEmpty() ? m_models->get(modelPath) : nullptr;
 		if (geometry && !geometry->empty()) {
 			Vec3 angles;

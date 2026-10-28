@@ -47,7 +47,8 @@ std::shared_ptr<const ModelGeometry> ModelCache::get(const QString& path) {
 			return;
 		}
 		std::string error;
-		auto geometry = loadModelGeometry(*fs, path.toStdString(), 0, &error);
+		// A key with "#..." is a variant (skin, body groups - a door with its handle).
+		auto geometry = loadModelVariant(*fs, parseModelVariant(path.toStdString()), &error);
 		auto shared = geometry ? std::make_shared<const ModelGeometry>(std::move(*geometry)) : nullptr;
 		QMetaObject::invokeMethod(
 			self, [self, path, shared, error, generationCounter, generation] {
@@ -59,7 +60,7 @@ std::shared_ptr<const ModelGeometry> ModelCache::get(const QString& path) {
 				entry.geometry = shared;
 				entry.error = shared ? QString() : QString::fromStdString(error.empty() ? "unknown error" : error);
 				if (shared && self->m_catalog) {
-					self->m_catalog->setModelBounds(path.toStdString(), shared->bounds);
+					self->m_catalog->setModelBounds(parseModelVariant(path.toStdString()).path, shared->bounds);
 				}
 				emit self->modelReady(path);
 			},

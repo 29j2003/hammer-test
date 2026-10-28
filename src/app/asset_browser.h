@@ -191,6 +191,9 @@ signals:
 	/// A material was clicked in the list (lowercase name as listed, "concrete/wall01").
 	void materialPicked(const QString& name);
 
+protected:
+	void resizeEvent(QResizeEvent* event) override;
+
 private:
 	void reload();
 	void updateUsedMaterials();
@@ -208,6 +211,7 @@ private:
 	QComboBox* m_materialCategory;
 	QLabel* m_materialInfo;
 	QListWidget* m_recent;
+	bool m_recentRoom = true;   ///< The browser is high enough for the row of recent materials
 	QFutureWatcher<AssetIndex> m_indexWatcher;
 	std::atomic<int> m_generation{0};
 

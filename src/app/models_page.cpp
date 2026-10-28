@@ -224,9 +224,11 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_placeAs->addItem("prop_static");
 	m_placeAs->addItem("prop_physics");
 	m_placeAs->addItem("prop_dynamic");
+	m_placeAs->addItem("prop_door_rotating");
 	m_placeAs->setItemData(0, tr("Part of the world: cheapest, never moves (needs a model made as a static prop)"), Qt::ToolTipRole);
 	m_placeAs->setItemData(1, tr("Falls, can be picked up and broken (needs a collision model)"), Qt::ToolTipRole);
 	m_placeAs->setItemData(2, tr("Can move and animate, controlled by inputs"), Qt::ToolTipRole);
+	m_placeAs->setItemData(3, tr("A door that opens: turns around its hinge, with handle and sounds from the model"), Qt::ToolTipRole);
 	placeRow->addWidget(m_placeAs);
 	placeRow->addStretch(1);
 	m_copy = new QPushButton(tr("Copy path"));
@@ -480,7 +482,7 @@ void ModelsPage::loaded(const Loaded& result) {
 		}
 		rebuildBodyGroups();
 		// The class the model is made for (same rule as dropping it into the map).
-		m_placeAs->setCurrentText(QString::fromStdString(recommendedPropClass({m_info.staticProp, m_hasPhysics})));
+		m_placeAs->setCurrentText(QString::fromStdString(recommendedPropClass({m_info.staticProp, m_hasPhysics, isDoorPropModel(m_current.toStdString(), m_info)})));
 	}
 	if (result.geometry) {
 		m_viewer->setModel(result.geometry, result.withInfo);

@@ -46,7 +46,10 @@ Press **Shift+E**. The **Tool** tab lists every entity class of the game, with i
 The class at the top of *Object Properties* is a search list: click it, type a few letters (several words narrow
 it down, e.g. `prop phys`), move with the **arrow keys** and press **Enter**. With an empty search the classes
 related to the current one come first (for `prop_static`: `prop_dynamic`, `prop_physics` …). The keys stay.
-The mouse wheel scrolls the panel; it only changes a drop-down or number field you clicked into first.
+The mouse wheel scrolls the panel; it only changes a drop-down or number field you clicked into first, and it
+never switches between *Keyvalues*, *Outputs* and *Inputs*. The sky list is the exception: rest the mouse on it for a
+moment (without scrolling), then the wheel goes through the skies. Picking another object keeps the panel where you
+had scrolled to.
 
 Fields that name something of the game are drop-down lists you can scroll through or type into: the sky
 (worldspawn *SkyBox Texture Name*, with pictures), soundscapes, sounds, models, particle systems, materials, decals and
@@ -149,7 +152,9 @@ A `func_door` or `func_door_rotating` you place with the Entity tool or make wit
 - **Speed** (units or degrees per second), **Closing**: *Stays open* or *closes after* some seconds.
 - Switches: **Opens when the player presses Use**, **Opens when the player walks into it**, **Starts locked**
   (an `Unlock` input opens it up; the *Locked* sound plays when someone tries it).
-- Door models: **Model** (the game's door models) and **Handle** (none, lever, push bar, keypad).
+- Door models: **Model** (the game's door models) and **Handle** (none, lever, push bar, keypad). The views draw the
+  door with the chosen handle, so you see where it sits. Dragging a door model into the view makes a
+  `prop_door_rotating` right away, and *Problems* points out a door model placed as `prop_physics` (it would fall over).
 - **Sounds**: one list per sound (*Opening*, *Closing*, *Stops*, *Locked*; door models: *Opening*, *Moving*,
   *Closed*, *Locked* - empty keeps the model's own), door sounds listed, each with **▶** to listen.
 - **Test open** plays the opening in the views at the door's real speed.
@@ -187,8 +192,9 @@ The **Models** button in the side bar shows every model of the game and its mods
   **physics** (collision model, mass, breakable settings). **Materials** lists what it is painted with; click one to
   open it in the Material Editor. Missing ones are shown in red - the game draws them as a checkerboard.
 - **Place in map** (or a double-click in the list) switches to the map with the entity tool ready: every click places
-  the model. **Place as** picks the entity: `prop_static` for models made as static props, `prop_physics` for models
-  with a collision model, `prop_dynamic` otherwise - change it if you need something else. The skin goes with it (and
+  the model. **Place as** picks the entity: `prop_door_rotating` for door models, `prop_static` for models made as
+  static props, `prop_physics` for models with a collision model, `prop_dynamic` otherwise - change it if you need
+  something else. The skin goes with it (and
   the body groups, except for `prop_static`, which has none in the map file).
 - You can also **drag** a model onto the **Map** button of the side bar; the map opens and you drop the model into a
   view. **Copy path** puts `models/.../name.mdl` on the clipboard.

@@ -55,6 +55,10 @@ namespace edit {
 [[nodiscard]] Bounds entityBounds(const Entity& entity, const EntityCatalog* catalog);
 /// Model a point entity shows: its "model" key (.mdl) or the FGD's studio("...") model; empty if none.
 [[nodiscard]] std::string entityModel(const Entity& entity, const EntityCatalog* catalog);
+/// The model key the views draw for a point entity (modelVariantKey): its model with the
+/// "skin" and "body" keys, and a prop_door_rotating's "hardware" as body group 1 (lever, push
+/// bar, keypad - the engine's SetBodygroup in CBasePropDoor::Spawn). Empty if it shows none.
+[[nodiscard]] std::string entityModelKey(const Entity& entity, const EntityCatalog* catalog);
 /// Box around everything selected (objects, or the faces' brushes in face mode).
 [[nodiscard]] Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog);
 

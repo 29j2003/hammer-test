@@ -5,6 +5,7 @@
 #include <sme/brush.h>
 #include <sme/csg.h>
 #include <sme/material.h>
+#include <sme/studio_model.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -183,6 +184,26 @@ std::string entityModel(const Entity& entity, const EntityCatalog* catalog) {
 		}
 	}
 	return {};
+}
+
+std::string entityModelKey(const Entity& entity, const EntityCatalog* catalog) {
+	ModelVariant variant;
+	variant.path = entityModel(entity, catalog);
+	if (variant.path.empty()) return {};
+	const auto number = [&entity](const char* key, int fallback) {
+		try {
+			const auto value = entity.get(key);
+			return value.empty() ? fallback : std::max(0, std::stoi(value));
+		} catch (...) {
+			return fallback;
+		}
+	};
+	variant.skin = number("skin", 0);
+	variant.body = number("body", number("SetBodyGroup", 0));
+	if (iequals(entity.classname(), "prop_door_rotating")) {
+		variant.groups.emplace_back(1, number("hardware", 1));   // DOOR_HARDWARE_GROUP
+	}
+	return modelVariantKey(variant);
 }
 
 Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog) {
