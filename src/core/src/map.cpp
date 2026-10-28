@@ -4,8 +4,10 @@
 
 #include <sme/text.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 
@@ -100,18 +102,65 @@ Side parseSide(const KvNode& node) {
 	return side;
 }
 
-Solid parseSolid(const KvNode& node) {
+/// A brush, or nothing when one of its sides is broken (the rest of the map still loads).
+std::optional<Solid> parseSolid(const KvNode& node, VmfLoadReport* report) {
 	Solid solid;
 	for (const auto& child : node.children) {
 		if (!child.block && iequals(child.key, "id")) {
 			solid.id = parseInt(child.value);
 		} else if (child.block && iequals(child.key, "side")) {
-			solid.sides.push_back(parseSide(child));
+			try {
+				solid.sides.push_back(parseSide(child));
+			} catch (const std::exception& e) {
+				if (report) {
+					++report->skippedSolids;
+					report->notes.push_back("brush " + std::to_string(solid.id) + " left out: " + e.what());
+				}
+				return std::nullopt;
+			}
 		} else {
 			solid.extra.push_back(child);
 		}
 	}
 	return solid;
+}
+
+/// A line `"key" "value"` whose value holds more quotes (`"message" "say "hi""`) breaks the
+/// KeyValues syntax; the inner quotes become apostrophes. Other lines stay as they are.
+std::string repairQuotes(std::string_view text, VmfLoadReport* report) {
+	std::string out;
+	out.reserve(text.size());
+	std::size_t lineNumber = 0;
+	std::size_t start = 0;
+	while (start <= text.size()) {
+		const auto end = text.find('\n', start);
+		const std::string_view line = text.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
+		++lineNumber;
+		const auto quotes = std::count(line.begin(), line.end(), '"');
+		const auto first = line.find_first_not_of(" \t");
+		const auto last = line.find_last_not_of(" \t\r");
+		bool repaired = false;
+		if (quotes > 4 && first != std::string_view::npos && line[first] == '"' && line[last] == '"') {
+			const auto keyEnd = line.find('"', first + 1);
+			const auto valueStart = keyEnd == std::string_view::npos ? keyEnd : line.find('"', keyEnd + 1);
+			if (valueStart != std::string_view::npos && valueStart < last) {
+				std::string value(line.substr(valueStart + 1, last - valueStart - 1));
+				std::replace(value.begin(), value.end(), '"', '\'');
+				out.append(line.substr(0, valueStart + 1)).append(value).append(line.substr(last));
+				repaired = true;
+				if (report) {
+					++report->repairedLines;
+					report->notes.push_back("line " + std::to_string(lineNumber) + ": quotes inside the value of \"" +
+					                        std::string(line.substr(first + 1, keyEnd - first - 1)) + "\" replaced by '");
+				}
+			}
+		}
+		if (!repaired) out.append(line);
+		if (end == std::string_view::npos) break;
+		out.push_back('\n');
+		start = end + 1;
+	}
+	return out;
 }
 
 // An output line: key = output name, value = "target,input,parameter,delay,times to fire".
@@ -140,7 +189,7 @@ Connection parseConnection(const KvNode& node) {
 	return c;
 }
 
-Entity parseEntity(const KvNode& node) {
+Entity parseEntity(const KvNode& node, VmfLoadReport* report = nullptr) {
 	Entity entity;
 	for (const auto& child : node.children) {
 		if (!child.block) {
@@ -150,7 +199,7 @@ Entity parseEntity(const KvNode& node) {
 				entity.keyValues.emplace_back(child.key, child.value);
 			}
 		} else if (iequals(child.key, "solid")) {
-			entity.solids.push_back(parseSolid(child));
+			if (auto solid = parseSolid(child, report)) entity.solids.push_back(std::move(*solid));
 		} else if (iequals(child.key, "connections")) {
 			for (const auto& output : child.children) {
 				if (!output.block) {
@@ -333,8 +382,10 @@ MapDocument::MapDocument() {
 	headerBlocks.push_back(std::move(view));
 }
 
-MapDocument MapDocument::parse(std::string_view vmfText) {
-	const auto root = parseKeyValues(vmfText);
+MapDocument MapDocument::parse(std::string_view vmfText, VmfLoadReport* report) {
+	VmfLoadReport local;
+	VmfLoadReport* const r = report ? report : &local;
+	const auto root = parseKeyValues(repairQuotes(vmfText, r));
 	MapDocument doc;
 	doc.headerBlocks.clear();
 	doc.world = {};
@@ -346,10 +397,10 @@ MapDocument MapDocument::parse(std::string_view vmfText) {
 		if (!node.block) {
 			doc.footerBlocks.push_back(node);
 		} else if (iequals(node.key, "world")) {
-			doc.world = parseEntity(node);
+			doc.world = parseEntity(node, r);
 			seenWorld = true;
 		} else if (iequals(node.key, "entity")) {
-			doc.entities.push_back(parseEntity(node));
+			doc.entities.push_back(parseEntity(node, r));
 		} else if (!seenWorld && doc.entities.empty()) {
 			doc.headerBlocks.push_back(node);
 		} else {

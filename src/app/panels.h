@@ -74,6 +74,7 @@ private:
 	QLabel* m_summary;
 	std::vector<Problem> m_problems;
 	std::vector<Problem> m_leaks;
+	CheckCache m_cache;            ///< Models and sounds read by the checks (cleared with the game or "Check map")
 };
 
 /// The Log dock: messages and compile output in colour.

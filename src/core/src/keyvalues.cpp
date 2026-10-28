@@ -149,9 +149,13 @@ void parseChildren(Tokenizer& tokens, KvNode& parent, bool topLevel, int depth) 
 	}
 }
 
+// KeyValues have no escapes: a quote inside the text would end the string and break the file
+// (Hammer then cannot open it), so it is written as an apostrophe.
 void appendQuoted(std::string& out, std::string_view text) {
 	out += '"';
-	out += text;
+	for (const char c : text) {
+		out += c == '"' ? '\'' : c;
+	}
 	out += '"';
 }
 

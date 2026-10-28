@@ -21,12 +21,14 @@ class QAbstractItemModel;
 class QStringListModel;
 
 #include <map>
+#include <optional>
 
 #include <functional>
 #include <set>
 #include <utility>
 #include <vector>
 
+#include <sme/assets.h>
 #include <sme/entity_catalog.h>
 #include <sme/map.h>
 
@@ -102,6 +104,8 @@ private:
 	/// Soundscape entities: which soundscape (with a button to edit it), and where it is heard -
 	/// a sphere (radius, or the whole map) or a block (trigger_soundscape) with its size.
 	void buildSoundscapeArea(QVBoxLayout* layout, const Entity& soundscape);
+	/// ambient_generic: whether its sound file loops, against the "Is NOT Looped" flag, with a fix.
+	void buildSoundLoopBox(QVBoxLayout* layout, const Entity& ambient);
 	void buildBrushes(QVBoxLayout* layout);
 	QWidget* makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed);
 	void setKey(const std::vector<int>& ids, const std::string& key, const QString& value);
@@ -136,6 +140,9 @@ private:
 	std::vector<std::pair<QString, QImage>> m_skies;
 	QString m_skiesGame;                   ///< Game the sky list belongs to
 	QFutureWatcher<std::vector<std::pair<QString, QImage>>> m_skyWatcher;
+	// Sound scripts for the loop check of ambient_generic, read on first need per game.
+	std::optional<std::vector<SoundScriptEntry>> m_soundScripts;
+	const void* m_soundScriptsGame = nullptr;
 };
 
 /// First sentence of an FGD description, shortened for the line under each field.

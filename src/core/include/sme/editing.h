@@ -126,7 +126,11 @@ template<typename F>
 /// Moves the brushes of selected brush entities back into the world and deletes those entities.
 [[nodiscard]] Change moveToWorld(MapDocument& doc, const Selection& selection);
 
-/// Sets (or with an empty optional removes) a key on several entities (0 = world).
+/// The value with every `"` turned into `'`: KeyValues have no escapes, so a typed quote would
+/// break the VMF (Hammer then cannot open it).
+[[nodiscard]] std::string withoutQuotes(std::string text);
+/// Sets (or with an empty optional removes) a key on several entities (0 = world). Quotes in
+/// the value become apostrophes (withoutQuotes).
 [[nodiscard]] Change setKeyValue(MapDocument& doc, const std::vector<int>& entityIds, const std::string& key, const std::optional<std::string>& value);
 // --- Shapes and brush tools (csg.h, shapes.h) -------------------------------------------
 

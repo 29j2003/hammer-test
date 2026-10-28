@@ -340,6 +340,30 @@ std::optional<DecodedAudio> decodeAudio(std::span<const std::byte> data, std::st
 	return out;
 }
 
+std::optional<bool> soundFileLoops(std::span<const std::byte> data) {
+	const Bytes in(data);
+	if (in.tag(0, "OggS")) {
+		return std::nullopt;   // Source 1 does not play Ogg
+	}
+	if (!(in.tag(0, "RIFF") && in.tag(8, "WAVE"))) {
+		return false;          // MP3: the engine never loops it
+	}
+	// Only the chunk headers are read (like decodeWav, without decoding the samples).
+	for (std::size_t at = 12; in.has(at, 8);) {
+		const std::uint32_t size = in.u32(at + 4);
+		const std::size_t body = at + 8;
+		if (in.tag(at, "cue ") && in.has(body, 4) && in.u32(body) > 0) {
+			return true;
+		}
+		if (in.tag(at, "smpl") && in.has(body, 36) && in.u32(body + 28) > 0) {
+			return true;
+		}
+		if (size > in.size()) break;
+		at = body + size + (size & 1);
+	}
+	return false;
+}
+
 std::vector<std::pair<float, float>> waveformPeaks(const DecodedAudio& audio, int buckets) {
 	std::vector<std::pair<float, float>> out;
 	const std::size_t frames = audio.frames();

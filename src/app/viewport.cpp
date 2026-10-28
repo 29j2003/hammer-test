@@ -18,6 +18,7 @@
 
 #include <cmath>
 
+#include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/csg.h>
 #include <sme/decals.h>
@@ -2482,12 +2483,18 @@ void Viewport::dropEvent(QDropEvent* event) {
 		return;
 	}
 	if (mime->hasFormat("application/x-sme-model")) {
-		// A model becomes a prop_static standing on the surface (change the class in Object Properties).
-		std::vector<std::pair<std::string, std::string>> keys{{"model", QString::fromUtf8(mime->data("application/x-sme-model")).toStdString()}};
+		// A model stands on the surface as the prop class it is made for: prop_static for static
+		// prop models, prop_physics with a collision model, else prop_dynamic.
+		const std::string model = QString::fromUtf8(mime->data("application/x-sme-model")).toStdString();
+		std::vector<std::pair<std::string, std::string>> keys{{"model", model}};
 		if (dropYaw != 0 || (!m_camera.is2D() && m_editor->randomYaw())) {
 			keys.emplace_back("angles", "0 " + std::to_string(dropYaw) + " 0");   // the turn the preview showed
 		}
-		placeEntityAt(event->position(), "prop_static", keys, dropOrigin);
+		std::string classname = "prop_static";
+		if (const auto* game = m_editor->game()) {
+			if (const auto flags = readPropModelFlags(game->files, model)) classname = recommendedPropClass(*flags);
+		}
+		placeEntityAt(event->position(), classname, keys, dropOrigin);
 		event->acceptProposedAction();
 		return;
 	}

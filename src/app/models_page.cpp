@@ -452,9 +452,8 @@ void ModelsPage::loaded(const Loaded& result) {
 			m_skin->setEnabled(m_skin->count() > 1);
 		}
 		rebuildBodyGroups();
-		// The class the model is made for: static props as prop_static, models with a collision
-		// model as prop_physics, everything else as prop_dynamic.
-		m_placeAs->setCurrentIndex(m_info.staticProp ? 0 : (m_hasPhysics ? 1 : 2));
+		// The class the model is made for (same rule as dropping it into the map).
+		m_placeAs->setCurrentText(QString::fromStdString(recommendedPropClass({m_info.staticProp, m_hasPhysics})));
 	}
 	if (result.geometry) {
 		m_viewer->setModel(result.geometry, result.withInfo);

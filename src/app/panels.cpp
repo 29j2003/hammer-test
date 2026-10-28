@@ -132,7 +132,11 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	m_list->setWordWrap(true);
 	m_list->setSelectionMode(QAbstractItemView::NoSelection);
 	layout->addWidget(m_list, 1);
-	connect(check, &QPushButton::clicked, this, &ProblemsPanel::runChecks);
+	connect(check, &QPushButton::clicked, this, [this] {
+		m_cache = {};   // read models and sounds again (they may have changed on disk)
+		runChecks();
+	});
+	connect(editor, &Editor::gameChanged, this, [this] { m_cache = {}; });
 	connect(editor, &Editor::documentReplaced, this, [this] {
 		m_leaks.clear();
 		QTimer::singleShot(300, this, &ProblemsPanel::runChecks);
@@ -153,6 +157,7 @@ void ProblemsPanel::runChecks() {
 	context.entities = m_editor->entities();
 	context.files = m_editor->game() ? &m_editor->game()->files : nullptr;
 	context.materialNames = names.empty() ? nullptr : &names;
+	context.cache = &m_cache;
 	m_problems = checkMap(m_editor->doc(), context);
 	showProblems();
 }

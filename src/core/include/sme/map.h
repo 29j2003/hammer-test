@@ -93,13 +93,23 @@ struct SolidRef {
 	constexpr bool operator==(const SolidRef&) const = default;
 };
 
+/// What loading a damaged VMF had to repair or leave out (Hammer often cannot open such files).
+struct VmfLoadReport {
+	int repairedLines = 0;      ///< Lines with stray quotes inside a value (the quotes became ')
+	int skippedSolids = 0;      ///< Brushes with a side that has no valid plane
+	std::vector<std::string> notes;   ///< One line per repair, for the log
+	[[nodiscard]] bool clean() const { return repairedLines == 0 && skippedSolids == 0; }
+};
+
 /// A whole VMF map: world, entities and the other blocks, kept so a save writes back what was read.
 class MapDocument {
 public:
 	MapDocument();
 
-	/// Parses VMF text. Throws std::runtime_error on broken syntax.
-	[[nodiscard]] static MapDocument parse(std::string_view vmfText);
+	/// Parses VMF text. Damage that can be contained is repaired or left out and listed in
+	/// `report`: quotes inside a value (a typed `"` breaks Hammer's files) and brushes with a
+	/// broken side. Throws std::runtime_error when the structure itself is broken.
+	[[nodiscard]] static MapDocument parse(std::string_view vmfText, VmfLoadReport* report = nullptr);
 	/// Writes VMF text.
 	[[nodiscard]] std::string serialize() const;
 

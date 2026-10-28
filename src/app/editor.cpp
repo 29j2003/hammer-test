@@ -246,8 +246,9 @@ bool Editor::openMap(const QString& path, QString* error) {
 		return false;
 	}
 	const QByteArray data = file.readAll();
+	VmfLoadReport report;
 	try {
-		m_doc = MapDocument::parse(std::string_view(data.constData(), static_cast<std::size_t>(data.size())));
+		m_doc = MapDocument::parse(std::string_view(data.constData(), static_cast<std::size_t>(data.size())), &report);
 	} catch (const std::exception& e) {
 		if (error) {
 			*error = QString::fromStdString(e.what());
@@ -267,6 +268,15 @@ bool Editor::openMap(const QString& path, QString* error) {
 	emit documentChanged();
 	emit selectionChanged();
 	emit message(tr("Opened %1: %2 brushes, %3 entities").arg(QFileInfo(path).fileName()).arg(m_doc.solidCount()).arg(m_doc.entities.size()));
+	if (!report.clean()) {
+		// The file was damaged (Hammer would refuse it); say what was repaired, saving writes it clean.
+		emit message(tr("The file was damaged: repaired %1 lines with stray quotes, skipped %2 broken brushes. Saving writes a clean file.")
+		                 .arg(report.repairedLines)
+		                 .arg(report.skippedSolids));
+		for (const auto& note : report.notes) {
+			emit message(QStringLiteral("  ") + QString::fromStdString(note));
+		}
+	}
 	return true;
 }
 
