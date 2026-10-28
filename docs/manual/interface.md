@@ -20,6 +20,19 @@ The window has six parts, from left to right and top to bottom:
 5. **The views**: one 3D view, or 3D plus top, front and side.
 6. **Right panel** with *Object Properties*, the **bottom panel** with browsers and logs, and the **status bar**.
 
+## The start page
+
+When Mapsmith opens it shows the start page (also **File > Start page**):
+
+- **Continue** opens the map you worked on last, in its mod, with a picture of it (taken when you saved).
+- **Recent** lists the other maps you worked on lately; double-click one to open it in its mod.
+- **Start new project** makes a new mod built on Half-Life 2 with Mapbase, installs Mapsmith's features into it and
+  opens a first map: a closed room with a light, a player start and a cubemap, saved in the mod's map folder - ready
+  to build on and to run. (**File > New project** does the same.)
+- **Open a map ...** and **Go to the editor**.
+
+Untick **Show at startup** to start straight in the editor.
+
 ## The side bar
 
 Each button fills the window with one page:
@@ -62,7 +75,9 @@ The [Building](building.html) page describes each tool.
 
 From left to right:
 
-- **Game**: the game or mod you map for, and **⚙** for its [game settings](getting-started.html#game-settings).
+- **Mod**: the mod (or game) you work on - click it to switch. Your own mods (Steam's `sourcemods`, a new one
+  included) are listed first, the Steam games below; the search field finds any of them. **⚙** opens its
+  [game settings](getting-started.html#game-settings).
 - **Undo** and **Redo** (Ctrl+Z, Ctrl+Y).
 - **Objects | Faces**: the selection mode. *Objects* (5 or 4) selects whole brushes and entities. *Faces* (3)
   selects single faces for texturing.
@@ -153,13 +168,17 @@ key/value list. At the bottom of the panel, a help area explains the key you are
 
 | Tab | What it is |
 |---|---|
-| **Asset Browser** | Materials and models: search, filters and pictures. Drag a material onto a face or a model into the view. In a low dock the pictures get smaller so whole tiles with their names fit, and the row of recent materials makes room. |
+| **Asset Browser** | Materials and models: search, filters and pictures. Drag a material onto a face or a model into the view. The selected tile gets an orange frame (the picture keeps its colours). The panel never gets lower than one row of tiles with their names - in a low panel the pictures get smaller. **Recent ▾** next to the search lists the materials used lately (click: current, double-click: apply, or drag onto a face). |
 | **Sounds** | The sound browser (also its own page). |
 | **Particles** | The particle browser (also its own page). |
 | **Compile** | The steps, warnings and errors of the last compile. |
 | **Problems** | The problem check with Select and fix buttons. |
 | **Map Budget** | Brushes, sides, planes, entities, edicts and more against the engine limits (see Compiling). |
 | **Log** | Messages of the editor. |
+
+Everything shown as text can be copied: select lines in the log or the compile output and press **Ctrl+C**, or
+right-click > **Copy all**. The compile's warnings and errors copy with **Ctrl+C** or right-click **Copy**; **Copy all**
+in the *Compile* and *Problems* tabs copies everything at once - handy for a search or a bug report.
 
 ## The views
 

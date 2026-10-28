@@ -5,7 +5,10 @@
 #include "asset_browser.h"
 #include "editor.h"
 #include "mod_code_panel.h"
+#include "text_copy.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -134,7 +137,12 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	auto* report = new QPushButton(tr("Make report"));
 	report->setObjectName("problemsMakeReport");
 	report->setToolTip(reportHowTo());
+	auto* copyAll = new QPushButton(tr("Copy all"));
+	copyAll->setObjectName("problemsCopyAll");
+	copyAll->setToolTip(tr("Copy every problem with its fix as text"));
+	connect(copyAll, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(problemsText()); });
 	top->addWidget(m_summary, 1);
+	top->addWidget(copyAll);
 	top->addWidget(report);
 	top->addWidget(check);
 	layout->addLayout(top);
@@ -196,10 +204,12 @@ void ProblemsPanel::showProblems() {
 		auto* message = new QLabel(QStringLiteral("%1 %2").arg(QString::fromUtf8(icon), QString::fromStdString(problem->message)));
 		message->setTextFormat(Qt::PlainText);
 		message->setWordWrap(true);
+		message->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		auto* fix = new QLabel(QString::fromStdString(problem->howToFix));
 		fix->setTextFormat(Qt::PlainText);
 		fix->setWordWrap(true);
 		fix->setProperty("role", "description");
+		fix->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		v->addWidget(message);
 		v->addWidget(fix);
 		auto* buttons = new QHBoxLayout;
@@ -244,6 +254,18 @@ void ProblemsPanel::showProblems() {
 	} else {
 		m_summary->setText(tr("%1 errors, %2 warnings, %3 hints").arg(errors).arg(warnings).arg(static_cast<int>(all.size()) - errors - warnings));
 	}
+}
+
+QString ProblemsPanel::problemsText() const {
+	QStringList lines;
+	for (const auto* list : {&m_leaks, &m_problems}) {
+		for (const auto& problem : *list) {
+			const char* kind = problem.severity == Problem::Severity::Error ? "Error" : (problem.severity == Problem::Severity::Warning ? "Warning" : "Hint");
+			lines << QStringLiteral("%1: %2").arg(QString::fromLatin1(kind), QString::fromStdString(problem.message));
+			if (!problem.howToFix.empty()) lines << QStringLiteral("    %1").arg(QString::fromStdString(problem.howToFix));
+		}
+	}
+	return lines.isEmpty() ? m_summary->text() : lines.join('\n');
 }
 
 // --- Map Budget -------------------------------------------------------------------------
@@ -333,6 +355,7 @@ void BudgetPanel::refresh() {
 
 LogPanel::LogPanel(QWidget* parent) : QPlainTextEdit(parent) {
 	setReadOnly(true);
+	addCopyAll(this);   // select and Ctrl+C, or right-click Copy all
 	setMaximumBlockCount(20000);
 	QFont font("monospace");
 	font.setStyleHint(QFont::Monospace);

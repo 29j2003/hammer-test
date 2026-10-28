@@ -61,6 +61,8 @@ QToolBar QToolButton[iconOnly="true"] { padding: 4px; }
 QToolBar QToolButton[segment="first"] { border-top-right-radius: 0; border-bottom-right-radius: 0; background: #2e2e2e; border-color: #3a3a3a; }
 QToolBar QToolButton[segment="last"] { border-top-left-radius: 0; border-bottom-left-radius: 0; background: #2e2e2e; border-color: #3a3a3a; margin-left: -4px; }
 QToolBar QToolButton[segment="first"]:checked, QToolBar QToolButton[segment="last"]:checked { background: #444444; color: #f5b541; }
+QToolBar QToolButton[chooser="true"] { background: #2d2d2d; border: 1px solid #5c5c5c; border-radius: 6px; font-weight: 600; padding: 4px 12px; }
+QToolBar QToolButton[chooser="true"]:hover { border-color: #f5a524; }
 QToolBar QToolButton[accent="true"] { background: #f5a524; border-color: #f5a524; color: #1b1b1b; font-weight: 600; padding: 4px 14px; }
 QToolBar QToolButton[accent="true"]:hover { background: #ffb53f; }
 QToolBar#Tools { background: #232323; padding: 6px 5px; spacing: 4px; border-right: 1px solid #2e2e2e; }
@@ -79,6 +81,7 @@ QTabBar { qproperty-drawBase: 0; }
 
 QGroupBox { background: #2a2a2a; border: 1px solid #363636; border-radius: 7px; margin-top: 20px; padding: 10px 8px 8px 8px; }
 QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 2px; color: #e3a64f; font-weight: 600; }
+QLabel[role="heading"] { font-weight: 600; font-size: 14px; color: #f0f0f0; margin-top: 6px; }
 QFrame[role="card"] { background: #2a2a2a; border: 1px solid #363636; border-radius: 7px; }
 QFrame[role="card"][highlight="true"] { border: 1px solid #5ccf7a; }
 

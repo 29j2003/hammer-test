@@ -5,7 +5,9 @@
 #include "editor.h"
 #include "features_panel.h"
 
-#include <QComboBox>
+#include <QButtonGroup>
+#include <QFrame>
+#include <QRadioButton>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QDir>
@@ -98,6 +100,51 @@ NewModDialog::NewModDialog(Editor* editor, QWidget* parent) : QDialog(parent), m
 	intro->setProperty("role", "description");
 	v->addWidget(intro);
 
+	// First choice: what the mod is made from - as big, plain cards (Mapbase first: it is what
+	// Mapsmith's features and most modern HL2 mods use).
+	auto* baseTitle = new QLabel(tr("1. What should your mod be based on?"));
+	baseTitle->setProperty("role", "heading");
+	v->addWidget(baseTitle);
+	const auto& steam = editor->discovery().steam;
+	const bool hasMapbase = !mapbaseMounts(steam.sourceModsDir()).empty();
+	m_base = new QButtonGroup(this);
+	const auto card = [this, v](ModBase base, const QString& name, const QString& text, bool enabled) {
+		auto* frame = new QFrame;
+		frame->setObjectName(QStringLiteral("newModBaseCard%1").arg(int(base)));
+		frame->setProperty("role", "card");
+		auto* h = new QHBoxLayout(frame);
+		h->setContentsMargins(10, 8, 10, 8);
+		auto* radio = new QRadioButton(name);
+		radio->setObjectName(QStringLiteral("newModBase%1").arg(int(base)));
+		QFont font = radio->font();
+		font.setBold(true);
+		radio->setFont(font);
+		radio->setEnabled(enabled);
+		auto* about = new QLabel(text);
+		about->setWordWrap(true);
+		about->setProperty("role", "description");
+		auto* column = new QVBoxLayout;
+		column->addWidget(radio);
+		column->addWidget(about);
+		h->addLayout(column, 1);
+		m_base->addButton(radio, int(base));
+		v->addWidget(frame);
+		return radio;
+	};
+	auto* mapbase = card(ModBase::Mapbase, tr("Half-Life 2 with Mapbase (recommended)"),
+	                     hasMapbase ? tr("Half-Life 2 and its episodes plus Mapbase: many more entities and better lighting. Mapsmith's "
+	                                     "features (better graphics and sound) are installed into the mod right away.")
+	                                : tr("Needs Mapbase's shared content (the \"mapbase_shared\" folder in sourcemods), which was not "
+	                                     "found. Install Mapbase from its ModDB page, then open this dialog again."),
+	                     hasMapbase);
+	auto* plain = card(ModBase::Singleplayer, tr("Half-Life 2 (plain)"),
+	                   tr("Half-Life 2 and its episodes as Valve made them (Source SDK Base 2013 Singleplayer), without Mapbase."), true);
+	card(ModBase::Multiplayer, tr("Multiplayer"), tr("Half-Life 2: Deathmatch content (Source SDK Base 2013 Multiplayer)."), true);
+	(hasMapbase ? mapbase : plain)->setChecked(true);
+
+	auto* nameTitle = new QLabel(tr("2. Name it"));
+	nameTitle->setProperty("role", "heading");
+	v->addWidget(nameTitle);
 	auto* form = new QFormLayout;
 	m_title = new QLineEdit;
 	m_title->setObjectName("newModTitle");
@@ -105,22 +152,14 @@ NewModDialog::NewModDialog(Editor* editor, QWidget* parent) : QDialog(parent), m
 	m_folder = new QLineEdit;
 	m_folder->setObjectName("newModFolder");
 	m_folder->setPlaceholderText(tr("mymod"));
-	m_base = new QComboBox;
-	m_base->setObjectName("newModBase");
-	m_base->addItem(tr("Half-Life 2 singleplayer (Source SDK Base 2013 Singleplayer)"), int(ModBase::Singleplayer));
-	const auto& steam = editor->discovery().steam;
-	if (!mapbaseMounts(steam.sourceModsDir()).empty()) {
-		m_base->addItem(tr("Half-Life 2 singleplayer with Mapbase (shared content found)"), int(ModBase::Mapbase));
-		m_base->setCurrentIndex(1);
-	}
-	m_base->addItem(tr("Multiplayer (Source SDK Base 2013 Multiplayer)"), int(ModBase::Multiplayer));
-	form->addRow(tr("Title"), m_title);
-	form->addRow(tr("Folder"), m_folder);
-	form->addRow(tr("Built on"), m_base);
+	form->addRow(tr("Title (shown in Steam)"), m_title);
+	form->addRow(tr("Folder name"), m_folder);
 	v->addLayout(form);
 
 	// Maps to take along: the open one (checked) and the others of the current game's map folder.
-	v->addWidget(new QLabel(tr("Maps to copy into the new mod")));
+	auto* mapsTitle = new QLabel(tr("3. Maps to take along (optional)"));
+	mapsTitle->setProperty("role", "heading");
+	v->addWidget(mapsTitle);
 	m_maps = new QListWidget;
 	m_maps->setObjectName("newModMaps");
 	QStringList paths;
@@ -200,7 +239,7 @@ ModTemplate NewModDialog::modTemplate() const {
 	ModTemplate mod;
 	mod.title = m_title->text().trimmed().toStdString();
 	mod.folder = m_folder->text().trimmed().toStdString();
-	mod.base = static_cast<ModBase>(m_base->currentData().toInt());
+	mod.base = static_cast<ModBase>(m_base->checkedId());
 	if (mod.base == ModBase::Mapbase) mod.extraMounts = mapbaseMounts(m_editor->discovery().steam.sourceModsDir());
 	return mod;
 }

@@ -156,6 +156,28 @@ std::pair<Change, std::string> connect(MapDocument& doc, int sourceId, int targe
 	return {t.finish(), name};
 }
 
+std::pair<Change, std::string> setTarget(MapDocument& doc, const std::vector<int>& ids, const std::string& key, int targetId) {
+	Entity* target = targetId != 0 ? doc.findEntity(targetId) : nullptr;
+	if (!target || ids.empty()) {
+		return {Change{}, {}};
+	}
+	Transaction t(doc, "Set " + key);
+	t.touchEntity(targetId);
+	std::string name = target->get("targetname");
+	if (name.empty()) {
+		name = uniqueTargetName(doc, target->classname());
+		target->set("targetname", name);
+	}
+	for (const int id : ids) {
+		Entity* entity = doc.findEntity(id);
+		if (!entity || id == targetId) continue;
+		if (id != 0) t.touchEntity(id);
+		else t.touchWorld();
+		entity->set(key, name);
+	}
+	return {t.finish(), name};
+}
+
 } // namespace edit
 
 } // namespace sme

@@ -58,22 +58,24 @@ let all maps compile while you do something else.
 
 ## New mod
 
-**File > New mod ...** (or the button on *Overview*) creates a new mod in Steam's `sourcemods` folder:
+**File > New mod ...** (or the button on *Overview*) creates a new mod in Steam's `sourcemods` folder. First you choose
+what it is based on - as big cards:
 
-| Field | Meaning |
-|---|---|
-| **Title** | the name shown in Steam and the main menu, e.g. *My Mod* |
-| **Folder** | the folder name, letters, digits, `_` and `-` only, e.g. `mymod` |
-| **Built on** | *Half-Life 2 singleplayer (Source SDK Base 2013 Singleplayer)*, *Half-Life 2 singleplayer with Mapbase* (offered when Mapbase's shared content is found) or *Multiplayer (Source SDK Base 2013 Multiplayer)* |
-| **Maps to copy into the new mod** | tick maps of the current game to take along |
+- **Half-Life 2 with Mapbase (recommended)**: Half-Life 2 and its episodes plus Mapbase - many more entities, better
+  lighting, and Mapsmith's features installed right away. It needs Mapbase's shared content (`mapbase_shared` in
+  `sourcemods`); without it the card says how to get it.
+- **Half-Life 2 (plain)**: Source SDK Base 2013 Singleplayer, without Mapbase.
+- **Multiplayer**: Half-Life 2: Deathmatch content (Source SDK Base 2013 Multiplayer).
+
+Then the **Title** (shown in Steam and the main menu, e.g. *My Mod*) and the **Folder name** (letters, digits, `_` and
+`-`, filled in from the title), and optionally the maps of the current game to take along.
 
 **Create mod** writes the `gameinfo.txt`, the usual folders, a `cfg/autoexec.cfg` and the resource file with the title,
 and opens the new mod in the editor. Restart Steam to see the mod in your library.
 
 {: .note }
-A mod built on Mapbase also needs Mapbase's game code: put `client.dll` and `server.dll` (Mapbase's or your own
-build) into the mod's `bin` folder. Without them, the mod runs with the base game's code and Mapbase entities do
-nothing.
+A mod built on Mapbase gets Mapbase's game code with Mapsmith's features at once (see [Features](#features-install-mapbase-fidelity-and-choose-what-it-does)).
+**File > New project** goes one step further: the new mod plus a first map to build on (see the start page).
 
 ## Menu
 
@@ -188,7 +190,9 @@ puts it into the open mod with one click:
   your map compiles bake it;
 - then the generated materials (liquid in bottles, sheen, relief ...), made from the game's own.
 
-No compiler, no git, no scripts to start. A Mapbase mod without the features shows a line **Give this mod Mapsmith's
+The **Install** card lists these files with one line each and shows the state in colour: green **Installed** with
+the version and the date, orange **Not installed** or **Update available**. While it installs, a bar shows the two
+steps (copying, then making the materials) with the time it takes. No compiler, no git, no scripts to start. A Mapbase mod without the features shows a line **Give this mod Mapsmith's
 features** on the Overview with the same button, and a **New mod** with Mapbase gets them right away.
 
 What the mod had before (Mapbase's own DLLs, for example) is kept as `<file>.mapsmith-backup` and comes back with

@@ -33,6 +33,8 @@ public:
 	[[nodiscard]] StepState stepState(int index) const;
 	[[nodiscard]] int warningCount() const { return m_warnings; }
 	[[nodiscard]] int errorCount() const { return m_errors; }
+	/// Everything shown as text: title, summary, warnings and errors, full output ("Copy all").
+	[[nodiscard]] QString allText() const;
 	[[nodiscard]] QString summary() const;
 
 signals:
@@ -54,6 +56,7 @@ private:
 	QPushButton* m_cancel;
 	QPushButton* m_again;
 	QPushButton* m_leakButton;
+	QPushButton* m_copyButton;     ///< Copy all: summary, problems and output as text
 	QPushButton* m_reportButton;   ///< Shown once a run is done: one tests in the game next
 	QTreeWidget* m_steps;
 	QTreeWidget* m_problems;

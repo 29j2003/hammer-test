@@ -48,6 +48,9 @@ struct DecodedAudio;
 
 namespace sme::app {
 
+/// Item role of target drop-downs: the id of an entity without a name (picking it names it).
+inline constexpr int TARGET_ENTITY_ROLE = Qt::UserRole + 20;
+
 class Editor;
 class AssetBrowser;
 class MaterialCache;

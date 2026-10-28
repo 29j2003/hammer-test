@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QPointer>
+#include <QElapsedTimer>
 #include <QWidget>
 
 #include <filesystem>
@@ -31,6 +32,8 @@
 
 class QCheckBox;
 class QLabel;
+class QProgressBar;
+class QTimer;
 class QListWidget;
 class QPushButton;
 
@@ -125,6 +128,7 @@ private:
 	void scriptFinished(bool ok);
 	void setFreshStep(FreshStep step, const QString& detail = {});
 	void showInstall();
+	void showProgress();
 	/// After the files are in: the generated materials (deploy.ps1), then installed().
 	void runAfterInstall(ModCodeAction action);
 	[[nodiscard]] std::filesystem::path sdkBin() const;
@@ -141,6 +145,12 @@ private:
 	QString m_bundleError;
 	/// What the script runner does for this tab after an install or removal.
 	enum class AfterRun { None, Deploy, Remove } m_afterRun = AfterRun::None;
+	/// The install's progress line under the button (idle: hidden).
+	enum class ProgressPhase { Idle, Copying, GameFiles, Done, Failed } m_progressPhase = ProgressPhase::Idle;
+	QElapsedTimer m_progressStart;
+	QTimer* m_progressClock = nullptr;
+	QProgressBar* m_installProgress = nullptr;
+	QLabel* m_installStep = nullptr;
 	std::set<std::string> m_autoUpdated;   ///< Mods updated by themselves this session
 
 	QLabel* m_installState;

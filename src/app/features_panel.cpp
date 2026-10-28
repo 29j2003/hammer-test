@@ -6,8 +6,10 @@
 #include "enhancements.h"
 #include "mod_code_panel.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QFrame>
 #include <QGridLayout>
@@ -15,6 +17,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QLocale>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -147,25 +151,60 @@ FeaturesPanel::FeaturesPanel(Editor* editor, ModCodePanel* modCode, QWidget* par
 	auto* install = card(tr("Install"));
 	install->setObjectName("featuresInstallCard");
 	auto* inv = new QVBoxLayout(install);
-	inv->addWidget(description(tr("Mapsmith brings mapbase-fidelity ready-built: one click puts it into the mod - the game code, "
-	                              "shaders, settings and VRAD with baked ambient occlusion. No compiler, no scripts. What the mod "
-	                              "had before is kept and comes back when you remove the features.")));
-	m_installState = new QLabel;
-	m_installState->setObjectName("featuresInstallState");
-	m_installState->setWordWrap(true);
-	m_installState->setTextFormat(Qt::RichText);
-	inv->addWidget(m_installState);
+	// The button on the left, what it does next to it; the state right under it, in colour.
 	auto* installRow = new QHBoxLayout;
 	m_installButton = new QPushButton(tr("Install features"));
 	m_installButton->setObjectName("featuresInstall");
 	m_installButton->setProperty("accent", true);
+	m_installButton->setMinimumHeight(34);
+	installRow->addWidget(m_installButton, 0, Qt::AlignTop);
+	auto* installText = new QVBoxLayout;
+	m_installState = new QLabel;
+	m_installState->setObjectName("featuresInstallState");
+	m_installState->setWordWrap(true);
+	m_installState->setTextFormat(Qt::RichText);
+	installText->addWidget(m_installState);
+	installText->addWidget(description(tr("Puts Mapsmith's ready-built graphics and sound features into this mod with one click - no "
+	                                      "compiler, no scripts. What the mod had before is kept and comes back when you remove them.")));
+	installRow->addLayout(installText, 1);
+	inv->addLayout(installRow);
+	// Progress while installing: the copying, then the game files (materials the features need).
+	m_installProgress = new QProgressBar;
+	m_installProgress->setObjectName("featuresInstallProgress");
+	m_installProgress->setTextVisible(false);
+	m_installProgress->setRange(0, 3);
+	m_installProgress->setVisible(false);
+	inv->addWidget(m_installProgress);
+	m_installStep = new QLabel;
+	m_installStep->setObjectName("featuresInstallStep");
+	m_installStep->setTextFormat(Qt::RichText);
+	m_installStep->setVisible(false);
+	inv->addWidget(m_installStep);
+	m_progressClock = new QTimer(this);
+	m_progressClock->setInterval(500);
+	connect(m_progressClock, &QTimer::timeout, this, &FeaturesPanel::showProgress);
+	// What goes where, one line each.
+	auto* what = new QLabel(tr("<b>What gets installed</b>"
+	                           "<table cellspacing='0' cellpadding='2'>"
+	                           "<tr><td>bin/client.dll, bin/server.dll</td><td>&nbsp;the game code: Mapbase with the features built in</td></tr>"
+	                           "<tr><td>bin/game_shader_dx6.dll</td><td>&nbsp;the extra shaders: walls with depth, liquid, water, sky</td></tr>"
+	                           "<tr><td>shaders/fxc/*.vcs</td><td>&nbsp;the compiled shader programs</td></tr>"
+	                           "<tr><td>cfg/fidelity.cfg</td><td>&nbsp;the settings (the ticks below), run by autoexec.cfg</td></tr>"
+	                           "<tr><td>VRAD (in the SDK's bin)</td><td>&nbsp;bakes soft shadows in corners when you compile a map</td></tr>"
+	                           "<tr><td>materials/...</td><td>&nbsp;made right after: the materials the effects need</td></tr>"
+	                           "</table>"));
+	what->setObjectName("featuresWhat");
+	what->setTextFormat(Qt::RichText);
+	what->setWordWrap(true);
+	what->setProperty("role", "description");
+	inv->addWidget(what);
+	auto* removeRow = new QHBoxLayout;
 	m_removeButton = new QPushButton(tr("Remove features"));
 	m_removeButton->setObjectName("featuresRemove");
 	m_removeButton->setToolTip(tr("Take the features out of the mod again: what was there before comes back"));
-	installRow->addWidget(m_installButton);
-	installRow->addWidget(m_removeButton);
-	installRow->addStretch(1);
-	inv->addLayout(installRow);
+	removeRow->addWidget(m_removeButton);
+	removeRow->addStretch(1);
+	inv->addLayout(removeRow);
 	m_autoUpdate = new QCheckBox(tr("Update the mod's features by themselves when a newer Mapsmith brings newer ones"));
 	m_autoUpdate->setObjectName("featuresAutoUpdate");
 	m_autoUpdate->setChecked(QSettings().value(QStringLiteral("features/autoUpdate"), true).toBool());
@@ -355,15 +394,19 @@ void FeaturesPanel::showInstall() {
 			break;
 		case InstallState::NoMod: text = tr("Open a mod first."); break;
 		case InstallState::NotInstalled:
-			text = tr("Not installed in this mod yet. Mapsmith brings version %1.").arg(QString::fromStdString(m_bundle->version));
+			text = tr("<span style='color:#f5a524; font-size:15px'><b>Not installed</b></span> in this mod yet. Mapsmith brings version %1.")
+			           .arg(QString::fromStdString(m_bundle->version));
 			break;
-		case InstallState::Current:
-			text = tr("<span style='color:#8fdc9a'>✓ Installed</span>: version %1, for %2 mods.")
+		case InstallState::Current: {
+			const QFileInfo record(fromPath(m_modDir / INSTALLED_FILE));
+			text = tr("<span style='color:#5ccf7a; font-size:15px'><b>✓ Installed</b></span> - version %1, for %2 mods, on %3.")
 			           .arg(QString::fromStdString(installed->version),
-			                installed->branch == ModBranch::Episodic ? tr("Episode Two") : tr("Half-Life 2"));
+			                installed->branch == ModBranch::Episodic ? tr("Episode Two") : tr("Half-Life 2"),
+			                QLocale().toString(record.lastModified(), QLocale::ShortFormat));
 			break;
+		}
 		case InstallState::Outdated:
-			text = tr("Installed: version %1. Mapsmith brings %2 - update to get it.")
+			text = tr("<span style='color:#f5a524; font-size:15px'><b>Update available</b></span> - installed: version %1, Mapsmith brings %2.")
 			           .arg(QString::fromStdString(installed->version), QString::fromStdString(m_bundle->version));
 			break;
 	}
@@ -391,8 +434,14 @@ bool FeaturesPanel::installNow() {
 		return false;
 	}
 	const auto before = readInstalledFeatures(m_modDir);
+	m_progressStart.start();
+	m_progressPhase = ProgressPhase::Copying;
+	showProgress();
+	QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);   // the bar shows before the copying
 	const auto result = installFeatures(*m_bundle, m_modDir, sdkBin());
 	if (!result.ok) {
+		m_progressPhase = ProgressPhase::Failed;
+		showProgress();
 		showInstall();
 		m_installState->setText(m_installState->text() + QStringLiteral("<br><span style='color:#ff8a7a'>%1</span>")
 		                                                     .arg(tr("Could not install: %1").arg(QString::fromStdString(result.error)).toHtmlEscaped()));
@@ -402,8 +451,44 @@ bool FeaturesPanel::installNow() {
 	                         : tr("The features are installed (version %1). Start the mod - everything is on.")
 	                               .arg(QString::fromStdString(m_bundle->version)));
 	if (m_chosen) hookFeatureChoice(m_modDir);   // the add-on is there now: autoexec.cfg runs the choice
+	m_progressPhase = ProgressPhase::GameFiles;
 	runAfterInstall(ModCodeAction::Deploy);
+	if (m_afterRun == AfterRun::None) m_progressPhase = ProgressPhase::Done;   // nothing more to run here
+	showProgress();
 	return true;
+}
+
+void FeaturesPanel::showProgress() {
+	const bool shown = m_progressPhase != ProgressPhase::Idle;
+	m_installProgress->setVisible(shown);
+	m_installStep->setVisible(shown);
+	if (!shown) {
+		m_progressClock->stop();
+		return;
+	}
+	const QString elapsed = QStringLiteral("%1 s").arg(m_progressStart.isValid() ? m_progressStart.elapsed() / 1000 : 0);
+	switch (m_progressPhase) {
+		case ProgressPhase::Copying:
+			m_installProgress->setValue(1);
+			m_installStep->setText(tr("<b>Step 1 of 2:</b> copying the game code, shaders and settings into the mod ..."));
+			break;
+		case ProgressPhase::GameFiles:
+			m_installProgress->setValue(2);
+			m_installStep->setText(tr("✓ Game code, shaders and settings copied<br><b>Step 2 of 2:</b> making the materials the "
+			                          "effects need (usually under a minute) ... %1").arg(elapsed));
+			break;
+		case ProgressPhase::Done:
+			m_installProgress->setValue(3);
+			m_installStep->setText(tr("<span style='color:#5ccf7a'><b>✓ Done</b></span> in %1 - start the mod or compile a map.").arg(elapsed));
+			break;
+		case ProgressPhase::Failed:
+			m_installStep->setText(tr("<span style='color:#ff8a7a'><b>✗ Stopped</b></span> - see the message above (the full log is on "
+			                          "the Build from source tab)."));
+			break;
+		case ProgressPhase::Idle: break;
+	}
+	if (m_progressPhase == ProgressPhase::GameFiles) m_progressClock->start();
+	else m_progressClock->stop();
 }
 
 bool FeaturesPanel::removeNow() {
@@ -625,6 +710,10 @@ void FeaturesPanel::scriptFinished(bool ok) {
 		// deploy.ps1 after an install (or -Remove after a removal) has finished.
 		const bool deploy = m_afterRun == AfterRun::Deploy;
 		m_afterRun = AfterRun::None;
+		if (m_progressPhase == ProgressPhase::GameFiles) {
+			m_progressPhase = ok ? ProgressPhase::Done : ProgressPhase::Failed;
+			showProgress();
+		}
 		if (!ok) {
 			m_status->setText(QStringLiteral("<span style='color:#ff8a7a'>%1</span>")
 			                      .arg(deploy ? tr("The features are in, but the generated materials could not be made (the log is on "

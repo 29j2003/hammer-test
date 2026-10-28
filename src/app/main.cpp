@@ -41,6 +41,7 @@
 #include "models_page.h"
 #include "panels.h"
 #include "particle_browser.h"
+#include "start_page.h"
 #include "style.h"
 #include "viewport.h"
 
@@ -143,6 +144,8 @@ int main(int argc, char** argv) {
 
 	if (!parser.positionalArguments().isEmpty()) {
 		window.openMap(parser.positionalArguments().first());
+	} else if (!automated && StartPage::showAtStartup()) {
+		window.showStartPage();   // continue the last project, or start a new one
 	}
 	if (parser.isSet("render")) {
 		const QString mode = parser.value("render");
@@ -188,6 +191,7 @@ int main(int argc, char** argv) {
 			static const QMap<QString, MainWindow::Page> PAGES = {{"map", MainWindow::Page::Map}, {"materials", MainWindow::Page::Materials}, {"models", MainWindow::Page::Models},
 				{"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles}, {"mod", MainWindow::Page::Project}, {"project", MainWindow::Page::Project}};
 			window.showPage(PAGES.value(parser.value("page").toLower(), MainWindow::Page::Map));
+			if (parser.value("page").compare("start", Qt::CaseInsensitive) == 0) window.showStartPage();
 			if (parser.value("page").compare("texts", Qt::CaseInsensitive) == 0) {
 				window.showPage(MainWindow::Page::Project);
 				window.projectTabs()->setCurrentWidget(window.textsPanel());

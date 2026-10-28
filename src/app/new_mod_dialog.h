@@ -15,7 +15,7 @@
 
 #include <sme/mod_template.h>
 
-class QComboBox;
+class QButtonGroup;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -56,7 +56,7 @@ private:
 	Editor* m_editor;
 	QLineEdit* m_title;
 	QLineEdit* m_folder;
-	QComboBox* m_base;
+	QButtonGroup* m_base;          ///< What the mod is based on (id = ModBase)
 	QListWidget* m_maps;
 	FeatureChecklist* m_features;
 	QLabel* m_where;

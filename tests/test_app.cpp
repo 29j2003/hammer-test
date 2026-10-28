@@ -14,7 +14,9 @@
 #include <QClipboard>
 #include <QTableWidget>
 #include <QDesktopServices>
+#include <QLayout>
 #include <QTabBar>
+#include <QProgressBar>
 #include <QAbstractSpinBox>
 #include <QEnterEvent>
 #include <QScrollArea>
@@ -101,6 +103,7 @@
 #include "enhancements.h"
 #include "features_panel.h"
 #include "main_window.h"
+#include "start_page.h"
 #include "mod_code_panel.h"
 #include "mod_page.h"
 #include "model_viewer.h"
@@ -2398,6 +2401,8 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		auto* right = window.findChild<QDockWidget*>("Object Properties");
 		REQUIRE(bottom);
 		REQUIRE(right);
+		window.resizeDocks({bottom}, {260}, Qt::Vertical);   // room above its minimum (a row of tiles)
+		settle();
 		const int bottomBefore = bottom->height(), rightBefore = right->width();
 		const QPoint start = grip->mapToGlobal(grip->rect().center());
 		const auto send = [&](QEvent::Type type, const QPoint& global, Qt::MouseButtons buttons) {
@@ -2536,6 +2541,160 @@ TEST_CASE("panels: the wheel scrolls instead of switching, low docks show whole 
 	window.resizeDocks({dock}, {420}, Qt::Vertical);
 	settle();
 	CHECK(list->iconSize().height() > low);
+}
+
+TEST_CASE("ux: whole tiles in a low dock, recent popup, the Materials page follows, targets, mod chooser, copying, start page") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	qputenv("XDG_DATA_HOME", (home.path() + "/data").toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QSignalSpy indexed(window.assets(), &AssetBrowser::materialsIndexed);
+	window.resize(1400, 800);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	REQUIRE((indexed.count() > 0 || indexed.wait(10000)));
+	settle();
+
+	// 1. The Asset Browser never gets lower than one row of tiles with their names.
+	AssetBrowser* assets = window.assets();
+	const int minimum = assets->minimumSizeHint().height();
+	CHECK(minimum <= 170);
+	QDockWidget* dock = nullptr;
+	for (QWidget* w = assets; w && !dock; w = w->parentWidget()) dock = qobject_cast<QDockWidget*>(w);
+	REQUIRE(dock);
+	window.resizeDocks({dock}, {30}, Qt::Vertical);
+	settle();
+	CHECK(assets->height() >= minimum);
+	auto* list = assets->findChild<QListView*>("materialList");
+	REQUIRE(list);
+	CHECK(list->gridSize().height() <= list->viewport()->height());   // a whole tile, name included
+	// Recently used materials: a button with a popup, not a row of their own.
+	editor.setCurrentMaterial("demo/concrete");
+	auto* recentButton = assets->findChild<QToolButton*>("recentMaterials");
+	REQUIRE(recentButton);
+	CHECK(recentButton->isEnabled());
+	assets->showRecent();
+	settle();
+	auto* popup = assets->findChild<QWidget*>("recentPopup");
+	REQUIRE(popup);
+	CHECK(popup->isVisible());
+	auto* recent = popup->findChild<QListWidget*>();
+	REQUIRE(recent);
+	REQUIRE(recent->count() >= 1);
+	QTest::mouseClick(recent->viewport(), Qt::LeftButton, {}, recent->visualItemRect(recent->item(0)).center());
+	settle();
+	CHECK_FALSE(popup->isVisible());
+	window.resizeDocks({dock}, {260}, Qt::Vertical);
+	settle();
+
+	// 2. The Materials page shows the material picked last in the browser.
+	REQUIRE(list->model()->rowCount() > 4);
+	for (const int row : {2, 4}) {
+		window.showPage(MainWindow::Page::Map);
+		settle();
+		list->setCurrentIndex(list->model()->index(row, 0));
+		settle();
+		const QString picked = list->model()->index(row, 0).data(Qt::UserRole).toString();
+		window.showPage(MainWindow::Page::Materials);
+		settle();
+		CHECK(window.materialEditor()->materialName().compare(picked, Qt::CaseInsensitive) == 0);
+	}
+	window.showPage(MainWindow::Page::Map);
+	settle();
+
+	// 3. A target field lists the entities without a name too; picking one names it.
+	auto [placeNpc, npcId] = edit::placeEntity(editor.doc(), "npc_citizen", {0, 0, 0}, editor.entities()->find("npc_citizen"));
+	editor.commit(std::move(placeNpc));
+	auto [placeScript, scriptId] = edit::placeEntity(editor.doc(), "scripted_sequence", {64, 0, 0}, editor.entities()->find("scripted_sequence"));
+	editor.commit(std::move(placeScript));
+	Selection script;
+	script.entities.push_back(scriptId);
+	editor.setSelection(script);
+	settle();
+	QComboBox* target = nullptr;
+	int unnamed = -1;
+	for (auto* combo : window.properties()->findChildren<QComboBox*>()) {
+		for (int i = 0; i < combo->count(); ++i) {
+			if (combo->itemData(i, TARGET_ENTITY_ROLE).toInt() == npcId) {
+				target = combo;
+				unnamed = i;
+			}
+		}
+	}
+	REQUIRE(target);
+	CHECK(target->itemText(unnamed).contains("npc_citizen"));
+	emit target->activated(unnamed);
+	settle();
+	const std::string npcName = editor.doc().findEntity(npcId)->get("targetname");
+	CHECK_FALSE(npcName.empty());
+	CHECK(editor.doc().findEntity(scriptId)->get("m_iszEntity") == npcName);
+	// The panel fits its dock: nothing reaches out to the right (arrows of drop-downs included).
+	auto* scroll = window.properties()->findChild<QScrollArea*>();
+	REQUIRE(scroll);
+	QDockWidget* right = window.findChild<QDockWidget*>("Object Properties");
+	REQUIRE(right);
+	window.resizeDocks({right}, {320}, Qt::Horizontal);
+	settle();
+	CHECK(scroll->widget()->width() <= scroll->viewport()->width());
+	editor.clearSelection();
+	settle();
+
+	// 4. The mod chooser says what it is and lists the own mods first.
+	auto* gameButton = window.findChild<QToolButton*>("gameButton");
+	REQUIRE(gameButton);
+	CHECK(gameButton->text().startsWith("Mod:"));
+	QStringList sections;
+	for (auto* a : gameButton->menu()->actions()) {
+		if (a->isSeparator() && !a->text().isEmpty()) sections << a->text();
+	}
+	REQUIRE(sections.size() >= 2);
+	CHECK(sections.front() == "Your mods");
+
+	// 7. What Mapsmith shows as text can be copied.
+	window.problems()->runChecks();
+	CHECK_FALSE(window.problems()->problemsText().isEmpty());
+	CHECK(window.findChild<QPushButton*>("problemsCopyAll"));
+	CHECK(window.findChild<QPushButton*>("compileCopyAll"));
+
+	// 9. The start page: a first map from a template room, then Continue opens it again.
+	REQUIRE(window.makeStarterMap("ux_room"));
+	const QString room = editor.filePath();
+	CHECK(QFileInfo(room).fileName() == "ux_room.vmf");
+	CHECK(QFileInfo::exists(room));
+	CHECK(editor.doc().world.solids.size() == 6);
+	CHECK(window.currentPage() == MainWindow::Page::Map);
+	REQUIRE_FALSE(loadRecentProjects().empty());
+	CHECK(QDir::cleanPath(QString::fromStdString(loadRecentProjects().front().mapPath)) == QDir::cleanPath(room));
+	editor.newMap();
+	window.showStartPage();
+	settle();
+	CHECK(window.startPageShown());
+	auto* start = window.startPage();
+	REQUIRE(start);
+	auto* continueButton = start->findChild<QPushButton*>("startContinue");
+	REQUIRE(continueButton);
+	CHECK(continueButton->isVisible());
+	QTest::mouseClick(continueButton, Qt::LeftButton);
+	settle();
+	CHECK_FALSE(window.startPageShown());
+	CHECK(QDir::cleanPath(editor.filePath()) == QDir::cleanPath(room));
+	auto* showAtStart = start->findChild<QCheckBox*>("startShowAtStartup");
+	REQUIRE(showAtStart);
+	CHECK(StartPage::showAtStartup());
+	showAtStart->setChecked(false);
+	CHECK_FALSE(StartPage::showAtStartup());
 }
 
 TEST_CASE("update check: release information and the version button") {
@@ -5110,6 +5269,15 @@ TEST_CASE("features from Mapsmith: offered on the Overview, installed by one cli
 	auto* state = features->findChild<QLabel*>("featuresInstallState");
 	REQUIRE(state);
 	CHECK(state->text().contains("1.0+aaa"));
+	CHECK(state->text().contains("Installed"));   // in green, with the date
+	// What it installed is listed, and the progress ended with "Done".
+	REQUIRE(features->findChild<QLabel*>("featuresWhat"));
+	CHECK(features->findChild<QLabel*>("featuresWhat")->text().contains("client.dll"));
+	auto* progress = features->findChild<QProgressBar*>("featuresInstallProgress");
+	REQUIRE(progress);
+	CHECK_FALSE(progress->isHidden());
+	CHECK(progress->value() == progress->maximum());
+	CHECK(features->findChild<QLabel*>("featuresInstallStep")->text().contains("Done"));
 	CHECK(features->findChild<QPushButton*>("featuresInstall")->text() == "Install again");
 	CHECK_FALSE(features->findChild<QPushButton*>("featuresRemove")->isHidden());
 	// The Overview now offers the checklist instead (the add-on is there, no choice yet).
@@ -5220,6 +5388,7 @@ int main(int argc, char** argv) {
 	for (const char* scheme : {"file", "http", "https"}) QDesktopServices::setUrlHandler(QString::fromLatin1(scheme), &external, "open");
 	doctest::Context context(argc, argv);
 	const int result = context.run();
+	for (const char* scheme : {"file", "http", "https"}) QDesktopServices::unsetUrlHandler(QString::fromLatin1(scheme));
 	for (const auto& stray : strays.strays) {
 		std::fprintf(stderr, "Shown as its own window before it had a parent: %s\n", qPrintable(stray));
 	}

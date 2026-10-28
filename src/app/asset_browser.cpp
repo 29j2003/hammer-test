@@ -26,6 +26,10 @@
 #include <QMimeData>
 #include <QResizeEvent>
 #include <QStyle>
+#include <QScreen>
+#include <QFrame>
+#include <QToolButton>
+#include <QStyledItemDelegate>
 #include <QPainter>
 #include <QRegularExpression>
 #include <QTabBar>
@@ -45,9 +49,63 @@ namespace sme::app {
 namespace {
 
 constexpr int THUMB = 96;
-constexpr int RECENT_THUMB = 48;
-/// Below this height the browser drops the row of recent materials (the grid needs the room).
-constexpr int RECENT_MIN_HEIGHT = 250;
+/// Smallest picture of a tile: the dock cannot get lower than one row of these with names.
+constexpr int MIN_THUMB = 40;
+constexpr int RECENT_THUMB = 56;
+
+/// Height of a tile's name line under the picture.
+int labelHeight(const QFontMetrics& metrics) {
+	return metrics.height() + 8;
+}
+
+/// Draws a browser tile: the picture as it is (never tinted, so a selected brick stays brick
+/// coloured), an orange frame around the selected one, and its name on one line, shortened in
+/// the middle (the full name is in the tooltip and the line under the grid).
+class AssetTileDelegate : public QStyledItemDelegate {
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+
+	void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+		painter->save();
+		painter->setRenderHint(QPainter::Antialiasing);
+		painter->setRenderHint(QPainter::SmoothPixmapTransform);
+		const QRect tile = option.rect.adjusted(2, 2, -2, -2);
+		const bool selected = option.state.testFlag(QStyle::State_Selected);
+		const bool hover = option.state.testFlag(QStyle::State_MouseOver);
+		if (selected || hover) {
+			painter->setPen(Qt::NoPen);
+			painter->setBrush(selected ? QColor(70, 57, 42) : QColor(44, 44, 44));
+			painter->drawRoundedRect(tile, 6, 6);
+		}
+		const QSize icon = option.decorationSize;
+		const QRect picture(tile.left() + (tile.width() - icon.width()) / 2, tile.top() + 4, icon.width(), icon.height());
+		const QVariant decoration = index.data(Qt::DecorationRole);
+		QPixmap pixmap = decoration.value<QPixmap>();
+		if (pixmap.isNull()) pixmap = decoration.value<QIcon>().pixmap(icon, option.widget ? option.widget->devicePixelRatioF() : 1.0);
+		if (!pixmap.isNull()) {
+			const QSize fitted = pixmap.size().scaled(picture.size(), Qt::KeepAspectRatio);
+			const QRect target(picture.left() + (picture.width() - fitted.width()) / 2, picture.top() + (picture.height() - fitted.height()) / 2,
+			                   fitted.width(), fitted.height());
+			painter->drawPixmap(target, pixmap);
+		}
+		if (selected) {
+			painter->setBrush(Qt::NoBrush);
+			painter->setPen(QPen(QColor(255, 160, 40), 2));
+			painter->drawRoundedRect(QRectF(picture).adjusted(-2, -2, 2, 2), 4, 4);
+		}
+		QFont font = option.font;
+		font.setBold(selected);
+		painter->setFont(font);
+		painter->setPen(selected ? QColor(255, 211, 143) : option.palette.color(QPalette::Text));
+		const QRect text(tile.left() + 2, picture.bottom() + 4, tile.width() - 4, QFontMetrics(font).height());
+		const QString name = QFontMetrics(font).elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideMiddle, text.width());
+		painter->drawText(text, Qt::AlignHCenter | Qt::AlignTop, name);
+		painter->restore();
+	}
+	[[nodiscard]] QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex&) const override {
+		return {option.decorationSize.width() + 18, option.decorationSize.height() + labelHeight(option.fontMetrics)};
+	}
+};
 
 /// Strip of recently used materials; items can be dragged like browser items.
 class RecentList : public QListWidget {
@@ -84,17 +142,16 @@ class AssetIconView : public QListView {
 public:
 	using QListView::QListView;
 
-	/// Thumbnail edge that fits the view's height (between 40 and THUMB pixels).
+	/// Thumbnail edge that fits the view's height (between MIN_THUMB and THUMB pixels).
 	[[nodiscard]] int fittingThumb() const {
-		const int label = fontMetrics().height() * 2 + 4;   // two lines of name under the picture
-		const int room = viewport()->height() - label - 14;
-		return std::clamp(room, 40, THUMB);
+		const int room = viewport()->height() - labelHeight(fontMetrics()) - 6;
+		return std::clamp(room, MIN_THUMB, THUMB);
 	}
 	void fitTiles() {
 		const int thumb = fittingThumb();
 		if (thumb == iconSize().width()) return;
 		setIconSize(QSize(thumb, thumb));
-		setGridSize(QSize(thumb + 18, thumb + fontMetrics().height() * 2 + 10));
+		setGridSize(QSize(thumb + 18, thumb + labelHeight(fontMetrics())));
 	}
 
 protected:
@@ -123,12 +180,14 @@ QListView* makeIconView(QWidget* parent) {
 	auto* view = new AssetIconView(parent);
 	view->setViewMode(QListView::IconMode);
 	view->setIconSize(QSize(THUMB, THUMB));
-	view->setGridSize(QSize(THUMB + 18, THUMB + view->fontMetrics().height() * 2 + 10));
+	view->setGridSize(QSize(THUMB + 18, THUMB + labelHeight(view->fontMetrics())));
 	view->setTextElideMode(Qt::ElideMiddle);
+	view->setItemDelegate(new AssetTileDelegate(view));
+	view->setMouseTracking(true);   // hover highlight
 	view->setResizeMode(QListView::Adjust);
 	view->setMovement(QListView::Static);
 	view->setUniformItemSizes(true);
-	view->setWordWrap(true);
+	view->setWordWrap(false);
 	view->setDragEnabled(true);
 	view->setDragDropMode(QAbstractItemView::DragOnly);
 	view->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -411,26 +470,47 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_materialCategory->addItem(tr("Skybox"), int(MaterialFilter::Category::Sky));
 		m_materialCategory->addItem(tr("Used in this map"), int(MaterialFilter::Category::UsedInMap));
 		m_materialCategory->addItem(tr("All"), int(MaterialFilter::Category::All));
+		// Recently used materials: a button in the search row opens them as tiles with names,
+		// so the grid below keeps all the height of the dock.
+		m_recentButton = new QToolButton;
+		m_recentButton->setObjectName("recentMaterials");
+		m_recentButton->setText(tr("Recent ▾"));
+		m_recentButton->setToolTip(tr("Materials used lately - click one to make it current, double-click to apply it, drag it onto a face"));
+		row->addWidget(m_recentButton);
 		row->addWidget(m_materialSearch, 1);
 		row->addWidget(m_materialCategory);
 		v->addLayout(row);
+		m_recentPopup = new QFrame(m_recentButton, Qt::Popup);
+		m_recentPopup->setObjectName("recentPopup");
+		static_cast<QFrame*>(m_recentPopup)->setFrameShape(QFrame::StyledPanel);
+		auto* popupLayout = new QVBoxLayout(m_recentPopup);
+		popupLayout->setContentsMargins(6, 6, 6, 6);
+		auto* popupTitle = new QLabel(tr("Used lately"));
+		popupTitle->setProperty("role", "description");
+		popupLayout->addWidget(popupTitle);
 		m_recent = new RecentList;
 		m_recent->setViewMode(QListView::IconMode);
 		m_recent->setFlow(QListView::LeftToRight);
-		m_recent->setWrapping(false);
+		m_recent->setWrapping(true);
+		m_recent->setResizeMode(QListView::Adjust);
+		m_recent->setMovement(QListView::Static);
 		m_recent->setIconSize(QSize(RECENT_THUMB, RECENT_THUMB));
-		// Room for the picture and one line of name (cut in the middle), and the scroll bar.
-		m_recent->setTextElideMode(Qt::ElideMiddle);
 		m_recent->setUniformItemSizes(true);
-		m_recent->setGridSize(QSize(RECENT_THUMB + 44, RECENT_THUMB + m_recent->fontMetrics().height() + 10));
-		m_recent->setFixedHeight(m_recent->gridSize().height() + 2 * m_recent->frameWidth() +
-		                         m_recent->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, m_recent) + 2);
+		m_recent->setGridSize(QSize(RECENT_THUMB + 44, RECENT_THUMB + labelHeight(m_recent->fontMetrics())));
+		m_recent->setItemDelegate(new AssetTileDelegate(m_recent));
+		m_recent->setMouseTracking(true);
 		m_recent->setDragEnabled(true);
 		m_recent->setDragDropMode(QAbstractItemView::DragOnly);
-		m_recent->setToolTip(tr("Recently used - click to make current, double-click to apply, drag onto a face"));
-		v->addWidget(m_recent);
-		connect(m_recent, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) { m_editor->setCurrentMaterial(item->data(Qt::UserRole).toString()); });
-		connect(m_recent, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) { m_editor->applyMaterialToSelection(item->data(Qt::UserRole).toString()); });
+		popupLayout->addWidget(m_recent);
+		connect(m_recentButton, &QToolButton::clicked, this, &AssetBrowser::showRecent);
+		connect(m_recent, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+			selectMaterial(item->data(Qt::UserRole).toString());
+			m_recentPopup->hide();
+		});
+		connect(m_recent, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+			m_editor->applyMaterialToSelection(item->data(Qt::UserRole).toString());
+			m_recentPopup->hide();
+		});
 		connect(m_editor, &Editor::recentMaterialsChanged, this, &AssetBrowser::updateRecent);
 		m_materialModel = new MaterialListModel(m_thumbnails, this);
 		m_materialFilter = new MaterialFilter(this);
@@ -742,18 +822,48 @@ void AssetBrowser::reload() {
 	}));
 }
 
+QSize AssetBrowser::minimumSizeHint() const {
+	// One row of the smallest tiles with their names, the search row and the tabs; the line
+	// under the grid goes away when it does not fit (see resizeEvent).
+	QSize size = QWidget::minimumSizeHint();
+	if (!m_materialSearch) return size;
+	const int row = MIN_THUMB + labelHeight(fontMetrics()) + 8;
+	const int tabs = m_pageMode ? 0 : m_tabs->tabBar()->sizeHint().height();
+	size.setHeight(tabs + m_materialSearch->sizeHint().height() + row + 18);
+	return size;
+}
+
 void AssetBrowser::resizeEvent(QResizeEvent* event) {
 	QWidget::resizeEvent(event);
-	const bool room = height() >= RECENT_MIN_HEIGHT;
-	if (room != m_recentRoom) {
-		m_recentRoom = room;
-		updateRecent();
+	// The line with the hovered name and size only when a row of tiles still fits above it.
+	if (!m_materialInfo || !m_materialSearch) return;
+	const bool roomForInfo = height() >= minimumSizeHint().height() + m_materialInfo->sizeHint().height() + 6;
+	if (m_materialInfo) m_materialInfo->setVisible(roomForInfo);
+	if (m_modelInfo) m_modelInfo->setVisible(roomForInfo);
+}
+
+void AssetBrowser::showRecent() {
+	updateRecent();
+	if (m_recent->count() == 0) return;
+	const int columns = std::min(6, m_recent->count());
+	const int rows = (m_recent->count() + columns - 1) / columns;
+	const QSize grid = m_recent->gridSize();
+	m_recent->setFixedSize(columns * grid.width() + 2 * m_recent->frameWidth() + 6, rows * grid.height() + 2 * m_recent->frameWidth() + 6);
+	m_recentPopup->adjustSize();
+	QPoint at = m_recentButton->mapToGlobal(QPoint(0, m_recentButton->height()));
+	if (const QScreen* screen = m_recentButton->screen()) {
+		const QRect area = screen->availableGeometry();
+		if (at.y() + m_recentPopup->height() > area.bottom()) at.setY(m_recentButton->mapToGlobal(QPoint(0, 0)).y() - m_recentPopup->height());
+		at.setX(std::clamp(at.x(), area.left(), std::max(area.left(), area.right() - m_recentPopup->width())));
 	}
+	m_recentPopup->move(at);
+	m_recentPopup->show();
 }
 
 void AssetBrowser::updateRecent() {
 	m_recent->clear();
-	m_recent->setVisible(!m_pageMode && !m_editor->recentMaterials().isEmpty() && height() >= RECENT_MIN_HEIGHT);
+	m_recentButton->setVisible(!m_pageMode);
+	m_recentButton->setEnabled(!m_editor->recentMaterials().isEmpty());
 	for (const auto& name : m_editor->recentMaterials()) {
 		auto* item = new QListWidgetItem(name.section('/', -1).toLower(), m_recent);
 		item->setData(Qt::UserRole, name);

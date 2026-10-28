@@ -98,6 +98,8 @@ public:
 	/// Shows a material ("concrete/wall01") for editing.
 	void openMaterial(const QString& name);
 	[[nodiscard]] QString materialName() const { return m_name; }
+	/// Changes made since the material was opened or saved.
+	[[nodiscard]] bool hasUnsavedChanges() const { return !m_edits.empty() || m_shaderChanged || m_heightDirty; }
 	/// Left column; MainWindow puts the Asset Browser (materials) into it while the page is shown.
 	[[nodiscard]] QWidget* browserHolder() const { return m_browserHolder; }
 	[[nodiscard]] QString shader() const { return m_shader; }
