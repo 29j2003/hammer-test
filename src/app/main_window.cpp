@@ -6,6 +6,7 @@
 #include "compile_window.h"
 #include "map_look_panel.h"
 #include "mod_page.h"
+#include "models_page.h"
 #include "maps_panel.h"
 #include "menu_editor.h"
 #include "new_mod_dialog.h"
@@ -32,6 +33,8 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDragEnterEvent>
+#include <QMimeData>
 #include <QComboBox>
 #include <QDockWidget>
 #include <QDir>
@@ -67,6 +70,8 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <functional>
 #include <limits>
 #include <map>
 
@@ -78,6 +83,26 @@
 namespace sme::app {
 
 namespace {
+
+/// Opens a page when something is dragged over its side bar button (see the Map button).
+class PageDropSwitch : public QObject {
+public:
+	PageDropSwitch(QObject* parent, std::function<void()> open) : QObject(parent), m_open(std::move(open)) {}
+
+	bool eventFilter(QObject*, QEvent* event) override {
+		if (event->type() != QEvent::DragEnter) return false;
+		auto* drag = static_cast<QDragEnterEvent*>(event);
+		const auto formats = drag->mimeData()->formats();
+		const bool ours = std::any_of(formats.begin(), formats.end(), [](const QString& f) { return f.startsWith("application/x-sme-"); });
+		if (!ours) return false;
+		drag->acceptProposedAction();
+		m_open();
+		return true;
+	}
+
+private:
+	std::function<void()> m_open;
+};
 
 const char* SHORTCUT_HELP = R"(<h3>Camera</h3>
 <table cellpadding="3">
@@ -277,6 +302,18 @@ void MainWindow::createDocks() {
 	m_particles = new ParticleBrowser(m_editor, m_assets);
 	m_compileWindow = new CompileWindow(&m_compiler);
 	m_materialEditor = new MaterialEditor(m_editor, this);
+	// Models page: every model with a 3D view; "Place in map" arms the entity tool with it.
+	m_modelsPage = new ModelsPage(m_editor, m_assets, m_materials);
+	connect(m_modelsPage, &ModelsPage::placeRequested, this, [this](const QString& classname, const std::vector<std::pair<std::string, std::string>>& keys) {
+		m_editor->setCurrentEntity(classname, keys);
+		showPage(Page::Map);
+		m_editor->setTool(Editor::Tool::Entity);
+		emit m_editor->message(tr("Click in the map to place %1 as %2 - Esc or another tool stops").arg(m_modelsPage->currentModel().section('/', -1), classname));
+	});
+	connect(m_modelsPage, &ModelsPage::openMaterialRequested, this, [this](const QString& name) {
+		m_materialEditor->openMaterial(name);
+		showPage(Page::Materials);
+	});
 	// Project page: everything around the maps - overview, all maps with batch compiling, the
 	// mod's main menu, source control and getting it ready to share.
 	m_modPage = new ModPage(m_editor);
@@ -308,6 +345,7 @@ void MainWindow::createDocks() {
 	m_particlesPage->setObjectName("particlesPage");
 	(new QVBoxLayout(m_particlesPage))->setContentsMargins(0, 0, 0, 0);
 	m_pages->addWidget(m_materialEditor);
+	m_pages->addWidget(m_modelsPage);
 	m_pages->addWidget(m_soundsPage);
 	m_pages->addWidget(m_particlesPage);
 	m_pages->addWidget(m_projectPage);
@@ -387,7 +425,7 @@ void MainWindow::showMaterialEditor() {
 }
 
 void MainWindow::showPage(Page page) {
-	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_projectPage};
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_modelsPage, m_soundsPage, m_particlesPage, m_projectPage};
 	QWidget* target = widgets[int(page)];
 	// The browsers that are docks while mapping move to their page and back.
 	const auto borrow = [](QWidget* browser, QDockWidget* dock, QWidget* holder, bool toPage) {
@@ -411,8 +449,8 @@ void MainWindow::showPage(Page page) {
 }
 
 MainWindow::Page MainWindow::currentPage() const {
-	QWidget* const widgets[] = {m_rows, m_materialEditor, m_soundsPage, m_particlesPage, m_projectPage};
-	for (int i = 0; i < 5; ++i) {
+	QWidget* const widgets[] = {m_rows, m_materialEditor, m_modelsPage, m_soundsPage, m_particlesPage, m_projectPage};
+	for (int i = 0; i < 6; ++i) {
 		if (m_pages->currentWidget() == widgets[i]) return Page(i);
 	}
 	return Page::Map;
@@ -465,7 +503,7 @@ void MainWindow::raiseDock(const QString& name) {
 		showMaterialEditor();
 		return;
 	}
-	static const QMap<QString, Page> PAGES = {{"Materials", Page::Materials}, {"Mod", Page::Project}, {"Project", Page::Project}};
+	static const QMap<QString, Page> PAGES = {{"Materials", Page::Materials}, {"Models", Page::Models}, {"Mod", Page::Project}, {"Project", Page::Project}};
 	if (const auto it = PAGES.constFind(name); it != PAGES.constEnd()) {
 		showPage(*it);
 		return;
@@ -689,8 +727,16 @@ void MainWindow::createActions() {
 		connect(a, &QAction::triggered, this, [this, page] { showPage(page); });
 		return a;
 	};
-	pageAction("page:map", tr("Map"), tr("The map: 3D and 2D views, tools and their panels"), Page::Map)->setChecked(true);
+	auto* mapPage = pageAction("page:map", tr("Map"), tr("The map: 3D and 2D views, tools and their panels"), Page::Map);
+	mapPage->setChecked(true);
 	pageAction("page:materials", tr("Materials"), tr("Material Editor: textures, shaders and mapbase-fidelity effects"), Page::Materials);
+	pageAction("page:models", tr("Models"), tr("Every model with a 3D view, skins and body groups; place one in the map"), Page::Models);
+	// Dragging a model, material, sound ... onto the Map button opens the map, so the drag can go
+	// on into a view.
+	if (auto* mapButton = m_pageBar->widgetForAction(mapPage)) {
+		mapButton->setAcceptDrops(true);
+		mapButton->installEventFilter(new PageDropSwitch(mapButton, [this] { showPage(Page::Map); }));
+	}
 	pageAction("page:sounds", tr("Sounds"), tr("Sounds, sound scripts and soundscapes"), Page::Sounds);
 	pageAction("page:particles", tr("Particles"), tr("Particle systems of the game"), Page::Particles);
 	pageAction("page:mod", tr("Project"), tr("Your mod: overview, all maps (batch compile), main menu, source control, ship"), Page::Project);

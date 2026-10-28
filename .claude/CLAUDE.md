@@ -16,12 +16,12 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - `src/app/` – Qt-6-Editor (`smeapp` + Programm `Mapsmith`): `main` (Start, Optionen), `editor` (Zustand, alle Änderungen über `commit()`),
   `camera`, `viewport` (Kamera, Werkzeuge, Gizmos; Clip/Vertex/Polygon in `viewport_tools`), `renderer` (OpenGL 3.3,
   Licht-Vorschau nach VRAD-Formeln, Schatten in `renderer_shadows`), `material_cache`
-  (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer),
+  (lädt im Hintergrund), `model_cache` + `model_thumbnails` (Modelle im Hintergrund, Vorschaubilder per CPU-Rasterizer), `models_page` + `model_viewer` (Seite Models: Ordner, Suche, 3D-Ansicht mit Skins/Bodygroups, Place in map),
   `asset_browser` (Materialien, Modelle), `material_editor` + `material_preview` (inkl. Schalter für die mapbase-fidelity-Shader der Mod), `sound_browser` + `sound_player` + `soundscape_editor`
   (Sounds-Seite/-Dock, Wiedergabe über QAudioSink, optional), `copy_paste`,
   `map_look_panel`, `menu_editor` (Hauptmenü der Mod), `mod_page` (Project-Seite, Tab Overview), `maps_panel` (alle Karten, Stapel-Kompilieren), `new_mod_dialog` (neue Mod aus Karten), `source_control_panel` (Git: Änderungen, Commit, Pull/Push), `ship_panel` (Karte/Mod für Spieler: bspzip, ZIP, Workshop), `particle_browser`, `tool_panel` (Werkzeug-Optionen, Formen, Entity-Liste), `properties_panel` (Smart Edit, NPC-Pose,
   Justify; func_instance-Kasten in `properties_instance`), `visgroups_panel`, `panels` (Outliner, Probleme, Log), `compile` + `compile_window` (VBSP/VVIS/VRAD/Spiel, Fortschritt),
-  `shortcut_dialog`, `autosaver` (Autosave, Wiederherstellen nach Absturz), `history_panel`, `find_dialog`, `replace_materials_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste: Map, Materials, Sounds, Particles, Project), `icons` (gezeichnete Icons), `style`, `toggle_switch`.
+  `shortcut_dialog`, `autosaver` (Autosave, Wiederherstellen nach Absturz), `history_panel`, `find_dialog`, `replace_materials_dialog`, `updater` (Update-Prüfung, Download, Installation), `main_window` (Seitenleiste: Map, Materials, Models, Sounds, Particles, Project), `icons` (gezeichnete Icons), `style`, `toggle_switch`.
 - `src/probe/` – `sme-probe`: Bericht über Steam/Spiele/Mods (Pfade maskiert) und Einzelprüfungen (`vmf`, `material`, …).
 - `tests/` – doctest; `fixture` (künstliche Steam-Installation, keine Valve-Dateien), `demo` (Demo-Inhalte + Demo-Karte),
   `test_app.cpp` (echte Fenster mit simulierter Maus, Label `ui`, braucht OpenGL → unter Linux `xvfb-run`).

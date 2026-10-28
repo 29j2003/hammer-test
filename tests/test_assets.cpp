@@ -297,6 +297,59 @@ TEST_CASE("model triangles from .mdl, .vvd and .vtx") {
 	CHECK_FALSE(buildModelGeometry({files.mdl, truncated, files.vtx}, 0, &error));
 }
 
+TEST_CASE("model body groups, skins and prop settings") {
+	test::StudioModelSpec spec;
+	spec.groups.push_back({"body", {{"box", {{-16, -16, 0, 16, 16, 32}}}}});
+	spec.groups.push_back({"lid", {{"lid_closed", {{-16, -16, 32, 16, 16, 36}}}, {"blank", {}}}});
+	spec.groups.push_back({"handle", {{"left", {{-20, -2, 10, -16, 2, 20}}}, {"right", {{16, -2, 10, 20, 2, 20}}}, {"both", {{-20, -2, 10, -16, 2, 20}, {16, -2, 10, 20, 2, 20}}}}});
+	spec.textures = {"wood", "metal"};
+	spec.staticProp = true;
+	spec.mass = 35;
+	spec.keyValues = "\"prop_data\" { \"base\" \"Wooden.Medium\" }";
+	const auto files = test::makeStudioModel(spec);
+
+	const auto info = readModelInfo(files.mdl);
+	REQUIRE(info);
+	CHECK(info->skinCount == 2);
+	CHECK(info->staticProp);
+	CHECK(info->mass == doctest::Approx(35));
+	CHECK(info->keyValues.find("Wooden.Medium") != std::string::npos);
+	REQUIRE(info->bodyGroups.size() == 3);
+	CHECK(info->bodyGroups[1].name == "lid");
+	CHECK(info->bodyGroups[1].options == std::vector<std::string>{"lid_closed", "blank"});
+	CHECK(info->bodyGroups[2].options.size() == 3);
+	// body = sum of choice * (product of the option counts before it): lid 1 -> 1, handle 2 -> 2*2.
+	CHECK(info->bodyValue({}) == 0);
+	CHECK(info->bodyValue({0, 1, 0}) == 1);
+	CHECK(info->bodyValue({0, 1, 2}) == 5);
+	CHECK(info->bodyValue({0, 9, 9}) == 5);   // out of range: clamped
+
+	std::string error;
+	const auto defaults = buildModelGeometry({files.mdl, files.vvd, files.vtx}, 0, &error);
+	REQUIRE_MESSAGE(defaults, error);
+	CHECK(defaults->triangleCount() == 36);   // box, closed lid, left handle
+	CHECK(defaults->meshes[0].material == "models/props/wood");
+	const auto open = buildModelGeometry({files.mdl, files.vvd, files.vtx}, 0, &error, {}, info->bodyValue({0, 1, 2}));
+	REQUIRE_MESSAGE(open, error);
+	CHECK(open->triangleCount() == 36);       // box, no lid, both handles
+	CHECK(open->bounds.max.x == doctest::Approx(20));
+	CHECK(open->bounds.min.x == doctest::Approx(-20));
+	const auto metal = buildModelGeometry({files.mdl, files.vvd, files.vtx}, 1, &error);
+	REQUIRE(metal);
+	CHECK(metal->meshes[0].material == "models/props/metal");
+	// Every body number gives a model (or a clean error), never a crash.
+	for (int body = -3; body < 40; ++body) {
+		(void)buildModelGeometry({files.mdl, files.vvd, files.vtx}, 0, nullptr, {}, body);
+	}
+	// Plain models: one body group with one option, one skin, no prop settings.
+	const auto plain = readModelInfo(test::makeStudioModel({{-8, -8, 0, 8, 8, 8}}, {"idle"}, "", "crate", "models/props/").mdl);
+	REQUIRE(plain);
+	CHECK(plain->skinCount == 1);
+	CHECK_FALSE(plain->staticProp);
+	CHECK(plain->bodyGroups.size() == 1);
+	CHECK(plain->keyValues.empty());
+}
+
 TEST_CASE("compile output: errors, warnings, explanations, progress") {
 	const auto leak = classifyCompileLine("**** leaked ****");
 	REQUIRE(leak);

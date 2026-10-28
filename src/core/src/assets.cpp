@@ -68,13 +68,23 @@ private:
 constexpr std::size_t HDR_VERSION = 4;
 constexpr std::size_t HDR_NAME = 12;
 constexpr std::size_t HDR_HULL_MIN = 104;
+constexpr std::size_t HDR_FLAGS = 152;
 constexpr std::size_t HDR_NUM_SEQ = 188;
 constexpr std::size_t HDR_SEQ_INDEX = 192;
 constexpr std::size_t HDR_NUM_TEXTURES = 204;
 constexpr std::size_t HDR_TEXTURE_INDEX = 208;
 constexpr std::size_t HDR_NUM_CDTEXTURES = 212;
 constexpr std::size_t HDR_CDTEXTURE_INDEX = 216;
+constexpr std::size_t HDR_NUM_SKINFAMILIES = 224;
+constexpr std::size_t HDR_NUM_BODYPARTS = 232;
+constexpr std::size_t HDR_BODYPART_INDEX = 236;
 constexpr std::size_t HDR_SURFACEPROP = 308;
+constexpr std::size_t HDR_KEYVALUE_INDEX = 312;
+constexpr std::size_t HDR_KEYVALUE_SIZE = 316;
+constexpr std::size_t HDR_MASS = 328;
+constexpr std::size_t BODYPART_SIZE = 16;     // sznameindex, nummodels, base, modelindex
+constexpr std::size_t STUDIO_MODEL_SIZE = 148;
+constexpr int STUDIOHDR_FLAGS_STATIC_PROP = 0x10;
 constexpr std::size_t HDR_NUM_INCLUDES = 336;
 constexpr std::size_t HDR_INCLUDE_INDEX = 340;
 constexpr std::size_t HDR_SIZE = 408;
@@ -171,6 +181,36 @@ std::optional<ModelInfo> readModelInfo(std::span<const std::byte> data, std::str
 		}
 	}
 	info.surfaceProp = r.str(r.i32(HDR_SURFACEPROP));
+	info.staticProp = (r.i32(HDR_FLAGS) & STUDIOHDR_FLAGS_STATIC_PROP) != 0;
+	info.mass = r.f32(HDR_MASS);
+	if (!(info.mass >= 0 && info.mass < 1e7f)) info.mass = 0;   // also NaN
+	info.skinCount = std::clamp(r.i32(HDR_NUM_SKINFAMILIES), 1, MAX_ITEMS);
+	const int keyValueIndex = r.i32(HDR_KEYVALUE_INDEX), keyValueSize = r.i32(HDR_KEYVALUE_SIZE);
+	if (keyValueIndex > 0 && keyValueSize > 0 && r.fits(static_cast<std::size_t>(keyValueIndex), static_cast<std::size_t>(keyValueSize))) {
+		info.keyValues = r.str(keyValueIndex, static_cast<std::size_t>(std::min(keyValueSize, 65536)));
+	}
+	// Body groups: each body part with its models (options).
+	const int numParts = r.i32(HDR_NUM_BODYPARTS);
+	const int partIndex = r.i32(HDR_BODYPART_INDEX);
+	if (numParts > 0 && numParts <= 256 && partIndex > 0 &&
+	    r.fits(static_cast<std::size_t>(partIndex), static_cast<std::size_t>(numParts) * BODYPART_SIZE)) {
+		for (int i = 0; i < numParts; ++i) {
+			const auto part = static_cast<long long>(partIndex) + static_cast<long long>(i) * BODYPART_SIZE;
+			ModelInfo::BodyGroup group;
+			group.name = r.str(part + r.i32(static_cast<std::size_t>(part)), 64);
+			const int numModels = r.i32(static_cast<std::size_t>(part) + 4);
+			const long long models = part + r.i32(static_cast<std::size_t>(part) + 12);
+			if (numModels < 1 || numModels > 256 || models < 0 ||
+			    !r.fits(static_cast<std::size_t>(models), static_cast<std::size_t>(numModels) * STUDIO_MODEL_SIZE)) {
+				group.options.emplace_back();
+			} else {
+				for (int m = 0; m < numModels; ++m) {
+					group.options.push_back(r.str(models + static_cast<long long>(m) * STUDIO_MODEL_SIZE, 64));
+				}
+			}
+			info.bodyGroups.push_back(std::move(group));
+		}
+	}
 
 	const int numIncludes = r.i32(HDR_NUM_INCLUDES);
 	const int includeIndex = r.i32(HDR_INCLUDE_INDEX);
@@ -185,6 +225,18 @@ std::optional<ModelInfo> readModelInfo(std::span<const std::byte> data, std::str
 		}
 	}
 	return info;
+}
+
+int ModelInfo::bodyValue(const std::vector<int>& choices) const {
+	int body = 0, base = 1;
+	for (std::size_t i = 0; i < bodyGroups.size(); ++i) {
+		const int options = std::max<int>(1, static_cast<int>(bodyGroups[i].options.size()));
+		const int choice = i < choices.size() ? std::clamp(choices[i], 0, options - 1) : 0;
+		body += choice * base;
+		if (base > (1 << 24) / options) break;   // absurd counts: stop before overflowing
+		base *= options;
+	}
+	return body;
 }
 
 std::vector<std::string> modelSequences(const GameFileSystem& fs, std::string_view modelPath, std::string* error) {

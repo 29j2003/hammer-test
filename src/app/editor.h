@@ -166,7 +166,12 @@ public:
 	[[nodiscard]] const QStringList& recentMaterials() const { return m_recentMaterials; }
 	/// Entity class the entity tool places ("armed"); empty = nothing armed.
 	[[nodiscard]] QString currentEntityClass() const { return m_currentEntityClass; }
+	/// Arms a class without extra keyvalues.
 	void setCurrentEntityClass(const QString& classname);
+	/// Arms a class with keyvalues every placed entity gets (a prop with its model, skin ...).
+	void setCurrentEntity(const QString& classname, std::vector<std::pair<std::string, std::string>> keys);
+	/// The keyvalues armed with the class (empty for a plain class).
+	[[nodiscard]] const std::vector<std::pair<std::string, std::string>>& currentEntityKeys() const { return m_currentEntityKeys; }
 	/// The armed class is a brush entity: the entity tool drags a box like the block tool.
 	[[nodiscard]] bool armedBrushEntity() const;
 	/// Point entities placed in the 3D view get a random yaw (props, foliage, debris).
@@ -299,6 +304,7 @@ private:
 	QString m_currentMaterial = "DEV/DEV_MEASUREGENERIC01";
 	QStringList m_recentMaterials;
 	QString m_currentEntityClass = "info_player_start";
+	std::vector<std::pair<std::string, std::string>> m_currentEntityKeys;
 	bool m_randomYaw = false;
 	ShapeOptions m_shapeOptions;
 	bool m_footerModified = false;   ///< Cordons changed (not part of undo, like in Hammer)

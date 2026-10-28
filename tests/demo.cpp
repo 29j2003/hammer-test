@@ -418,6 +418,19 @@ void createDemo(Fixture& f) {
 	                 makeStudioModel({{-24, -24, 0, 24, 24, 48}}, {"idle"}, "", "wood001", "demo/"));
 	writeStudioModel(f.mod / "models/props_demo/barrel01.mdl",
 	                 makeStudioModel({{-14, -14, 0, 14, 14, 44}, {-15, -15, 6, 15, 15, 10}, {-15, -15, 34, 15, 15, 38}}, {"idle"}, "", "metal001", "demo/"));
+	{
+		// A supply crate with a lid body group, two skins and prop settings (the Models page shows them).
+		StudioModelSpec crate;
+		crate.groups.push_back({"crate", {{"crate", {{-20, -14, 0, 20, 14, 26}}}}});
+		crate.groups.push_back({"lid", {{"lid_closed", {{-21, -15, 26, 21, 15, 30}}}, {"blank", {}}}});
+		crate.textures = {"wood001", "metal001"};
+		crate.cdmaterials = "demo/";
+		crate.staticProp = true;
+		crate.mass = 40;
+		crate.keyValues = "\"prop_data\" { \"base\" \"Wooden.Medium\" }";
+		writeStudioModel(f.mod / "models/props_demo/supply_crate.mdl", makeStudioModel(crate));
+		writeBytes(f.mod / "models/props_demo/supply_crate.phy", std::vector<std::byte>(16, std::byte{0}));
+	}
 	writeBytes(f.mod / "models/humans/male_shared.mdl",
 	           makeModelFile({"walk_all", "run_all", "sitchair1", "sit_ground", "lean_wall", "leanwall_idle", "Idle_Relaxed_SMG1_1", "crouch_idle"}, ""));
 
@@ -692,8 +705,23 @@ void createDemo(Fixture& f) {
 	writeText(f.mod / "mapsrc/demo.vmf", doc.serialize());
 }
 
+namespace {
+
+/// The .mdl header with sequences, textures, one $cdmaterials folder, surface prop and include.
+std::vector<std::byte> modelHeader(const std::vector<std::string>& sequences, const std::string& include, const std::vector<std::string>& textures,
+                                   const std::string& cdmaterials);
+
+} // namespace
+
 std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, const std::string& include, const std::string& texture,
                                      const std::string& cdmaterials) {
+	return modelHeader(sequences, include, {texture}, cdmaterials);
+}
+
+namespace {
+
+std::vector<std::byte> modelHeader(const std::vector<std::string>& sequences, const std::string& include, const std::vector<std::string>& textures,
+                                   const std::string& cdmaterials) {
 	std::vector<std::byte> data(408, std::byte{0});
 	const auto put32 = [&](std::size_t offset, std::int32_t value) { std::memcpy(data.data() + offset, &value, 4); };
 	const auto putString = [&](const std::string& s) {
@@ -719,10 +747,12 @@ std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, 
 		put32(base + 8, static_cast<std::int32_t>(activity - base));
 	}
 	const std::size_t texIndex = data.size();
-	data.resize(data.size() + 64, std::byte{0});
-	const auto texName = putString(texture);
-	put32(texIndex, static_cast<std::int32_t>(texName - texIndex));
-	put32(204, 1);
+	data.resize(data.size() + 64 * textures.size(), std::byte{0});
+	for (std::size_t i = 0; i < textures.size(); ++i) {
+		const auto texName = putString(textures[i]);
+		put32(texIndex + 64 * i, static_cast<std::int32_t>(texName - (texIndex + 64 * i)));
+	}
+	put32(204, static_cast<std::int32_t>(textures.size()));
 	put32(208, static_cast<std::int32_t>(texIndex));
 	const std::size_t cdIndex = data.size();
 	data.resize(data.size() + 4, std::byte{0});
@@ -740,137 +770,227 @@ std::vector<std::byte> makeModelFile(const std::vector<std::string>& sequences, 
 	return data;
 }
 
-StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes, const std::vector<std::string>& sequences,
-                                 const std::string& include, const std::string& texture, const std::string& cdmaterials) {
-	StudioModelFiles out;
-	// Vertices and triangles of the boxes (4 vertices and 2 triangles per side, counter-clockwise from outside).
+/// Triangles of boxes (4 vertices and 2 triangles per side, counter-clockwise from outside).
+struct BoxMesh {
 	struct V {
 		float p[3], n[3], uv[2];
 	};
 	std::vector<V> verts;
 	std::vector<std::uint16_t> indices;
+};
+
+BoxMesh boxMesh(const std::vector<std::array<float, 6>>& boxes) {
+	BoxMesh out;
 	for (const auto& b : boxes) {
 		const float lo[3] = {b[0], b[1], b[2]}, hi[3] = {b[3], b[4], b[5]};
 		for (int axis = 0; axis < 3; ++axis) {
 			for (int side = 0; side < 2; ++side) {
 				const int u = (axis + 1) % 3, v = (axis + 2) % 3;
-				const auto base = static_cast<std::uint16_t>(verts.size());
+				const auto base = static_cast<std::uint16_t>(out.verts.size());
 				const float corners[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
 				for (const auto& c : corners) {
-					V vert{};
+					BoxMesh::V vert{};
 					vert.p[axis] = side ? hi[axis] : lo[axis];
 					vert.p[u] = c[0] ? hi[u] : lo[u];
 					vert.p[v] = c[1] ? hi[v] : lo[v];
 					vert.n[axis] = side ? 1.f : -1.f;
 					vert.uv[0] = c[0];
 					vert.uv[1] = 1 - c[1];
-					verts.push_back(vert);
+					out.verts.push_back(vert);
 				}
 				if (side) {
-					indices.insert(indices.end(), {base, std::uint16_t(base + 1), std::uint16_t(base + 2), base, std::uint16_t(base + 2), std::uint16_t(base + 3)});
+					out.indices.insert(out.indices.end(), {base, std::uint16_t(base + 1), std::uint16_t(base + 2), base, std::uint16_t(base + 2), std::uint16_t(base + 3)});
 				} else {
-					indices.insert(indices.end(), {base, std::uint16_t(base + 2), std::uint16_t(base + 1), base, std::uint16_t(base + 3), std::uint16_t(base + 2)});
+					out.indices.insert(out.indices.end(), {base, std::uint16_t(base + 2), std::uint16_t(base + 1), base, std::uint16_t(base + 3), std::uint16_t(base + 2)});
 				}
 			}
 		}
 	}
+	return out;
+}
+
+} // namespace
+
+StudioModelFiles makeStudioModel(const std::vector<std::array<float, 6>>& boxes, const std::vector<std::string>& sequences,
+                                 const std::string& include, const std::string& texture, const std::string& cdmaterials) {
+	StudioModelSpec spec;
+	spec.groups.push_back({"body", {{"model", boxes}}});
+	spec.sequences = sequences;
+	spec.include = include;
+	spec.textures = {texture};
+	spec.cdmaterials = cdmaterials;
+	return makeStudioModel(spec);
+}
+
+StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
+	StudioModelFiles out;
 	const auto put32 = [](std::vector<std::byte>& data, std::size_t offset, std::int32_t value) { std::memcpy(data.data() + offset, &value, 4); };
 	const auto putFloat = [](std::vector<std::byte>& data, std::size_t offset, float value) { std::memcpy(data.data() + offset, &value, 4); };
-	const auto n = static_cast<std::int32_t>(verts.size());
+	const auto grow = [](std::vector<std::byte>& data, std::size_t bytes) {
+		const auto at = data.size();
+		data.resize(at + bytes, std::byte{0});
+		return at;
+	};
+	const auto putString = [](std::vector<std::byte>& data, const std::string& text) {
+		const auto at = data.size();
+		for (const char c : text) data.push_back(std::byte(c));
+		data.push_back(std::byte{0});
+		return at;
+	};
 
-	// .mdl: header + sequences/texture (makeModelFile), then skin table, body part, model, mesh.
+	// Geometry of every option, in file order (group by group).
+	std::vector<std::vector<BoxMesh>> meshes;
+	for (const auto& group : spec.groups) {
+		auto& list = meshes.emplace_back();
+		for (const auto& option : group.options) list.push_back(boxMesh(option.second));
+	}
+
+	// .mdl: header (sequences, textures), flags, mass, $keyvalues, skin table, body parts.
 	auto& mdl = out.mdl;
-	mdl = makeModelFile(sequences, include, texture, cdmaterials);
+	mdl = modelHeader(spec.sequences, spec.include, spec.textures, spec.cdmaterials);
 	float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
-	for (const auto& v : verts) {
-		for (int k = 0; k < 3; ++k) {
-			lo[k] = std::min(lo[k], v.p[k]);
-			hi[k] = std::max(hi[k], v.p[k]);
+	for (const auto& list : meshes) {
+		for (const auto& mesh : list) {
+			for (const auto& v : mesh.verts) {
+				for (int k = 0; k < 3; ++k) {
+					lo[k] = std::min(lo[k], v.p[k]);
+					hi[k] = std::max(hi[k], v.p[k]);
+				}
+			}
 		}
 	}
 	for (int k = 0; k < 3; ++k) {
 		putFloat(mdl, 104 + k * 4, lo[k]);   // hull_min
 		putFloat(mdl, 116 + k * 4, hi[k]);   // hull_max
 	}
-	const std::size_t skins = mdl.size();
-	mdl.resize(mdl.size() + 4, std::byte{0});   // one family, one reference: texture 0
+	put32(mdl, 152, spec.staticProp ? 0x10 : 0);   // flags (STUDIOHDR_FLAGS_STATIC_PROP)
+	putFloat(mdl, 328, spec.mass);
+	if (!spec.keyValues.empty()) {
+		const auto at = putString(mdl, spec.keyValues);
+		put32(mdl, 312, static_cast<std::int32_t>(at));
+		put32(mdl, 316, static_cast<std::int32_t>(spec.keyValues.size() + 1));
+	}
+	const auto families = static_cast<std::int32_t>(std::max<std::size_t>(1, spec.textures.size()));
+	const std::size_t skins = grow(mdl, 2 * static_cast<std::size_t>(families));   // one reference per family
+	for (std::int32_t f = 0; f < families; ++f) {
+		const auto texture = static_cast<std::int16_t>(f);
+		std::memcpy(mdl.data() + skins + 2 * static_cast<std::size_t>(f), &texture, 2);
+	}
 	put32(mdl, 220, 1);
-	put32(mdl, 224, 1);
+	put32(mdl, 224, families);
 	put32(mdl, 228, static_cast<std::int32_t>(skins));
-	const std::size_t part = mdl.size();
-	mdl.resize(mdl.size() + 16 + 148 + 116, std::byte{0});
-	const std::size_t model = part + 16, mesh = model + 148;
-	put32(mdl, 232, 1);
-	put32(mdl, 236, static_cast<std::int32_t>(part));
-	put32(mdl, part + 4, 1);                                            // nummodels
-	put32(mdl, part + 8, 1);                                            // base
-	put32(mdl, part + 12, static_cast<std::int32_t>(model - part));     // modelindex
-	put32(mdl, model + 72, 1);                                          // nummeshes
-	put32(mdl, model + 76, static_cast<std::int32_t>(mesh - model));    // meshindex
-	put32(mdl, model + 80, n);                                          // numvertices
-	put32(mdl, model + 84, 0);                                          // vertexindex
-	put32(mdl, mesh + 0, 0);                                            // material (skin reference)
-	put32(mdl, mesh + 4, static_cast<std::int32_t>(model - mesh));      // modelindex
-	put32(mdl, mesh + 8, n);                                            // numvertices
-	put32(mdl, mesh + 12, 0);                                           // vertexoffset
+
+	const std::size_t parts = grow(mdl, 16 * spec.groups.size());
+	put32(mdl, 232, static_cast<std::int32_t>(spec.groups.size()));
+	put32(mdl, 236, static_cast<std::int32_t>(parts));
+	std::int32_t base = 1, vertexStart = 0;
+	for (std::size_t g = 0; g < spec.groups.size(); ++g) {
+		const auto& group = spec.groups[g];
+		const std::size_t part = parts + 16 * g;
+		put32(mdl, part, static_cast<std::int32_t>(putString(mdl, group.name) - part));
+		const std::size_t models = grow(mdl, 148 * group.options.size());
+		put32(mdl, part + 4, static_cast<std::int32_t>(group.options.size()));   // nummodels
+		put32(mdl, part + 8, base);
+		put32(mdl, part + 12, static_cast<std::int32_t>(models - part));
+		base *= static_cast<std::int32_t>(std::max<std::size_t>(1, group.options.size()));
+		for (std::size_t m = 0; m < group.options.size(); ++m) {
+			const std::size_t model = models + 148 * m;
+			const auto& name = group.options[m].first;
+			std::memcpy(mdl.data() + model, name.data(), std::min<std::size_t>(name.size(), 63));
+			const auto n = static_cast<std::int32_t>(meshes[g][m].verts.size());
+			put32(mdl, model + 80, n);                    // numvertices
+			put32(mdl, model + 84, vertexStart * 48);     // vertexindex (bytes into the .vvd vertices)
+			vertexStart += n;
+			if (n == 0) continue;
+			const std::size_t mesh = grow(mdl, 116);
+			put32(mdl, model + 72, 1);                                          // nummeshes
+			put32(mdl, model + 76, static_cast<std::int32_t>(mesh - model));    // meshindex
+			put32(mdl, mesh + 0, 0);                                            // material (skin reference)
+			put32(mdl, mesh + 4, static_cast<std::int32_t>(model - mesh));      // modelindex
+			put32(mdl, mesh + 8, n);                                            // numvertices
+			put32(mdl, mesh + 12, 0);                                           // vertexoffset
+		}
+	}
 
 	// .vvd: header, vertices (48 bytes), tangents (16 bytes).
 	auto& vvd = out.vvd;
-	vvd.assign(64 + verts.size() * 64, std::byte{0});
+	const auto total = static_cast<std::size_t>(vertexStart);
+	vvd.assign(64 + total * 64, std::byte{0});
 	std::memcpy(vvd.data(), "IDSV", 4);
 	put32(vvd, 4, 4);
 	put32(vvd, 12, 1);
-	for (int lod = 0; lod < 8; ++lod) put32(vvd, 16 + lod * 4, n);
+	for (int lod = 0; lod < 8; ++lod) put32(vvd, 16 + lod * 4, vertexStart);
 	put32(vvd, 52, 64);
 	put32(vvd, 56, 64);
-	put32(vvd, 60, static_cast<std::int32_t>(64 + verts.size() * 48));
-	for (std::size_t i = 0; i < verts.size(); ++i) {
-		const auto base = 64 + i * 48;
-		putFloat(vvd, base, 1.f);   // weight of bone 0
-		vvd[base + 15] = std::byte{1};
-		for (int k = 0; k < 3; ++k) {
-			putFloat(vvd, base + 16 + k * 4, verts[i].p[k]);
-			putFloat(vvd, base + 28 + k * 4, verts[i].n[k]);
+	put32(vvd, 60, static_cast<std::int32_t>(64 + total * 48));
+	std::size_t written = 0;
+	for (const auto& list : meshes) {
+		for (const auto& mesh : list) {
+			for (const auto& v : mesh.verts) {
+				const auto at = 64 + written * 48;
+				putFloat(vvd, at, 1.f);   // weight of bone 0
+				vvd[at + 15] = std::byte{1};
+				for (int k = 0; k < 3; ++k) {
+					putFloat(vvd, at + 16 + k * 4, v.p[k]);
+					putFloat(vvd, at + 28 + k * 4, v.n[k]);
+				}
+				putFloat(vvd, at + 40, v.uv[0]);
+				putFloat(vvd, at + 44, v.uv[1]);
+				++written;
+			}
 		}
-		putFloat(vvd, base + 40, verts[i].uv[0]);
-		putFloat(vvd, base + 44, verts[i].uv[1]);
 	}
 
-	// .dx90.vtx (packed structs): header 36, body part 8, model 8, LOD 12, mesh 9, strip group 25,
-	// vertices 9, indices 2, one triangle-list strip 27.
+	// .dx90.vtx (packed structs): header 36, body parts 8, models 8, LOD 12, mesh 9, strip group
+	// 25, vertices 9, indices 2, one triangle-list strip 27.
 	auto& vtx = out.vtx;
-	const std::size_t bodyPart = 36, vmodel = 44, lod = 52, vmesh = 64, group = 73, vertices = 98;
-	const std::size_t indexStart = vertices + verts.size() * 9, strip = indexStart + indices.size() * 2;
-	vtx.assign(strip + 27, std::byte{0});
+	vtx.assign(36, std::byte{0});
 	put32(vtx, 0, 7);
 	put32(vtx, 4, 24);
 	put32(vtx, 20, 1);                                              // numLODs
-	put32(vtx, 28, 1);                                              // numBodyParts
-	put32(vtx, 32, static_cast<std::int32_t>(bodyPart));
-	put32(vtx, bodyPart, 1);
-	put32(vtx, bodyPart + 4, static_cast<std::int32_t>(vmodel - bodyPart));
-	put32(vtx, vmodel, 1);
-	put32(vtx, vmodel + 4, static_cast<std::int32_t>(lod - vmodel));
-	put32(vtx, lod, 1);
-	put32(vtx, lod + 4, static_cast<std::int32_t>(vmesh - lod));
-	put32(vtx, vmesh, 1);
-	put32(vtx, vmesh + 4, static_cast<std::int32_t>(group - vmesh));
-	put32(vtx, group, n);
-	put32(vtx, group + 4, static_cast<std::int32_t>(vertices - group));
-	put32(vtx, group + 8, static_cast<std::int32_t>(indices.size()));
-	put32(vtx, group + 12, static_cast<std::int32_t>(indexStart - group));
-	put32(vtx, group + 16, 1);
-	put32(vtx, group + 20, static_cast<std::int32_t>(strip - group));
-	for (std::size_t i = 0; i < verts.size(); ++i) {
-		const auto id = static_cast<std::uint16_t>(i);
-		vtx[vertices + i * 9 + 3] = std::byte{1};
-		std::memcpy(vtx.data() + vertices + i * 9 + 4, &id, 2);
+	put32(vtx, 28, static_cast<std::int32_t>(spec.groups.size()));  // numBodyParts
+	const std::size_t vparts = grow(vtx, 8 * spec.groups.size());
+	put32(vtx, 32, static_cast<std::int32_t>(vparts));
+	for (std::size_t g = 0; g < spec.groups.size(); ++g) {
+		const std::size_t vpart = vparts + 8 * g;
+		const std::size_t vmodels = grow(vtx, 8 * spec.groups[g].options.size());
+		put32(vtx, vpart, static_cast<std::int32_t>(spec.groups[g].options.size()));
+		put32(vtx, vpart + 4, static_cast<std::int32_t>(vmodels - vpart));
+		for (std::size_t m = 0; m < spec.groups[g].options.size(); ++m) {
+			const auto& mesh = meshes[g][m];
+			const std::size_t vmodel = vmodels + 8 * m;
+			const std::size_t lod = grow(vtx, 12);
+			put32(vtx, vmodel, 1);
+			put32(vtx, vmodel + 4, static_cast<std::int32_t>(lod - vmodel));
+			if (mesh.verts.empty()) continue;   // blank: a LOD without meshes
+			const std::size_t vmesh = grow(vtx, 9);
+			put32(vtx, lod, 1);
+			put32(vtx, lod + 4, static_cast<std::int32_t>(vmesh - lod));
+			const std::size_t group = grow(vtx, 25);
+			put32(vtx, vmesh, 1);
+			put32(vtx, vmesh + 4, static_cast<std::int32_t>(group - vmesh));
+			const std::size_t vertices = grow(vtx, 9 * mesh.verts.size());
+			const std::size_t indexStart = grow(vtx, 2 * mesh.indices.size());
+			const std::size_t strip = grow(vtx, 27);
+			const auto n = static_cast<std::int32_t>(mesh.verts.size());
+			put32(vtx, group, n);
+			put32(vtx, group + 4, static_cast<std::int32_t>(vertices - group));
+			put32(vtx, group + 8, static_cast<std::int32_t>(mesh.indices.size()));
+			put32(vtx, group + 12, static_cast<std::int32_t>(indexStart - group));
+			put32(vtx, group + 16, 1);
+			put32(vtx, group + 20, static_cast<std::int32_t>(strip - group));
+			for (std::size_t i = 0; i < mesh.verts.size(); ++i) {
+				const auto id = static_cast<std::uint16_t>(i);
+				vtx[vertices + i * 9 + 3] = std::byte{1};
+				std::memcpy(vtx.data() + vertices + i * 9 + 4, &id, 2);
+			}
+			std::memcpy(vtx.data() + indexStart, mesh.indices.data(), mesh.indices.size() * 2);
+			put32(vtx, strip, static_cast<std::int32_t>(mesh.indices.size()));
+			put32(vtx, strip + 4, 0);
+			put32(vtx, strip + 8, n);
+			vtx[strip + 18] = std::byte{1};                                 // STRIP_IS_TRILIST
+		}
 	}
-	std::memcpy(vtx.data() + indexStart, indices.data(), indices.size() * 2);
-	put32(vtx, strip, static_cast<std::int32_t>(indices.size()));
-	put32(vtx, strip + 4, 0);
-	put32(vtx, strip + 8, n);
-	vtx[strip + 18] = std::byte{1};                                 // STRIP_IS_TRILIST
 	return out;
 }
 

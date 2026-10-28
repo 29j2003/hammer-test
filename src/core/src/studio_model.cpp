@@ -155,7 +155,7 @@ bool readVtxMesh(const Reader& vtx, long long mesh, const StripLayout& layout, s
 } // namespace
 
 std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int skin, std::string* error,
-                                                const std::function<bool(const std::string&)>& materialExists) {
+                                                const std::function<bool(const std::string&)>& materialExists, int body) {
 	const auto fail = [&](const std::string& message) -> std::optional<ModelGeometry> {
 		if (error) *error = message;
 		return std::nullopt;
@@ -255,7 +255,7 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 		return texture >= 0 && texture < static_cast<int>(textures.size()) ? textures[static_cast<std::size_t>(texture)] : std::string("tools/toolsnodraw");
 	};
 
-	// Body parts (first model of each = default body group) with their meshes, matched with the VTX tree.
+	// Body parts (one model of each, chosen by `body`) with their meshes, matched with the VTX tree.
 	const int numBodyParts = count(mdl.i32(HDR_NUM_BODYPARTS), 256);
 	const long long bodyPartIndex = mdl.i32(HDR_BODYPART_INDEX);
 	if (numBodyParts < 0 || !mdl.fits(bodyPartIndex, static_cast<long long>(numBodyParts) * BODYPART_SIZE)) return fail("body parts out of range");
@@ -269,11 +269,13 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 		for (int b = 0; ok && b < numBodyParts; ++b) {
 			const long long part = bodyPartIndex + static_cast<long long>(b) * BODYPART_SIZE;
 			const int numModels = count(mdl.i32(part + 4), 256);
-			const long long modelIndex = part + mdl.i32(part + 12);
+			const int base = std::max(1, mdl.i32(part + 8));
+			const int choice = numModels > 0 ? (std::max(0, body) / base) % numModels : 0;
+			const long long modelIndex = part + mdl.i32(part + 12) + static_cast<long long>(choice) * MODEL_SIZE;
 			const long long vtxPart = vtxBodyParts + static_cast<long long>(b) * 8;
 			if (numModels <= 0) continue;
-			if (!mdl.fits(modelIndex, MODEL_SIZE) || vtx.i32(vtxPart) < 1) { ok = false; break; }
-			const long long vtxModel = vtxPart + vtx.i32(vtxPart + 4);
+			if (!mdl.fits(modelIndex, MODEL_SIZE) || vtx.i32(vtxPart) <= choice) { ok = false; break; }
+			const long long vtxModel = vtxPart + vtx.i32(vtxPart + 4) + static_cast<long long>(choice) * 8;
 			const int lods = vtx.i32(vtxModel);
 			const long long vtxLod = vtxModel + vtx.i32(vtxModel + 4);
 			if (lods < 1 || !vtx.fits(vtxLod, 12)) { ok = false; break; }
@@ -324,7 +326,7 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 	return fail("triangle file (.vtx) does not match the model");
 }
 
-std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::string_view modelPath, int skin, std::string* error) {
+std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::string_view modelPath, int skin, std::string* error, int body) {
 	const auto path = normalizePath(modelPath);
 	if (!endsWithI(path, ".mdl")) {
 		if (error) *error = "not a .mdl file";
@@ -342,7 +344,7 @@ std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::st
 	if (!vtx) vtx = fs.read(stem + ".dx80.vtx");
 	const std::vector<std::byte> empty;
 	const std::function<bool(const std::string&)> exists = [&](const std::string& material) { return fs.exists("materials/" + material + ".vmt"); };
-	return buildModelGeometry({*mdl, vvd ? *vvd : empty, vtx ? *vtx : empty}, skin, error, exists);
+	return buildModelGeometry({*mdl, vvd ? *vvd : empty, vtx ? *vtx : empty}, skin, error, exists, body);
 }
 
 } // namespace sme

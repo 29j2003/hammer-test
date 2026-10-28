@@ -43,6 +43,19 @@ struct ModelInfo {
 	std::vector<std::string> materialDirs;  ///< $cdmaterials folders
 	std::string surfaceProp;
 	Vec3 hullMin, hullMax;
+	int skinCount = 1;                      ///< Skin families ($texturegroup), at least 1
+	/// A body group ($bodygroup): one of its options is shown at a time ("blank" = nothing).
+	struct BodyGroup {
+		std::string name;
+		std::vector<std::string> options;
+	};
+	std::vector<BodyGroup> bodyGroups;      ///< In file order; the first option of each is the default
+	bool staticProp = false;                ///< Compiled with $staticprop (can be a prop_static)
+	float mass = 0;                         ///< Physics mass from $collisionmodel (0 without)
+	std::string keyValues;                  ///< $keyvalues text (prop_data, physgun_interactions ...)
+
+	/// The engine's "body" number for one chosen option per body group (missing entries: 0).
+	[[nodiscard]] int bodyValue(const std::vector<int>& choices) const;
 };
 
 /// Parses a Source 1 .mdl header (versions 44-49). Never reads outside the buffer.

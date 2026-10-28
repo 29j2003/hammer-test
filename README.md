@@ -127,7 +127,12 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   plays its sound; type a file (it completes) or take the one shown in the player. **Save to the mod** writes
   `scripts/soundscapes_<mod>.txt` and puts it first in the mod's `soundscapes_manifest.txt`, so a changed copy of a
   game soundscape is used instead of the original. Keys the editor does not know stay in the file.
-- **Side bar**: on the far left *Map*, *Materials*, *Sounds*, *Particles* and *Project* each fill
+- **Models**: every model of the game and its mods by folder, with search and preview pictures. Pick one to turn it
+  around in 3D, switch its skins and body groups, see its size, triangles, animations, materials (click one to edit it)
+  and prop settings (static prop, collision model, mass). **Place in map** arms the entity tool with it as
+  `prop_static`, `prop_physics` or `prop_dynamic` (picked to suit the model); or drag it onto the *Map* button and on
+  into a view.
+- **Side bar**: on the far left *Map*, *Materials*, *Models*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
   has the tabs *Overview*, *Maps*, *Menu*, *Source control* and *Ship* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
