@@ -94,6 +94,8 @@ protected:
 	void initializeGL() override;
 	void paintGL() override;
 	void resizeGL(int w, int h) override;
+	/// Holds back repaints the window asks for faster than the frame limit (see requestFrame()).
+	void paintEvent(QPaintEvent* event) override;
 	void mousePressEvent(QMouseEvent* event) override;
 	void mouseMoveEvent(QMouseEvent* event) override;
 	void mouseReleaseEvent(QMouseEvent* event) override;
@@ -325,6 +327,7 @@ private:
 	QElapsedTimer m_fpsClock;
 	QElapsedTimer m_lastFrame;            ///< When the last frame was drawn (frame limit)
 	quint64 m_framesDrawn = 0;
+	QSize m_paintedSize;                  ///< Size of the last frame: a new size always draws
 	double m_fps = 0;
 };
 

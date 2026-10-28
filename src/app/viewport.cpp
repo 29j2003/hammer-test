@@ -1013,6 +1013,21 @@ void Viewport::applyFrameLimit() {
 	m_moveTimer.setInterval(fps > 0 ? std::max(1, 1000 / fps) : 0);
 }
 
+void Viewport::paintEvent(QPaintEvent* event) {
+	// Repaints of the window (another panel changed, a tooltip ...) also draw the view; above the
+	// frame limit they wait for the next allowed frame. The view keeps showing the last one.
+	const int fps = m_editor->maxFps();
+	if (fps > 0 && size() == m_paintedSize && m_lastFrame.isValid()) {
+		const qint64 wait = 1000 / fps - m_lastFrame.elapsed();
+		if (wait > 0) {
+			if (!m_frameTimer.isActive()) m_frameTimer.start(int(wait));
+			return;
+		}
+	}
+	m_paintedSize = size();
+	QOpenGLWidget::paintEvent(event);
+}
+
 void Viewport::requestFrame() {
 	const int fps = m_editor->maxFps();
 	if (fps <= 0 || !m_lastFrame.isValid()) {
