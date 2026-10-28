@@ -16,6 +16,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QSettings>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -45,6 +46,16 @@ QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QString
 		saveFeatureChoice(created.folder, *featuresOff, false);
 		saveEnhancementSettings(created.folder, withFeatureEffects({}, *featuresOff));
 	}
+	// A Mapbase mod gets Mapsmith's features right away: the game code (Mapbase with the add-on),
+	// shaders, settings - the mod runs without anything else to put into bin. The generated
+	// materials follow when the Features tab sees the mod (deploy.ps1 runs there).
+	if (mod.base == ModBase::Mapbase) {
+		if (const auto bundle = readFeatureBundle(featureBundleDir())) {
+			const QFileInfo vrad(editor->gameSettings().vrad);
+			const auto installed = installFeatures(*bundle, created.folder, vrad.exists() ? toPath(vrad.absolutePath()) : std::filesystem::path());
+			if (installed.ok) QSettings().setValue(QStringLiteral("features/deployPending/%1").arg(fromPath(created.folder)), true);
+		}
+	}
 	// Find it like every other mod and open it.
 	editor->discover(fromPath(steam.root()));
 	const QString key = QStringLiteral("sourcemods/") + QString::fromStdString(mod.folder);
@@ -68,7 +79,9 @@ bool runNewModDialog(Editor* editor, QWidget* parent) {
 	QString note = QObject::tr("The mod \"%1\" is ready and open. Start Steam once so it shows up in the library.")
 	                   .arg(QString::fromStdString(dialog.modTemplate().title));
 	if (dialog.modTemplate().base == ModBase::Mapbase) {
-		note += QObject::tr("\n\nMapbase: put Mapbase's game code (bin/client.dll and server.dll, or your own build) into the mod's bin folder.");
+		note += editor->gameEntry() && readInstalledFeatures(editor->gameEntry()->gameDir)
+		            ? QObject::tr("\n\nMapbase's game code with Mapsmith's features is installed - the mod runs as it is.")
+		            : QObject::tr("\n\nMapbase: put Mapbase's game code (bin/client.dll and server.dll, or your own build) into the mod's bin folder.");
 	}
 	QMessageBox::information(parent, QObject::tr("New mod"), note);
 	return true;
@@ -133,7 +146,7 @@ NewModDialog::NewModDialog(Editor* editor, QWidget* parent) : QDialog(parent), m
 	// mapbase-fidelity's features, chosen right away (all on); folded away until wanted.
 	auto* featureRow = new QHBoxLayout;
 	auto* featureNote = new QLabel(tr("Features of mapbase-fidelity: all on. They are used once the add-on is installed in the mod "
-	                                  "(Project > Mod code); change them any time under Project > Features."));
+	                                  "(one click under Project > Features); change them any time there."));
 	featureNote->setProperty("role", "description");
 	featureNote->setWordWrap(true);
 	auto* featureToggle = new QPushButton(tr("Choose features ..."));

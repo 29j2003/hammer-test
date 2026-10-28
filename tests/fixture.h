@@ -37,6 +37,11 @@ void createFixture(Fixture& fixture, const std::filesystem::path& dir = {});
 /// Writes a text file, creating parent folders.
 void writeText(const std::filesystem::path& path, std::string_view text);
 
+/// A fake feature bundle (what the Windows package carries next to Mapsmith.exe, see
+/// sme/mod_install.h): client/server DLLs for HL2 and Episodic, the shader DLL, VRAD, the add-on's
+/// game files and scripts, and manifest.txt. `tag` goes into every file, so two bundles differ.
+void makeFeatureBundle(const std::filesystem::path& root, std::string_view version, std::string_view tag);
+
 /// Adds demo content (textures, a model with animations, sounds, entity classes) to the
 /// fixture's mod and writes the demo map to <mod>/mapsrc/demo.vmf.
 void createDemo(Fixture& fixture);

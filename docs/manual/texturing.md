@@ -132,7 +132,8 @@ preview is an approximation of the game's shaders, not an exact match.
 ## mapbase-fidelity materials
 
 If your mod uses the [mapbase-fidelity](mapbase-fidelity.html) graphics add-on, the Material Editor can turn on its
-shaders. The preview shows them right away; the game shows them after the mod's `deploy.bat` has run once.
+shaders. The preview shows them right away; the game shows them once the mod has the add-on (Project › Features ›
+Install features).
 
 ### Relief (real depth)
 

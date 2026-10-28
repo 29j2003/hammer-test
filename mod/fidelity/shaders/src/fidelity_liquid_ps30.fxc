@@ -1,0 +1,517 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Pixel shader of Fidelity_Liquid: a container partly filled with liquid, in
+// one material on the container's own mesh (no extra liquid mesh, the idea of
+// Half-Life: Alyx's bottles).
+//
+// The model keeps its own look: everything is the base texture, lit like
+// Valve's VertexLitGeneric. Only the part that holds liquid changes: the
+// whole container, or - with a key colour (c40, medical: green) - only the
+// texels of that colour (the green tube of a health vial or medkit; frame,
+// caps and cross stay as they are).
+//
+// A plane in world space (set per prop by the FidelityLiquid material proxy:
+// the height that holds the prop's amount of liquid, tilting when it
+// sloshes) with small waves on it (c37) splits that part:
+//
+//   front faces below the surface  liquid (bright meniscus line under it)
+//   front faces above the surface  empty glass
+//   back faces below the surface   the liquid surface, as seen from above
+//                                  through the glass (flat, with the waves)
+//   back faces above the surface   the far side of the glass
+//
+// The material draws three times (c36.x): first the solid parts (everything
+// that holds no liquid, labels) opaque and with depth, both sides (a cap's
+// inner side shows through the glass), so the liquid can not
+// cover the frame in front of it and the frame not the liquid; then, blended
+// and with culling off, the back faces of the container and its front faces,
+// so the blending order is right for any convex container. (With one blended
+// pass the vial's tube covered its frame, depending on the order of the
+// triangles.) Which texels hold liquid is decided on a blurred mip level:
+// highlight streaks on the glass of the vial counted as frame otherwise.
+// Lighting is the engine's (ambient cube + up to 4 lights, or the baked
+// per-vertex light of static props), reflections the nearest env_cubemap with
+// a Fresnel term (weak by default: HDR cubemaps of bright skies are very
+// bright).
+//
+// Liquid colour: $liquidcolor, or the texture's own colour (c37.z; medical
+// liquid is painted into the texture). It gets denser where the view goes
+// through more of it (edges darker). Bubbles (c38) rise in world space: a few
+// big slow ones that sway for thick medical liquid, many small fast ones for
+// fizzy drinks; shaken (c37.w), many more and faster, and the surface foams.
+// The surface ("lid"), seen through the empty glass above it: where the view
+// through a front face above the plane meets the plane inside the container
+// (its profile from the proxy: an axis and 8 radii along it, c41-c44), it is
+// drawn right there, under the glass - the liquid's own colour seen deep,
+// lit mostly by the light from all around, with a reflection and a thin
+// lighter line where it meets the glass; soft foam when shaken. Seen from
+// below, the far side of the liquid is drawn instead. Back faces below the plane draw it too, where
+// the profile does not reach (it used to be only those: where the container
+// had no back face behind - the medkit's tube, parts of the vial - one looked
+// through the surface). Dark (tinted) glass (c39.w) lays its own colour over
+// everything: the part with liquid darker and denser, the empty part
+// see-through, so the level shows from every side. Where the texture's alpha
+// is high (labels, caps of see-through bottles) it is drawn solid.
+//
+//=============================================================================//
+
+// DYNAMIC: "PIXELFOGTYPE"	"0..1"
+// DYNAMIC: "NUM_LIGHTS"	"0..4"
+
+#include "common_ps_fxc.h"
+#include "common_vertexlitgeneric_dx9.h"
+#include "shader_constant_register_map.h"
+#include "fidelity_common.h"
+
+const float4 g_DiffuseModulation	: register( PSREG_DIFFUSE_MODULATION );
+const float3 cAmbientCube[ 6 ]		: register( PSREG_AMBIENT_CUBE );
+const float4 g_EyePos				: register( PSREG_EYEPOS_SPEC_EXPONENT );
+const float4 g_FogParams			: register( PSREG_FOG_PARAMS );
+PixelShaderLightInfo cLightInfo[ 3 ]	: register( PSREG_LIGHT_INFO_ARRAY );
+
+const float4 g_LiquidPlane			: register( c32 );	// world space normal (xyz), distance (w)
+const float4 g_LiquidColor			: register( c33 );	// rgb (linear), alpha
+const float4 g_SurfaceColor			: register( c34 );	// rgb, foam line height (units)
+const float4 g_GlassColor			: register( c35 );	// rgb, alpha
+const float4 g_Pass					: register( c36 );	// pass (0 solid, 1 back faces, 2 front faces), reflection strength, label threshold, liquid colour from the texture (0/1)
+const float4 g_Wave					: register( c37 );	// wave height (units), time, how far the bubbles have risen (s at their speed), fizz 0..1
+const float4 g_Bubbles				: register( c38 );	// density (0 = none), size (units), rising speed (units/s), sway
+const float4 g_Center				: register( c39 );	// fill point (world, xyz), tinted glass 0..1
+const float4 g_Key					: register( c40 );	// key colour of the parts holding liquid (rgb); w: 0 off, 1 key colour, 2 mask (s2)
+const float4 g_AxisStart			: register( c41 );	// container profile: start of its axis (world, xyz), length of a slice (w)
+const float4 g_AxisDir				: register( c42 );	// direction of the axis (xyz, unit), w: 1 profile known, 0 not
+const float4 g_Radii[ 2 ]			: register( c43 );	// radius of the 8 slices along the axis (c43, c44)
+const float4 g_DepthAlpha			: register( c45 );	// x: 1 = the solid parts write the depth into destination alpha (opaque container, for SSAO)
+
+#define BUBBLE_STEPS	14		// steps into the liquid for the bubbles
+#define BUBBLE_STEP		0.32	// length of a step (bubble cells)
+
+sampler BaseTextureSampler		: register( s0 );
+sampler EnvmapSampler			: register( s1 );
+sampler MaskSampler				: register( s2 );	// where the texture holds liquid (the proxy's mask)
+sampler NormalizeSampler		: register( s5 );
+
+struct PS_INPUT
+{
+	float2 baseTexCoord	: TEXCOORD0;
+	float4 lightAtten	: TEXCOORD1;
+	float3 worldNormal	: TEXCOORD2;
+	float3 worldPos		: TEXCOORD3;
+	float3 projPos		: TEXCOORD4;
+	float3 staticLight	: TEXCOORD5;
+	float  vFace		: VFACE;
+};
+
+float3 Lighting( PS_INPUT i, float3 vNormal )
+{
+	return PixelShaderDoLighting( i.worldPos, vNormal, float3( 0, 0, 0 ), false, true, i.lightAtten,
+		cAmbientCube, NormalizeSampler, NUM_LIGHTS, cLightInfo, false, false, 1.0f, false, BaseTextureSampler ) + i.staticLight;
+}
+
+// 1 where a texel has the key colour (same hue, colourful enough), 0 on grey,
+// white and other colours. Same rule as Fidelity_KeyMatch in the proxy.
+float KeyMatch( float3 vColor, float3 vKey )
+{
+	const float3 c = vColor - min( vColor.r, min( vColor.g, vColor.b ) );
+	const float3 k = vKey - min( vKey.r, min( vKey.g, vKey.b ) );
+	const float flMax = max( vColor.r, max( vColor.g, vColor.b ) );
+	const float flSaturation = ( flMax - min( vColor.r, min( vColor.g, vColor.b ) ) ) / max( flMax, 0.001 );
+	const float flHue = dot( c, k ) / max( length( c ) * length( k ), 0.0001 );
+	return smoothstep( 0.7, 0.85, flHue ) * smoothstep( 0.15, 0.3, flSaturation );
+}
+
+// Height of the waves at a point of the surface (two crossing wave trains),
+// and its slope for the surface normal.
+float Wave( float2 p, float t, out float2 vSlope )
+{
+	const float2 k1 = float2( 0.9, 0.35 ), k2 = float2( -0.4, 1.3 );
+	const float a1 = dot( p, k1 ) + t * 5.3;
+	const float a2 = dot( p, k2 ) + t * 7.9;
+	vSlope = k1 * cos( a1 ) * 0.6 + k2 * cos( a2 ) * 0.4;
+	return sin( a1 ) * 0.6 + sin( a2 ) * 0.4;
+}
+
+// Smooth noise 0..1 (value noise, smoothly blended between the cells)
+float SmoothNoise( float2 p )
+{
+	const float2 c = floor( p );
+	const float2 f = frac( p );
+	const float2 u = f * f * ( 3.0 - 2.0 * f );
+	return lerp( lerp( FidelityHash( c ), FidelityHash( c + float2( 1, 0 ) ), u.x ),
+		lerp( FidelityHash( c + float2( 0, 1 ) ), FidelityHash( c + float2( 1, 1 ) ), u.x ), u.y );
+}
+
+// The container's profile (c41-c44) at vPos: its radius there (between the
+// slices' middles - no dynamic indexing in ps_3_0), the distance from the
+// axis, and the widest radius. False outside its length or without a profile.
+bool ProfileAt( float3 vPos, out float flRadius, out float flDistance, out float flWidest )
+{
+	const float3 vRel = vPos - g_AxisStart.xyz;
+	const float flAlong = dot( vRel, g_AxisDir.xyz );
+	const float s = flAlong / max( g_AxisStart.w, 0.001 );
+	const float c = clamp( s - 0.5, 0.0, 7.0 );
+	const float4 w0 = saturate( 1.0 - abs( c - float4( 0, 1, 2, 3 ) ) );
+	const float4 w1 = saturate( 1.0 - abs( c - float4( 4, 5, 6, 7 ) ) );
+	flRadius = dot( g_Radii[ 0 ], w0 ) + dot( g_Radii[ 1 ], w1 );
+	flDistance = length( vRel - g_AxisDir.xyz * flAlong );
+	const float4 m = max( g_Radii[ 0 ], g_Radii[ 1 ] );
+	flWidest = max( max( m.x, m.y ), max( m.z, m.w ) );
+	return g_AxisDir.w > 0.5 && s >= 0.0 && s <= 8.0;
+}
+
+// Distance from the edge of the container where vPos lies (inside > 0), on
+// its profile; -1 outside its length or without a profile
+float InsideProfile( float3 vPos )
+{
+	float flRadius, flDistance, flWidest;
+	if ( !ProfileAt( vPos, flRadius, flDistance, flWidest ) )
+		return -1.0;
+	// Right up to the glass and a little beyond: the profile is only drawn on
+	// the container's own faces, so it can not poke out - but a margin inside
+	// left a see-through gap along the waterline (Julius: "Gap zwischen Decke
+	// und den Seiten")
+	return flRadius * 1.03 - flDistance;
+}
+
+// Rising bubbles seen through the container (0..1, a bright rim each), like
+// in a real fizzy drink (Julius: evenly spread over everything they made no
+// sense): they rise in strings from a few spots, meandering, one after the
+// other at uneven gaps, most small and a few big, and grow on the way up.
+// Shaken, many more strings with fewer gaps. None above the surface, none in
+// a narrow neck or cap (where the profile is less than 60 % of its widest).
+// Real spheres in the liquid: the view is followed into the container in
+// short steps (BUBBLE_STEPS x BUBBLE_STEP cells, fainter with depth), and in
+// the cell of each step the ray is tested against that cell's bubble. Seen
+// from any side or angle they stay round - drawn on the glass (strings laid
+// out on it, dots from above), they were stretched into streaks wherever the
+// glass turned away from the view (Julius: on every bottle and the vials).
+// The grid is fixed to the container's fill point, not to the view (turned
+// with the view, they slid sideways whenever the player walked). Bubbles
+// smaller than a pixel fade out instead of flickering.
+// Some sit still on the inside of the glass, as in a real glass left alone
+// (Julius: "ein paar Blasen ... statisch", above all when not touched): in a
+// second, fixed grid, only where a bubble's cell touches the glass. Shaken,
+// they come off (each at its own strength) and come back one by one as it
+// calms down.
+
+// How bright the view (from vStart along vDir) sees a bubble at vBubble
+// (cells, radius flSize): a bright rim, a clearer middle
+float BubbleRing( float3 vBubble, float flSize, float3 vStart, float3 vDir, out float flAlong )
+{
+	const float3 vTo = vBubble - vStart;
+	flAlong = dot( vTo, vDir );
+	const float x = length( vTo - vDir * flAlong ) / flSize;
+	return smoothstep( 1.0, 0.7, x ) * ( 1.0 - 0.7 * smoothstep( 0.7, 0.25, x ) );
+}
+
+float Bubbles( float3 vWorldPos, float3 vView, float flEyeDistance )
+{
+	// Far away they would be smaller than a pixel (and fade out: Julius saw
+	// none "von weiten"): the grid gets coarser in steps of two - fewer,
+	// bigger bubbles that stay visible. One step for the whole container (from
+	// its fill point), so no seam runs across it.
+	const float flFar = length( g_EyePos.xyz - g_Center.xyz ) * 0.0018 / g_Bubbles.y;	// a pixel there, in cells
+	// (at most 4 x: coarser, they were too big and too many - Julius: "zu stark")
+	const float flSize = g_Bubbles.y * clamp( exp2( ceil( log2( max( flFar * 5.0, 1.0 ) ) ) ), 1.0, 4.0 );
+	const float3 vDir = -vView;
+	const float3 vStart = ( vWorldPos - g_Center.xyz ) / flSize;	// in bubble cells, from the fill point
+	const float flSurface = ( g_LiquidPlane.w - dot( g_LiquidPlane.xyz, g_Center.xyz ) ) / flSize;	// the plane, same units
+	const bool bProfile = g_AxisDir.w > 0.5;
+	// without a profile the back of the container is not known: not as deep
+	const float flReach = ( bProfile ? BUBBLE_STEPS : BUBBLE_STEPS * 0.35 ) * BUBBLE_STEP;
+	const float t = g_Wave.y;
+	// How far they rose comes from the proxy (it adds up the speed, faster
+	// while shaken): time x speed would jump when the speed changes - the
+	// bubbles shot down before rising again.
+	const float flRisen = g_Wave.z * g_Bubbles.z / flSize;
+	// Strings: at rest a few (a quarter of $bubbles), shaken many more, with fewer gaps
+	const float flStrings = saturate( g_Bubbles.x * lerp( 0.25, 1.0, g_Wave.w ) + g_Wave.w * 0.3 );
+	const float flGaps = lerp( 0.65, 0.9, g_Wave.w );
+	// Bubbles on the glass: how many cells along it hold one
+	const float flStuck = bProfile ? saturate( g_Bubbles.x * 1.2 ) : 0.0;
+	// One screen pixel, in cells (roughly: 90 degrees, 1080 lines)
+	const float flPixel = flEyeDistance * 0.0018 / flSize;
+
+	float flResult = 0.0;
+	bool bInside = false;
+	[loop]
+	for ( int k = 0; k < BUBBLE_STEPS; k++ )
+	{
+		const float s = ( k + 0.5 ) * BUBBLE_STEP;
+		if ( s > flReach )
+			break;
+		const float3 p = vStart + vDir * s;
+		if ( dot( g_LiquidPlane.xyz, p ) > flSurface )
+			break;	// out of the liquid at the top
+		// Out through the far side: done. Not yet in (the profile is a little
+		// smaller than the glass in places): go on. (No continue and few nested
+		// branches: D3DX's compiler fails on them - "invalid read of more
+		// specific predicate".)
+		float flRadius = 1.0, flDistance = 0.0, flWidest = 1.0;
+		const bool bIn = !bProfile || ( ProfileAt( g_Center.xyz + p * flSize, flRadius, flDistance, flWidest ) && flDistance <= flRadius );
+		if ( !bIn && bInside )
+			break;
+		bInside = bInside || bIn;
+		const float flRoom = ( bIn ? 1.0 : 0.0 ) * ( bProfile ? smoothstep( 0.5, 0.7, flRadius / max( flWidest, 0.001 ) ) : 1.0 );
+		const float flFade = flRoom * ( 1.0 - 0.5 * s / flReach );	// fainter further in
+
+		// Still bubbles on the glass, in a grid of their own
+		const float3 vStill = floor( p + 0.37 );
+		const float hStill = FidelityHash( vStill.xy + vStill.z * float2( 7.13, 3.77 ) + 41.3 ) / max( flStuck * 0.2, 0.001 );	// < 1: one here
+		const float hPlace = FidelityHash( vStill.xy * 1.31 + vStill.z * float2( 2.9, 8.1 ) );
+		const float3 vStillBubble = vStill - 0.37 + 0.5 + ( float3( hPlace, frac( hPlace * 7.31 ), frac( hPlace * 13.7 ) ) - 0.5 ) * 0.5;
+		// how far from the glass (cells): the bubble's distance from the axis
+		// against the radius at this step (it changes slowly along the axis;
+		// a profile look-up of its own ran out of registers)
+		const float3 vStillRel = g_Center.xyz + vStillBubble * flSize - g_AxisStart.xyz;
+		const float flWall = ( flRadius * 1.03 - length( vStillRel - g_AxisDir.xyz * dot( vStillRel, g_AxisDir.xyz ) ) ) / flSize;
+		const float flStillSize = 0.05 + 0.1 * frac( hPlace * 3.7 ) * frac( hPlace * 3.7 );
+		float flStillAlong;
+		const float flStillRing = BubbleRing( vStillBubble, flStillSize, vStart, vDir, flStillAlong );
+		// shaken off: each at its own strength, back one by one as it calms down
+		const float flStays = 1.0 - smoothstep( 0.05 + 0.5 * hStill, 0.2 + 0.5 * hStill, g_Wave.w );
+		const bool bStill = bIn && hStill < 1.0 && flWall > 0.0 && flWall < 0.3 && flStillAlong > 0.0
+			&& flSurface - dot( g_LiquidPlane.xyz, vStillBubble ) > flStillSize;
+		flResult = max( flResult, ( bStill ? flStillRing * flStays * 0.8 : 0.0 ) * flFade
+			* smoothstep( flPixel * 0.4, flPixel * 1.2, flStillSize ) );
+
+		// Rising: a string only in some columns, every one at its own speed
+		// and with its own spacing, gaps in it
+		const float2 vColumn = floor( p.xy );
+		const float hString = FidelityHash( vColumn + 3.1 );
+		const float flSpacing = 1.0 + 1.6 * FidelityHash( vColumn + 5.9 );
+		const float flRise = flRisen * ( 0.6 + 0.8 * FidelityHash( vColumn + 8.3 ) );
+		const float flCell = floor( ( p.z - flRise ) / flSpacing );
+		const float hJitter = FidelityHash( float2( hString * 97.0, flCell ) + 2.9 );
+		const float hBubble = FidelityHash( float2( flCell, hString * 53.0 ) );
+		// The bubble: a little off the even spacing, meandering on the way
+		// up, wiggling (all within its cell, so no step misses it)
+		float3 vBubble;
+		vBubble.z = ( flCell + 0.5 + ( hJitter / flGaps - 0.5 ) * 0.3 ) * flSpacing + flRise;
+		const float flMeander = vBubble.z * 0.45 + hString * 6.2832;
+		const float flWiggle = t * 2.3 + hString * 40.0 + flCell * 0.7;
+		vBubble.xy = vColumn + 0.5 + ( float2( hBubble, hJitter / flGaps ) - 0.5 ) * 0.16
+			+ float2( sin( flMeander ), cos( flMeander * 0.8 ) ) * 0.1 + float2( sin( flWiggle ), cos( flWiggle * 1.3 ) ) * 0.06 * g_Bubbles.w;
+		// most small, a few big; bigger towards the surface (they take up gas on the way)
+		const float flBelow = flSurface - dot( g_LiquidPlane.xyz, vBubble );
+		const float flBubbleSize = ( 0.06 + 0.12 * hBubble * hBubble ) * lerp( 1.15, 0.6, saturate( flBelow * 0.1 ) );
+		// how close the view passes its centre
+		float flAlong;
+		const float flRing = BubbleRing( vBubble, flBubbleSize, vStart, vDir, flAlong );
+		const bool bRising = hString < flStrings && hJitter < flGaps && flAlong > 0.0;
+		const float flShow = ( bRising ? 1.0 : 0.0 ) * flFade
+			* smoothstep( flBubbleSize, flBubbleSize + 0.3, flBelow )	// gone at the surface
+			* smoothstep( flPixel * 0.4, flPixel * 1.2, flBubbleSize );	// not smaller than a pixel
+		flResult = max( flResult, flRing * flShow );
+	}
+	return flResult;
+}
+
+// Does the view to a back face below the surface pass through the surface
+// inside the container (then that face shows the surface from above)? Else it
+// came in through the side, below the surface: the face is seen through the
+// liquid (the bottom of a bottle showed light star shapes - the surface colour
+// on its inside). Without a profile: always (as before).
+bool BackFaceSeesSurface( float3 vWorldPos, float3 vView, float flAbove )
+{
+	if ( g_AxisDir.w < 0.5 )
+		return true;
+	const float flUp = dot( g_LiquidPlane.xyz, vView );	// towards the eye: up through the surface
+	if ( flUp <= 0.001 )
+		return false;
+	const float3 vCross = vWorldPos + vView * ( -flAbove / flUp );
+	return InsideProfile( vCross ) > 0.0;
+}
+
+// The liquid surface seen from above (vNormal: its normal with the waves),
+// lit. A real surface is the liquid's own colour, seen deep, with a
+// reflection on it - not a pale, lit disc (in the sun it glowed; Julius:
+// "viel zu hell"). A thin lighter line (flRim 0..1) where it meets the glass.
+// Foam only when shaken: soft drifting patches, mostly along the glass (the
+// blocky foam looked cheap).
+float3 LidColor( PS_INPUT i, float3 vPos, float3 vLiquidAlbedo, float flRim, float3 vNormal, float3 vView, float3 vThrough )
+{
+	float3 vLid = lerp( vLiquidAlbedo * 0.85, vLiquidAlbedo * 1.2, flRim * 0.6 );
+	if ( g_Wave.w > 0.01 )
+	{
+		const float2 p = vPos.xy * 0.9 + g_Wave.y * float2( 0.13, 0.07 );
+		const float n = SmoothNoise( p ) * 0.6 + SmoothNoise( p * 2.7 + 5.3 ) * 0.4;
+		const float flFoam = smoothstep( 0.55, 0.8, n + flRim * 0.3 ) * g_Wave.w;
+		vLid = lerp( vLid, lerp( vLiquidAlbedo, g_SurfaceColor.rgb, 0.6 ), flFoam * 0.7 );
+	}
+	// Mostly the light from all around: lit straight from above, the surface outshone the bottle
+	const float3 vLight = vThrough * 0.7 + Lighting( i, vNormal ) * 0.3;
+	const float flFresnel = 0.02 + 0.98 * pow( 1.0 - saturate( dot( vNormal, vView ) ), 5.0 );
+	const float3 vReflection = min( texCUBE( EnvmapSampler, reflect( -vView, vNormal ) ).rgb, 1.0 ) * g_Pass.y;
+	return vLid * vLight + vReflection * flFresnel;
+}
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	const bool bFront = i.vFace > 0;
+	const float4 vBase = tex2D( BaseTextureSampler, i.baseTexCoord );
+	// Does this texel belong to the part that holds liquid? The proxy's mask (key
+	// colour with the painted details inside filled in); without it the key
+	// colour on a blurred mip (streaks on the glass count as glass) - that one
+	// bled into other parts lying next to it in the texture (the medkit's box).
+	float flContainer = 1.0;
+	if ( g_Key.w > 1.5 )
+		flContainer = tex2D( MaskSampler, i.baseTexCoord ).r;
+	else if ( g_Key.w > 0.5 )
+		flContainer = KeyMatch( tex2Dbias( BaseTextureSampler, float4( i.baseTexCoord, 0, 4 ) ).rgb, g_Key.rgb );
+	// Solid: what holds no liquid, and labels and caps (high alpha of a see-through texture).
+	// With a key colour only the key decides: details painted into the liquid
+	// part (the health vial's highlights) showed as orange spots in it.
+	const float flLabel = g_Key.w > 0 ? 0.0 : smoothstep( g_Pass.z - 0.4, g_Pass.z, vBase.a );
+	const float flSolid = max( flLabel, 1.0 - flContainer );
+
+	const float flFogFactor = CalcPixelFogFactor( PIXELFOGTYPE, g_FogParams, g_EyePos.xyz, i.worldPos, i.projPos.z );
+	if ( g_Pass.x < 0.5 )
+	{
+		// Pass 1: the solid parts, as the model was (opaque). Both sides: seen
+		// from inside through the glass, the inner side of a cap or ring was
+		// culled and the caps looked invisible (Julius: "die Deckel sieht man
+		// von innen nicht").
+		clip( flSolid >= 0.5 ? 1 : -1 );
+		const float3 vSolid = vBase.rgb * Lighting( i, normalize( i.worldNormal ) * ( bFront ? 1.0 : -1.0 ) ) * g_DiffuseModulation.rgb;
+		return FinalOutput( float4( vSolid, g_DiffuseModulation.a ), flFogFactor, PIXELFOGTYPE, TONEMAP_SCALE_LINEAR, g_DepthAlpha.x > 0.5, i.projPos.z );
+	}
+	// Pass 2: back faces of the container, pass 3: its front faces (not the solid ones, they are drawn)
+	if ( g_Pass.x < 1.5 )
+		clip( !bFront && flContainer > 0.01 ? 1 : -1 );
+	else
+		clip( bFront && flSolid < 0.5 ? 1 : -1 );
+
+	float2 vSlope;
+	const float flWave = Wave( i.worldPos.xy, g_Wave.y, vSlope ) * g_Wave.x;
+	const float flAbove = dot( g_LiquidPlane.xyz, i.worldPos ) - g_LiquidPlane.w - flWave;
+	const bool bLiquid = flAbove < 0;
+
+	float3 vNormal = normalize( i.worldNormal ) * ( bFront ? 1.0 : -1.0 );
+	if ( !bFront && bLiquid )
+		vNormal = normalize( g_LiquidPlane.xyz - float3( vSlope * g_Wave.x, 0 ) );	// the liquid surface, with its waves
+
+	const float3 vView = normalize( g_EyePos.xyz - i.worldPos );
+	// The bubbles first, before the lighting's values take up registers (with
+	// one light the compiler ran out of them)
+	float flBubble = 0.0;
+	if ( bLiquid && bFront && g_Bubbles.x > 0 )
+		flBubble = saturate( Bubbles( i.worldPos, vView, length( g_EyePos.xyz - i.worldPos ) ) );
+	const float flFacing = saturate( dot( vNormal, vView ) );
+	const float flFresnel = 0.04 + 0.96 * pow( 1.0 - flFacing, 5.0 );
+	const float3 vReflection = texCUBE( EnvmapSampler, reflect( -vView, vNormal ) ).rgb * g_Pass.y;
+	const float3 vLight = Lighting( i, vNormal );
+	const float3 vOriginal = vBase.rgb * vLight;	// the model as it was
+	// Light coming through from all around (liquid never goes black)
+	const float3 vThrough = ( cAmbientCube[ 0 ] + cAmbientCube[ 1 ] + cAmbientCube[ 2 ] + cAmbientCube[ 3 ] + cAmbientCube[ 4 ] + cAmbientCube[ 5 ] ) / 6.0 + i.staticLight;
+	const float3 vLiquidAlbedo = g_Pass.w > 0.5 ? vBase.rgb : g_LiquidColor.rgb;
+
+	float3 vColor;
+	float flAlpha;
+	bool bLid = false;	// the view meets the surface behind this face
+	// A back face below the surface that shows the surface seen from above
+	const bool bBackLid = bLiquid && !bFront && dot( g_LiquidPlane.xyz, g_EyePos.xyz ) > g_LiquidPlane.w &&
+		BackFaceSeesSurface( i.worldPos, vView, flAbove );
+	if ( bLiquid )
+	{
+		// How much liquid the view goes through: little in the middle, a lot at the edges.
+		const float flThickness = 1.0 / max( flFacing, 0.15 );
+		const float flDensity = 1.0 - exp( -flThickness * ( 0.5 + 2.0 * g_LiquidColor.a ) );
+		float3 vLiquid = vLiquidAlbedo * lerp( 1.0, 0.75, flDensity );
+		if ( bFront )
+		{
+			// Meniscus: a thin, slightly lighter line right under the surface
+			// (brighter it read as a green ring round the vial)
+			const float flMeniscus = saturate( 1.0 + flAbove / max( g_SurfaceColor.w * 0.6, 0.01 ) );
+			vLiquid = lerp( vLiquid, vLiquidAlbedo * 1.25 + 0.02, saturate( flMeniscus * ( 0.25 + 0.4 * g_Wave.w ) ) );
+			flAlpha = lerp( g_LiquidColor.a, 0.98, flDensity );
+			if ( g_Bubbles.x > 0 )
+			{
+				// a light, paler rim: on a strong colour (the medical green) a brighter
+				// shade of it was not to be seen
+				// (half as strong as before: they shone too bright - Julius: "viel zu hell")
+				vLiquid = lerp( vLiquid, lerp( vLiquidAlbedo, float3( 1, 1, 1 ), 0.35 ), flBubble * 0.45 );
+				flAlpha = saturate( flAlpha + flBubble * 0.1 );
+			}
+		}
+		else if ( bBackLid )
+		{
+			// The surface seen from above, through the glass (where the profile does not reach)
+			vColor = LidColor( i, i.worldPos, vLiquidAlbedo, saturate( 1.0 + flAbove / max( g_SurfaceColor.w * 3.0, 0.1 ) ), vNormal, vView, vThrough );
+			flAlpha = 0.97;
+		}
+		else
+		{
+			// Seen from below (bottle held up, thrown), or through the liquid
+			// from the side (the bottom of a bottle): the far side of the
+			// liquid, as dense as the body - not the surface from above
+			vLiquid = vLiquidAlbedo * 0.75;
+			flAlpha = lerp( g_LiquidColor.a, 0.98, flDensity );
+		}
+		if ( !bBackLid )
+		{
+			vColor = vLiquid * ( vLight * 0.8 + vThrough * 0.2 ) + vReflection * flFresnel;
+			flAlpha = saturate( flAlpha + flFresnel * ( 1.0 - flAlpha ) );
+		}
+	}
+	else
+	{
+		// Empty glass: the texture, lighter and without most of its colour
+		// (a green tube without liquid is clear glass), and reflections.
+		const float3 vGlass = lerp( FidelityLuminance( vBase.rgb ).xxx, vBase.rgb, 0.35 ) * g_GlassColor.rgb;
+		vColor = vGlass * vLight * 0.6 + vReflection * flFresnel;
+		flAlpha = saturate( g_GlassColor.a * 0.5 + flFresnel * 0.45 ) * ( bFront ? 1.0 : 0.5 );
+
+		// The surface behind this glass: where the view, going down, meets the
+		// plane inside the container's profile
+		const float3 vDir = -vView;
+		const float flDown = -dot( g_LiquidPlane.xyz, vDir );
+		if ( bFront && flDown > 0.02 )
+		{
+			const float3 vHit = i.worldPos + vDir * ( flAbove / flDown );
+			const float flInside = InsideProfile( vHit );
+			if ( flInside > 0.0 )
+			{
+				bLid = true;
+				float2 vLidSlope;
+				Wave( vHit.xy, g_Wave.y, vLidSlope );
+				const float3 vLidNormal = normalize( g_LiquidPlane.xyz - float3( vLidSlope * g_Wave.x, 0 ) );
+				const float flRim = saturate( 1.0 - flInside / max( g_SurfaceColor.w * 3.0, 0.1 ) );
+				const float3 vLid = LidColor( i, vHit, vLiquidAlbedo, flRim, vLidNormal, vView, vThrough );
+				// the glass over the surface (blended as the GPU would)
+				const float flLidAlpha = 0.97;
+				const float flOut = flAlpha + flLidAlpha * ( 1.0 - flAlpha );
+				vColor = ( vColor * flAlpha + vLid * flLidAlpha * ( 1.0 - flAlpha ) ) / flOut;
+				flAlpha = flOut;
+			}
+		}
+	}
+
+	// Dark glass: its own colour over everything. The part with liquid darker
+	// and dense, the empty part see-through - the level shows from every side
+	// (Julius: the brown bottle was hard to see depending on the side); the far
+	// side stays see-through too (it made the bottle look solid).
+	if ( g_Center.w > 0 )
+	{
+		const bool bFull = bLiquid || bLid;
+		const float3 vTint = vOriginal * ( bFull ? 0.6 : 0.85 ) + vReflection * flFresnel;
+		vColor = lerp( vColor, vTint, g_Center.w * ( bFull ? 0.55 : 0.8 ) );
+		const float flTintAlpha = bFront ? ( bFull ? 0.9 : 0.55 ) : 0.4;
+		flAlpha = lerp( flAlpha, saturate( flTintAlpha + flFresnel * ( 1.0 - flTintAlpha ) ), g_Center.w );
+	}
+	// Bubbles show through dark glass too (they were lost in it)
+	// (lit like the liquid: unlit they glowed white in dark corners)
+	vColor = lerp( vColor, ( vLiquidAlbedo * 1.3 + 0.05 ) * ( vLight * 0.8 + vThrough * 0.2 ), flBubble * 0.2 * g_Center.w );
+
+	// Towards the solid parts it blends into the model as it was.
+	if ( bFront )
+	{
+		vColor = lerp( vColor, vOriginal, flSolid * 2.0 );
+		flAlpha = lerp( flAlpha, 1.0, flSolid * 2.0 );
+	}
+
+	vColor *= g_DiffuseModulation.rgb;
+	flAlpha *= g_DiffuseModulation.a;
+
+	return FinalOutput( float4( vColor, flAlpha ), flFogFactor, PIXELFOGTYPE, TONEMAP_SCALE_LINEAR );
+}

@@ -109,6 +109,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
 | `git_status` | Git-Ausgaben lesen (`status`, `log` ohne E-Mail), Remote → Web-Adresse |
 | `mod_code` | Quellcode der Mod (Mapbase-Checkout mit mapbase-fidelity): `modCodeScripts` (erkannt an `fidelity/update.ps1` + `sp/src` oder `update.bat`), `findModCode` (Suchwurzeln selbst, dann Unterordner – der Name der Mod zuerst, max. 300 je Wurzel), `modCodeSearchRoots` (GitHub Desktop, Visual Studio, Laufwerks-Ordner), `modCodeCommand` (PowerShell mit `-NoProfile -NonInteractive -File … -GamePath <mod>`, Windows mit `-ExecutionPolicy Bypass`, sonst `pwsh`; nie `pause`, nie `Read-Host`), `classifyScriptLine` (Statuswörter von `update.ps1`/`deploy.ps1`/`report.ps1` → Schritt + Art), `ScriptRun` (Schritt nur vorwärts, Fehlerzeilen ohne Dopplung, Zips des Berichts, `advice()` über `updateFailureAdvice`) |
+| `mod_install` | Funktionen der Mod aus Mapsmith installieren (ohne Compiler): Feature-Bundle (`readFeatureBundle`, `manifest.txt` = `mapsmith-features 1`, `version`, `<sha256>  <pfad>`; Pfade aus dem Ordner heraus machen das Manifest ungültig; `verifyFeatureBundle`), `modBranch` (Episodic, wenn `gameinfo.txt` außerhalb von Kommentaren `ep2`/`episodic` nennt), `featureInstallPlan` (`bin/<zweig>/client|server.dll` → `bin/`, `bin/game_shader_dx6.dll`, `fidelity/game/**` → Mod), `installFeatures` (nur geänderte Dateien, über Temp-Datei + `rename`; fremde Dateien einmal als `<datei>.mapsmith-backup`; `exec fidelity\t// mapbase-fidelity` wie deploy.ps1; VRAD ins SDK-`bin` mit `fidelity_backup/` + `fidelity_backup.txt` wie update.ps1; `cfg/mapsmith_installed.txt` mit Version, Zweig, Dateien + SHA-256, Backups), `removeFeatures` (Backups zurück, eigene unveränderte Dateien weg, eigene Exec-Zeile weg, VRAD zurück), eigenes SHA-256 (`sha256Hex`, `fileSha256`), `bundledScripts` (deploy.ps1/report.ps1 aus dem Bundle) |
 | `mod_features` | Funktionen von mapbase-fidelity als eine Liste (`modFeatures`: Id, Gruppe Graphics/Effects/Sound/Materials, Titel, eine Zeile, die Ein/Aus-ConVars (`FCVAR_ARCHIVE`) und/oder der Material-Effekt der Game enhancements); `writeFeaturesCfg`/`parseFeaturesCfg` (`cfg/mapsmith_features.cfg`: jeder Schalter 1/0), `saveFeatureChoice`/`hookFeatureChoice` (Zeile `exec mapsmith_features // mapsmith` in `autoexec.cfg`, nur mit Add-on), `withFeatureEffects`/`featuresOffBySettings` (Material-Funktionen ↔ `EnhancementSettings`), `generatedModFiles` (was deploy.ps1 und Mapsmith in der Mod gemacht haben: Marker in der ersten Zeile, Manifeste, Shader/DLL/cfg des Add-ons), `removeEditorFiles` |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
@@ -148,8 +149,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
 | `texts_panel` | Project › Texts: Lokalisierung und Captions der Mod (Tabelle Token × Sprache, Caption-Vorschau, Speichern, Captions kompilieren) |
 | `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf); meldet `pulled(root, changed)` und „Update mod“ (`updateModRequested`) an Mod code |
-| `mod_code_panel` | Project › Mod code: `update.ps1`/`deploy.ps1`/`report.ps1` per `QProcess` ohne Konsole (Schritte, Fortschritt, Log, Zusammenfassung mit Rat, Cancel beendet den ganzen Prozessbaum), Checkout finden/wählen je Mod, Optionen je Mod (nach Pull aktualisieren, beim Start `git fetch` bzw. Pull & Update), Zeile auf dem Overview (`banner()`); nach Erfolg `modUpdated` → `MainWindow` öffnet das Spiel neu (Caches, Game enhancements); `reportHowTo()` = Tooltip aller „Make report“-Knöpfe (Map-Menü, Compile, Problems → `MainWindow::makeReport`) |
-| `features_panel` | Project › Features: `FeatureChecklist` (auch im New-mod-Dialog, kompakt), `FeaturesPanel` (Haken sofort gespeichert: Schalter → `cfg/mapsmith_features.cfg`, Material-Funktionen → Game enhancements), Angebot einmal auf dem Overview (`offer()`), Fresh install inline bestätigt (Liste aus `generatedModFiles`) → `ModCodeAction::RemoveGameFiles` → Funktionen schreiben → Update mod bzw. Deploy |
+| `mod_code_panel` | Project › Build from source (letzter Tab, nur wer die Mod selbst baut): `update.ps1`/`deploy.ps1`/`report.ps1` per `QProcess` ohne Konsole (Schritte, Fortschritt, Log, Zusammenfassung mit Rat, Cancel beendet den ganzen Prozessbaum), Checkout finden/wählen je Mod, Optionen je Mod (nach Pull aktualisieren, beim Start `git fetch` bzw. Pull & Update), Zeile auf dem Overview (`banner()`); nach Erfolg `modUpdated` → `MainWindow` öffnet das Spiel neu (Caches, Game enhancements); `reportHowTo()` = Tooltip aller „Make report“-Knöpfe (Map-Menü, Compile, Problems → `MainWindow::makeReport`) |
+| `features_panel` | Project › Features: Kasten *Install* (`featureBundleDir()` = `$SME_FEATURES_DIR` oder `features/` neben dem Programm; `installNow`/`removeNow` über `mod_install`, danach deploy.ps1 des Bundles über `ModCodePanel` → `installed()` → Spiel neu lesen; Auto-Update einmal je Sitzung und Mod, QSettings `features/autoUpdate`, Standard an; Angebot „Install features“ auf dem Overview für Mapbase-Mods ohne Add-on), `FeatureChecklist` (auch im New-mod-Dialog, kompakt), `FeaturesPanel` (Haken sofort gespeichert: Schalter → `cfg/mapsmith_features.cfg`, Material-Funktionen → Game enhancements), Angebot einmal auf dem Overview (`offer()`), Fresh install inline bestätigt (Liste aus `generatedModFiles`) → `ModCodeAction::RemoveGameFiles` → Funktionen schreiben → Update mod bzw. Deploy |
 | `ship_panel` | Project › Ship: Abhängigkeiten, bspzip, ZIPs, Workshop |
 | `new_mod_dialog` | „New mod …“: neue Mod aus Karten |
 | `find_dialog`, `replace_materials_dialog` | Entities finden + Entity-Bericht; Materialien ersetzen |
@@ -292,8 +293,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   (`Viewport::drawConnections`, Ziele auch mit `*` am Ende).
 - Seitenleiste: `MainWindow` hat links die Werkzeugleiste „Pages“ (vor den Werkzeugen) und in der Mitte
   einen `QStackedWidget` (`workspacePages`) mit den Seiten aus `MainWindow::Page`: Map (die Views), Materials
-  (`MaterialEditor`), Models (`ModelsPage`), Sounds, Particles, Project (`QTabWidget` „projectTabs“: Overview = `ModPage`, Maps, Menu,
-  Source control, Ship). Sound- und Partikel-Browser sind beim Mappen
+  (`MaterialEditor`), Models (`ModelsPage`), Sounds, Particles, Project (`QTabWidget` „projectTabs“: Overview = `ModPage`, Features, Maps, Menu,
+  Texts, Source control, Ship, Build from source). Sound- und Partikel-Browser sind beim Mappen
   Docks; `showPage()` hängt sie in ihre Seite um und beim Zurückgehen wieder ins Dock. Solange nicht „Map“ vorn ist,
   blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
   der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Project")` zeigt die Seite ("Mod" geht
@@ -386,6 +387,31 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   `deploy.ps1 -Remove` (`ModCodeAction::RemoveGameFiles`, löst kein `modUpdated` aus), Funktionen neu schreiben,
   Update mod bzw. Install game files (`finished` von `ModCodePanel`, nächster Schritt per `QTimer::singleShot(0)`).
   UI-Test „features“ mit `setCommandFactory` wie bei Mod code.
+- Funktionen aus Mapsmith (`mod/`, `tools/export_mod_addon.py`, `.github/workflows/mod.yml`, Kern `mod_install`,
+  `FeaturesPanel`): Julius baut nichts selbst – kein Pull, kein Visual Studio, kein `update.bat`. Der Add-on-Code
+  (mapbase-fidelity) liegt deshalb (öffentlich) hier in `mod/`, aus dem privaten Mod-Repo exportiert:
+  `mod/MAPBASE` (Mapbase-Repo, Basis-Commit = `develop` d9fd335, exportierter Commit), `mod/sp/…` (alle Dateien, die
+  das Add-on unter `sp/` hinzufügt), `mod/mapbase.patch` (alle Änderungen an Mapbase-Dateien: Haken mit
+  `// mapbase-fidelity`, VPC/VGC, VS2022-Schalter, VRAD) und `mod/fidelity/…` (Spieldateien, Skripte, ohne Tests).
+  `mod/` nie von Hand ändern. **Nach Änderungen am Add-on** (im Mod-Repo, gemergt):
+  `python3 tools/export_mod_addon.py --repo <mymod>` (liest nur den Commit `--ref`, Standard `master`), committen;
+  `--check` prüft, dass `mod/` (im Index, Zeilenenden normalisiert) genau der Export ist. Geprüft am 28.10.2026:
+  Basis + Patch + `mod/sp` ergibt exakt den `sp/`-Baum von mymod `52465da`, und der Linux-Prüfbau `client_episodic
+  server_episodic shaders_fidelity` davon läuft durch. Nimmt die Mod ein neueres Mapbase, `DEFAULT_BASE` im Skript
+  anpassen. CI (`mod.yml`, Windows-Runner `windows-2022` wegen Toolset v143; von `ci.yml` und `release.yml` gerufen):
+  Mapbase am Basis-Commit (sparse `sp`, `core.autocrlf false`, damit der Patch passt), Patch + Dateien, VPC
+  (`creategameprojects.bat`, `createmaptoolsprojects.bat`), `tools/repair_vpc_solution.py` (fehlende
+  Release|Win32-Bauzeilen wie `Repair-Solution` in update.ps1), MSBuild `games.sln` und aus `maptools.sln` nur
+  `Vrad_dll;Vrad_launcher`, dann `tools/collect_mod_build.py` → Feature-Bundle (Artefakt `mapsmith-features`,
+  Cache-Schlüssel = Hash von `mod/**` + Skripten, also nur neu gebaut, wenn sich das Add-on ändert). Das Windows-Paket
+  legt es als `features/` neben `Mapsmith.exe` (ZIP und Installer; der Updater bringt es mit). Version des Bundles =
+  `mod/fidelity/VERSION` + `+` + exportierter Commit (7 Zeichen); weicht sie von `cfg/mapsmith_installed.txt` ab,
+  aktualisiert der Features-Tab die Mod beim Öffnen. Ohne Checkout führt „Update mod“ (Build from source, Source
+  control, Hinweise anderer Panels) `installNow` aus, und deploy.ps1/report.ps1 laufen aus dem Bundle (Make report
+  ohne Quellcode). Neue Mapbase-Mod (`createModAndSwitch`): Funktionen gleich installiert, deploy.ps1 beim ersten
+  Öffnen (QSettings `features/deployPending/<ordner>`). Tests: `test_mod_install.cpp` (Kern, mit
+  `test::makeFeatureBundle`), UI-Test „features from Mapsmith“. Nicht prüfbar hier: der Windows-Bau in der CI bis er
+  einmal läuft, und das Spiel mit den gebauten DLLs.
 - Material-Editor (`MaterialEditor` + `MaterialPreview`): Felder für die häufigen Parameter, Tabelle für den Rest,
   Vorschau (Wand/Würfel/Kugel, Sonne/Lampe/Nacht/unbeleuchtet; ssbump über die drei Basisvektoren). Speichern schreibt
   nach `<mod>/materials/<name>.vmt` (VPK-Material → Kopie in der Mod) und meldet `materialSaved` → `MaterialCache::reload`.
@@ -564,7 +590,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 
 - Linux: siehe `.claude/CLAUDE.md`. Windows: Visual Studio 2022 oder neuer + Qt 6.8 (`-DCMAKE_PREFIX_PATH=<Qt>/msvc2022_64`).
 - CI (`.github/workflows/ci.yml`): `checks` (Privatsphäre), `linux` (Build, Tests, UI-Tests unter Xvfb, Screenshots als
-  Artefakt), `windows` (MSVC-Build, Tests, ZIP mit `Mapsmith.exe`, `sme-probe.exe`, Qt-DLLs, Prüfsumme, dazu der Installer
+  Artefakt), `mod` (die Funktionen der Mod aus `mod/` auf Mapbase gebaut, `mod.yml`, gecacht), `windows` (MSVC-Build,
+  Tests, ZIP mit `Mapsmith.exe`, `sme-probe.exe`, Qt-DLLs, `features/` (Feature-Bundle), Prüfsumme, dazu der Installer
   `Mapsmith-Setup-<version>.exe` aus `installer/mapsmith.iss` (Inno Setup, pro Benutzer nach `%LOCALAPPDATA%\Programs\Mapsmith`,
   ohne Adminrechte; der Updater ersetzt später die Dateien dort aus der ZIP). Programm-Icon: `src/app/resources/mapsmith.ico`
   (`Mapsmith --write-icon DIR` + `tools/make_ico.py`; gezeichnet in `icons.cpp` `drawAppLogo`). Der frühere Name war

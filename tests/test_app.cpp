@@ -4951,6 +4951,153 @@ TEST_CASE("relief: the bricks found in the texture, whole bricks as zones, chang
 	REQUIRE(waitFor([](const MaterialInfo& info) { return info.shader.compare("LightmappedGeneric", Qt::CaseInsensitive) == 0; }));
 }
 
+TEST_CASE("features from Mapsmith: offered on the Overview, installed by one click, updated by themselves, removed again") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	// The feature bundle the Windows package carries next to Mapsmith.exe.
+	QTemporaryDir bundleDir;
+	const auto bundle = toPath(bundleDir.path());
+	test::makeFeatureBundle(bundle, "1.0+aaa", "one");
+	qputenv("SME_FEATURES_DIR", bundleDir.path().toUtf8());
+
+	test::Fixture f;
+	test::createFixture(f);   // a Mapbase mod (HL2) without the add-on, Mapbase's own DLL in bin
+	test::writeText(f.mod / "bin" / "client.dll", "mapbase client");
+	test::writeText(f.sdkBase / "bin" / "vrad.exe", "mapbase vrad");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	REQUIRE_FALSE(editor.hasFidelity());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	auto* features = window.featuresPanel();
+	auto* modCode = window.modCodePanel();
+	REQUIRE(features);
+	REQUIRE(modCode);
+	REQUIRE(features->bundle());
+	CHECK(features->installState() == FeaturesPanel::InstallState::NotInstalled);
+	// No PowerShell in the test: the bundle's scripts print what the real ones print.
+	std::vector<ModCodeAction> ran;
+	std::vector<std::filesystem::path> ranScripts;
+	modCode->setCommandFactory([&](ModCodeAction action, const ModCodeScripts& scripts, const std::filesystem::path&) {
+		ran.push_back(action);
+		const auto script = action == ModCodeAction::Report ? scripts.report : scripts.deploy;
+		ranScripts.push_back(script);
+		ScriptCommand command;
+		command.workingDir = scripts.root;
+#ifdef Q_OS_WIN
+		command.program = "cmd.exe";
+		command.args = {"/c", "type", fromPath(script).replace('/', '\\').toStdString()};
+#else
+		command.program = "sh";
+		command.args = {"-c", "cat \"$1\"; echo Done.", "sh", fromPath(script).toStdString()};
+#endif
+		return std::optional<ScriptCommand>(command);
+	});
+	QSignalSpy installed(features, &FeaturesPanel::installed);
+	const auto waitInstalled = [&](int count) {
+		for (int i = 0; i < 500 && installed.count() < count; ++i) QTest::qWait(20);
+		settle();
+		return installed.count() >= count;
+	};
+
+	// The Overview offers the install (a Mapbase mod without the features).
+	auto* offer = features->offer();
+	REQUIRE(offer);
+	CHECK_FALSE(offer->isHidden());
+	auto* offerInstall = offer->findChild<QPushButton*>("featuresOfferInstall");
+	REQUIRE(offerInstall);
+	CHECK_FALSE(offerInstall->isHidden());
+	CHECK(offer->findChild<QPushButton*>("featuresOfferChoose")->isHidden());
+	// Build from source is out of the way: last tab, and without source code its "Update mod"
+	// installs these features.
+	CHECK(window.projectTabs()->indexOf(modCode) == window.projectTabs()->count() - 1);
+	CHECK(window.projectTabs()->tabText(window.projectTabs()->indexOf(modCode)) == "Build from source");
+	CHECK_FALSE(modCode->hasCheckout());
+	CHECK(modCode->findChild<QPushButton*>("modCodeUpdate")->text() == "Install features");
+	CHECK(modCode->canRun(ModCodeAction::Report));   // Make report works without the mod's source code
+	CHECK(modCode->scripts()->report == bundle / "fidelity" / "report.ps1");
+
+	// One click: the files are in, then the bundle's deploy.ps1 makes the generated materials.
+	QTest::mouseClick(offerInstall, Qt::LeftButton);
+	REQUIRE(waitInstalled(1));
+	CHECK(readFileText(f.mod / "bin" / "client.dll") == "hl2 client one");
+	CHECK(readFileText(f.mod / "bin" / "client.dll.mapsmith-backup") == "mapbase client");
+	CHECK(readFileText(f.mod / "bin" / "game_shader_dx6.dll") == "shaders one");
+	CHECK(readFileText(f.mod / "shaders" / "fxc" / "fidelity_ssao_ps20b.vcs") == "ssao one");
+	CHECK(readFileText(f.sdkBase / "bin" / "vrad.exe") == "vrad one");
+	CHECK(readFileText(f.sdkBase / "bin" / "fidelity_backup" / "vrad.exe") == "mapbase vrad");
+	CHECK(ran == std::vector<ModCodeAction>{ModCodeAction::Deploy});
+	CHECK(ranScripts.back() == bundle / "fidelity" / "deploy.ps1");
+	settle();
+	CHECK(editor.hasFidelity());   // the game was read again: the views and enhancements see the add-on
+	CHECK(features->installState() == FeaturesPanel::InstallState::Current);
+	auto* state = features->findChild<QLabel*>("featuresInstallState");
+	REQUIRE(state);
+	CHECK(state->text().contains("1.0+aaa"));
+	CHECK(features->findChild<QPushButton*>("featuresInstall")->text() == "Install again");
+	CHECK_FALSE(features->findChild<QPushButton*>("featuresRemove")->isHidden());
+	// The Overview now offers the checklist instead (the add-on is there, no choice yet).
+	CHECK(offerInstall->isHidden());
+	CHECK_FALSE(offer->findChild<QPushButton*>("featuresOfferChoose")->isHidden());
+
+	// A newer Mapsmith: the mod gets the new version by itself when it is opened.
+	test::makeFeatureBundle(bundle, "2.0+bbb", "two");
+	features->reloadBundle();
+	REQUIRE(waitInstalled(2));
+	CHECK(readFileText(f.mod / "bin" / "client.dll") == "hl2 client two");
+	CHECK(readFileText(f.mod / "bin" / "client.dll.mapsmith-backup") == "mapbase client");
+	CHECK(features->installState() == FeaturesPanel::InstallState::Current);
+	CHECK(state->text().contains("2.0+bbb"));
+	// Switched off, a newer one waits for a click.
+	features->findChild<QCheckBox*>("featuresAutoUpdate")->setChecked(false);
+	test::makeFeatureBundle(bundle, "3.0+ccc", "three");
+	features->reloadBundle();
+	settle();
+	QTest::qWait(100);
+	CHECK(features->installState() == FeaturesPanel::InstallState::Outdated);
+	CHECK(features->findChild<QPushButton*>("featuresInstall")->text() == "Update features");
+	CHECK(readFileText(f.mod / "bin" / "client.dll") == "hl2 client two");
+
+	// Remove: what the mod had before comes back.
+	QTest::mouseClick(features->findChild<QPushButton*>("featuresRemove"), Qt::LeftButton);
+	REQUIRE(waitInstalled(3));
+	CHECK(ran.back() == ModCodeAction::RemoveGameFiles);
+	CHECK(readFileText(f.mod / "bin" / "client.dll") == "mapbase client");
+	CHECK_FALSE(std::filesystem::exists(f.mod / "bin" / "game_shader_dx6.dll"));
+	CHECK(readFileText(f.sdkBase / "bin" / "vrad.exe") == "mapbase vrad");
+	CHECK(features->installState() == FeaturesPanel::InstallState::NotInstalled);
+
+	// "Update mod" without source code (Build from source tab, the notes elsewhere): installs.
+	QTest::mouseClick(modCode->findChild<QPushButton*>("modCodeUpdate"), Qt::LeftButton);
+	REQUIRE(waitInstalled(4));
+	CHECK(readFileText(f.mod / "bin" / "client.dll") == "hl2 client three");
+
+	// A new Mapbase mod has the game code and the features from the start; its generated
+	// materials follow when it opens.
+	QString error;
+	ModTemplate fresh{"Fresh Mod", "freshmod", ModBase::Mapbase, mapbaseMounts(f.steam / "steamapps/sourcemods")};
+	REQUIRE(createModAndSwitch(&editor, fresh, {}, &error) == "sourcemods/freshmod");
+	const auto freshDir = f.steam / "steamapps/sourcemods/freshmod";
+	const auto freshInstalled = readInstalledFeatures(freshDir);
+	REQUIRE(freshInstalled);
+	CHECK(freshInstalled->version == "3.0+ccc");
+	// (the template mounts Episode Two: its DLLs)
+	CHECK(freshInstalled->branch == modBranch(readFileText(freshDir / "gameinfo.txt").value_or("")));
+	CHECK(readFileText(freshDir / "bin" / "server.dll") ==
+	      std::string(modBranchName(freshInstalled->branch)) + " server three");
+	REQUIRE(waitInstalled(5));
+	CHECK(ran.back() == ModCodeAction::Deploy);
+	CHECK(editor.hasFidelity());
+	qunsetenv("SME_FEATURES_DIR");
+}
+
 namespace {
 
 /// Watches for windows that pop up by accident: a widget shown before it is put into a layout is

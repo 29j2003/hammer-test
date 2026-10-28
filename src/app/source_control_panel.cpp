@@ -141,7 +141,7 @@ SourceControlPanel::SourceControlPanel(Editor* editor, QWidget* parent) : QWidge
 	m_pull = button(tr("Pull"), "scmPull", tr("Get the new commits from the remote and merge them"));
 	m_push = button(tr("Push"), "scmPush", tr("Send your commits to the remote"));
 	m_openSolution = button(tr("Open in Visual Studio"), "scmSolution", tr("Open the solution of the source code"));
-	m_runUpdate = button(tr("Update mod"), "scmUpdate", tr("Build the mod's code and install everything into the mod (Project > Mod code)"));
+	m_runUpdate = button(tr("Update mod"), "scmUpdate", tr("Build the mod's code and install everything into the mod (Project > Build from source)"));
 	for (auto* b : {m_fetch, m_pull, m_push}) actionRow->addWidget(b);
 	actionRow->addStretch(1);
 	actionRow->addWidget(m_openSolution);

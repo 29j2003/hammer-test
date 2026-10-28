@@ -121,6 +121,15 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	v->setContentsMargins(12, 10, 12, 10);
 	v->setSpacing(10);
 
+	// Not needed for the features: Project > Features installs them.
+	m_bundleNote = new QLabel(tr("<b>Only for building the mod from its own source code.</b> The mod's features (ambient occlusion, "
+	                             "light shafts, liquid in bottles ...) come with Mapsmith: Project &gt; Features installs and updates "
+	                             "them - no compiler, no scripts. Make report works here either way."));
+	m_bundleNote->setObjectName("modCodeBundleNote");
+	m_bundleNote->setWordWrap(true);
+	m_bundleNote->setProperty("role", "description");
+	v->addWidget(m_bundleNote);
+
 	// Where the source code is.
 	auto* source = card(tr("Source code of the mod"));
 	auto* sv = new QVBoxLayout(source);
@@ -297,6 +306,22 @@ void ModCodePanel::setCommandFactory(CommandFactory factory) {
 	updateButtons();
 }
 
+void ModCodePanel::setFeatureBundle(std::optional<FeatureBundle> bundle, std::function<void()> install) {
+	m_bundle = std::move(bundle);
+	m_installBundle = std::move(install);
+	showRepository();
+}
+
+bool ModCodePanel::hasCheckout() const {
+	return modCodeScripts(toPath(m_root)).has_value();
+}
+
+std::optional<ModCodeScripts> ModCodePanel::scripts() const {
+	if (auto checkout = modCodeScripts(toPath(m_root))) return checkout;
+	if (m_bundle) return bundledScripts(*m_bundle);
+	return std::nullopt;
+}
+
 QString ModCodePanel::settingsKey(const QString& name) const {
 	return QStringLiteral("games/%1/modCode/%2").arg(QString(m_gameKey).replace('/', '_'), name);
 }
@@ -406,8 +431,11 @@ void ModCodePanel::showRepository() {
 	if (m_gameKey.isEmpty()) {
 		m_state->setText(tr("Open a mod first (the game button at the top)."));
 	} else if (m_root.isEmpty()) {
-		m_state->setText(tr("No source code found for this mod. If the mod is built from its own code (Mapbase with "
-		                    "mapbase-fidelity), press Choose folder ... and pick the folder with fidelity and sp in it."));
+		m_state->setText(m_bundle ? tr("No source code chosen - not needed: the features come with Mapsmith (Project > Features). "
+		                               "Only if you build the mod yourself, press Choose folder ... and pick the folder with "
+		                               "fidelity and sp in it.")
+		                          : tr("No source code found for this mod. If the mod is built from its own code (Mapbase with "
+		                               "mapbase-fidelity), press Choose folder ... and pick the folder with fidelity and sp in it."));
 	} else if (!scripts) {
 		m_state->setText(tr("This folder has no fidelity/update.ps1 - choose the folder of the mod's source code."));
 	} else {
@@ -425,7 +453,13 @@ void ModCodePanel::showRepository() {
 	} else {
 		m_news->clear();
 	}
-	m_platformNote->setVisible(!onWindows && !m_factory);
+	// Without source code "Update mod" installs the features Mapsmith brings.
+	const bool fromBundle = !scripts && m_bundle && m_installBundle;
+	m_update->setText(fromBundle ? tr("Install features") : tr("Update mod"));
+	m_update->setToolTip(fromBundle ? tr("Install the features Mapsmith brings into the mod (as Project > Features does)")
+	                                : tr("Build the code with Visual Studio 2022 and install everything into the mod: DLLs, VRAD with baked AO, game files"));
+	m_noVrad->setVisible(!fromBundle);
+	m_platformNote->setVisible(!onWindows && !m_factory && !fromBundle);
 	m_platformNote->setText(QStandardPaths::findExecutable(QStringLiteral("pwsh")).isEmpty()
 	                            ? tr("Building the mod's code needs Windows with Visual Studio 2022. Installing the game files and "
 	                                 "making reports here needs PowerShell 7 (pwsh), which is not installed.")
@@ -442,8 +476,10 @@ bool ModCodePanel::canRun(ModCodeAction action, QString* why) const {
 	};
 	if (running()) return fail(tr("A script is running."));
 	if (!m_editor->gameEntry()) return fail(tr("Open the mod first."));
-	const auto scripts = modCodeScripts(toPath(m_root));
-	if (!scripts) return fail(tr("Choose the mod's source code first (Project > Mod code)."));
+	const bool update = action == ModCodeAction::Update || action == ModCodeAction::UpdateNoVrad;
+	if (update && !hasCheckout() && m_bundle && m_installBundle) return true;   // installs the features Mapsmith brings
+	const auto scripts = this->scripts();
+	if (!scripts || (update && scripts->update.empty())) return fail(tr("Choose the mod's source code first (Project > Build from source)."));
 	if (((action == ModCodeAction::Deploy || action == ModCodeAction::RemoveGameFiles) && scripts->deploy.empty()) ||
 	    (action == ModCodeAction::Report && scripts->report.empty())) {
 		return fail(tr("This source code has no script for that."));
@@ -516,7 +552,11 @@ bool ModCodePanel::start(ModCodeAction action) {
 		if (!running()) m_summary->setText(QStringLiteral("<span style='color:#ff8a7a'>%1</span>").arg(why.toHtmlEscaped()));
 		return false;
 	}
-	const auto scripts = modCodeScripts(toPath(m_root));
+	if ((action == ModCodeAction::Update || action == ModCodeAction::UpdateNoVrad) && !hasCheckout()) {
+		m_installBundle();   // no source code: the features Mapsmith brings (they run Install game files after)
+		return true;
+	}
+	const auto scripts = this->scripts();
 	const auto modDir = m_editor->gameEntry()->gameDir;
 	const auto command = m_factory ? m_factory(action, *scripts, modDir) : modCodeCommand(*scripts, action, modDir, onWindows);
 	if (!command) {

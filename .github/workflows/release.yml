@@ -12,7 +12,12 @@ permissions:
   contents: read
 
 jobs:
+  mod:
+    # The mod's features (mod/), built on Mapbase (see mod.yml).
+    uses: ./.github/workflows/mod.yml
+
   windows:
+    needs: mod
     runs-on: windows-2025
     timeout-minutes: 90
     permissions:
@@ -40,6 +45,11 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Unit tests
         run: ctest --test-dir build -C Release --output-on-failure -LE ui
+      - name: Mod features
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: mapsmith-features
+          path: features-bundle
       - name: Package
         shell: pwsh
         run: |
@@ -49,6 +59,8 @@ jobs:
           Copy-Item build/src/app/Release/Mapsmith.exe $out
           Copy-Item build/src/probe/Release/sme-probe.exe $out
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.txt $out
+          # The mod's features Mapsmith installs into a mod (Project > Features).
+          Copy-Item -Recurse features-bundle "$out/features"
           Copy-Item build/_deps/sourcepp-src/LICENSE "$out/LICENSE_sourcepp.txt"
           Copy-Item build/_deps/sourcepp-src/THIRDPARTY_LEGAL_NOTICES.txt "$out/THIRD_PARTY_NOTICES_sourcepp.txt"
           windeployqt --release --no-translations --no-system-d3d-compiler "$out/Mapsmith.exe"

@@ -1,0 +1,118 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Pixel shader of Fidelity_Volumetric: the light a flashlight or projected
+// texture (the player's flashlight, env_projectedtexture) leaves in the air -
+// a cone of haze with the shadows of everything standing in it. It lives in
+// the world (the light's own frustum and shadow map), so it looks the same
+// from every side, unlike the screen-space light shafts.
+//
+// Quarter size. Along each pixel's view ray, from the eye up to the scene
+// (its linear depth) or the reach of the light, STEPS points (jittered per
+// pixel in a 4 x 4 pattern that the composite's 4 x 4 box removes); each point
+// in the light's texture space: inside the cone, its spot texture, its shadow
+// map (one hardware-filtered tap) and its distance falloff - the same terms
+// as the light on the walls. Summed x path length x density x colour.
+// Additive: more lights add up in the same target.
+//
+// The sun (env_global_light, an ortho light: parallel rays, no falloff) works
+// the same way: shafts through windows and between buildings in the world,
+// from its shadow map. Haze scatters forward (Henyey-Greenstein, c10.w): the
+// shafts show most when looking towards the light, as in reality. Towards
+// the edges of the light's texture the haze fades out (the sun's shadow map
+// covers only the area around the player).
+//
+// Mist near the ground (c13, as Black Mesa's height fog, but lit): the air is
+// denser low down - 1 + mist x exp( -(height above the base) / thickness) -
+// so the sun's and the lights' haze gathers there, with the shadows' shafts
+// in it. The base is a height in the world (the floor where the map starts,
+// or the map's own value): the mist stays where it is, wherever one looks.
+//
+//=============================================================================//
+
+// DYNAMIC: "SHADOWS"						"0..1"
+// DYNAMIC: "FLASHLIGHTDEPTHFILTERMODE"	"0..2"
+
+#include "common_ps_fxc.h"
+#include "fidelity_common.h"
+
+#define STEPS 24
+
+sampler DepthSampler	: register( s0 );	// the scene's linear depth in alpha (_rt_FidelityDepth)
+sampler SpotSampler		: register( s1 );	// the light's spot texture
+sampler ShadowSampler	: register( s2 );	// its shadow map
+
+const float4 g_Eye			: register( c0 );	// eye (xyz), depth scale (fidelity_common.h)
+const float4 g_Forward		: register( c1 );	// view forward (xyz), near z
+const float4 g_Right		: register( c2 );	// view right x tan(fov x / 2) (xyz), target width in pixels
+const float4 g_Up			: register( c3 );	// view up x tan(fov y / 2) (xyz), target height in pixels
+const float4 g_ToLight[ 4 ]	: register( c4 );	// world to the light's texture space, rows (c4..c7)
+const float4 g_LightPos		: register( c8 );	// light origin (xyz), far z
+const float4 g_LightColor	: register( c9 );	// colour x density (rgb), reach (view depth the walk ends at, at most)
+const float4 g_Atten		: register( c10 );	// constant, linear, quadratic attenuation, forward scattering g (0 = all ways alike)
+const float4 g_Screen		: register( c11 );	// texture coordinate -> 0..1 over the view: scale (xy), offset (zw)
+const float4 g_LightDir		: register( c12 );	// direction the light shines (xyz), 1 = parallel rays (sun: no falloff)
+const float4 g_Mist			: register( c13 );	// mist: base height, 1 / thickness, extra density at the base (0 = none), -
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	const float2 vScreen = i.vTexCoord * g_Screen.xy + g_Screen.zw;
+	// Only as far as the encoded depth reaches (about 512 units), also where it
+	// is full (sky - or a wall further away: the 8 bit depth cannot tell them
+	// apart). Marching on to the light's reach there went through the far wall
+	// of a big room into the sunny outside: the room filled with thick haze
+	// (Julius 26.10.2026, a new map)
+	const float flAlpha = tex2Dlod( DepthSampler, float4( i.vTexCoord, 0, 0 ) ).a;
+	const float flDepth = min( FidelityViewDepth( flAlpha, g_Eye.w, g_Forward.w ), g_LightColor.w );
+
+	// the view ray for one unit of view depth
+	const float2 vNdc = float2( vScreen.x * 2.0 - 1.0, 1.0 - vScreen.y * 2.0 );
+	const float3 vRay = g_Forward.xyz + vNdc.x * g_Right.xyz + vNdc.y * g_Up.xyz;
+	const float flJitter = FidelityTileNoise( vScreen * float2( g_Right.w, g_Up.w ) ).x;
+
+	float3 vSum = 0;
+	[loop]
+	for ( int k = 0; k < STEPS; k++ )
+	{
+		const float4 vPos = float4( g_Eye.xyz + vRay * ( flDepth * ( k + flJitter ) / STEPS ), 1.0 );
+		const float4 vLight = float4( dot( g_ToLight[ 0 ], vPos ), dot( g_ToLight[ 1 ], vPos ), dot( g_ToLight[ 2 ], vPos ), dot( g_ToLight[ 3 ], vPos ) );
+		const float3 vProj = vLight.xyz / max( vLight.w, 1e-4 );
+		// inside the cone: in front of the light, within its texture and depth range
+		const float flInside = step( 1e-4, vLight.w ) * step( 0.0, vProj.x ) * step( vProj.x, 1.0 ) * step( 0.0, vProj.y ) * step( vProj.y, 1.0 )
+			* step( 0.0, vProj.z ) * step( vProj.z, 1.0 );
+		// (the sun's own texture is a flashlight cookie at most - its light is even)
+		const float3 vSpot = lerp( tex2Dlod( SpotSampler, float4( vProj.xy, 0, 0 ) ).rgb, 1.0, g_LightDir.w );
+#if SHADOWS
+#if FLASHLIGHTDEPTHFILTERMODE == 0
+		// NVIDIA: the hardware compares (and filters 2 x 2)
+		const float flLit = tex2Dlod( ShadowSampler, float4( vProj.xy, vProj.z, 0 ) ).x;
+#else
+		const float flLit = step( vProj.z, tex2Dlod( ShadowSampler, float4( vProj.xy, 0, 0 ) ).x );
+#endif
+#else
+		const float flLit = 1.0;
+#endif
+		// distance falloff as on the walls (fidelity_parallax_flashlight_ps30.fxc); none for the sun
+		const float3 vToLight = g_LightPos.xyz - vPos.xyz;
+		const float flDist2 = max( dot( vToLight, vToLight ), 1.0 );
+		const float flDist = sqrt( flDist2 );
+		const float flEnd = saturate( ( g_LightPos.w - flDist ) / ( 0.4 * g_LightPos.w ) );
+		const float flAtten = lerp( saturate( flEnd * dot( g_Atten.xyz, float3( 1.0, 1.0 / flDist, 1.0 / flDist2 ) ) ), 1.0, g_LightDir.w );
+		// soft towards the edges of the light's texture
+		const float flEdge = saturate( min( min( vProj.x, 1.0 - vProj.x ), min( vProj.y, 1.0 - vProj.y ) ) * 8.0 );
+		// forward scattering: the angle between the light's way in and the way to the eye
+		const float3 vIn = lerp( -vToLight / flDist, g_LightDir.xyz, g_LightDir.w );
+		const float flCos = dot( vIn, normalize( g_Eye.xyz - vPos.xyz ) );
+		const float g = g_Atten.w;
+		const float flPhase = ( 1.0 - g * g ) / pow( max( 1.0 + g * g - 2.0 * g * flCos, 1e-3 ), 1.5 );
+		// denser near the ground
+		const float flMist = 1.0 + g_Mist.z * exp( -max( vPos.z - g_Mist.x, 0.0 ) * g_Mist.y );
+		vSum += vSpot * ( flLit * flAtten * flInside * flEdge * flPhase * flMist );
+	}
+	// each step stands for flDepth / STEPS of view depth, that x |ray| in world units
+	return float4( vSum * g_LightColor.rgb * ( flDepth * length( vRay ) / STEPS ), 1.0 );
+}

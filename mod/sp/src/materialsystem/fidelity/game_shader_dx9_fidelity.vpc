@@ -1,0 +1,56 @@
+//-----------------------------------------------------------------------------
+//	GAME_SHADER_DX9_FIDELITY.VPC
+//
+//	mapbase-fidelity shader DLL: our own model shaders, next to Mapbase's
+//	game_shader_dx9, so Mapbase's shaders stay untouched. The engine of Source
+//	SDK Base 2013 only loads mod shader DLLs with fixed names from the mod's
+//	bin folder (like game_shader_dx6 and game_shader_dx9; the
+//	game_shader_generic* wildcard no longer works), so the DLL is called game_shader_dx6 - the
+//	name the Source Shader Editor uses for the same reason. Listed in projects.vgc
+//	and in the "game" group of groups.vgc (lines marked "mapbase-fidelity"),
+//	so it is built with games.sln.
+//
+//	Only fidelity_shaders_all.cpp is listed: it compiles every shader of the
+//	DLL. New shaders go there, not here - changing this list makes the
+//	generated Visual Studio project outdated until XBLAH's "Configure" runs.
+//	The .fxc sources live in fidelity\shaders\src; fidelity\tools\build_shaders.py
+//	compiles them into fidelity\game\shaders\fxc and writes fxctmp9\*.inc.
+//-----------------------------------------------------------------------------
+
+$Macro SRCDIR		"..\.."
+// Same bin folder as Client (Episodic), from where the DLLs reach the mod.
+$Macro GAMENAME		"mod_episodic"
+$Macro OUTBINNAME	"game_shader_dx6"
+$Macro OUTBINDIR	"$SRCDIR\..\game\$GAMENAME\bin"
+
+$Include "$SRCDIR\vpc_scripts\source_dll_base.vpc"
+
+$Configuration
+{
+	$Compiler
+	{
+		$AdditionalIncludeDirectories	"$BASE;fxctmp9;$SRCDIR\materialsystem\stdshaders;$SRCDIR\materialsystem\stdshaders\fxctmp9;$SRCDIR\materialsystem\stdshaders\vshtmp9"
+		$PreprocessorDefinitions		"$BASE;STDSHADER_DX9_DLL_EXPORT;FAST_MATERIALVAR_ACCESS"
+		$PreprocessorDefinitions		"$BASE;USE_ACTUAL_DX" [($WIN32||$X360) && !$GL]
+	}
+
+	$Linker
+	{
+		$AdditionalDependencies			"$BASE version.lib winmm.lib"	[$WIN32]
+	}
+}
+
+$Project "Shaders (Fidelity)"
+{
+	$Folder	"Source Files"
+	{
+		$File	"$SRCDIR\materialsystem\stdshaders\BaseVSShader.cpp"
+		$File	"fidelity_shaders_all.cpp"
+	}
+
+	$Folder "Link Libraries"
+	{
+		$Lib	mathlib
+		$Lib	shaderlib
+	}
+}

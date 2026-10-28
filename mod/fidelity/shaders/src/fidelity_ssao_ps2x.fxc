@@ -1,0 +1,103 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Screen-space ambient occlusion, normal-free "paired samples" variant.
+//
+// For every pixel we take NUM_PAIRS pairs of depth samples that lie
+// symmetrically around it (+offset / -offset). On a flat surface the
+// reciprocal depth (1/z) is linear in screen space, so the harmonic mean of a
+// pair equals the centre depth exactly - no occlusion, no matter how steep the
+// viewing angle. In a crease or corner the pair lies in front of the centre
+// and the difference becomes the occlusion. Foreground objects far in front
+// of the pixel are faded out by a range check to avoid dark halos.
+//
+// This needs no normal buffer, which matters because the only depth the
+// engine gives us is the 8 bit destination alpha (copied by the engine to
+// _rt_FullFrameDepth right before the fidelity hook).
+//
+// s0 : _rt_FullFrameDepth (linear depth in alpha)
+// c0 : 1/width, 1/height, width, height              (of the source texture)
+// c1 : depth scale, zNear, pixels per unit at depth 1, radius (units)
+// c2 : strength, bias (units), fade start (units), 1 / (fade end - fade start)
+// c3 : max radius (px), min radius (px), -, -
+//
+// Output: occlusion term in rgb (1 = unoccluded), alpha 1.
+//
+//=============================================================================//
+
+#include "fidelity_common.h"
+
+#ifndef NUM_PAIRS
+#define NUM_PAIRS 8
+#endif
+
+sampler DepthSampler	: register( s0 );
+
+const float4 g_vScreen	: register( c0 );
+const float4 g_vDepth	: register( c1 );
+const float4 g_vShape	: register( c2 );
+const float4 g_vLimits	: register( c3 );
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+float SampleDepth( float2 vUV )
+{
+	return FidelityViewDepth( tex2D( DepthSampler, vUV ).a, g_vDepth.x, g_vDepth.y );
+}
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	float2 vUV = i.vTexCoord;
+	float flDepth = SampleDepth( vUV );
+
+	// Distance fade: the depth in dest alpha saturates at its range, so the
+	// effect has to disappear smoothly before that.
+	float flFade = 1.0 - saturate( ( flDepth - g_vShape.z ) * g_vShape.w );
+
+	float flRadius = g_vDepth.w;
+	float flRadiusPx = clamp( flRadius * g_vDepth.z / flDepth, g_vLimits.y, g_vLimits.x );
+
+	// Per-pixel rotation and radius jitter (4 x 4 pattern), removed later by the blur.
+	float2 vNoise = FidelityTileNoise( vUV * g_vScreen.zw );
+	float flNoiseA = vNoise.x;
+	float flNoiseB = vNoise.y;
+
+	float flSin, flCos;
+	sincos( flNoiseA * ( 3.14159265 / NUM_PAIRS ), flSin, flCos );
+
+	float flOcclusion = 0.0;
+	float flInvRadius = 1.0 / flRadius;
+
+	[unroll]
+	for ( int k = 0; k < NUM_PAIRS; k++ )
+	{
+		// NUM_PAIRS directions spread over half a circle (pairs cover the other half).
+		float flAngle = ( 3.14159265 / NUM_PAIRS ) * k;
+		float2 vDir = float2( cos( flAngle ), sin( flAngle ) );
+		vDir = float2( vDir.x * flCos - vDir.y * flSin, vDir.x * flSin + vDir.y * flCos );
+
+		// Spiral: each pair a little further out, jittered per pixel.
+		float flScale = ( k + 0.5 + flNoiseB ) / ( NUM_PAIRS + 1.0 );
+		float2 vOffset = vDir * ( flRadiusPx * flScale ) * g_vScreen.xy;
+
+		float flDepthA = SampleDepth( vUV + vOffset );
+		float flDepthB = SampleDepth( vUV - vOffset );
+
+		// Depth of the plane through both samples, measured at the centre pixel.
+		float flPlaneDepth = 2.0 / ( 1.0 / flDepthA + 1.0 / flDepthB );
+		float flCrease = flDepth - flPlaneDepth - g_vShape.y;
+
+		// Ignore samples that stick out far in front of the centre (other objects).
+		float flFront = flDepth - min( flDepthA, flDepthB );
+		float flRange = saturate( 2.0 - flFront * flInvRadius );
+
+		flOcclusion += saturate( flCrease * flInvRadius ) * flRange;
+	}
+
+	flOcclusion *= ( 1.0 / NUM_PAIRS );
+
+	float flAO = 1.0 - saturate( flOcclusion * g_vShape.x * flFade );
+	return float4( flAO, flAO, flAO, 1.0 );
+}

@@ -1,0 +1,58 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Vertex shader of Fidelity_SoftParticle: the game's old particles (smoke,
+// dust, sparks of the CParticleMgr system - position, colour, one texture
+// coordinate) as UnlitGeneric draws them, plus where they are on screen, so
+// the pixel shader can fade them where they meet a wall (as Valve's
+// SpriteCard, spritecard_vsxx.fxc, does for the new particles).
+//
+//=============================================================================//
+
+// DYNAMIC: "DOWATERFOG"		"0..1"
+
+#include "common_vs_fxc.h"
+
+static const int g_FogType		= DOWATERFOG;
+
+const float4 cViewportTransformScaled	: register( SHADER_SPECIFIC_CONST_10 );
+
+struct VS_INPUT
+{
+	float4 vPos			: POSITION;
+	float4 vColor		: COLOR0;
+	float2 vTexCoord0	: TEXCOORD0;
+};
+
+struct VS_OUTPUT
+{
+	float4 projPosSetup	: POSITION;
+	float  fog			: FOG;
+	float2 baseTexCoord	: TEXCOORD0;
+	float4 color		: TEXCOORD1;	// linear colour, alpha
+	float4 screenPos	: TEXCOORD2;	// x, y (x w), projected z, w
+	float3 worldPos		: TEXCOORD3;
+	float3 projPos		: TEXCOORD4;
+};
+
+VS_OUTPUT main( const VS_INPUT v )
+{
+	VS_OUTPUT o = ( VS_OUTPUT )0;
+
+	const float3 worldPos = mul( float4( v.vPos.xyz, 1 ), cModel[ 0 ] );
+	float4 vProjPos = mul( float4( worldPos, 1 ), cViewProj );
+	o.projPosSetup = vProjPos;
+
+	// on screen (as SpriteCard: y up, then the viewport, mat_viewportscale)
+	float2 vScreen = ( float2( vProjPos.x, -vProjPos.y ) + vProjPos.w ) * 0.5;
+	vScreen = vScreen * cViewportTransformScaled.xy + vProjPos.w * cViewportTransformScaled.zw;
+	o.screenPos = float4( vScreen, vProjPos.z, vProjPos.w );
+
+	vProjPos.z = dot( float4( worldPos, 1 ), cViewProjZ );
+	o.projPos = vProjPos.xyz;
+	o.worldPos = worldPos;
+	o.fog = CalcFog( worldPos, vProjPos.xyz, g_FogType );
+
+	o.baseTexCoord = v.vTexCoord0;
+	o.color = float4( GammaToLinear( v.vColor.rgb ), v.vColor.a );
+	return o;
+}

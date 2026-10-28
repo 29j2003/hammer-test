@@ -19,7 +19,8 @@ settings then simply do nothing.
 ## Does my mod have it?
 
 Mapsmith treats a mod as having mapbase-fidelity when it finds the add-on's `cfg/fidelity.cfg`, its shaders, or its
-shader library in the mod's `bin` folder. The add-on's files get into the mod through its `deploy.bat`.
+shader library in the mod's `bin` folder. Mapsmith brings the add-on ready-built: **Project › Features › Install
+features** puts it into the mod with one click (see [the Project page](project.html#install)) - nothing to build.
 
 Without it, the Map Look tab says so: your values are then only shown in the editor's preview, and players see them
 once the mod has the add-on.

@@ -1,0 +1,67 @@
+//========= mapbase-fidelity ==================================================//
+//
+// A faint lens flare from the sun (as Black Mesa: only on the brightest light,
+// "carefully, not to blind you"): a few soft ghosts on the line from the sun
+// through the middle of the screen, warm and cool, added onto the frame (the
+// material is additive). Whether the sun is seen: the share of bright sky in
+// nine taps around the sun's position - a wall, a roof or a tree in front
+// hides the flare softly. Sky is where the depth (destination alpha) is at
+// its maximum; that is also true of anything beyond the depth's range, so a
+// tap counts only as far as the scene is as bright there as the sky around
+// the sun (the light shafts' threshold): a distant building in front of the
+// sun no longer lets the flare through.
+//
+//   s0 : the scene's linear depth in alpha (_rt_FidelityDepth)
+//   s1 : the scene's colour before the shafts (_rt_FullFrameFB)
+//   c0 : sun position (uv of the scene texture), aspect (width / height), strength
+//   c1 : uv of the middle of the view, tap spacing around the sun (uv),
+//        brightness threshold (0..0.99)
+//
+//=============================================================================//
+
+#include "fidelity_common.h"
+
+sampler DepthSampler	: register( s0 );
+sampler SceneSampler	: register( s1 );
+
+const float4 g_vSun		: register( c0 );
+const float4 g_vView	: register( c1 );
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+// a soft disc of radius flRadius (screen heights) at vCentre
+float Ghost( float2 vUV, float2 vCentre, float flRadius )
+{
+	const float flDist = length( ( vUV - vCentre ) * float2( g_vSun.z, 1.0 ) );
+	const float t = saturate( 1.0 - flDist / flRadius );
+	return t * t;
+}
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	// how much of the sun is seen
+	float flSky = 0.0;
+	for ( int y = -1; y <= 1; y++ )
+	{
+		for ( int x = -1; x <= 1; x++ )
+		{
+			const float2 vTap = g_vSun.xy + float2( x, y ) * g_vView.z;
+			const float flBright = saturate( ( FidelityLuminance( tex2D( SceneSampler, vTap ).rgb ) - g_vView.w ) / ( 1.0 - g_vView.w ) );
+			flSky += step( 0.99, tex2D( DepthSampler, vTap ).a ) * flBright;
+		}
+	}
+	const float flStrength = g_vSun.w * flSky / 9.0;
+
+	// ghosts on the line from the sun through the middle, mirrored
+	const float2 vAxis = g_vView.xy - g_vSun.xy;
+	const float2 vUV = i.vTexCoord;
+	float3 vFlare = Ghost( vUV, g_vSun.xy + vAxis * 0.55, 0.035 ) * float3( 1.0, 0.75, 0.45 );
+	vFlare += Ghost( vUV, g_vSun.xy + vAxis * 1.25, 0.06 ) * float3( 0.45, 0.65, 1.0 ) * 0.6;
+	vFlare += Ghost( vUV, g_vSun.xy + vAxis * 1.7, 0.02 ) * float3( 1.0, 0.85, 0.6 );
+	vFlare += Ghost( vUV, g_vSun.xy + vAxis * 2.2, 0.09 ) * float3( 0.6, 1.0, 0.7 ) * 0.35;
+	// alpha only above 0 (alpha tested); adds next to nothing to the depth in alpha
+	return float4( vFlare * flStrength, 1.0 / 255.0 );
+}

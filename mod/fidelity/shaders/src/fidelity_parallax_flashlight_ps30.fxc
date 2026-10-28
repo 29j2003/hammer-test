@@ -1,0 +1,181 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Pixel shader of Fidelity_Parallax's light pass: the flashlight, projected
+// textures and the sun's shadows of env_global_light, added on top of the
+// main pass. As Mapbase's flashlight_ps2x.fxc (spot texture, distance
+// falloff, shadow map with its filter), but on the relief: the texture is
+// moved by exactly the same parallax as in the main pass
+// (fidelity_parallax_common.h) - drawn flat, the light lay on a flat copy of
+// the wall (Julius: "bei Licht bricht die Illusion") - the bumped normal
+// faces the light, and the relief shades itself: bricks throw short soft
+// shadows across the mortar on the side away from the light. Blended
+// surfaces (BLEND) mix both layers by height exactly as the main pass.
+//
+//=============================================================================//
+
+// DYNAMIC: "PIXELFOGTYPE"				"0..1"
+// DYNAMIC: "FLASHLIGHTSHADOWS"			"0..1"
+// DYNAMIC: "FLASHLIGHTDEPTHFILTERMODE"	"0..2"
+// DYNAMIC: "BLEND"						"0..1"
+
+#define FIDELITY_BLEND BLEND
+
+#include "common_ps_fxc.h"
+#include "shader_constant_register_map.h"
+#include "common_flashlight_fxc.h"
+#include "fidelity_parallax_common.h"
+
+sampler SpotSampler				: register( s0 );
+sampler BaseTextureSampler		: register( s1 );
+sampler BumpmapSampler			: register( s2 );	// normal map, or flat
+sampler HeightSampler			: register( s3 );
+sampler RandomRotationSampler	: register( s5 );
+sampler FlashlightDepthSampler	: register( s7 );
+sampler DetailSampler			: register( s8 );	// the detail texture, or grey
+sampler BaseTexture2Sampler		: register( s9 );	// blended: $basetexture2
+sampler Bumpmap2Sampler			: register( s10 );	// blended: $bumpmap2, or flat
+sampler Height2Sampler			: register( s11 );	// blended: the second layer's height map
+sampler BlendModulateSampler	: register( s12 );	// blended: $blendmodulatetexture
+
+const float4 g_Detail					: register( c0 );	// $detailtint (rgb), $detailblendfactor (0 = no detail)
+const float4 g_Parallax					: register( c1 );	// as the main pass: depth, darkening of deep parts, fade start, 1 / fade length
+const float4 g_ShadowTweaks				: register( PSREG_ENVMAP_TINT__SHADOW_TWEAKS );
+const float4 g_Options					: register( c4 );	// unused, unused, $ssbump (0/1), bumped (1) or not (0)
+const float4 g_DetailScale				: register( c6 );	// $detailscale (u, v)
+const float4 g_HeightTexel				: register( c7 );	// one texel of the height map (u, v)
+const float4 g_Plane					: register( c9 );	// reference plane on walls, on floors and ceilings (1 = top on the polygon), most shift (world units)
+const float4 g_EyePos					: register( PSREG_EYEPOS_SPEC_EXPONENT );
+const float4 g_FogParams				: register( PSREG_FOG_PARAMS );
+const float4 g_FlashlightAttenuation	: register( PSREG_FLASHLIGHT_ATTENUATION );
+const float4 g_FlashlightPos			: register( PSREG_FRESNEL_SPEC_PARAMS );
+const float4 g_Blend					: register( c20 );	// as the main pass
+const float4 g_Layer2					: register( c21 );
+const float4 g_Height2Texel				: register( c22 );
+const float4 g_LayerStep				: register( c25 );	// blended: a step in the first height map's coordinates in the second's (xy for (1, 0), zw for (0, 1))
+const float4 g_Base2Step				: register( c26 );	// the same into the second base texture's
+const float4 g_DetailMode				: register( c24 );
+
+struct PS_INPUT
+{
+	float4 baseAndBumpTexCoord	: TEXCOORD0;
+	float4 spotTexCoord			: TEXCOORD1;
+	float4 worldPos_projPosZ	: TEXCOORD2;
+	float4 worldNormal			: TEXCOORD3;	// w: painted blend (blended surfaces)
+	float3 projPosXYW			: TEXCOORD4;
+	float4 base2AndBump2TexCoord	: TEXCOORD5;	// second base texture (xy), second height and bump map (zw)
+};
+
+// The blend painted here (0 = first layer, 1 = second), as WorldVertexTransition
+float FidelityPaintedBlend( float flVertex, float2 vBaseUV, float4 vBlend, sampler BlendModulateSampler )
+{
+	const float flBlend = vBlend.z > 0.5 ? 1.0 - flVertex : flVertex;
+	const float4 vModulate = tex2D( BlendModulateSampler, vBaseUV );
+	const float flModulated = smoothstep( max( 0.0, vModulate.g - vModulate.r ), min( 1.0, vModulate.g + vModulate.r ), flBlend );
+	return vBlend.y > 0.5 ? flModulated : flBlend;
+}
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	// The shadow map first, while few registers are taken (later one filter
+	// mode ran out of them)
+	const float3 vProjCoords = i.spotTexCoord.xyz / i.spotTexCoord.w;
+#if FLASHLIGHTSHADOWS
+	const float flMapShadow = DoFlashlightShadow( FlashlightDepthSampler, RandomRotationSampler, vProjCoords, i.projPosXYW.xy / i.projPosXYW.z,
+		FLASHLIGHTDEPTHFILTERMODE, g_ShadowTweaks, false );
+#endif
+
+	const float3 vWorldPos = i.worldPos_projPosZ.xyz;
+	float3 vView = g_EyePos.xyz - vWorldPos;
+	const float flDistance = length( vView );
+	vView /= max( flDistance, 0.001 );
+
+	// The same shift as the main pass
+	float2 vBaseUV = i.baseAndBumpTexCoord.xy;
+	float2 vBumpUV = i.baseAndBumpTexCoord.zw;
+	float2 vBase2UV = i.base2AndBump2TexCoord.xy;
+	float2 vUV2 = i.base2AndBump2TexCoord.zw;
+	const FidelityParallaxFrame f = FidelityParallaxAxes( vWorldPos, i.worldNormal.xyz, vBaseUV, vBumpUV );
+	FidelityParallaxBlend b = ( FidelityParallaxBlend )0;
+#if BLEND
+	const float2 dBase2a = ddx( vBase2UV ), dBase2b = ddy( vBase2UV );
+	// (a second layer without a height map lies on the reference plane: else it slid with the view)
+	b = FidelityParallaxBlendSetup( vBumpUV, vUV2, g_LayerStep, g_Base2Step, FidelityPaintedBlend( i.worldNormal.w, vBaseUV, g_Blend, BlendModulateSampler ),
+		g_Blend.w, g_Layer2.w > 0.5 ? -1.0 : FidelityParallaxPlane( f, g_Plane.xy ) );
+#endif
+	// Far away and at very flat angles the relief fades out: seen nearly
+	// edge-on, narrow faces (sills, frames) pulled texture in from beyond
+	// their edges (Julius: bright stretched stripes)
+	const float flStrength = saturate( 1.0 - ( flDistance - g_Parallax.z ) * g_Parallax.w ) * smoothstep( 0.08, 0.3, abs( dot( f.N, vView ) ) ) * f.flEven;
+	const float flDepth = g_Parallax.x * flStrength;
+	const float flHeight = FidelityParallaxShift( f, HeightSampler, Height2Sampler, b, vView, flDepth, FidelityParallaxPlane( f, g_Plane.xy ), g_Plane.z, vBaseUV, vBumpUV );
+
+	float4 vBaseAlpha = tex2Dgrad( BaseTextureSampler, vBaseUV, f.dBase1, f.dBase2 );
+
+	// The normal: the bump map's (a self-shadowed one holds the weights of
+	// the three directions), or without one from the height map's slopes
+	float3 vBump = tex2Dgrad( BumpmapSampler, vBumpUV, f.duv1, f.duv2 ).xyz;
+	const bool bSSBump = g_Options.z > 0.5;
+	// (the height map's slopes cost four reads: only without a bump map)
+	float3 vNormal = vBump * 2.0 - 1.0;
+	if ( g_Options.w <= 0.5 )
+		vNormal = FidelityParallaxHeightNormal( HeightSampler, vBumpUV, f.duv1, f.duv2, g_HeightTexel.xy, flDepth );
+#if BLEND
+	// Blended: the second layer where the walk ended, mixed by both heights there
+	FidelityParallaxLayer2Shift( b, vBumpUV, vUV2, vBase2UV );
+	const float flLayer2 = FidelityHeightBlend( b.flBlend, b.flH1, b.flH2, b.flDepth );
+	// (its own height map's slopes in its own units: the depth scaled by how much bigger a step is there)
+	const float flDepth2 = flDepth * sqrt( abs( g_LayerStep.x * g_LayerStep.w - g_LayerStep.z * g_LayerStep.y ) );
+	vBaseAlpha = lerp( vBaseAlpha, tex2Dgrad( BaseTexture2Sampler, vBase2UV, dBase2a, dBase2b ), flLayer2 );
+	if ( g_Layer2.x > 0.5 )
+	{
+		const float3 vBump2 = tex2Dgrad( Bumpmap2Sampler, vUV2, b.d2a, b.d2b ).xyz;
+		vBump = lerp( vBump, vBump2, flLayer2 );
+		vNormal = lerp( vNormal, vBump2 * 2.0 - 1.0, flLayer2 );
+	}
+	else if ( !bSSBump )
+	{
+		vNormal = lerp( vNormal, FidelityParallaxHeightNormal( Height2Sampler, vUV2, b.d2a, b.d2b, g_Height2Texel.xy, flDepth2 ), flLayer2 );
+	}
+#endif
+	if ( bSSBump )
+		vNormal = bumpBasis[ 0 ] * vBump.x + bumpBasis[ 1 ] * vBump.y + bumpBasis[ 2 ] * vBump.z;
+	vNormal = normalize( vNormal );
+
+	float3 vBase = vBaseAlpha.rgb;
+	const float3 vDetail = tex2Dgrad( DetailSampler, vBaseUV * g_DetailScale.xy, f.dBase1 * g_DetailScale.xy, f.dBase2 * g_DetailScale.xy ).rgb * g_Detail.rgb;
+	if ( g_DetailMode.x > 0.5 )
+		vBase += vDetail * g_Detail.w;
+	else
+		vBase *= lerp( float3( 1, 1, 1 ), 2.0 * vDetail, g_Detail.w );
+
+	// The light: spot texture, distance falloff, shadow map (as Mapbase)
+	float3 vSpot = tex2D( SpotSampler, vProjCoords.xy ).rgb * cFlashlightColor.rgb;
+	const float3 vDelta = g_FlashlightPos.xyz - vWorldPos;
+	const float flDistSquared = dot( vDelta, vDelta );
+	const float flDist = sqrt( flDistSquared );
+	const float flFarZ = g_FlashlightAttenuation.w;
+	const float flEndFalloff = RemapValClamped( flDist, flFarZ, 0.6 * flFarZ, 0.0, 1.0 );
+	const float flAtten = saturate( flEndFalloff * dot( g_FlashlightAttenuation.xyz, float3( 1.0, 1.0 / flDist, 1.0 / flDistSquared ) ) );
+#if FLASHLIGHTSHADOWS
+	const float flAttenuated = lerp( flMapShadow, 1.0, g_ShadowTweaks.y );
+	vSpot *= saturate( lerp( flAttenuated, flMapShadow, flAtten ) );
+#endif
+
+	// Facing the light with the relief's normal, and the relief's own shadow
+	const float3 vToLight = vDelta / max( flDist, 0.001 );
+	const float3 vLightTS = FidelityParallaxToTexture( f, vToLight );
+	// The relief turns the light only part way, and never to more than twice
+	// what the flat wall gets: with the sun low across a wall the brick edges
+	// facing it caught full light - bright upright lines at every joint
+	// (Julius: golden stripes over walls, golden rims on the cobbles)
+	const float3 vLightDir = normalize( vLightTS );
+	const float flFlat = saturate( vLightDir.z );
+	const float flNdotL = min( saturate( dot( normalize( lerp( float3( 0, 0, 1 ), vNormal, 0.6 ) ), vLightDir ) ), 2.0 * flFlat + 0.05 );
+	const float flSelfShadow = FidelityParallaxShadow( f, HeightSampler, Height2Sampler, b, vToLight, flDepth, vBumpUV, flHeight );
+
+	const float3 vResult = vSpot * vBase * flNdotL * flAtten * flSelfShadow;
+	const float flFogFactor = CalcPixelFogFactor( PIXELFOGTYPE, g_FogParams, g_EyePos.xyz, vWorldPos, i.worldPos_projPosZ.w );
+	// alpha: decals (bullet holes) add light only where they are; walls blend
+	// without it (one + one)
+	return FinalOutput( float4( vResult, vBaseAlpha.a ), flFogFactor, PIXELFOGTYPE, TONEMAP_SCALE_LINEAR );
+}

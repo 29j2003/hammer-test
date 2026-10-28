@@ -1,0 +1,21 @@
+//-----------------------------------------------------------------------------
+//	FIDELITY_CLIENT.VPC
+//
+//	mapbase-fidelity client files. Included from client_base.vpc (line marked
+//	"mapbase-fidelity"), right after client_mapbase.vpc.
+//
+//	Only fidelity_all.cpp is listed: it compiles every other add-on file. New
+//	files go into fidelity_all.cpp, not here - changing this list makes the
+//	generated Visual Studio project outdated until XBLAH's "Configure" runs.
+//-----------------------------------------------------------------------------
+
+$Project
+{
+	$Folder	"Source Files"
+	{
+		$Folder	"Fidelity"
+		{
+			$File	"$SRCDIR\game\client\fidelity\fidelity_all.cpp"
+		}
+	}
+}

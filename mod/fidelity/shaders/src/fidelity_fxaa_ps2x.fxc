@@ -1,0 +1,73 @@
+//========= mapbase-fidelity ==================================================//
+//
+// FXAA (fast approximate anti-aliasing), following the "console" variant of
+// Timothy Lottes' FXAA 3.11: four diagonal luma taps find edges, then two
+// pairs of taps along the edge direction blend across it. It needs no loops
+// or dynamic branches, so it fits ps_2_b. Runs on the final, gamma-encoded
+// image (before the grade pass sharpens it).
+//
+// s0 : _rt_FullFrameFB
+// c0 : 1/width, 1/height, edge threshold, minimum edge threshold
+// c1 : edge sharpness, -, -, -
+//
+//=============================================================================//
+
+#include "fidelity_common.h"
+
+sampler FrameSampler	: register( s0 );
+
+const float4 g_vScreen	: register( c0 );
+const float4 g_vParams	: register( c1 );
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	float2 vUV = i.vTexCoord;
+	float2 vTexel = g_vScreen.xy;
+
+	float4 vCenter = tex2D( FrameSampler, vUV );
+	float flLumaM = FidelityLuminance( vCenter.rgb );
+
+	// Corners, half a texel away: bilinear filtering averages 2x2 pixels each.
+	float flLumaNW = FidelityLuminance( tex2D( FrameSampler, vUV + float2( -0.5, -0.5 ) * vTexel ).rgb );
+	float flLumaSW = FidelityLuminance( tex2D( FrameSampler, vUV + float2( -0.5,  0.5 ) * vTexel ).rgb );
+	float flLumaNE = FidelityLuminance( tex2D( FrameSampler, vUV + float2(  0.5, -0.5 ) * vTexel ).rgb ) + 1.0 / 384.0;
+	float flLumaSE = FidelityLuminance( tex2D( FrameSampler, vUV + float2(  0.5,  0.5 ) * vTexel ).rgb );
+
+	float flLumaMin = min( min( flLumaNW, flLumaSW ), min( flLumaNE, flLumaSE ) );
+	float flLumaMax = max( max( flLumaNW, flLumaSW ), max( flLumaNE, flLumaSE ) );
+	float flRange = max( flLumaMax, flLumaM ) - min( flLumaMin, flLumaM );
+	float flThreshold = max( g_vScreen.w, flLumaMax * g_vScreen.z );
+
+	// Edge direction (perpendicular to the luma gradient)
+	float flSWMinusNE = flLumaSW - flLumaNE;
+	float flSEMinusNW = flLumaSE - flLumaNW;
+	float2 vDir = float2( flSWMinusNE + flSEMinusNW, flSWMinusNE - flSEMinusNW );
+	float2 vDir1 = vDir * rsqrt( dot( vDir, vDir ) + 1e-8 );
+
+	float4 vN1 = tex2D( FrameSampler, vUV - vDir1 * vTexel * 0.5 );
+	float4 vP1 = tex2D( FrameSampler, vUV + vDir1 * vTexel * 0.5 );
+
+	float flDirAbsMin = min( abs( vDir1.x ), abs( vDir1.y ) ) * g_vParams.x;
+	float2 vDir2 = clamp( vDir1 / max( flDirAbsMin, 1e-4 ), -2.0, 2.0 );
+
+	float4 vN2 = tex2D( FrameSampler, vUV - vDir2 * vTexel * 2.0 );
+	float4 vP2 = tex2D( FrameSampler, vUV + vDir2 * vTexel * 2.0 );
+
+	float3 vA = ( vN1.rgb + vP1.rgb ) * 0.5;
+	float3 vB = ( vN2.rgb + vP2.rgb ) * 0.25 + vA * 0.5;
+
+	// The wide taps may have crossed into another edge: then use the narrow pair.
+	float flLumaB = FidelityLuminance( vB );
+	float3 vResult = ( flLumaB < flLumaMin || flLumaB > flLumaMax ) ? vA : vB;
+
+	// Flat areas keep the original pixel.
+	vResult = ( flRange < flThreshold ) ? vCenter.rgb : vResult;
+
+	// Keep alpha; the shader alpha-tests against 0, so never output exactly 0.
+	return float4( vResult, max( vCenter.a, 1.0 / 255.0 ) );
+}

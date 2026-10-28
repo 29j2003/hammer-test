@@ -2,6 +2,7 @@
 
 #include "fixture.h"
 
+#include <sme/mod_install.h>
 #include <sme/text.h>
 
 #include <atomic>
@@ -125,6 +126,30 @@ Fixture::~Fixture() {
 		std::error_code ec;
 		std::filesystem::remove_all(root, ec);
 	}
+}
+
+void makeFeatureBundle(const std::filesystem::path& root, std::string_view version, std::string_view tag) {
+	std::filesystem::remove_all(root);
+	const std::string t(tag);
+	const std::vector<std::pair<std::string, std::string>> files = {
+		{"bin/episodic/client.dll", "episodic client " + t},
+		{"bin/episodic/server.dll", "episodic server " + t},
+		{"bin/hl2/client.dll", "hl2 client " + t},
+		{"bin/hl2/server.dll", "hl2 server " + t},
+		{"bin/game_shader_dx6.dll", "shaders " + t},
+		{"vrad/vrad.exe", "vrad " + t},
+		{"vrad/vrad_dll.dll", "vrad dll " + t},
+		{"fidelity/game/shaders/fxc/fidelity_ssao_ps20b.vcs", "ssao " + t},
+		{"fidelity/game/cfg/fidelity.cfg", "// fidelity " + t + "\n"},
+		{"fidelity/deploy.ps1", "Write-Host 'deploy " + t + "'\n"},
+		{"fidelity/report.ps1", "Write-Host 'report " + t + "'\n"},
+	};
+	std::vector<FeatureBundleFile> listed;
+	for (const auto& [path, content] : files) {
+		writeText(root / path, content);
+		listed.push_back({path, sha256Hex(content)});
+	}
+	writeText(root / std::string(BUNDLE_MANIFEST), writeBundleManifest(version, listed));
 }
 
 void writeText(const std::filesystem::path& path, std::string_view text) {
