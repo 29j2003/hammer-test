@@ -13,6 +13,7 @@ add_library(smecore STATIC
 	src/compile_options.cpp
 	src/csg.cpp
 	src/decals.cpp
+	src/fidelity_effects.cpp
 	src/displacement.cpp
 	src/clipboard.cpp
 	src/visibility.cpp

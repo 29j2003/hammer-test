@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "enhancements.h"
 #include "material_cache.h"
 #include "model_thumbnails.h"
 #include "model_viewer.h"
@@ -199,6 +200,9 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_materialList->setObjectName("modelMaterials");
 	m_materialList->setMaximumHeight(110);
 	rightLayout->addWidget(m_materialList);
+	m_enhancementSwitches = new EnhancementSwitches(editor->enhancements(), right);
+	rightLayout->addWidget(m_enhancementSwitches);
+	m_enhancementSwitches->setModel({});
 
 	auto* placeRow = new QHBoxLayout;
 	placeRow->addWidget(new QLabel(tr("Place as")));
@@ -485,6 +489,7 @@ void ModelsPage::rebuildBodyGroups() {
 
 void ModelsPage::updateDetails() {
 	m_materialList->clear();
+	m_enhancementSwitches->setModel(m_current);
 	const auto geometry = m_viewer->model();
 	const bool have = !m_current.isEmpty() && geometry;
 	m_place->setEnabled(!m_current.isEmpty());

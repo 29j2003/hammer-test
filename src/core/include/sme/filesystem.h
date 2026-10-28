@@ -62,6 +62,10 @@ public:
 	[[nodiscard]] std::optional<std::vector<std::byte>> read(std::string_view path, std::string_view pathId = "game") const;
 	/// Like read(), as text.
 	[[nodiscard]] std::optional<std::string> readText(std::string_view path, std::string_view pathId = "game") const;
+	/// The file as the game has it without `folder` (the mod's own folder and VPKs in it): the
+	/// original a mod's copy replaces. nullopt if only that folder has it.
+	[[nodiscard]] std::optional<std::string> readOriginal(std::string_view path, const std::filesystem::path& folder,
+	                                                      std::string_view pathId = "game") const;
 
 	/// All files below `dir` (normalized, lowercase, unique, sorted) with the given extension
 	/// (e.g. ".vmt"; empty = any). Searches recursively.
@@ -70,6 +74,8 @@ public:
 	/// Tells the file system about a file the editor just wrote into one of the game's folders
 	/// (folder contents are indexed once; without this the new file would stay unseen).
 	void noteWrittenFile(const std::filesystem::path& file);
+	/// The same for a file the editor deleted: the next mount's copy (the game's original) counts again.
+	void noteRemovedFile(const std::filesystem::path& file);
 
 	/// Number of files a mount provides (builds its index if needed).
 	[[nodiscard]] std::size_t fileCount(std::size_t mountIndex) const;
@@ -80,6 +86,8 @@ private:
 	std::vector<std::unique_ptr<MountData>> m_data;
 
 	[[nodiscard]] bool mountMatches(std::size_t index, std::string_view pathId) const;
+	[[nodiscard]] std::optional<std::vector<std::byte>> readMount(std::size_t mountIndex, const std::string& relative) const;
+	void noteFile(const std::filesystem::path& file, bool exists);
 };
 
 } // namespace sme

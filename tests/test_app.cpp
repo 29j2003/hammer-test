@@ -62,6 +62,7 @@
 #include <sme/displacement.h>
 #include <sme/entity_search.h>
 #include <sme/text.h>
+#include <sme/fidelity_effects.h>
 #include <sme/fidelity_look.h>
 #include <sme/heightmap.h>
 #include <sme/soundscape.h>
@@ -89,6 +90,7 @@
 #include "toggle_switch.h"
 #include "copy_paste.h"
 #include "editor.h"
+#include "enhancements.h"
 #include "main_window.h"
 #include "mod_page.h"
 #include "model_viewer.h"
@@ -3588,6 +3590,143 @@ TEST_CASE("texts: the mod's localization and captions, edited, translated, saved
 	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
 		window.grab().save(QDir(shots).filePath("texts.png"));
 	}
+}
+
+TEST_CASE("game enhancements: on by default, off for one model or the whole mod") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);   // mapbase-fidelity installed, a glass bottle in the base game
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	auto* enhancements = editor.enhancements();
+	REQUIRE(enhancements);
+	REQUIRE(enhancements->available());
+	const auto waitIdle = [&] {
+		for (int i = 0; i < 400 && (enhancements->busy() || !enhancements->ready()); ++i) QTest::qWait(25);
+		settle();
+	};
+	waitIdle();
+	REQUIRE(enhancements->ready());
+	const QString bottle = "materials/models/props_junk/glassbottle01a.vmt";
+	const QString model = "models/props_junk/glassbottle01a.mdl";
+	const auto bottleText = [&] { return editor.game()->files.readText(bottle.toStdString()).value_or(""); };
+	const auto modFile = f.mod / "materials/models/props_junk/glassbottle01a.vmt";
+
+	// On by default: the game's bottle got its liquid material in the mod, as deploy.bat writes it.
+	CHECK(std::filesystem::exists(modFile));
+	CHECK(bottleText().starts_with(DEPLOY_MARKER));
+	CHECK(effectIsOn(GameEffect::Liquid, bottleText()));
+	CHECK(enhancements->candidateCount(GameEffect::Liquid) == 1);
+	CHECK(enhancements->activeCount(GameEffect::Liquid) == 1);
+	CHECK(enhancements->effectsFor(model) == std::vector<GameEffect>{GameEffect::Liquid});
+	CHECK(enhancements->effectsFor("models/props_demo/crate01.mdl").empty());
+	// The demo's water and bottle001 are the mod's own materials: untouched.
+	CHECK_FALSE(isGeneratedMaterial(editor.game()->files.readText("materials/demo/water001.vmt").value_or("")));
+
+	// Project > Overview: a switch per effect, the counts, the status.
+	window.showPage(MainWindow::Page::Project);
+	window.projectTabs()->setCurrentWidget(window.modPage());
+	settle();
+	auto* section = window.modPage()->findChild<QGroupBox*>("enhancementsSection");
+	REQUIRE(section);
+	CHECK(section->isVisible());
+	auto* liquidMod = section->findChild<QCheckBox*>("enhancementMod:liquid");
+	REQUIRE(liquidMod);
+	CHECK(liquidMod->isChecked());
+	CHECK(section->findChild<QCheckBox*>("enhancementMod:wind")->isChecked());
+	auto* status = section->findChild<QLabel*>("enhancementStatus");
+	REQUIRE(status);
+	CHECK(status->text().startsWith("Up to date: 1 material"));
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		window.grab().save(QDir(shots).filePath("enhancements.png"));
+	}
+
+	// One prop: its switch in Object Properties; off leaves the model out and the original comes back.
+	window.showPage(MainWindow::Page::Map);
+	auto [placed, propId] = edit::placeEntity(editor.doc(), "prop_physics", {0, 0, 0}, editor.entities()->find("prop_physics"),
+	                                          {{"model", model.toStdString()}});
+	editor.commit(std::move(placed));
+	Selection propSel;
+	propSel.entities.push_back(propId);
+	editor.setSelection(propSel);
+	window.raiseDock("Object Properties");
+	settle();
+	auto* switches = window.properties()->findChild<EnhancementSwitches*>("enhancementSwitches");
+	REQUIRE(switches);
+	CHECK(switches->isVisible());
+	auto* liquidProp = switches->findChild<QCheckBox*>("enhancement:liquid");
+	REQUIRE(liquidProp);
+	CHECK(liquidProp->isChecked());
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		window.properties()->grab().save(QDir(shots).filePath("enhancements_prop.png"));
+	}
+	QTest::mouseClick(liquidProp, Qt::LeftButton);
+	waitIdle();
+	CHECK(enhancements->settings().isExcluded(GameEffect::Liquid, model.toStdString()));
+	CHECK_FALSE(effectIsOn(GameEffect::Liquid, bottleText()));
+	CHECK(bottleText().starts_with(std::string(MAPSMITH_MARKER) + " off (liquid)"));
+	CHECK(loadEnhancementSettings(f.mod).isExcluded(GameEffect::Liquid, model.toStdString()));   // kept in the mod
+	liquidProp = window.properties()->findChild<QCheckBox*>("enhancement:liquid");
+	REQUIRE(liquidProp);
+	CHECK_FALSE(liquidProp->isChecked());
+
+	// The Models page shows the same state.
+	window.showPage(MainWindow::Page::Models);
+	window.modelsPage()->selectModel(model);
+	settle();
+	auto* pageSwitch = window.modelsPage()->findChild<QCheckBox*>("enhancement:liquid");
+	REQUIRE(pageSwitch);
+	CHECK(pageSwitch->isVisibleTo(window.modelsPage()));
+	CHECK_FALSE(pageSwitch->isChecked());
+
+	// The Overview lists it; "Remove from list" brings the effect back.
+	window.showPage(MainWindow::Page::Project);
+	settle();
+	auto* excluded = section->findChild<QTreeWidget*>("enhancementExcluded");
+	REQUIRE(excluded);
+	REQUIRE(excluded->topLevelItemCount() == 1);
+	CHECK(excluded->topLevelItem(0)->text(0) == model);
+	excluded->topLevelItem(0)->setSelected(true);
+	QTest::mouseClick(section->findChild<QPushButton*>("enhancementRemove"), Qt::LeftButton);
+	waitIdle();
+	CHECK(enhancements->settings().excluded.empty());
+	CHECK(effectIsOn(GameEffect::Liquid, bottleText()));
+	pageSwitch = window.modelsPage()->findChild<QCheckBox*>("enhancement:liquid");
+	REQUIRE(pageSwitch);
+	CHECK(pageSwitch->isChecked());
+
+	// Off for the whole mod, and on again.
+	QTest::mouseClick(liquidMod, Qt::LeftButton);
+	waitIdle();
+	CHECK_FALSE(enhancements->settings().enabled(GameEffect::Liquid));
+	CHECK_FALSE(effectIsOn(GameEffect::Liquid, bottleText()));
+	CHECK(status->text().startsWith("Up to date: 0 material"));
+	QTest::mouseClick(liquidMod, Qt::LeftButton);
+	waitIdle();
+	CHECK(effectIsOn(GameEffect::Liquid, bottleText()));
+	CHECK(loadEnhancementSettings(f.mod) == EnhancementSettings{});
+
+	// A material of the mod's own (no marker) is never overwritten, only reported.
+	const std::string own = "\"VertexLitGeneric\"\n{\n\t\"$basetexture\" \"demo/glass001\"\n}\n";
+	test::writeText(modFile, own);
+	editor.game()->files.noteWrittenFile(modFile);
+	QTest::mouseClick(liquidMod, Qt::LeftButton);
+	waitIdle();
+	CHECK(bottleText() == own);
+	CHECK(enhancements->keptOwn() == QStringList{"models/props_junk/glassbottle01a"});
+	CHECK(status->text().contains("1 kept (your own material)"));
 }
 
 namespace {

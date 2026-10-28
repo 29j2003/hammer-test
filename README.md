@@ -201,6 +201,9 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   - *Liquid inside*: for glass props (`Fidelity_Liquid`): liquid and glass colour, fill level (fixed or different in
     every prop), how it sways and how thick it is, splashing and pouring out.
   A material made by `deploy.bat` is marked as such; saving it makes it the mod's own, so `deploy.bat` leaves it alone.
+- **Game enhancements (mapbase-fidelity)**: liquid in bottles, sway in the wind and water glint are on by default – Mapsmith
+  writes the materials into the mod by itself; switch an effect off for the whole mod (*Project › Overview*) or for one
+  model (*Object Properties*, *Models* page). Your own materials are never overwritten.
 - **Parallax-corrected cubemaps (Mapbase)**: select an env_cubemap and press *Add room box*: the box is fitted to the
   walls around it; drag the squares on its sides in the view to change it. The editor creates and names the
   parallax_obb and links it to the cubemap.

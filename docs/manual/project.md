@@ -25,6 +25,8 @@ What Mapsmith knows about the chosen game or mod:
   was **found**. A file in a path higher up hides the same file further down, which is how a mod replaces the game's
   files;
 - **Entities**: the loaded FGD files and how many entity classes they define.
+- **Game enhancements** (mods with mapbase-fidelity): the add-on's effects for the whole mod and what is left out;
+  see [Game enhancements](mapbase-fidelity.html#game-enhancements).
 
 Buttons: **Open mod folder**, **Edit gameinfo.txt**, **Compile and game settings ...** and **New mod ...**.
 

@@ -465,6 +465,12 @@ void createDemo(Fixture& f) {
 		writeStudioModel(f.mod / "models/props_demo/supply_crate.mdl", makeStudioModel(crate));
 		writeBytes(f.mod / "models/props_demo/supply_crate.phy", std::vector<std::byte>(16, std::byte{0}));
 	}
+	// A glass bottle of the base game (not the mod's own): game enhancements give it liquid by
+	// themselves, as mapbase-fidelity's deploy.bat does for the game's bottles.
+	writeText(f.sdkBase / "hl2/materials/models/props_junk/glassbottle01a.vmt",
+	          vmt("VertexLitGeneric", "\t\"$basetexture\" \"demo/glass001\"\n\t\"$translucent\" \"1\"\n\t\"$surfaceprop\" \"glassbottle\"\n"));
+	writeStudioModel(f.sdkBase / "hl2/models/props_junk/glassbottle01a.mdl",
+	                 makeStudioModel({{-3, -3, 0, 3, 3, 8}, {-1.5f, -1.5f, 8, 1.5f, 1.5f, 13}}, {"idle"}, "", "glassbottle01a", "models/props_junk/"));
 	writeBytes(f.mod / "models/humans/male_shared.mdl",
 	           makeModelFile({"walk_all", "run_all", "sitchair1", "sit_ground", "lean_wall", "leanwall_idle", "Idle_Relaxed_SMG1_1", "crouch_idle"}, ""));
 

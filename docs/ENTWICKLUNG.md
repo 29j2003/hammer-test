@@ -98,6 +98,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2` |
 | `heightmap` | Höhenkarten fürs Relief: aus der Normal-Map (Frankot-Chellappa) oder der Helligkeit, Zonen, VTF schreiben, `fidelityReliefSource` (Regeln von `deploy.ps1`) |
 | `fidelity_look` | Look-Werte von mapbase-fidelity pro Karte (Liste, `cfg/fidelity.cfg` lesen, in der Karte lesen/schreiben) |
+| `fidelity_effects` | Game enhancements: Effekte von mapbase-fidelity (Liquid, Wind, Water; Relief nur Info) nach den Regeln und mit dem Text von `deploy.ps1` (`deployWouldApply`, `makeEffectMaterial`, Marker `DEPLOY_MARKER`), Einstellungen der Mod in `cfg/mapsmith_enhancements.txt` (`EnhancementSettings`: Effekt aus, Modelle/Materialien ausgenommen), Kandidaten aus den Original-Materialien des Spiels (`GameFileSystem::readOriginal` überspringt den Mod-Ordner), `planEnhancements` (an = Text wie deploy, aus = Kopie des Originals mit `MAPSMITH_MARKER`, damit `deploy.bat` sie als eigene Datei stehen lässt; Dateien der Mod ohne Marker nie anfassen → `keptOwn`); Ausschluss wirkt pro Material, also für alle Modelle mit diesem Material |
 | `sky_presets` | Licht passend zum Himmel (`applySky`, Tabelle der Himmel) |
 | `material_replace` | Material ersetzen (ganze Karte, Auswahl oder gewählte Flächen; exakt oder Platzhalter; Ausrichtung behalten oder an der Welt ausrichten; Overlays/Decals), `countMaterialMatches` für die Vorschau |
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
@@ -132,7 +133,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `map_look_panel` | Dock Map Look (mapbase-fidelity-Look der Karte) |
 | `history_panel` | Dock History (alle Undo-Schritte) |
 | `compile`, `compile_window` | Kompilieren (`CompileRunner`), Kompilier-Dialog, Spiel-Einstellungen; Dock Compile |
-| `mod_page` | Project › Overview: Spiel/Mod, Ordner, Karten, Suchpfade, FGDs |
+| `mod_page` | Project › Overview: Spiel/Mod, Ordner, Karten, Suchpfade, FGDs, Game enhancements |
+| `enhancements` | `GameEnhancements` (gehört dem `Editor`): bei Spielwechsel und jeder Schalter-Änderung `planEnhancements` im Hintergrund, schreibt/entfernt die Dateien (`QSaveFile`, `noteWrittenFile`), meldet `materialsChanged` (Viewport/Browser laden neu); Kandidaten einmal pro Spiel. `EnhancementSwitches` (Schalter eines Modells: Object Properties, Models-Seite), `EnhancementsSection` (Project › Overview) |
 | `maps_panel` | Project › Maps: alle Karten, Stapel-Kompilieren, Dateiaktionen |
 | `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
 | `texts_panel` | Project › Texts: Lokalisierung und Captions der Mod (Tabelle Token × Sprache, Caption-Vorschau, Speichern, Captions kompilieren) |
@@ -546,6 +548,11 @@ mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo un
   getestet, nicht mit echtem bspzip/steamcmd. Die Abhängigkeiten kommen aus der offenen VMF, nicht aus der BSP; Materialien
   in PCF-Dateien und Modelle, die erst Skripte (z. B. Gibs, `propdata`) laden, werden nicht gefunden. Eigene PCF brauchen
   im Spiel zusätzlich ein Partikel-Manifest. Die Seite „Project“ im `MainWindow` bindet das Panel ein (`ShipPanel(Editor*)`).
+
+- Game enhancements (`fidelity_effects`, `enhancements`): Regeln und Text aus `deploy.ps1` von mymod nachgebaut und gegen
+  dessen Ausgabe-Text getestet, aber nicht im Spiel geprüft. Nicht nachgebaut: die eigenen Modell-Kopien für dunkles Glas
+  (`Get-ContainerModels`), Relief automatisch (bleibt beim Material-Editor). Viele Materialien beim ersten Öffnen (HL2:
+  alle Nicht-Modell-Materialien werden einmal fürs Wasser gelesen) – Dauer mit echtem HL2 messen.
 
 ## Fahrplan
 

@@ -2,6 +2,7 @@
 
 #include "editor.h"
 
+#include "enhancements.h"
 #include "model_cache.h"
 
 #include <QApplication>
@@ -70,6 +71,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_shapeOptions.steps = settings.value("shape/steps", m_shapeOptions.steps).toInt();
 	m_rotationSnap = settings.value("editor/rotationSnap", 15.0).toDouble();
 	m_randomYaw = settings.value("entities/randomYaw", false).toBool();
+	m_enhancements = std::make_unique<GameEnhancements>(this);
 }
 
 Editor::~Editor() = default;

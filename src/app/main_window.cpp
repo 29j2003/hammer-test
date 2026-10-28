@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "compile_window.h"
+#include "enhancements.h"
 #include "map_look_panel.h"
 #include "mod_page.h"
 #include "models_page.h"
@@ -523,6 +524,13 @@ void MainWindow::createDocks() {
 	connect(m_materialEditor, &MaterialEditor::materialSaved, this, [this](const QString& name) {
 		m_materials->reload(name);
 		m_assets->materialChanged(name);
+	});
+	// Game enhancements wrote materials of the mod: the views show them as the game will.
+	connect(m_editor->enhancements(), &GameEnhancements::materialsChanged, this, [this](const QStringList& names) {
+		for (const auto& name : names) {
+			if (m_materials->isKnown(name)) m_materials->reload(name);
+			m_assets->materialChanged(name);
+		}
 	});
 	tabifyDockWidget(assets, log);
 	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
