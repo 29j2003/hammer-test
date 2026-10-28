@@ -1,6 +1,7 @@
 # Release: pushing a tag "v1.2.3" builds the Windows package and publishes it as a GitHub
 # release with a SHA-256 checksum. The editor's update check reads the newest release.
-# The tag must match the VERSION file (checked below).
+# The tag must match the VERSION file (checked below). The tag may also come from a release drafted
+# on github.com ("Create new tag on publish"); the files are then added to that release.
 name: Release
 
 on:
@@ -66,11 +67,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content VERSION).Trim()
-          # Release text: the message of the (annotated) tag.
-          git fetch --force origin "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
-          $notes = git tag -l --format='%(contents)' "${{ github.ref_name }}"
+          $tag = "${{ github.ref_name }}"
+          $files = "dist/Mapsmith-Setup-$version.exe", "dist/Mapsmith-Setup-$version.exe.sha256",
+                   "dist/Mapsmith-$version-windows.zip", "dist/Mapsmith-$version-windows.zip.sha256"
+          # A release drafted on github.com (which creates the tag) keeps its text; only the files are added.
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber --repo "${{ github.repository }}"
+            if ($LASTEXITCODE -ne 0) { throw "Upload failed" }
+            exit 0
+          }
+          # Otherwise the release text is the message of the (annotated) tag.
+          git fetch --force origin "+refs/tags/${tag}:refs/tags/${tag}"
+          $notes = git tag -l --format='%(contents)' $tag
           if (-not $notes) { $notes = "Mapsmith $version" }
           Set-Content -Path notes.md -Value $notes -Encoding utf8
-          gh release create "${{ github.ref_name }}" "dist/Mapsmith-Setup-$version.exe" "dist/Mapsmith-Setup-$version.exe.sha256" `
-            "dist/Mapsmith-$version-windows.zip" "dist/Mapsmith-$version-windows.zip.sha256" `
-            --repo "${{ github.repository }}" --title "Mapsmith $version" --notes-file notes.md
+          gh release create $tag @files --repo "${{ github.repository }}" --title "Mapsmith $version" --notes-file notes.md
+          if ($LASTEXITCODE -ne 0) { throw "Release failed" }

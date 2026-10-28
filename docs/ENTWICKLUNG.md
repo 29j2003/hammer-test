@@ -439,6 +439,9 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Windows und wenn der Ordner beschreibbar ist, sonst öffnet sich die Release-Seite.
 - **Release**: `VERSION` erhöhen und committen, `git tag -a vX.Y.Z -m "<Release-Text>"`, Tag pushen. Der Workflow
   `release.yml` prüft Tag = `VERSION`, baut, testet, packt und erstellt das Release (nur dieser Job darf schreiben).
+  Ohne Tag-Push (z. B. aus einer Cloud-Sitzung, die nur ihren Branch pushen darf): auf github.com *Releases → Draft a
+  new release*, Tag `vX.Y.Z` mit *Create new tag on publish* auf dem Branch anlegen, Text einfügen, veröffentlichen –
+  der Workflow läuft dann ebenfalls und hängt Setup, ZIP und Prüfsummen an dieses Release an.
 
 - Linux: siehe `.claude/CLAUDE.md`. Windows: Visual Studio 2022 oder neuer + Qt 6.8 (`-DCMAKE_PREFIX_PATH=<Qt>/msvc2022_64`).
 - CI (`.github/workflows/ci.yml`): `checks` (Privatsphäre), `linux` (Build, Tests, UI-Tests unter Xvfb, Screenshots als
