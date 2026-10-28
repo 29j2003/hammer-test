@@ -2195,7 +2195,10 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 			QApplication::processEvents();
 		}
 		const quint64 frames = view->framesDrawn() - before;
-		CHECK(frames <= 40);   // 60 fps for half a second, with some slack
+		// 60 fps for the time that passed; some slack for repaints the window itself asks for.
+		// Without the limit every pass of this loop may draw a frame.
+		const double allowed = clock.elapsed() * 60.0 / 1000.0 * 1.5 + 5;
+		CHECK(double(frames) <= allowed);
 		CHECK(frames >= 3);
 	}
 
