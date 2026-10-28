@@ -394,7 +394,14 @@ ParticleBrowser::ParticleBrowser(Editor* editor, AssetBrowser* assets, QWidget* 
 	m_search = new QLineEdit;
 	m_search->setPlaceholderText(tr("Search particle systems (fire, smoke, spark ...)"));
 	m_search->setClearButtonEnabled(true);
-	v->addWidget(m_search);
+	auto* searchRow = new QHBoxLayout;
+	searchRow->addWidget(m_search, 1);
+	auto* importParticles = new QPushButton(tr("Import ..."));
+	importParticles->setObjectName("importParticles");
+	importParticles->setToolTip(tr("Bring a particle file (.pcf) into the mod and its particle list"));
+	searchRow->addWidget(importParticles);
+	connect(importParticles, &QPushButton::clicked, this, &ParticleBrowser::importRequested);
+	v->addLayout(searchRow);
 	m_tree = new ParticleTree;
 	addCopyShortcut(m_tree, Qt::DisplayRole);   // Ctrl+C: the effect name
 	m_tree->setHeaderHidden(true);

@@ -65,6 +65,9 @@
 
 #include <sme/studio_anim.h>
 #include <sme/audio.h>
+#include <sme/sound_edit.h>
+#include <sme/model_import.h>
+#include <sme/asset_import.h>
 #include <sme/asset_refs.h>
 #include <sme/brush.h>
 #include <sme/displacement.h>
@@ -83,11 +86,14 @@
 #include <sme/soundscape_area.h>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <cstdio>
 #include <functional>
 
 #include "asset_browser.h"
+#include "import_dialog.h"
 #include "class_picker.h"
 #include "autosaver.h"
 #include "find_dialog.h"
@@ -5668,6 +5674,240 @@ TEST_CASE("animations page: add an animation (.smd), preview it and build it int
 	page->setPlaying(false);
 }
 #endif
+
+TEST_CASE("import: own sounds, pictures, models and particle files come into the mod") {
+	namespace fs = std::filesystem;
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const auto mod = editor.gameEntry()->gameDir;
+	QTemporaryDir sources;
+	const auto source = [&](const QString& name) { return sources.filePath(name); };
+	const auto write = [](const QString& path, const std::vector<std::byte>& data) {
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(reinterpret_cast<const char*>(data.data()), qint64(data.size()));
+	};
+	const auto writeText = [](const QString& path, const QString& text) {
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(text.toUtf8());
+	};
+	const auto dialogFor = [&](const char* button) -> ImportDialog* {
+		auto* open = window.findChild<QPushButton*>(button);
+		REQUIRE(open);
+		open->click();
+		settle();
+		auto* dialog = window.findChild<ImportDialog*>("importDialog");
+		REQUIRE(dialog);
+		REQUIRE(dialog->isVisible());
+		return dialog;
+	};
+
+	// A sound from the Sounds page: a WAV at 48 kHz stereo becomes mono 22 kHz with a script name.
+	{
+		DecodedAudio tone;
+		tone.sampleRate = 48000;
+		tone.channels = 2;
+		for (int i = 0; i < 4800; ++i) {
+			const auto s = std::int16_t(6000 * std::sin(i * 0.05));
+			tone.samples.insert(tone.samples.end(), {s, s});
+		}
+		write(source("Engine Hum.wav"), encodeWav(tone));
+		auto* dialog = dialogFor("importSounds");
+		CHECK(dialog->kind() == ImportDialog::Kind::Sound);
+		auto* importButton = dialog->findChild<QPushButton*>("importNow");
+		CHECK_FALSE(importButton->isEnabled());   // nothing chosen yet
+		REQUIRE(dialog->setSourceFile(source("Engine Hum.wav")));
+		CHECK(dialog->findChild<QLabel*>("importPreview")->text().contains("48000"));
+		CHECK(dialog->findChild<QLineEdit*>("importName")->text() == "engine_hum");
+		dialog->findChild<QComboBox*>("importRate")->setCurrentIndex(1);   // 22050
+		dialog->findChild<QCheckBox*>("importScript")->setChecked(true);
+		CHECK(dialog->findChild<QLineEdit*>("importScriptName")->text() == "Custom.engine_hum");
+		CHECK(dialog->findChild<QLabel*>("importTarget")->text().contains("sound/custom/engine_hum.wav"));
+		REQUIRE(importButton->isEnabled());
+		QSignalSpy changed(dialog, &ImportDialog::modChanged);
+		importButton->click();
+		CHECK(dialog->resultText().contains("Custom.engine_hum"));
+		CHECK(changed.count() == 1);
+		const auto wav = mod / "sound/custom/engine_hum.wav";
+		REQUIRE(fs::exists(wav));
+		std::ifstream in(wav, std::ios::binary);
+		const std::string bytes((std::istreambuf_iterator<char>(in)), {});
+		const auto decoded = decodeAudio(std::as_bytes(std::span(bytes.data(), bytes.size())), "x.wav");
+		REQUIRE(decoded);
+		CHECK(decoded->sampleRate == 22050);
+		CHECK(decoded->channels == 1);
+		CHECK(fs::exists(mod / "scripts/game_sounds_mapsmith.txt"));
+		// The same name again: only with Replace ticked.
+		REQUIRE(dialog->setSourceFile(source("Engine Hum.wav")));
+		auto* replace = dialog->findChild<QCheckBox*>("importReplace");
+		CHECK(replace->isVisibleTo(dialog));
+		CHECK_FALSE(importButton->isEnabled());
+		replace->setChecked(true);
+		CHECK(importButton->isEnabled());
+		dialog->findChild<QPushButton*>("importUndo")->click();   // the first one is taken back
+		CHECK_FALSE(fs::exists(wav));
+		CHECK(dialog->resultText().contains("Taken back"));
+		REQUIRE(dialog->setSourceFile(source("Engine Hum.wav")));
+		REQUIRE(dialog->importNow());
+		CHECK(fs::exists(wav));
+		dialog->close();
+		settle();
+	}
+
+	// A picture from the Materials page: VTF + VMT, a _normal picture next to it is the bump map.
+	{
+		ImageRgba image;
+		image.width = 64;
+		image.height = 32;
+		for (int i = 0; i < 64 * 32; ++i) image.pixels.insert(image.pixels.end(), {std::byte(i % 256), std::byte(90), std::byte(40), std::byte(255)});
+		write(source("Red Bricks.png"), encodePng(image));
+		write(source("Red Bricks_normal.png"), encodePng(image));
+		window.showMaterialEditor();
+		settle();
+		auto* dialog = dialogFor("importMaterial");
+		REQUIRE(dialog->setSourceFile(source("Red Bricks.png")));
+		CHECK_FALSE(dialog->findChild<QLabel*>("importPreview")->pixmap().isNull());
+		CHECK(dialog->findChild<QLabel*>("importNormal")->text().contains("_normal"));
+		dialog->findChild<QComboBox*>("importSurface")->setCurrentText("brick");
+		REQUIRE(dialog->importNow());
+		CHECK(dialog->resultText().contains("custom/red_bricks"));
+		const std::string vmt = [&] {
+			std::ifstream in(mod / "materials/custom/red_bricks.vmt");
+			return std::string((std::istreambuf_iterator<char>(in)), {});
+		}();
+		CHECK(vmt.find("\"$bumpmap\" \"custom/red_bricks_normal\"") != std::string::npos);
+		CHECK(vmt.find("\"$surfaceprop\" \"brick\"") != std::string::npos);
+		CHECK_FALSE(dialog->setSourceFile(source("Engine Hum.wav")));   // not a picture: said so, nothing to import
+		CHECK(dialog->findChild<QLabel*>("importPreview")->text().contains("Not a picture"));
+		CHECK_FALSE(dialog->findChild<QPushButton*>("importNow")->isEnabled());
+		dialog->close();
+		settle();
+	}
+
+	// A model from the Models page: .obj + .mtl + picture, compiled by (a stand-in for) studiomdl.
+	{
+		writeText(source("crate.obj"), "mtllib crate.mtl\nv -0.5 0 -0.5\nv 0.5 0 -0.5\nv 0.5 1 -0.5\nv -0.5 1 -0.5\nv -0.5 0 0.5\nv 0.5 0 0.5\nv 0.5 1 0.5\n"
+		                                "v -0.5 1 0.5\nvt 0 0\nvt 1 0\nvt 1 1\nusemtl Crate Wood\nf 1/1 2/2 3/3 4/1\nf 5/1 8/2 7/3 6/1\nf 1/1 5/2 6/3 2/1\n"
+		                                "f 2/1 6/2 7/3 3/1\nf 3/1 7/2 8/3 4/1\nf 4/1 8/2 5/3 1/1\n");
+		writeText(source("crate.mtl"), "newmtl Crate Wood\nmap_Kd crate_wood.png\n");
+		ImageRgba wood;
+		wood.width = wood.height = 16;
+		wood.pixels.assign(16 * 16 * 4, std::byte(150));
+		write(source("crate_wood.png"), encodePng(wood));
+		// The stand-in writes what studiomdl would (or fails when asked to).
+		ModelImportOptions expected;
+		expected.name = "crate";
+		const auto outputs = modelOutputFiles(mod, expected);
+		QString script;
+#ifdef Q_OS_WIN
+		const QString fake = source("studiomdl.bat");
+		script = "@echo off\r\nif exist \"" + source("fail") + "\" (echo ERROR: too many bones & exit /b 1)\r\nmkdir \"" +
+		         QDir::toNativeSeparators(fromPath(outputs[0].parent_path())) + "\" 2>nul\r\n";
+		for (const auto& file : outputs) script += "echo compiled> \"" + QDir::toNativeSeparators(fromPath(file)) + "\"\r\n";
+#else
+		const QString fake = source("studiomdl");
+		script = "#!/bin/sh\nif [ -e '" + source("fail") + "' ]; then echo 'ERROR: too many bones'; exit 1; fi\nmkdir -p '" + fromPath(outputs[0].parent_path()) +
+		         "'\necho \"$@\" > '" + source("args.txt") + "'\n";
+		for (const auto& file : outputs) script += "echo compiled > '" + fromPath(file) + "'\n";
+#endif
+		writeText(fake, script);
+		QFile::setPermissions(fake, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+		{
+			QSettings settings;
+			settings.beginGroup("games/" + QString(editor.gameKey()).replace('/', '_'));
+			settings.setValue("studiomdl", fake);
+		}
+		CHECK(ImportDialog::studiomdlPath(&editor) == fake);
+		window.raiseDock("Models");
+		settle();
+		auto* dialog = dialogFor("importModel");
+		REQUIRE(dialog->setSourceFile(source("crate.obj")));
+		auto* materials = dialog->findChild<QListWidget*>("importMaterials");
+		REQUIRE(materials->count() == 1);
+		CHECK(materials->item(0)->text().contains("crate_wood.png"));
+		CHECK(dialog->findChild<QLabel*>("importPreview")->text().contains(QStringLiteral("39 × 39 × 39 units")));   // 1 m cube in game units
+		dialog->findChild<QComboBox*>("importUnits")->setCurrentIndex(2);   // inches: tiny
+		CHECK(dialog->findChild<QLabel*>("importPreview")->text().contains(QStringLiteral("1 × 1 × 1 units")));
+		dialog->findChild<QComboBox*>("importUnits")->setCurrentIndex(0);
+		dialog->findChild<QComboBox*>("importModelKind")->setCurrentIndex(1);   // physics
+		QSignalSpy done(dialog, &ImportDialog::finished);
+		REQUIRE(dialog->importNow());
+		REQUIRE((done.count() > 0 || done.wait(10000)));
+		CHECK(done.last().at(0).toBool());
+		CHECK(dialog->resultText().contains("models/custom/crate.mdl"));
+		for (const auto& file : outputs) CHECK(fs::exists(file));
+		CHECK(fs::exists(mod / "materials/models/custom/crate_wood.vmt"));
+		CHECK(fs::exists(mod / "modelsrc/custom/crate/crate.qc"));
+#ifndef Q_OS_WIN
+		QFile args(source("args.txt"));
+		REQUIRE(args.open(QIODevice::ReadOnly));
+		CHECK(QString::fromUtf8(args.readAll()).contains("crate.qc"));
+#endif
+		// Undo takes the model, its sources and its material out again.
+		REQUIRE(dialog->undoLast());
+		for (const auto& file : outputs) CHECK_FALSE(fs::exists(file));
+		CHECK_FALSE(fs::exists(mod / "materials/models/custom/crate_wood.vmt"));
+		// A failing compile: the reason is shown and nothing stays behind.
+		writeText(source("fail"), "x");
+		REQUIRE(dialog->setSourceFile(source("crate.obj")));
+		done.clear();
+		REQUIRE(dialog->importNow());
+		REQUIRE((done.count() > 0 || done.wait(10000)));
+		CHECK_FALSE(done.last().at(0).toBool());
+		CHECK(dialog->resultText().contains("too many bones"));
+		CHECK_FALSE(fs::exists(mod / "modelsrc/custom/crate/crate.qc"));
+		CHECK_FALSE(fs::exists(mod / "materials/models/custom/crate_wood.vmt"));
+		dialog->close();
+		settle();
+	}
+
+	// A particle file from the Particles page: into particles/ and the manifest.
+	{
+		write(source("my_fire.pcf"), test::makePcf({"my_fire", "my_embers"}));
+		window.raiseDock("Particles");
+		settle();
+		auto* dialog = dialogFor("importParticles");
+		REQUIRE(dialog->setSourceFile(source("my_fire.pcf")));
+		CHECK(dialog->findChild<QListWidget*>("importSystems")->count() == 2);
+		REQUIRE(dialog->importNow());
+		CHECK(fs::exists(mod / "particles/my_fire.pcf"));
+		std::ifstream in(mod / "particles/particles_manifest.txt");
+		const std::string manifest((std::istreambuf_iterator<char>(in)), {});
+		CHECK(manifest.find("!particles/my_fire.pcf") != std::string::npos);
+		dialog->close();
+		settle();
+	}
+
+	// The game is read again: the imports are there; the mod lists them for "Remove import".
+	settle();
+	QTest::qWait(200);
+	settle();
+	REQUIRE(editor.game());
+	CHECK(editor.game()->files.exists("sound/custom/engine_hum.wav"));
+	CHECK(editor.game()->files.exists("materials/custom/red_bricks.vmt"));
+	CHECK(editor.game()->files.exists("particles/my_fire.pcf"));
+	const auto records = loadImports(mod);
+	REQUIRE(records.size() == 3);   // sound, material, particles (the model was taken back)
+	CHECK(records[1].asset == "custom/red_bricks");
+	CHECK(window.findChild<QMenu*>("importMenu"));
+}
 
 namespace {
 

@@ -140,6 +140,8 @@ signals:
 	void liveChanged(const QString& name, const QString& vmt, const QImage& heights);
 	/// The views show the material as saved again (it was saved, or left without saving).
 	void liveReverted(const QString& name);
+	/// "Import ...": bring the mapper's own files into the mod (ImportDialog).
+	void importRequested();
 
 private:
 	enum class Kind { Wall, Blend, Model, Water, Unlit, Other };

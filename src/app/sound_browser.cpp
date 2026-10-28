@@ -329,6 +329,11 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	row->addWidget(m_search, 1);
 	row->addWidget(m_kind);
 	row->addWidget(newScape);
+	auto* importSounds = new QPushButton(tr("Import ..."));
+	importSounds->setObjectName("importSounds");
+	importSounds->setToolTip(tr("Bring your own sound (WAV, MP3, OGG, FLAC) into the mod as a game-ready WAV"));
+	row->addWidget(importSounds);
+	connect(importSounds, &QPushButton::clicked, this, &SoundBrowser::importRequested);
 	v->addLayout(row);
 	m_tree = new SoundTree;
 	m_tree->setColumnCount(2);

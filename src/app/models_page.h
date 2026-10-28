@@ -96,6 +96,8 @@ signals:
 	void placeRequested(const QString& classname, const std::vector<std::pair<std::string, std::string>>& keys);
 	/// A material of the model was clicked: open it in the material editor.
 	void openMaterialRequested(const QString& material);
+	/// "Import ...": bring the mapper's own files into the mod (ImportDialog).
+	void importRequested();
 
 private:
 	/// What a background load produced.

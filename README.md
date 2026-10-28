@@ -142,6 +142,10 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 - **Browsers**: materials filtered by kind (brush, blend/displacement, model, tool, see-through, water, decals, skybox,
   used in this map), models with previews, a **Sounds** tab with every sound script entry, sound file and soundscape
   and a **Particles** tab (drag a particle system in for an info_particle_system).
+- **Import your own files** (*Import ...* on the Sounds, Materials, Models and Particles pages): sounds (WAV, MP3,
+  OGG, FLAC) become game-ready WAVs with an optional sound script entry, pictures (PNG, JPG, TGA) become VTF + VMT
+  materials, `.obj`/`.smd` models are compiled with the game's studiomdl as static, physics or dynamic props, `.pcf`
+  particle files are added to the particle manifest. Nothing is overwritten without asking; every import can be undone.
 - **Particles**: pick a system to see it move - fire, smoke, sparks with their sprites, child systems included - and
   turn around it (drag; right drag moves up and down; the wheel zooms), pause, restart, slow down or speed up. Next to it
   its parts as cards: emitters, initializers, operators, renderers and children with all their values. The preview runs

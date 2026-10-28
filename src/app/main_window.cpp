@@ -25,6 +25,7 @@
 #include "replace_materials_dialog.h"
 #include "autosaver.h"
 #include "icons.h"
+#include "import_dialog.h"
 #include "material_editor.h"
 #include "material_cache.h"
 #include "panels.h"
@@ -40,6 +41,8 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QDialog>
+#include <QListWidget>
 #include <QCloseEvent>
 #include <QDragEnterEvent>
 #include <QMimeData>
@@ -528,6 +531,11 @@ void MainWindow::createDocks() {
 	connect(m_features, &FeaturesPanel::installed, this, reloadGame);
 	m_modPage->addBanner(m_features->offer());
 	m_features->refreshOffer();
+	// "Import ..." on the pages: the mapper's own sounds, pictures, models and particle files.
+	connect(m_sounds, &SoundBrowser::importRequested, this, [this] { openImport(ImportDialog::Kind::Sound); });
+	connect(m_materialEditor, &MaterialEditor::importRequested, this, [this] { openImport(ImportDialog::Kind::Material); });
+	connect(m_modelsPage, &ModelsPage::importRequested, this, [this] { openImport(ImportDialog::Kind::Model); });
+	connect(m_particles, &ParticleBrowser::importRequested, this, [this] { openImport(ImportDialog::Kind::Particles); });
 	connect(m_features, &FeaturesPanel::showRequested, this, [this] {
 		showPage(Page::Project);
 		m_projectPage->setCurrentWidget(m_features);
@@ -905,6 +913,14 @@ void MainWindow::createActions() {
 		                           .arg(result->textures)
 		                           .arg(result->models));
 	}));
+	auto* imports = file->addMenu(tr("Import into the mod"));
+	imports->setObjectName("importMenu");
+	imports->addAction(action(tr("Sound ..."), QKeySequence(), [this] { openImport(ImportDialog::Kind::Sound); }));
+	imports->addAction(action(tr("Picture as material ..."), QKeySequence(), [this] { openImport(ImportDialog::Kind::Material); }));
+	imports->addAction(action(tr("Model ..."), QKeySequence(), [this] { openImport(ImportDialog::Kind::Model); }));
+	imports->addAction(action(tr("Particle file ..."), QKeySequence(), [this] { openImport(ImportDialog::Kind::Particles); }));
+	imports->addSeparator();
+	imports->addAction(action(tr("Imported files ..."), QKeySequence(), [this] { showImports(); }));
 	file->addSeparator();
 	file->addAction(action(tr("Exit"), QKeySequence::Quit, [this] { close(); }));
 
@@ -2293,6 +2309,74 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 	}
 	QSettings().setValue("window/geometry", saveGeometry());
 	event->accept();
+}
+
+ImportDialog* MainWindow::openImport(ImportDialog::Kind kind) {
+	if (m_importDialog && m_importDialog->kind() != kind && !m_importDialog->busy()) m_importDialog->deleteLater();
+	if (!m_importDialog || m_importDialog->kind() != kind) {
+		m_importDialog = new ImportDialog(m_editor, kind, this);
+		m_importDialog->setAttribute(Qt::WA_DeleteOnClose);
+		connect(m_importDialog, &ImportDialog::modChanged, this, &MainWindow::reloadGameSoon);
+	}
+	m_importDialog->show();
+	m_importDialog->raise();
+	m_importDialog->activateWindow();
+	return m_importDialog;
+}
+
+void MainWindow::showImports() {
+	const auto* entry = m_editor->gameEntry();
+	if (!entry) return;
+	const auto modDir = entry->gameDir;
+	QDialog dialog(this);
+	dialog.setWindowTitle(tr("Imported files"));
+	dialog.setMinimumSize(520, 320);
+	auto* v = new QVBoxLayout(&dialog);
+	auto* about = new QLabel(tr("Everything Mapsmith imported into this mod. Remove takes the files out again (and the lines it added to sound "
+	                            "scripts and manifests); replaced files come back."));
+	about->setWordWrap(true);
+	v->addWidget(about);
+	auto* list = new QListWidget;
+	list->setObjectName("importList");
+	v->addWidget(list, 1);
+	const auto fill = [list, modDir] {
+		list->clear();
+		for (const auto& record : loadImports(modDir)) {
+			list->addItem(QStringLiteral("%1  -  %2  (%3 files)").arg(QString::fromStdString(record.kind), QString::fromStdString(record.asset)).arg(record.created.size()));
+		}
+	};
+	fill();
+	auto* buttons = new QHBoxLayout;
+	auto* remove = new QPushButton(tr("Remove import"));
+	remove->setObjectName("importRemove");
+	auto* close = new QPushButton(tr("Close"));
+	buttons->addWidget(remove);
+	buttons->addStretch(1);
+	buttons->addWidget(close);
+	v->addLayout(buttons);
+	connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+	connect(remove, &QPushButton::clicked, &dialog, [this, list, modDir, fill] {
+		const auto records = loadImports(modDir);
+		const int row = list->currentRow();
+		if (row < 0 || row >= int(records.size())) return;
+		std::string error;
+		if (!undoImport(records[std::size_t(row)], &error)) m_log->append(QString::fromStdString(error), QColor(255, 140, 120));
+		forgetImport(modDir, records[std::size_t(row)]);
+		m_log->append(tr("Removed the import %1").arg(QString::fromStdString(records[std::size_t(row)].asset)));
+		fill();
+		reloadGameSoon();
+	});
+	dialog.exec();
+}
+
+void MainWindow::reloadGameSoon() {
+	if (m_reloadPending) return;
+	m_reloadPending = true;
+	m_log->append(tr("The mod's files changed - reading them again"));
+	QTimer::singleShot(0, this, [this] {
+		m_reloadPending = false;
+		if (!m_editor->gameKey().isEmpty()) selectGame(m_editor->gameKey());
+	});
 }
 
 } // namespace sme::app

@@ -127,6 +127,11 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	auto* searchRow = new QHBoxLayout;
 	searchRow->addWidget(m_search, 1);
 	searchRow->addWidget(m_usedOnly);
+	auto* importModel = new QPushButton(tr("Import ..."));
+	importModel->setObjectName("importModel");
+	importModel->setToolTip(tr("Bring your own model (.obj from Blender and others, or .smd) into the mod: compiled with the game's studiomdl"));
+	searchRow->addWidget(importModel);
+	connect(importModel, &QPushButton::clicked, this, &ModelsPage::importRequested);
 	middleLayout->addLayout(searchRow);
 	m_model = new ModelListModel(assets->modelThumbnails(), this);
 	m_filter = new ModelFolderFilter(this);

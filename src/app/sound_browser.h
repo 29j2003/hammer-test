@@ -135,6 +135,8 @@ signals:
 	void audioLoaded();
 	/// The dock's "Edit this sound" button: the Sounds page should be shown (it has room for the tools).
 	void pageRequested();
+	/// "Import ...": bring the mapper's own files into the mod (ImportDialog).
+	void importRequested();
 
 protected:
 	void resizeEvent(QResizeEvent* event) override;
