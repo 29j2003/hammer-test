@@ -1,6 +1,7 @@
 // animations_page.cpp - The Animations page (see animations_page.h).
 
 #include "animations_page.h"
+#include "process_guard.h"
 
 #include "asset_browser.h"
 #include "editor.h"
@@ -320,6 +321,7 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 }
 
 AnimationsPage::~AnimationsPage() {
+	stopOwnProcesses(this);   // studiomdl may still run: its finish must not reach a page that is gone
 	++m_generation;
 	m_loader.waitForFinished();
 }

@@ -1,6 +1,7 @@
 // source_control_panel.cpp - Source control panel (see source_control_panel.h).
 
 #include "source_control_panel.h"
+#include "process_guard.h"
 
 #include "editor.h"
 
@@ -414,13 +415,7 @@ void SourceControlPanel::refresh() {
 
 SourceControlPanel::~SourceControlPanel() {
 	std::queue<Job>().swap(m_jobs);
-	for (auto* process : findChildren<QProcess*>(Qt::FindDirectChildrenOnly)) {
-		process->disconnect(this);
-		if (process->state() != QProcess::NotRunning) {
-			process->kill();
-			process->waitForFinished(2000);
-		}
-	}
+	stopOwnProcesses(this);
 }
 
 void SourceControlPanel::run(const QStringList& args, Done done, bool logged) {

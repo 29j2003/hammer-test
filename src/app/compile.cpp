@@ -1,6 +1,7 @@
 // compile.cpp - Map compile pipeline and dialogs (see compile.h).
 
 #include "compile.h"
+#include "process_guard.h"
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -124,11 +125,7 @@ QStringList CompileRunner::stepNames() const {
 }
 
 CompileRunner::~CompileRunner() {
-	if (m_process) {
-		m_process->disconnect(this);
-		m_process->kill();
-		m_process->waitForFinished(2000);
-	}
+	stopOwnProcesses(this);
 }
 
 void CompileRunner::start(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options) {

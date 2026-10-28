@@ -1,6 +1,7 @@
 // import_dialog.cpp - Importing sounds, pictures, models and particle files (see import_dialog.h).
 
 #include "import_dialog.h"
+#include "process_guard.h"
 
 #include "editor.h"
 #include "sound_player.h"
@@ -121,11 +122,11 @@ ImportDialog::ImportDialog(Editor* editor, Kind kind, QWidget* parent) : QDialog
 }
 
 ImportDialog::~ImportDialog() {
-	if (m_process) {
-		m_process->disconnect(this);
-		m_process->kill();
-		m_process->waitForFinished(2000);
-	}
+	const bool compiling = busy();
+	stopOwnProcesses(this);
+	// Closed while studiomdl ran: the model was not made, so what was written for it goes again
+	// (as when studiomdl fails) instead of staying in the mod unlisted.
+	if (compiling && m_plan) (void)undoImport(m_plan->record);
 }
 
 QString ImportDialog::fileFilter(Kind kind) {
