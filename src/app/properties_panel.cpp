@@ -2,6 +2,8 @@
 
 #include "properties_panel.h"
 
+#include "class_picker.h"
+
 #include "copy_paste.h"
 
 #include "asset_browser.h"
@@ -12,6 +14,8 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QAbstractSpinBox>
+#include <QWheelEvent>
 #include <QCompleter>
 #include <QListView>
 #include <QStringListModel>
@@ -291,6 +295,17 @@ QStringList PropertiesPanel::sequencesFor(const Entity& entity) const {
 	return out;
 }
 
+bool PropertiesPanel::eventFilter(QObject* watched, QEvent* event) {
+	if (event->type() == QEvent::Wheel) {
+		auto* field = qobject_cast<QWidget*>(watched);
+		if (field && !field->hasFocus()) {
+			QApplication::sendEvent(m_scroll->viewport(), event);   // scroll the panel instead
+			return true;
+		}
+	}
+	return QWidget::eventFilter(watched, event);
+}
+
 QAbstractItemModel* PropertiesPanel::sharedNames(const QString& kind, const QStringList& names) {
 	auto& [model, count] = m_sharedNames[kind];
 	if (!model) model = new QStringListModel(this);
@@ -320,6 +335,14 @@ void PropertiesPanel::rebuild() {
 		buildEntity(layout, {0});
 	}
 	layout->addStretch(1);
+	// The wheel scrolls the panel; it only changes a box or number that has the keyboard focus
+	// (scrolling past a drop-down must not change a key by accident).
+	for (auto* field : content->findChildren<QWidget*>()) {
+		if (qobject_cast<QComboBox*>(field) || qobject_cast<QAbstractSpinBox*>(field) || qobject_cast<QSlider*>(field)) {
+			field->setFocusPolicy(Qt::StrongFocus);
+			field->installEventFilter(this);
+		}
+	}
 	m_scroll->setWidget(content);   // deletes the previous content
 	m_content = content;
 	m_help->setText(m_defaultHelp);
@@ -608,26 +631,10 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		header->addWidget(worldLabel, 1);
 		header->addWidget(descriptionLabel(tr("%1 brushes, %2 entities").arg(doc.solidCount()).arg(doc.entities.size())));
 	} else {
-		auto* classCombo = new QComboBox;
-		classCombo->setObjectName("entityClass");
-		classCombo->setEditable(true);
-		classCombo->setToolTip(tr("Class of the entity - pick another to change it (its keys stay)"));
-		QStringList classes;
-		if (catalog) {
-			for (const auto* cls : catalog->placeable()) {
-				if (cls->isSolid() == !first->solids.empty()) {
-					classes << qs(cls->name);
-				}
-			}
-		}
-		classCombo->addItems(classes);
-		auto* completer = new QCompleter(classes, classCombo);
-		completer->setCaseSensitivity(Qt::CaseInsensitive);
-		completer->setFilterMode(Qt::MatchContains);
-		classCombo->setCompleter(completer);
-		classCombo->setEditText(sameClass ? qs(classname) : tr("(different classes)"));
-		connect(classCombo, &QComboBox::activated, this, [this, classCombo, entityIds] { setKey(entityIds, "classname", classCombo->currentText()); });
-		header->addWidget(classCombo, 1);
+		auto* classPicker = new ClassPicker(catalog, !first->solids.empty());
+		classPicker->setClassName(sameClass ? qs(classname) : QString(), tr("(different classes)"));
+		connect(classPicker, &ClassPicker::classChosen, this, [this, entityIds](const QString& name) { setKey(entityIds, "classname", name); });
+		header->addWidget(classPicker, 1);
 		header->addWidget(descriptionLabel(entityIds.size() > 1 ? tr("%1 entities").arg(entityIds.size()) : tr("id %1").arg(first->id)));
 	}
 	layout->addLayout(header);

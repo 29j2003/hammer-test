@@ -75,6 +75,7 @@
 #include <functional>
 
 #include "asset_browser.h"
+#include "class_picker.h"
 #include "autosaver.h"
 #include "find_dialog.h"
 #include "history_panel.h"
@@ -2232,6 +2233,34 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		settle();
 		REQUIRE(modelBox());
 		CHECK(modelBox()->model() == shared);
+
+		// The wheel over a drop-down without focus scrolls the panel, it never changes the value.
+		auto* box = modelBox();
+		const QString before = box->currentText();
+		QWheelEvent wheel(QPointF(5, 5), box->mapToGlobal(QPointF(5, 5)), {}, {0, -120}, Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+		QApplication::sendEvent(box, &wheel);
+		CHECK(box->currentText() == before);
+
+		// Class picker: a search list with the related classes on top, arrows and Enter.
+		auto* picker = window.properties()->findChild<ClassPicker*>("entityClass");
+		REQUIRE(picker);
+		CHECK(picker->className() == "prop_static");
+		picker->openList();
+		settle();
+		REQUIRE(picker->list());
+		CHECK_FALSE(picker->list()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "Related to prop_static"
+		CHECK(picker->list()->item(1)->text() == "prop_dynamic");
+		QTest::keyClicks(picker->searchField(), "info");
+		CHECK(picker->list()->currentItem()->text().startsWith("info_"));
+		const QString second = picker->list()->count() > 1 ? picker->list()->item(1)->text() : QString();
+		QTest::keyClick(picker->searchField(), Qt::Key_Down);
+		if (!second.isEmpty()) CHECK(picker->list()->currentItem()->text() == second);
+		picker->searchField()->clear();
+		QTest::keyClicks(picker->searchField(), "prop dyn");
+		QTest::keyClick(picker->searchField(), Qt::Key_Return);
+		settle();
+		CHECK(editor.doc().findEntity(propId)->classname() == "prop_dynamic");
+		editor.undo();
 		editor.undo();
 		settle();
 	}

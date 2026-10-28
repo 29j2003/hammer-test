@@ -39,6 +39,14 @@ Press **Shift+E**. The **Tool** tab lists every entity class of the game, with i
 - To turn existing brushes into a brush entity, select them and use **Tie to** (Ctrl+T); see
   [Building](building.html#brush-entities-tie-to-and-move-to-world).
 
+
+### Changing the class
+
+The class at the top of *Object Properties* is a search list: click it, type a few letters (several words narrow
+it down, e.g. `prop phys`), move with the **arrow keys** and press **Enter**. With an empty search the classes
+related to the current one come first (for `prop_static`: `prop_dynamic`, `prop_physics` …). The keys stay.
+The mouse wheel scrolls the panel; it only changes a drop-down or number field you clicked into first.
+
 ## The properties panel
 
 Select an entity and the right panel shows it.

@@ -57,6 +57,10 @@ signals:
 	/// "Edit soundscape" on a soundscape entity: the soundscape's name (open it on the Sounds page).
 	void editSoundscapeRequested(const QString& name);
 
+protected:
+	/// Sends wheel turns over unfocused boxes to the scroll area (see rebuild()).
+	bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
 	void rebuild();
 	void buildEntity(QVBoxLayout* layout, const std::vector<int>& entityIds);

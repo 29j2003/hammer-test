@@ -279,6 +279,40 @@ TEST_CASE("textures decode (RGBA and DXT1) and pick small mips") {
 	CHECK(encodePng(*thumb).size() > 8);
 }
 
+TEST_CASE("FGD: related classes for the class picker") {
+	Fixture f;
+	test::createFixture(f);
+	const auto fgd = f.root / "related.fgd";
+	test::writeText(fgd, R"(@BaseClass = Targetname [ targetname(target_source) : "Name" ]
+@BaseClass = Origin [ origin(origin) : "Origin" ]
+@BaseClass base(Targetname, Origin) = BaseProp [ model(studio) : "Model" ]
+@BaseClass base(BaseProp) = BasePropPhysics [ massscale(float) : "Mass" ]
+@PointClass base(BaseProp) = prop_static : "Static" []
+@PointClass base(BasePropPhysics) = prop_physics : "Physics" []
+@PointClass base(BasePropPhysics) = prop_physics_multiplayer : "Physics MP" []
+@PointClass base(BaseProp) = prop_dynamic : "Dynamic" []
+@PointClass base(BaseProp) = cycler : "Cycler" []
+@PointClass base(Targetname, Origin) = light : "Light" []
+@PointClass base(Targetname, Origin) = logic_relay : "Relay" []
+@PointClass base(Targetname, Origin) = info_target : "Target" []
+@SolidClass base(Targetname) = func_detail : "Detail" []
+@SolidClass base(Targetname) = func_brush : "Brush" []
+)");
+	EntityCatalog catalog;
+	REQUIRE(catalog.load({fgd}));
+	const auto related = catalog.related("prop_static", 4);
+	REQUIRE(related.size() >= 3);
+	for (int i = 0; i < 3; ++i) {
+		CHECK(related[std::size_t(i)]->name.rfind("prop_", 0) == 0);   // the prop family first
+	}
+	CHECK(std::none_of(related.begin(), related.end(), [](const EntityClass* c) { return c->name == "light" || c->isSolid(); }));
+	CHECK(catalog.related("prop_physics", 1).front()->name == "prop_physics_multiplayer");
+	const auto brushes = catalog.related("func_detail");
+	REQUIRE(brushes.size() == 1);
+	CHECK(brushes.front()->name == "func_brush");
+	CHECK(catalog.related("no_such_class").empty());
+}
+
 TEST_CASE("FGD: includes, base classes, helpers, choices, flags, IO") {
 	Fixture f;
 	test::createFixture(f);

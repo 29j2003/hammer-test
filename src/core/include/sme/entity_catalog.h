@@ -91,6 +91,11 @@ public:
 	/// Classes a mapper can place (everything except BaseClass), sorted by name.
 	[[nodiscard]] std::vector<const EntityClass*> placeable() const;
 
+	/// Placeable classes most like `name` (same kind, point or brush), best first, at most `limit`:
+	/// the same family (prop_static -> prop_physics, prop_dynamic ...) and shared base classes
+	/// count, base classes nearly every entity has count little. Empty for unknown classes.
+	[[nodiscard]] std::vector<const EntityClass*> related(std::string_view name, std::size_t limit = 8) const;
+
 	/// Number of classes, base classes included.
 	[[nodiscard]] std::size_t size() const { return m_classes.size(); }
 

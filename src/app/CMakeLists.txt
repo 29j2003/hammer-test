@@ -32,6 +32,7 @@ add_library(smeapp STATIC
 	panels.cpp
 	particle_browser.cpp
 	properties_panel.cpp
+	class_picker.cpp
 	replace_materials_dialog.cpp
 	properties_instance.cpp
 	renderer.cpp

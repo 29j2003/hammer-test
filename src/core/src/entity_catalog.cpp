@@ -5,7 +5,9 @@
 #include <sme/text.h>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
+#include <map>
 #include <set>
 
 #include <toolpp/FGD.h>
@@ -210,6 +212,49 @@ std::vector<const EntityClass*> EntityCatalog::placeable() const {
 			out.push_back(&entity);
 		}
 	}
+	return out;
+}
+
+std::vector<const EntityClass*> EntityCatalog::related(std::string_view name, std::size_t limit) const {
+	const EntityClass* target = find(name);
+	if (!target || limit == 0) return {};
+	// Every base class a class inherits from, directly or through others.
+	std::map<const EntityClass*, std::set<std::string>> ancestors;
+	const auto ancestorsOf = [&](const EntityClass* cls) -> const std::set<std::string>& {
+		auto [it, added] = ancestors.try_emplace(cls);
+		if (added) {
+			std::vector<std::string> todo(cls->bases.begin(), cls->bases.end());
+			while (!todo.empty()) {
+				const std::string base = toLower(todo.back());
+				todo.pop_back();
+				if (!it->second.insert(base).second) continue;
+				if (const auto* parent = find(base)) todo.insert(todo.end(), parent->bases.begin(), parent->bases.end());
+			}
+		}
+		return it->second;
+	};
+	const auto places = placeable();
+	// How rare each base class is: sharing "Targetname" says nothing, sharing "BasePropPhysics" a lot.
+	std::map<std::string, int> users;
+	for (const auto* cls : places) {
+		for (const auto& base : ancestorsOf(cls)) ++users[base];
+	}
+	const auto family = [](std::string_view n) { return toLower(n.substr(0, n.find('_'))); };
+	const std::string targetFamily = family(target->name);
+	const auto& targetBases = ancestorsOf(target);
+	std::vector<std::pair<double, const EntityClass*>> scored;
+	for (const auto* cls : places) {
+		if (cls == target || cls->isSolid() != target->isSolid()) continue;
+		double score = 0;
+		if (family(cls->name) == targetFamily) score += 3;
+		for (const auto& base : ancestorsOf(cls)) {
+			if (targetBases.count(base)) score += std::log(double(places.size()) / double(std::max(1, users[base])));
+		}
+		if (score > 1.0) scored.emplace_back(score, cls);
+	}
+	std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+	std::vector<const EntityClass*> out;
+	for (std::size_t i = 0; i < scored.size() && out.size() < limit; ++i) out.push_back(scored[i].second);
 	return out;
 }
 
