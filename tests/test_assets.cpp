@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 
@@ -380,6 +381,86 @@ TEST_CASE("model body groups, skins and prop settings") {
 	CHECK_FALSE(plain->staticProp);
 	CHECK(plain->bodyGroups.size() == 1);
 	CHECK(plain->keyValues.empty());
+}
+
+namespace {
+
+/// A .bsp with `samples` env_cubemap samples and a pakfile listing `names` (central directory only).
+std::vector<std::byte> makeCubemapBsp(int samples, const std::vector<std::string>& names) {
+	std::vector<std::byte> out(8 + 64 * 16 + 4);
+	const auto put32 = [](std::vector<std::byte>& v, std::size_t at, std::uint32_t value) {
+		for (int i = 0; i < 4; ++i) v[at + std::size_t(i)] = std::byte((value >> (8 * i)) & 0xff);
+	};
+	std::memcpy(out.data(), "VBSP", 4);
+	put32(out, 4, 20);
+	const std::size_t cubemapsAt = out.size();
+	out.resize(out.size() + std::size_t(samples) * 16);
+	put32(out, 8 + 42 * 16, std::uint32_t(cubemapsAt));
+	put32(out, 8 + 42 * 16 + 4, std::uint32_t(samples * 16));
+	std::vector<std::byte> zip;
+	const auto append16 = [&zip](std::uint16_t v) { zip.push_back(std::byte(v & 0xff)); zip.push_back(std::byte(v >> 8)); };
+	const auto append32 = [&](std::uint32_t v) { append16(std::uint16_t(v & 0xffff)); append16(std::uint16_t(v >> 16)); };
+	zip.resize(10);   // stands for the local entries
+	const std::size_t centralAt = zip.size();
+	for (const auto& name : names) {
+		append32(0x02014b50u);
+		for (int i = 0; i < 6; ++i) append16(0);   // versions, flags, method, time, date
+		append32(0); append32(0); append32(0);     // crc, sizes
+		append16(std::uint16_t(name.size()));
+		for (int i = 0; i < 4; ++i) append16(0);   // extra, comment, disk, internal attributes
+		append32(0); append32(0);                  // external attributes, local header offset
+		for (const char c : name) zip.push_back(std::byte(c));
+	}
+	const std::size_t centralSize = zip.size() - centralAt;
+	append32(0x06054b50u);
+	append16(0); append16(0);
+	append16(std::uint16_t(names.size())); append16(std::uint16_t(names.size()));
+	append32(std::uint32_t(centralSize)); append32(std::uint32_t(centralAt));
+	append16(0);
+	const std::size_t pakAt = out.size();
+	out.insert(out.end(), zip.begin(), zip.end());
+	put32(out, 8 + 40 * 16, std::uint32_t(pakAt));
+	put32(out, 8 + 40 * 16 + 4, std::uint32_t(zip.size()));
+	return out;
+}
+
+} // namespace
+
+TEST_CASE("compile output: built cubemaps are judged by the map, not by the game's exit code") {
+	const auto fresh = makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf", "materials/maps/test/c144_-16_24.vtf"});
+	const auto before = readBspCubemaps(fresh, "test");
+	REQUIRE(before);
+	CHECK(before->samples == 2);
+	CHECK(before->built == 1);   // cubemapdefault (VBSP's) does not count
+	const auto built = makeCubemapBsp(2, {"materials/maps/test/cubemapdefault.vtf", "materials/maps/TEST/c144_-16_24.vtf",
+	                                      "materials/maps/test/c-512_0_64.vtf", "materials/maps/test/c-512_0_64.hdr.vtf",
+	                                      "materials/maps/other/c1_2_3.vtf", "materials/maps/test/c1_2.vtf"});
+	const auto after = readBspCubemaps(built, "Test");
+	REQUIRE(after);
+	CHECK(after->built == 3);
+	// Julius' log: the game wrote the cubemaps and ended with exit code 1 - that is a success.
+	auto verdict = judgeCubemapBuild(1, false, BspCubemaps{2, 0}, after, true);
+	CHECK(verdict.ok);
+	CHECK(verdict.message.find("3 cubemaps built") != std::string::npos);
+	CHECK(verdict.message.find("exit code 1") != std::string::npos);
+	// Nothing new in the map: a failure, whatever the exit code.
+	verdict = judgeCubemapBuild(0, false, BspCubemaps{2, 0}, BspCubemaps{2, 0}, false);
+	CHECK_FALSE(verdict.ok);
+	CHECK_FALSE(judgeCubemapBuild(1, true, std::nullopt, std::nullopt, false).ok);
+	// No env_cubemap: nothing to build is fine.
+	CHECK(judgeCubemapBuild(1, false, BspCubemaps{}, BspCubemaps{}, true).ok);
+	// Broken files are no .bsp, never a crash.
+	CHECK_FALSE(readBspCubemaps({}, "test"));
+	auto broken = built;
+	broken.resize(broken.size() - 30);   // pakfile lump now points past the end
+	CHECK_FALSE(readBspCubemaps(broken, "test"));
+	for (std::size_t cut = 0; cut < built.size(); cut += 7) {
+		std::vector<std::byte> part(built.begin(), built.begin() + std::ptrdiff_t(cut));
+		(void)readBspCubemaps(part, "test");
+	}
+	auto garbage = built;
+	for (std::size_t i = 8 + 64 * 16 + 4; i < garbage.size(); i += 3) garbage[i] = std::byte(0xff);
+	(void)readBspCubemaps(garbage, "test");
 }
 
 TEST_CASE("compile output: errors, warnings, explanations, progress") {

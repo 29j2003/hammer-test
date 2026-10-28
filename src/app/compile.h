@@ -4,14 +4,17 @@
 
 #pragma once
 
+#include <QDateTime>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QObject>
 #include <QProcess>
 #include <QStringList>
 
+#include <optional>
 #include <vector>
 
+#include <sme/compile_log.h>
 #include <sme/compile_options.h>
 #include <sme/math.h>
 
@@ -82,6 +85,7 @@ private:
 		QStringList arguments;
 		bool detached = false;   ///< The game is started and left running
 		bool copy = false;       ///< Copy the BSP instead of running a program
+		QString cubemapsInto;    ///< Building cubemaps into this map (maps/<map>.bsp): judged by the map, not the exit code
 	};
 	static std::vector<Step> plan(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options);
 	void next();
@@ -92,6 +96,8 @@ private:
 	std::size_t m_index = 0;
 	QProcess* m_process = nullptr;
 	QString m_vmfPath, m_gameDir;
+	std::optional<BspCubemaps> m_cubemapsBefore;   ///< The map's cubemaps when a cubemap step started
+	QDateTime m_mapTimeBefore;                     ///< ... and its time
 	bool m_leaked = false;
 	int m_current = -1;
 	bool m_cancelled = false;

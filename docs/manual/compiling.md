@@ -181,6 +181,8 @@ it into the `.bsp` in the `maps` folder, then closes.
   players use; with *Both* lighting, build both.
 - Build cubemaps again after every compile; a new compile replaces the `.bsp` and its reflections.
 - Cubemaps are built from the light of the compiled map, so build them after VRAD, as the dialog does.
+- The game always ends with exit code 1 after building cubemaps. Mapsmith therefore looks into the map in `maps`
+  instead: the log says how many cubemaps are now in it, and the step only fails when none were built.
 - For reflections that line up with the room (Mapbase), give the cubemap a room box; see
   [Cubemaps and room boxes](entities.html#cubemaps-and-room-boxes).
 

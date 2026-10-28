@@ -61,6 +61,18 @@ void saveCompileOptions(const QString& gameKey, const CompileOptions& options) {
 	QSettings().setValue("compile/" + QString(gameKey).replace('/', '_'), QString::fromStdString(options.serialize()));
 }
 
+namespace {
+
+/// The cubemaps in a compiled map file (nullopt if it is missing or unreadable).
+std::optional<BspCubemaps> readMapCubemaps(const QString& path) {
+	QFile file(path);
+	if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
+	const QByteArray data = file.readAll();
+	return readBspCubemaps(std::as_bytes(std::span(data.constData(), static_cast<std::size_t>(data.size()))), QFileInfo(path).completeBaseName().toStdString());
+}
+
+} // namespace
+
 std::vector<CompileRunner::Step> CompileRunner::plan(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options) {
 	std::vector<Step> steps;
 	const QFileInfo vmf(vmfPath);
@@ -77,7 +89,10 @@ std::vector<CompileRunner::Step> CompileRunner::plan(const QString& vmfPath, con
 			case CompileTool::Vvis: step.program = settings.vvis; break;
 			case CompileTool::Vrad: step.program = settings.vrad; break;
 			case CompileTool::Copy: step.copy = true; break;
-			case CompileTool::Cubemaps: step.program = settings.gameExe; break;
+			case CompileTool::Cubemaps:
+				step.program = settings.gameExe;
+				step.cubemapsInto = QDir(gameDir).filePath(QStringLiteral("maps/%1.bsp").arg(vmf.completeBaseName()));
+				break;
 			case CompileTool::Game:
 				if (settings.gameExe.isEmpty()) continue;   // no game set: compile only
 				step.program = settings.gameExe;
@@ -223,6 +238,10 @@ void CompileRunner::next() {
 		next();
 		return;
 	}
+	if (!step.cubemapsInto.isEmpty()) {
+		m_cubemapsBefore = readMapCubemaps(step.cubemapsInto);
+		m_mapTimeBefore = QFileInfo(step.cubemapsInto).lastModified();
+	}
 	m_process = new QProcess(this);
 	m_process->setProcessChannelMode(QProcess::MergedChannels);
 	m_process->setWorkingDirectory(QFileInfo(step.program).absolutePath());
@@ -266,6 +285,19 @@ void CompileRunner::next() {
 				const QByteArray text = lin.readAll();
 				emit leak(readPointfile(std::string_view(text.constData(), static_cast<std::size_t>(text.size()))));
 			}
+		}
+		if (!step.cubemapsInto.isEmpty()) {
+			// The game quits itself after -buildcubemaps with exit code 1: the map tells whether it worked.
+			const QFileInfo map(step.cubemapsInto);
+			const bool rewritten = map.exists() && (!m_mapTimeBefore.isValid() || map.lastModified() > m_mapTimeBefore);
+			const auto verdict = judgeCubemapBuild(code, status != QProcess::NormalExit, m_cubemapsBefore, readMapCubemaps(step.cubemapsInto), rewritten);
+			if (!verdict.ok) {
+				fail(tr("%1 failed: %2").arg(step.name, QString::fromStdString(verdict.message)));
+				return;
+			}
+			emit output(QString::fromStdString(verdict.message), QColor(130, 210, 140));
+			next();
+			return;
 		}
 		if (status != QProcess::NormalExit || code != 0) {
 			fail(tr("%1 failed (exit code %2).").arg(step.name).arg(code));
