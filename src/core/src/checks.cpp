@@ -6,6 +6,7 @@
 #include <sme/brush.h>
 #include <sme/doors.h>
 #include <sme/filesystem.h>
+#include <sme/layout_checks.h>
 #include <sme/material.h>
 #include <sme/text.h>
 
@@ -388,6 +389,8 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		p.howToFix = "Keep one sky_camera in the 3D skybox and delete the others.";
 		problems.push_back(std::move(p));
 	}
+	// Where things are: player start in a brush, entities in the void, lightmap scales, NPC nodes.
+	for (auto& p : checkLayout(doc, context)) problems.push_back(std::move(p));
 	return problems;
 }
 
@@ -504,7 +507,7 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 			return edit::placeEntity(doc, "info_player_start", spot, definition).first;
 		}
 		default:
-			return {};
+			return applyLayoutFix(doc, problem, entities);
 	}
 }
 

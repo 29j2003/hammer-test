@@ -44,6 +44,10 @@ struct Problem {
 		PropClassMismatch,      ///< prop_static without $staticprop, prop_physics without collision model
 		SoundLoopMismatch,      ///< ambient_generic "Is NOT Looped" does not match the WAV
 		MultipleSkyCameras,
+		PlayerStartInSolid,     ///< layout_checks: the player spawns stuck
+		EntityOutsideWorld,     ///< layout_checks: a point entity in the void
+		LightmapScale,          ///< layout_checks: extreme lightmap scales (to = the new scale)
+		NpcsWithoutNodes,       ///< layout_checks: NPCs but no info_node (objects = the NPCs)
 	};
 
 	Severity severity = Severity::Warning;
