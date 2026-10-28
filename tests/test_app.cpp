@@ -106,6 +106,8 @@
 #include "new_mod_dialog.h"
 #include <sme/mod_menu.h>
 #include "menu_editor.h"
+#include "texts_panel.h"
+#include <sme/localization.h>
 #include "tool_panel.h"
 #include "updater.h"
 #include "viewport.h"
@@ -3043,6 +3045,114 @@ TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's 
 	CHECK(menu.findChildren<QFrame*>("chapterCard").size() == 1);
 	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
 		menu.grab().save(QDir(shots).filePath("menu_editor.png"));
+	}
+}
+
+TEST_CASE("texts: the mod's localization and captions, edited, translated, saved and compiled") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	window.showPage(MainWindow::Page::Project);
+	window.projectTabs()->setCurrentWidget(window.textsPanel());
+	settle();
+	auto* texts = window.textsPanel();
+	REQUIRE(texts);
+	CHECK(texts->isVisible());
+	CHECK(window.projectTabs()->tabText(window.projectTabs()->indexOf(texts)) == "Texts");
+	CHECK(window.projectTabs()->indexOf(texts) == window.projectTabs()->indexOf(window.findChild<MenuEditor*>()) + 1);
+
+	// The mod's own texts first: English and German, a row per token, the missing German one marked.
+	CHECK(texts->languages() == QStringList{"english", "german"});
+	CHECK_FALSE(texts->modified());
+	auto* table = texts->table();
+	REQUIRE(table->rowCount() == 3);
+	CHECK(table->item(0, 0)->text() == "MyMod_Hint_Flashlight");
+	CHECK(table->item(0, 2)->text() == QString::fromUtf8("Drücke F für die Taschenlampe"));
+	CHECK(table->item(1, 2)->text().isEmpty());
+	CHECK(table->item(1, 2)->background().color() != table->item(0, 2)->background().color());
+	texts->findChild<QLineEdit*>("textsSearch")->setText("welcome");
+	CHECK_FALSE(table->isRowHidden(1));
+	CHECK(table->isRowHidden(0));
+	texts->findChild<QLineEdit*>("textsSearch")->clear();
+	texts->findChild<QCheckBox*>("textsOnlyMissing")->setChecked(true);
+	CHECK(table->isRowHidden(0));
+	CHECK_FALSE(table->isRowHidden(1));
+	texts->findChild<QCheckBox*>("textsOnlyMissing")->setChecked(false);
+
+	// Edit in the table and in the field below it; translate; a chapter title shows where the menu uses it.
+	table->item(1, 1)->setText("Welcome!");
+	CHECK(texts->text("MyMod_Sign_Welcome") == "Welcome!");
+	CHECK(texts->modified());
+	table->setCurrentCell(1, 2);
+	texts->editorField()->setPlainText("Willkommen!");
+	CHECK(texts->text("MyMod_Sign_Welcome", "german") == "Willkommen!");
+	CHECK(table->item(1, 2)->text() == "Willkommen!");
+	texts->setText("MYMOD_Chapter1_Title", "english", "THE BEGINNING");
+	REQUIRE(table->rowCount() == 4);
+	CHECK(table->item(3, table->columnCount() - 1)->text().contains("chapter 1"));
+	texts->addLanguage("french");
+	CHECK(texts->languages() == QStringList{"english", "french", "german"});
+	REQUIRE(texts->save());
+	CHECK_FALSE(texts->modified());
+
+	// On disk: UTF-16 with BOM, the condition kept, the new language its own file.
+	const auto bytesOf = [](const std::filesystem::path& path) {
+		const std::string text = readFileText(path).value_or(std::string());
+		std::vector<std::byte> bytes(text.size());
+		std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+		return bytes;
+	};
+	const auto english = bytesOf(f.mod / "resource/mymod_english.txt");
+	REQUIRE(english.size() > 2);
+	CHECK(static_cast<unsigned char>(english[0]) == 0xFF);
+	CHECK(static_cast<unsigned char>(english[1]) == 0xFE);
+	const auto englishFile = parseLocalizationFile(decodeTextFile(english));
+	CHECK(englishFile.get("MyMod_Sign_Welcome") == "Welcome!");
+	CHECK(englishFile.get("MYMOD_Chapter1_Title") == "THE BEGINNING");
+	REQUIRE(englishFile.find("MyMod_Hint_Pad") >= 0);
+	CHECK(englishFile.tokens[std::size_t(englishFile.find("MyMod_Hint_Pad"))].condition == "[$X360]");
+	CHECK(englishFile.tokens[0].comments == std::vector<std::string>{"// Hints"});
+	CHECK(parseLocalizationFile(decodeTextFile(bytesOf(f.mod / "resource/mymod_german.txt"))).get("MyMod_Sign_Welcome") == "Willkommen!");
+	const auto french = bytesOf(f.mod / "resource/mymod_french.txt");
+	REQUIRE(french.size() > 2);
+	CHECK(static_cast<unsigned char>(french[0]) == 0xFF);
+	CHECK(parseLocalizationFile(decodeTextFile(french)).language == "French");
+	// The Menu tab sees the chapter title the Texts tab wrote.
+	CHECK(loadModMenu(f.mod).localization.get("MYMOD_Chapter1_Title") == "THE BEGINNING");
+	texts->reload();
+	CHECK(texts->languages() == QStringList{"english", "french", "german"});
+	CHECK(texts->text("MyMod_Sign_Welcome") == "Welcome!");
+
+	// Captions: the preview shows the colour and the tags; compiling writes the .dat.
+	REQUIRE(texts->showSet("closecaption"));
+	CHECK(texts->findChild<QPushButton*>("textsCompile")->isVisible());
+	REQUIRE(table->rowCount() == 2);
+	table->setCurrentCell(0, 1);
+	settle();
+	CHECK(texts->preview()->text().contains("rgb(255,90,80)"));
+	CHECK(texts->preview()->text().contains("sound effect"));
+	table->setCurrentCell(1, 1);
+	CHECK(texts->preview()->text().contains("<i>"));
+	REQUIRE(texts->compileCaptions());
+	const auto dat = bytesOf(f.mod / "resource/closecaption_english.dat");
+	REQUIRE(dat.size() == 512 + 8192);
+	CHECK(std::string(reinterpret_cast<const char*>(dat.data()), 4) == "VCCD");
+	CHECK(static_cast<unsigned char>(dat[16]) == 2);   // two captions in the directory
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		window.grab().save(QDir(shots).filePath("texts.png"));
 	}
 }
 

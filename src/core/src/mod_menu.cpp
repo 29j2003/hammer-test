@@ -3,6 +3,7 @@
 #include <sme/mod_menu.h>
 
 #include <sme/filesystem.h>
+#include <sme/localization.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -662,8 +663,26 @@ ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu
 		return result;
 	}
 
-	// Chapters: configs 1..n (renumbered in list order), titles, backgrounds.
-	Localization localization = menu.localization;
+	// Chapters: configs 1..n (renumbered in list order), titles, backgrounds. The titles go into
+	// the localization file as it is on disk now (the Texts tab may have changed other tokens
+	// since the menu was loaded; comments and conditions stay - see sme/localization.h).
+	const std::string localizationName = "resource/" + toLower(folder) + "_" + std::string(language) + ".txt";
+	const auto localizationFile = resolveI(modDir, localizationName);
+	LocalizationFile localization;
+	if (localizationFile) {
+		localization = loadLocalizationFile(*localizationFile).value_or(LocalizationFile{});
+	} else {
+		localization.language = menu.localization.language;
+	}
+	bool titlesChanged = false;
+	const auto setTitle = [&](const std::string& token, const std::string& title) {
+		if (title.empty()) {
+			titlesChanged = localization.remove(token) || titlesChanged;
+		} else if (localization.get(token) != title || localization.find(token) < 0) {
+			localization.set(token, title);
+			titlesChanged = true;
+		}
+	};
 	std::map<int, std::string> backgrounds;
 	const auto existingBackgrounds = readModOrGame(modDir, "scripts/ChapterBackgrounds.txt", nullptr);
 	int number = 1;
@@ -671,7 +690,7 @@ ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu
 		const auto cfgPath = resolveI(modDir, "cfg/chapter" + std::to_string(number) + ".cfg").value_or(modDir / "cfg" / ("chapter" + std::to_string(number) + ".cfg"));
 		const std::string old = readModOrGame(modDir, "cfg/chapter" + std::to_string(number) + ".cfg", nullptr).value_or(std::string());
 		if (!writeWithBackup(cfgPath, utf8Bytes(setChapterMap(old, chapter.map)), result)) return result;
-		localization.set(chapterTitleToken(folder, number), chapter.title);
+		setTitle(chapterTitleToken(folder, number), chapter.title);
 		if (!chapter.background.empty()) backgrounds[number] = chapter.background;
 		++number;
 	}
@@ -687,12 +706,11 @@ ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu
 			if (!ec) result.backups.push_back(backup);
 		}
 		std::filesystem::remove(*stale, ec);
-		localization.set(chapterTitleToken(folder, extra), {});
+		setTitle(chapterTitleToken(folder, extra), {});
 	}
-	if (!localization.tokens.empty() || resolveI(modDir, "resource/" + toLower(folder) + "_" + std::string(language) + ".txt")) {
-		const auto path = resolveI(modDir, "resource/" + toLower(folder) + "_" + std::string(language) + ".txt")
-		                      .value_or(modDir / "resource" / (toLower(folder) + "_" + std::string(language) + ".txt"));
-		if (!writeWithBackup(path, encodeUtf16Le(writeLocalization(localization)), result)) return result;
+	if (titlesChanged || (!localizationFile && !localization.tokens.empty())) {
+		const auto path = localizationFile.value_or(modDir / "resource" / (toLower(folder) + "_" + std::string(language) + ".txt"));
+		if (!writeWithBackup(path, encodeUtf16Le(writeLocalizationFile(localization)), result)) return result;
 	}
 	if (!backgrounds.empty() || existingBackgrounds) {
 		const auto path = resolveI(modDir, "scripts/ChapterBackgrounds.txt").value_or(modDir / "scripts" / "ChapterBackgrounds.txt");

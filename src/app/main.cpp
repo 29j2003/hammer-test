@@ -9,7 +9,7 @@
 //   --camera "x y z yaw pitch"
 //   --render lit|unlit|wire
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
-//   --page NAME          show a page of the side bar (map, materials, models, sounds, particles, project; "mod" still works)
+//   --page NAME          show a page of the side bar (map, materials, models, sounds, particles, project, texts; "mod" still works)
 //   --model PATH         show a model on the Models page (with --page models)
 //   --pick-edge          vertex tool with an edge of the first brush picked
 //   --particle NAME      show a particle system in the Particles browser (with --page particles)
@@ -36,6 +36,7 @@
 #include "editor.h"
 #include "icons.h"
 #include "main_window.h"
+#include "texts_panel.h"
 #include "material_editor.h"
 #include "models_page.h"
 #include "panels.h"
@@ -184,6 +185,10 @@ int main(int argc, char** argv) {
 			static const QMap<QString, MainWindow::Page> PAGES = {{"map", MainWindow::Page::Map}, {"materials", MainWindow::Page::Materials}, {"models", MainWindow::Page::Models},
 				{"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles}, {"mod", MainWindow::Page::Project}, {"project", MainWindow::Page::Project}};
 			window.showPage(PAGES.value(parser.value("page").toLower(), MainWindow::Page::Map));
+			if (parser.value("page").compare("texts", Qt::CaseInsensitive) == 0) {
+				window.showPage(MainWindow::Page::Project);
+				window.projectTabs()->setCurrentWidget(window.textsPanel());
+			}
 		}
 		if (parser.isSet("particle")) {
 			// The systems are read in the background: try until they are there.

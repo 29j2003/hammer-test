@@ -145,7 +145,7 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   into a view.
 - **Side bar**: on the far left *Map*, *Materials*, *Models*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
-  has the tabs *Overview*, *Maps*, *Menu*, *Source control* and *Ship* (below). *Overview* shows the chosen game or
+  has the tabs *Overview*, *Maps*, *Menu*, *Texts*, *Source control* and *Ship* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
   was found, and the entity definitions (FGDs); **New mod ...** is there and in the File menu.
 - **Maps** (Project page): every map of the game or mod in one list, with when it was changed, whether its BSP is *up to date*,
@@ -166,6 +166,11 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   (*As shown during a game* adds Resume and Save). *Save to the mod* writes `gameinfo.txt` (only these keys change),
   `cfg/chapterN.cfg`, `resource/<mod>_english.txt` (chapter titles, UTF-16), `scripts/ChapterBackgrounds.txt` and
   `resource/GameMenu.res`; each file it replaces is kept once as `.bak`.
+- **Texts** (your mod's `resource/<mod>_<language>.txt` and captions): a table of tokens with a column per language,
+  missing translations marked, *+ Token*, *Rename*, *Delete*, *+ Language*. For captions: buttons for the caption tags
+  (colour, bold, italic, line break, sound effect, length) with a preview, *+ Caption for a sound ...*, and *Compile
+  captions*, which writes the `closecaption_<language>.dat` the game reads (no captioncompiler needed). Files are saved
+  as UTF-16 into the mod; comments and `[$X360]` lines stay.
 - **Source control** (Git, e.g. your mod's code on GitHub): pick the repository once per game (the mod folder or the
   mod's source code). You see the branch, how many commits are waiting to be pushed or pulled, and the changed files
   with check boxes. Write a message and *Commit* the checked files. *Fetch*, *Pull* and *Push* talk to the remote,
