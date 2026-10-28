@@ -367,6 +367,12 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	m_lighting = new QComboBox;
 	m_lighting->addItems({tr("Sun (outdoors)"), tr("Lamp (indoors, warm)"), tr("Night (dim, cold)"), tr("Unlit (texture only)")});
 	m_lighting->setToolTip(tr("Right drag in the preview moves the light"));
+	// The bar must not make the page wider than small screens: the boxes may shrink (the full
+	// names are in their lists).
+	for (QComboBox* box : {m_shape, m_lighting}) {
+		box->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		box->setMinimumContentsLength(6);
+	}
 	bar->addWidget(new QLabel(tr("Shape")));
 	bar->addWidget(m_shape);
 	bar->addSpacing(10);
