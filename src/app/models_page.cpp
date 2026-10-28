@@ -20,6 +20,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QListWidget>
+#include <QMenu>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
@@ -247,6 +248,28 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	});
 	connect(m_wireframe, &QCheckBox::toggled, m_viewer, &ModelViewer::setWireframe);
 	connect(reset, &QPushButton::clicked, m_viewer, &ModelViewer::frameModel);
+	// Right-click: copy, and "Show in ..." / "Find in map" from the main window.
+	m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+		const QModelIndex index = m_list->indexAt(pos);
+		if (!index.isValid()) return;
+		const QString path = index.data(Qt::UserRole).toString();
+		QMenu menu;
+		menu.addAction(tr("Copy path"), this, [path] { QApplication::clipboard()->setText(path); });
+		if (m_menuFiller) {
+			menu.addSeparator();
+			m_menuFiller(&menu, {AssetKind::Model, path.toStdString()}, AssetPlace::ModelsPage);
+		}
+		menu.exec(m_list->viewport()->mapToGlobal(pos));
+	});
+	m_materialList->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(m_materialList, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+		auto* item = m_materialList->itemAt(pos);
+		if (!item || !m_menuFiller) return;
+		QMenu menu;
+		m_menuFiller(&menu, {AssetKind::Material, item->text().toStdString()}, AssetPlace::ModelsPage);
+		menu.exec(m_materialList->viewport()->mapToGlobal(pos));
+	});
 	connect(m_materialList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
 		if (item && item->data(Qt::UserRole).toBool()) emit openMaterialRequested(item->text());
 	});

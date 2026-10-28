@@ -13,6 +13,7 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCompleter>
+#include <QMenu>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -289,6 +290,35 @@ QStringList PropertiesPanel::sequencesFor(const Entity& entity) const {
 	return out;
 }
 
+QMenu* PropertiesPanel::assetFieldMenu(QLineEdit* field, AssetKind kind) const {
+	QMenu* menu = field->createStandardContextMenu();
+	const QString text = field->text().trimmed();
+	if (m_menuFiller && !text.isEmpty()) {
+		menu->addSeparator();
+		m_menuFiller(menu, {kind, text.toStdString()}, AssetPlace::Properties);
+	}
+	return menu;
+}
+
+void PropertiesPanel::attachAssetMenu(QLineEdit* field, AssetKind kind) {
+	field->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(field, &QWidget::customContextMenuRequested, this, [this, field, kind](const QPoint& pos) {
+		QMenu* menu = assetFieldMenu(field, kind);
+		menu->exec(field->mapToGlobal(pos));
+		delete menu;
+	});
+}
+
+void PropertiesPanel::attachAssetMenu(QWidget* widget, const AssetRef& asset) {
+	widget->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(widget, &QWidget::customContextMenuRequested, this, [this, widget, asset](const QPoint& pos) {
+		if (!m_menuFiller) return;
+		QMenu menu;
+		m_menuFiller(&menu, asset, AssetPlace::Properties);
+		menu.exec(widget->mapToGlobal(pos));
+	});
+}
+
 void PropertiesPanel::rebuild() {
 	m_defaultHelp.clear();
 	auto* content = new QWidget;
@@ -428,6 +458,9 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 		if (isSequence && items.isEmpty()) {
 			combo->lineEdit()->setPlaceholderText(tr("set a model first to list its animations"));
 		}
+		if (isSound) attachAssetMenu(combo->lineEdit(), AssetKind::Sound);
+		if (isModel) attachAssetMenu(combo->lineEdit(), AssetKind::Model);
+		if (isParticle) attachAssetMenu(combo->lineEdit(), AssetKind::Particle);
 		connect(combo, &QComboBox::activated, this, [combo, commit](int) { commit(combo->currentText()); });
 		connect(combo->lineEdit(), &QLineEdit::editingFinished, this, [combo, commit, value] {
 			if (combo->currentText() != value) {
@@ -480,6 +513,7 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 		});
 		h->addWidget(pick);
 	} else if (type == "material" || type == "decal" || type == "sprite") {
+		attachAssetMenu(edit, AssetKind::Material);
 		auto* use = new QToolButton;
 		use->setText(tr("Use current"));
 		use->setToolTip(tr("Set the material selected in the material browser"));
@@ -1624,6 +1658,8 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 
 	auto* materialRow = new QHBoxLayout;
 	auto* material = new QLineEdit(qs(first->material));
+	material->setObjectName("faceMaterial");
+	attachAssetMenu(material, AssetKind::Material);
 	auto* useCurrent = new QPushButton(tr("Apply current"));
 	useCurrent->setToolTip(tr("Apply the material selected in the browser (Shift+T)"));
 	materialRow->addWidget(material, 1);
@@ -1827,6 +1863,8 @@ void PropertiesPanel::buildBrushes(QVBoxLayout* layout) {
 	for (std::size_t i = 0; i < ranked.size() && i < 8; ++i) {
 		auto* row = new QLabel(QStringLiteral("%1  <span style='color:#8a919c'>%2</span>").arg(qs(ranked[i].second)).arg(tr("%n face(s)", nullptr, -ranked[i].first)));
 		row->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		row->setObjectName("brushMaterial");
+		attachAssetMenu(row, {AssetKind::Material, normalizedMaterial(ranked[i].second)});
 		mv->addWidget(row);
 	}
 	auto* apply = new QPushButton(tr("Apply current material to all faces (Shift+T)"));

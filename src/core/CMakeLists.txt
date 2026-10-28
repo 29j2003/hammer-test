@@ -20,6 +20,7 @@ add_library(smecore STATIC
 	src/sky_presets.cpp
 	src/autosave.cpp
 	src/entity_search.cpp
+	src/asset_refs.cpp
 	src/material_replace.cpp
 	src/soundscape.cpp
 	src/sound_categories.cpp

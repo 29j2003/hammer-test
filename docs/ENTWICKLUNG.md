@@ -78,6 +78,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `studio_model` | Dreiecke eines Modells aus `.mdl` (Bodyparts, Meshes, Skins, `$cdmaterials`), `.vvd` (Vertices, Fixups) und `.dx90.vtx` (LOD 0, Strip-Groups 25/33 Byte); Referenz-Pose, alles grenzgeprüft |
 | `particles` | Partikelsysteme aus PCF (DMX über sourcepp), Vorschau-Simulation `ParticleSimulation`, Demo-PCF schreiben |
 | `entity_catalog` | FGDs laden (toolpp), Basisklassen auflösen, Helfer (`studio`, `size`, `color`, `iconsprite`); Editor-Sprite einer Klasse/Entity: `edit::classSprite`, `edit::entitySprite` (`sprite()` → eigenes `model`) |
+| `asset_refs` | Welche Assets (Material, Modell, Sound, Partikelsystem, Soundscape) die Auswahl nennt (`selectionAssets`) und was ein Asset benutzt (`objectsUsing`, „Find in map“); Grundlage der „Show in …“-Menüs (`MainWindow::fillAssetMenu`, `AssetMenuFiller` in `app/asset_menu.h`) |
 | `entity_search` | Entities finden: Klasse, Name, `key=value` (Platzhalter `*`/`?`, `wildcardMatch`), Ausgangsziel, Modell, Sound; Abfrage-Syntax mit `class:`/`name:`/`target:`/`model:`/`sound:`, alle Begriffe müssen passen |
 | `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei) |
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |

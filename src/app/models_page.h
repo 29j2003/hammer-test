@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "asset_menu.h"
+
 #include <QFuture>
 #include <QSortFilterProxyModel>
 #include <QThreadPool>
@@ -82,6 +84,8 @@ public:
 	/// One combo box per body group with more than one option (in body group order).
 	[[nodiscard]] const QList<QComboBox*>& bodyGroupBoxes() const { return m_bodyBoxes; }
 	[[nodiscard]] QListWidget* materialList() const { return m_materialList; }
+	/// Where the right-click menus get their "Show in ..." entries from (the main window).
+	void setAssetMenuFiller(AssetMenuFiller filler) { m_menuFiller = std::move(filler); }
 
 signals:
 	/// "Place in map" or a double-click: arm this class with these keyvalues on the Map page.
@@ -128,6 +132,7 @@ private:
 	QList<QComboBox*> m_bodyBoxes;
 	QLabel* m_details;
 	QListWidget* m_materialList;
+	AssetMenuFiller m_menuFiller;
 	QComboBox* m_placeAs;
 	QPushButton* m_place;
 	QPushButton* m_copy;

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "asset_menu.h"
 #include <QMainWindow>
 #include <QPointer>
 
@@ -88,6 +89,17 @@ public:
 	void raiseDock(const QString& name);
 	/// Puts the corner handles where the map views meet the panels (hidden on other pages).
 	void placeCornerGrips();
+	/// Where revealAsset shows an asset: in the Asset Browser under the map, or on its own page
+	/// (Materials, Models, Sounds, Particles).
+	enum class RevealIn { AssetBrowser, Page };
+	/// Shows the asset where it is listed and selects it there; false when it is not found.
+	bool revealAsset(const AssetRef& asset, RevealIn where);
+	/// Selects everything in the map that uses the asset (faces for a material); the number found.
+	int findInMap(const AssetRef& asset);
+	/// The "Show in ..." / "Find in map" entries for an asset; every menu naming one uses this.
+	void fillAssetMenu(QMenu* menu, const AssetRef& asset, AssetPlace from);
+	/// The views' right-click menu for the current selection (the caller owns it; for tests too).
+	[[nodiscard]] QMenu* buildContextMenu();
 	/// Shows the Materials page.
 	void showMaterialEditor();
 	/// Update check against the GitHub releases. `manual` also reports "up to date" and errors.
