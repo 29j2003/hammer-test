@@ -36,6 +36,7 @@ struct Problem {
 		NoLights,
 		BadTextureScale,
 		MissingModel,
+		DoorAreaportalNotLinked,   ///< objects.entities = {door, areaportal}
 		Leak,
 	};
 

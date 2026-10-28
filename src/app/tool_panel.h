@@ -13,6 +13,7 @@
 
 class QCheckBox;
 class QLabel;
+class QMenu;
 class QTableWidget;
 class QLineEdit;
 class QStackedWidget;
@@ -29,6 +30,9 @@ namespace sme::app {
 class Editor;
 class MaterialCache;
 class ModelThumbnails;
+
+/// The "Make door" entries (swinging, sliding, double, prop door) for menus and buttons.
+void fillMakeDoorMenu(QMenu* menu, Editor* editor);
 
 /// Entity classes of the game's FGDs, grouped into point and brush entities with
 /// their editor icons, a search, and the class that is "armed" (placed by the next click, or

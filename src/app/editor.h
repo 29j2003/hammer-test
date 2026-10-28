@@ -9,11 +9,14 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 
 #include <sme/clipboard.h>
+#include <sme/doors.h>
 #include <sme/editing.h>
 #include <sme/fidelity_look.h>
 #include <sme/visibility.h>
@@ -274,6 +277,27 @@ public:
 	/// Selects the whole path (path_track, path_corner ...) of the selected entity.
 	void selectTrackChain();
 
+	// --- Doors and connections (doors.h, io_links.h) -------------------------
+	/// Where the editor gets the game's model and sound names (the asset browser's lists).
+	void setAssetNames(std::function<QStringList()> models, std::function<QStringList()> sounds);
+	/// Make door: the selected world brushes become a door of this type that works right away
+	/// (opens with +use, fitting sounds, a door model for prop doors). Selects the new door(s).
+	void makeDoor(DoorType type, bool doubleDoor);
+	/// Door sounds of the game for each sound slot of a new door of this type.
+	[[nodiscard]] std::vector<std::string> defaultSoundsFor(DoorType type) const;
+	/// Local box of a loaded model (nullopt while it loads or without one).
+	[[nodiscard]] std::optional<Bounds> modelBounds(const std::string& model) const;
+	/// "Test open" in the Door box: the views play the door's opening once.
+	void testDoor(int doorId) { emit doorTestRequested(doorId); }
+	/// Connect mode: the next entity clicked in a view becomes the target of `sourceId`'s output.
+	void beginConnect(int sourceId);
+	void cancelConnect();
+	[[nodiscard]] int connectSource() const { return m_connectSource; }
+	/// A view picked the target: ends connect mode and asks for the output/input (connectRequested).
+	void finishConnect(int targetId);
+	/// Selects the entity and asks Object Properties to show its output number `index`.
+	void showConnection(int entityId, int index);
+
 	// --- Cordons (stored in the map, compile only what is inside) -------------
 	[[nodiscard]] CordonSet cordons() const;
 	void setCordons(const CordonSet& cordons);
@@ -300,8 +324,19 @@ signals:
 	void recentMaterialsChanged();
 	/// A short message for the status bar and the log.
 	void message(const QString& text);
+	/// Connect mode started or ended (views show a hint and a line to the cursor).
+	void connectModeChanged();
+	/// Source and target of a new connection are known: ask which output and input.
+	void connectRequested(int sourceId, int targetId);
+	/// Object Properties should show this output of the (now selected) entity.
+	void connectionFocusRequested(int entityId, int index);
+	/// The views should play this door's opening (Door box: Test open).
+	void doorTestRequested(int doorId);
 
 private:
+	/// A door made with the entity tool or Tie to gets working keys, folded into the same undo step.
+	void setUpNewDoor(int id, const std::string& changeName);
+
 	DiscoveryResult m_discovery;
 	std::unique_ptr<LoadedGame> m_game;
 	std::unique_ptr<ModelCache> m_models;   ///< After m_game: stops reading before the game goes away
@@ -343,6 +378,8 @@ private:
 	std::vector<std::pair<std::string, std::string>> m_currentEntityKeys;
 	bool m_randomYaw = false;
 	ShapeOptions m_shapeOptions;
+	std::function<QStringList()> m_modelNames, m_soundNames;
+	int m_connectSource = 0;   ///< Connect mode: the entity whose output is being made (0 = off)
 	bool m_footerModified = false;   ///< Cordons changed (not part of undo, like in Hammer)
 	struct LastShape {
 		Bounds box;

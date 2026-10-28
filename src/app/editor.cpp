@@ -18,6 +18,7 @@
 #include <sme/autosave.h>
 #include <sme/csg.h>
 #include <sme/displacement.h>
+#include <sme/doors.h>
 #include <sme/visgroups.h>
 #include <sme/sky_presets.h>
 #include <sme/text.h>
@@ -809,7 +810,9 @@ void Editor::createBrushEntity(const Bounds& box) {
 		                 .arg(QString::fromStdString(shapeName(m_shapeOptions.kind))));
 		return;
 	}
+	const std::string name = change.name;
 	commit(std::move(change));
+	setUpNewDoor(id, name);
 	Selection selection;
 	selection.entities.push_back(id);
 	setSelection(std::move(selection));
@@ -909,10 +912,141 @@ void Editor::tieSelectionToEntity(const QString& classname) {
 	}
 	Selection selection;
 	selection.entities.push_back(id);
+	const std::string name = change.name;
 	m_history.push(std::move(change));
+	m_selection = std::move(selection);
+	setUpNewDoor(id, name);
+	emit documentChanged();
+	emit selectionChanged();
+}
+
+void Editor::setUpNewDoor(int id, const std::string& changeName) {
+	// A door placed with the entity tool or tied from brushes works right away: it opens with +use,
+	// swings around its edge (not the map origin) and makes the game's door sounds. Same undo step.
+	const Entity* door = m_doc.findEntity(id);
+	if (!door || !isDoor(*door) || door->solids.empty()) {
+		return;
+	}
+	DoorSettings settings;
+	settings.type = *doorType(door->classname());
+	settings.slide = DoorSlide::Up;
+	if (const auto* definition = entities() ? entities()->find(door->classname()) : nullptr) {
+		if (const auto* speed = definition->property("speed"); speed && !speed->defaultValue.empty()) {
+			settings.speed = std::atof(speed->defaultValue.c_str());
+		}
+	}
+	settings.sounds = defaultSoundsFor(settings.type);
+	Change defaults = edit::setDoor(m_doc, id, settings);
+	defaults.name = changeName;
+	m_history.push(std::move(defaults), true);
+	emit documentChanged();
+}
+
+void Editor::setAssetNames(std::function<QStringList()> models, std::function<QStringList()> sounds) {
+	m_modelNames = std::move(models);
+	m_soundNames = std::move(sounds);
+}
+
+std::vector<std::string> Editor::defaultSoundsFor(DoorType type) const {
+	std::vector<std::string> names;
+	if (m_soundNames) {
+		for (const auto& name : m_soundNames()) names.push_back(name.toStdString());
+	}
+	auto sounds = defaultDoorSounds(type, names);
+	if (sounds.empty()) {
+		sounds.assign(doorSoundSlots(type).size(), std::string());   // props: the model's own sounds
+	}
+	return sounds;
+}
+
+std::optional<Bounds> Editor::modelBounds(const std::string& model) const {
+	if (model.empty() || !m_models) {
+		return std::nullopt;
+	}
+	const auto geometry = m_models->get(QString::fromStdString(model));
+	if (!geometry || geometry->bounds.empty()) {
+		return std::nullopt;
+	}
+	return geometry->bounds;
+}
+
+void Editor::makeDoor(DoorType type, bool doubleDoor) {
+	const std::string cls = doorClass(type);
+	const auto* definition = entities() ? entities()->find(cls) : nullptr;
+	DoorSettings settings;
+	settings.type = type;
+	settings.doubleDoor = doubleDoor;
+	settings.slide = doubleDoor ? DoorSlide::Left : DoorSlide::Up;
+	settings.closeAfter = type == DoorType::Prop ? -1 : 4;   // HL2's own doors stay open
+	if (definition) {
+		if (const auto* speed = definition->property("speed"); speed && !speed->defaultValue.empty()) {
+			settings.speed = std::atof(speed->defaultValue.c_str());
+		}
+	}
+	settings.sounds = defaultSoundsFor(type);
+	std::optional<Bounds> bounds;
+	if (type == DoorType::Prop) {
+		std::vector<std::string> models;
+		if (m_modelNames) {
+			for (const auto& name : m_modelNames()) models.push_back(name.toStdString());
+		}
+		const auto doors = doorModels(models);
+		if (doors.empty()) {
+			emit message(tr("No door model found in this game - make a brush door instead, or set a model in the Door box"));
+		} else {
+			// HL2 names its left-hinged doors ..._left: prefer one of those as the start.
+			const auto left = std::find_if(doors.begin(), doors.end(), [](const std::string& m) { return toLower(m).find("left") != std::string::npos; });
+			settings.model = left != doors.end() ? *left : doors.front();
+			bounds = modelBounds(settings.model);
+		}
+	}
+	auto [change, ids] = edit::makeDoor(m_doc, m_selection, settings, definition, bounds ? &*bounds : nullptr);
+	if (ids.empty()) {
+		emit message(tr("Select world brushes first: the block becomes the door"));
+		return;
+	}
+	m_history.push(std::move(change));
+	Selection selection;
+	selection.entities = ids;
 	m_selection = std::move(selection);
 	emit documentChanged();
 	emit selectionChanged();
+	emit message(tr("Door made: it opens when the player presses Use. Object Properties > Door sets how it opens."));
+}
+
+void Editor::beginConnect(int sourceId) {
+	if (sourceId == 0 || !m_doc.findEntity(sourceId)) {
+		return;
+	}
+	m_connectSource = sourceId;
+	emit connectModeChanged();
+	emit message(tr("Connect: click the entity this one should trigger (Esc cancels)"));
+}
+
+void Editor::cancelConnect() {
+	if (m_connectSource == 0) {
+		return;
+	}
+	m_connectSource = 0;
+	emit connectModeChanged();
+}
+
+void Editor::finishConnect(int targetId) {
+	const int source = m_connectSource;
+	cancelConnect();
+	if (source != 0 && targetId != 0 && m_doc.findEntity(targetId)) {
+		emit connectRequested(source, targetId);
+	}
+}
+
+void Editor::showConnection(int entityId, int index) {
+	if (!m_doc.findEntity(entityId) || entityId == 0) {
+		return;
+	}
+	Selection selection;
+	selection.entities.push_back(entityId);
+	setSelection(std::move(selection));
+	emit connectionFocusRequested(entityId, index);
 }
 
 void Editor::moveSelectionToWorld() {

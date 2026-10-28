@@ -36,6 +36,8 @@ add_library(smeapp STATIC
 	class_picker.cpp
 	replace_materials_dialog.cpp
 	properties_instance.cpp
+	properties_door.cpp
+	connect_popup.cpp
 	renderer.cpp
 	renderer_cubemaps.cpp
 	renderer_shadows.cpp
@@ -51,6 +53,7 @@ add_library(smeapp STATIC
 	updater.cpp
 	viewport.cpp
 	viewport_tools.cpp
+	viewport_doors.cpp
 	viewport_displace.cpp
 	visgroups_panel.cpp)
 target_include_directories(smeapp PUBLIC .)

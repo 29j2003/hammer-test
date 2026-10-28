@@ -6,7 +6,8 @@
 // fitting editor (choices, yes/no switches, flags as switches, colors, targets, models,
 // animations, sounds, the sky). What the focused key does is shown in the help area at the
 // bottom. Outputs are edited as cards; inputs list who triggers this entity. NPCs get a pose
-// helper. Faces: material and texture alignment. Brushes: tie to entity. Nothing: worldspawn.
+// helper, doors a Door box (how it opens, sounds, areaportal). Faces: material and texture
+// alignment. Brushes: tie to entity. Nothing: worldspawn.
 
 #pragma once
 
@@ -23,6 +24,7 @@ class QStringListModel;
 #include <map>
 
 #include <functional>
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
@@ -38,11 +40,16 @@ class QVBoxLayout;
 class QLineEdit;
 class QMenu;
 
+namespace sme {
+struct DecodedAudio;
+}
+
 namespace sme::app {
 
 class Editor;
 class AssetBrowser;
 class MaterialCache;
+class SoundPlayer;
 
 /// The Object Properties dock (see the file comment).
 class PropertiesPanel : public QWidget {
@@ -57,6 +64,10 @@ public:
 	void setAssetMenuFiller(AssetMenuFiller filler) { m_menuFiller = std::move(filler); }
 	/// The right-click menu of a field naming an asset (for tests; the caller owns the menu).
 	[[nodiscard]] QMenu* assetFieldMenu(QLineEdit* field, AssetKind kind) const;
+	/// Plays a sound script name (or a .wav below sound/) - the door sounds' play buttons.
+	void playSound(const QString& name);
+	/// The sound the last playSound() decoded (for tests; null while it loads or if it failed).
+	[[nodiscard]] std::shared_ptr<const DecodedAudio> lastPlayedSound() const { return m_lastSound; }
 
 signals:
 	/// "Edit material" on selected faces.
@@ -102,6 +113,9 @@ private:
 	/// Soundscape entities: which soundscape (with a button to edit it), and where it is heard -
 	/// a sphere (radius, or the whole map) or a block (trigger_soundscape) with its size.
 	void buildSoundscapeArea(QVBoxLayout* layout, const Entity& soundscape);
+	/// Doors: how it opens (swing with hinge side and direction, or slide), speed, closing, locked,
+	/// sounds with play buttons, Test open, and the areaportal in its doorway (properties_door.cpp).
+	void buildDoorBox(QVBoxLayout* layout, const Entity& door);
 	void buildBrushes(QVBoxLayout* layout);
 	QWidget* makeEditor(const EntityProperty& property, const std::vector<int>& ids, const QString& value, bool mixed);
 	void setKey(const std::vector<int>& ids, const std::string& key, const QString& value);
@@ -131,6 +145,10 @@ private:
 	bool m_pending = false;
 	QString m_filterText;
 	int m_tab = 0;                         ///< Keyvalues, Outputs, Inputs
+	int m_focusConnection = -1;            ///< Output card to show after the next rebuild (a clicked connection line)
+	SoundPlayer* m_soundPlayer = nullptr;  ///< Door sounds' play buttons (made on first use)
+	QFutureWatcher<std::shared_ptr<const DecodedAudio>> m_soundWatcher;
+	std::shared_ptr<const DecodedAudio> m_lastSound;
 	std::set<QString> m_collapsed;         ///< Folded groups (kept in the settings)
 	// Skies of the current game, read once in the background: name and picture.
 	std::vector<std::pair<QString, QImage>> m_skies;

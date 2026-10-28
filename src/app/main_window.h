@@ -189,6 +189,7 @@ private:
 	QAction* m_textureLock = nullptr;
 	CompileRunner m_compiler;
 	QList<QAction*> m_contextActions;
+	QMenu* m_doorMenu = nullptr;            ///< Brushes > Make door (also in the context menu)
 	Updater* m_updater = nullptr;
 	QToolButton* m_versionButton = nullptr;     ///< Bottom right: version, turns into "Update to x" when one is out
 	bool m_manualCheck = false;

@@ -156,6 +156,8 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		requestFrame();
 	});
 	connect(editor, &Editor::settingsChanged, this, &Viewport::requestFrame);
+	connect(editor, &Editor::connectModeChanged, this, &Viewport::requestFrame);
+	connect(editor, &Editor::doorTestRequested, this, &Viewport::startDoorTest);
 	connect(editor, &Editor::toolChanged, this, &Viewport::resetToolState);
 	connect(editor, &Editor::selectionChanged, this, [this] {
 		// The clip preview and the selected corners belong to the old selection.
@@ -560,8 +562,11 @@ void Viewport::paintGL() {
 	drawRoomBox(lines);
 	drawSoundscapeSphere(lines);
 	drawConnections(lines);
+	drawConnectLine(lines);
+	drawDoorPreview(lines);
 	drawGizmo(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
+	advanceDoorTest();
 
 	m_renderer.endFrame();
 	drawOverlay();
@@ -888,6 +893,58 @@ void Viewport::drawConnections(std::vector<LineVertex>& lines) const {
 	}
 }
 
+std::optional<std::pair<int, int>> Viewport::connectionAt(const QPointF& pos) const {
+	// The same lines drawConnections() draws: the selection's outputs and the outputs naming it.
+	if (!m_editor->showConnections() || m_editor->selection().entities.empty()) {
+		return std::nullopt;
+	}
+	const auto& doc = m_editor->doc();
+	double best = 5;
+	std::optional<std::pair<int, int>> found;
+	const auto consider = [&](const Vec3& a, const Vec3& b, int entityId, int index) {
+		QPointF pa, pb;
+		if (!m_camera.project(a, width(), height(), pa) || !m_camera.project(b, width(), height(), pb)) return;
+		const double d = distanceToSegment(pos, pa, pb);
+		if (d < best) {
+			best = d;
+			found = std::pair{entityId, index};
+		}
+	};
+	for (const int id : m_editor->selection().entities) {
+		const Entity* source = doc.findEntity(id);
+		if (!source || id == 0) continue;
+		const Vec3 center = entityCenter(*source);
+		const std::string name = source->get("targetname");
+		for (const auto& other : doc.entities) {
+			if (other.id == id) continue;
+			for (std::size_t i = 0; i < source->connections.size(); ++i) {
+				if (targetMatches(source->connections[i].target, other.get("targetname"))) consider(center, entityCenter(other), id, int(i));
+			}
+			for (std::size_t i = 0; i < other.connections.size(); ++i) {
+				if (targetMatches(other.connections[i].target, name)) consider(entityCenter(other), center, other.id, int(i));
+			}
+		}
+	}
+	return found;
+}
+
+void Viewport::drawConnectLine(std::vector<LineVertex>& lines) const {
+	const Entity* source = m_editor->connectSource() ? m_editor->doc().findEntity(m_editor->connectSource()) : nullptr;
+	if (!source || !rect().contains(m_lastPos.toPoint())) {
+		return;
+	}
+	Vec3 to;
+	if (m_camera.is2D()) {
+		to = viewPlanePoint(m_lastPos);
+	} else if (const auto hit = m_renderer.pick(rayAt(m_lastPos))) {
+		to = hit->entityId != 0 ? entityCenter(*m_editor->doc().findEntity(hit->entityId)) : hit->point;
+	} else {
+		const Ray ray = rayAt(m_lastPos);
+		to = ray.origin + ray.direction * 256.0;
+	}
+	line(lines, entityCenter(*source), to, {0.35f, 1.0f, 0.45f, 1});
+}
+
 void Viewport::drawOverlay() {
 	// The overlay is recorded first and painted on the CPU only when it changed; the GPU just
 	// draws the finished picture. (QPainter straight onto the GL widget garbles or loses text
@@ -932,6 +989,9 @@ void Viewport::drawOverlay() {
 		const QString loading = m_editor->models()->get(m_ghost->model) ? QString() : tr("  (loading ...)");
 		p.drawText(QRectF(m_dropPos + QPointF(18, 14), QSizeF(420, 20)), QColor(140, 255, 170),
 		           tr("%1   %2 x %3 x %4%5").arg(m_ghost->model.section('/', -1)).arg(std::lround(size.x)).arg(std::lround(size.y)).arg(std::lround(size.z)).arg(loading));
+	}
+	if (m_editor->connectSource() != 0) {
+		hint(tr("Connect: click the entity it should trigger - Esc cancels"));
 	}
 	if (m_editor->doc().solidCount() == 0 && m_editor->doc().entities.empty() && !m_camera.is2D()) {
 		p.drawText(QRectF(rect().adjusted(0, 0, 0, -40)), QColor(170, 175, 185), Qt::AlignCenter,
@@ -1288,6 +1348,16 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 		return;
 	}
 
+	if (m_editor->connectSource() != 0) {
+		// Connect mode: the clicked entity is the target.
+		const auto hit = m_renderer.pick(rayAt(event->position()));
+		if (hit && hit->entityId != 0) {
+			m_editor->finishConnect(hit->entityId);
+		} else {
+			emit m_editor->message(tr("Click an entity (a brush entity, a light, a sound ...) - Esc cancels"));
+		}
+		return;
+	}
 	if (toolMousePress(event)) {
 		return;
 	}
@@ -1322,6 +1392,13 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 		beginGizmoDrag(handle, event->position());
 		return;
 	}
+	// A click on a connection line shows that output in Object Properties.
+	if (event->modifiers() == Qt::NoModifier) {
+		if (const auto link = connectionAt(event->position())) {
+			m_editor->showConnection(link->first, link->second);
+			return;
+		}
+	}
 	// 2D views: dragging inside the selection moves it (Hammer style).
 	if (m_camera.is2D() && m_editor->selection().hasObjects() && tool != Editor::Tool::Rotate) {
 		const auto box = edit::selectionBounds(m_editor->doc(), m_editor->selection(), m_editor->entities());
@@ -1344,6 +1421,9 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 	const QPointF pos = event->position();
 	const QPointF delta = pos - m_lastPos;
 	m_lastPos = pos;
+	if (m_editor->connectSource() != 0) {
+		requestFrame();   // the line to the cursor
+	}
 
 	if (m_camera.is2D()) {
 		const Vec3 p = snap(viewPlanePoint(pos), m_editor->snapGrid());
@@ -2393,6 +2473,10 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
 			endLook();
 		}
 		return; // WASD/QE fly while looking; tool shortcuts are off
+	}
+	if (event->key() == Qt::Key_Escape && m_editor->connectSource() != 0) {
+		m_editor->cancelConnect();
+		return;
 	}
 	if (toolKey(event)) {
 		return;

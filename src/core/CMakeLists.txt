@@ -47,6 +47,8 @@ add_library(smecore STATIC
 	src/map.cpp
 	src/map_tools.cpp
 	src/soundscape_area.cpp
+	src/doors.cpp
+	src/io_links.cpp
 	src/particles.cpp
 	src/material.cpp
 	src/scene_export.cpp

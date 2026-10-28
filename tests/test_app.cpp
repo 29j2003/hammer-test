@@ -60,6 +60,7 @@
 #include <sme/asset_refs.h>
 #include <sme/brush.h>
 #include <sme/displacement.h>
+#include <sme/doors.h>
 #include <sme/entity_search.h>
 #include <sme/text.h>
 #include <sme/fidelity_effects.h>
@@ -88,6 +89,7 @@
 #include "properties_panel.h"
 #include "ship_panel.h"
 #include "toggle_switch.h"
+#include "connect_popup.h"
 #include "copy_paste.h"
 #include "editor.h"
 #include "enhancements.h"
@@ -1435,7 +1437,7 @@ TEST_CASE("editing with the mouse in the real window") {
 			CHECK(categoryTexts.front().startsWith("All sounds"));
 			REQUIRE(categoryTexts.filter("Weapons").size() == 1);
 			CHECK(categoryTexts.filter("Weapons").front().endsWith(" 2"));   // Weapon_Pistol.Single and its file
-			CHECK(categoryTexts.filter("Doors and buttons").front().endsWith(" 2"));
+			CHECK(categoryTexts.filter("Doors and buttons").front().endsWith(" 8"));   // 4 door scripts and their files
 			CHECK(categoryTexts.filter("Voice and dialogue").front().endsWith(" 2"));   // NPC_Citizen.Hello speaks
 			CHECK(categoryTexts.back().startsWith("Soundscapes"));
 			QSignalSpy loaded(sounds, &SoundBrowser::audioLoaded);
@@ -2253,7 +2255,9 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		settle();
 		REQUIRE(picker->list());
 		CHECK_FALSE(picker->list()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "Related to prop_static"
-		CHECK(picker->list()->item(1)->text() == "prop_dynamic");
+		QStringList related;
+		for (int i = 1; i < picker->list()->count() && picker->list()->item(i)->flags().testFlag(Qt::ItemIsEnabled); ++i) related << picker->list()->item(i)->text();
+		CHECK(related.contains("prop_dynamic"));
 		QTest::keyClicks(picker->searchField(), "info");
 		CHECK(picker->list()->currentItem()->text().startsWith("info_"));
 		const QString second = picker->list()->count() > 1 ? picker->list()->item(1)->text() : QString();
@@ -3062,9 +3066,9 @@ TEST_CASE("models page: folders, search, 3D view with skins and body groups, pla
 		if ((*it)->text(0) == "props_demo") demoFolder = *it;
 	}
 	REQUIRE(demoFolder);
-	CHECK(demoFolder->text(1) == "3");
+	CHECK(demoFolder->text(1) == "4");
 	page->folders()->setCurrentItem(demoFolder);
-	CHECK(page->list()->model()->rowCount() == 3);
+	CHECK(page->list()->model()->rowCount() == 4);
 	page->search()->setText("supply");
 	CHECK(page->list()->model()->rowCount() == 1);
 	page->search()->clear();
@@ -3854,6 +3858,236 @@ TEST_CASE("game enhancements: on by default, off for one model or the whole mod"
 	CHECK(bottleText() == own);
 	CHECK(enhancements->keptOwn() == QStringList{"models/props_junk/glassbottle01a"});
 	CHECK(status->text().contains("1 kept (your own material)"));
+}
+
+TEST_CASE("doors and connections: make door, Door box, test open, sounds, areaportal, connect by clicking") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	auto* assets = window.findChild<AssetBrowser*>();
+	REQUIRE(assets);
+	for (int i = 0; i < 100 && !assets->soundNames().contains("Doors.Move1"); ++i) settle();
+	REQUIRE(assets->soundNames().contains("Doors.Move1"));
+	auto* properties = window.findChild<PropertiesPanel*>();
+	REQUIRE(properties);
+
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(0, -320, 70);
+	view->camera().yaw = 90;
+	view->camera().pitch = -4;
+	view->update();
+	settle();
+	const auto find = [&]<typename T>(T*, const char* name) {
+		settle();
+		return window.findChild<T*>(QString::fromLatin1(name));
+	};
+	const auto selectBlock = [&](Vec3 a, Vec3 b) {
+		auto [made, ref] = edit::createBlock(editor.doc(), box(a, b), "DEMO/WOOD001");
+		editor.commit(std::move(made));
+		Selection selection;
+		selection.solids.push_back(ref);
+		editor.setSelection(std::move(selection));
+		settle();
+	};
+
+	// Make door from a block: a swinging door that works at once.
+	selectBlock({-32, -4, 0}, {32, 4, 112});
+	auto* makeButton = find((QPushButton*)nullptr, "actionMakeDoor");
+	REQUIRE(makeButton);
+	CHECK(makeButton->isVisible());
+	REQUIRE(window.findChild<QMenu*>("brushesMakeDoor"));
+	auto* swinging = window.findChild<QAction*>("makeDoorSwinging");
+	REQUIRE(swinging);
+	swinging->trigger();
+	settle();
+	REQUIRE(editor.selection().entities.size() == 1);
+	const int doorId = editor.selection().entities.front();
+	{
+		const Entity& door = *editor.doc().findEntity(doorId);
+		CHECK(door.classname() == "func_door_rotating");
+		CHECK(door.origin().x == doctest::Approx(32));   // hinge on the left edge seen from the front (+Y), no origin brush
+		CHECK(door.get("noise1") == "Doors.Move1");
+		CHECK(door.get("closesound") == "Doors.FullClose1");
+		CHECK((std::stoi(door.get("spawnflags")) & 256) != 0);
+	}
+	CHECK(editor.history().undoName() == "Make door");
+
+	// The Door box: hinge on the right moves the origin, one undo step.
+	auto* opens = find((QComboBox*)nullptr, "doorOpens");
+	REQUIRE(opens);
+	REQUIRE(find((QGroupBox*)nullptr, "doorBox"));
+	const int right = opens->findText("Swings - hinge on the right");
+	REQUIRE(right >= 0);
+	opens->setCurrentIndex(right);
+	emit opens->activated(right);
+	settle();
+	CHECK(editor.doc().findEntity(doorId)->origin().x == doctest::Approx(-32));
+	CHECK(editor.history().undoName() == "Edit door");
+	auto* swing = find((QComboBox*)nullptr, "doorSwing");
+	REQUIRE(swing);
+	const int front = swing->findData(int(DoorSwing::Front));
+	swing->setCurrentIndex(front);
+	emit swing->activated(front);
+	settle();
+	CHECK((std::stoi(editor.doc().findEntity(doorId)->get("spawnflags")) & 16) != 0);
+	CHECK(readDoor(*editor.doc().findEntity(doorId)).swing == DoorSwing::Front);
+	auto* summary = find((QLabel*)nullptr, "doorSummary");
+	REQUIRE(summary);
+	CHECK(summary->text().contains("always to the front"));
+
+	// Test open plays the motion in the view; the sound's play button decodes the sound.
+	auto* test = find((QPushButton*)nullptr, "doorTest");
+	REQUIRE(test);
+	QTest::mouseClick(test, Qt::LeftButton);
+	CHECK(view->doorTestId() == doorId);
+	const quint64 frames = view->framesDrawn();
+	for (int i = 0; i < 10; ++i) settle();
+	CHECK(view->framesDrawn() > frames + 2);   // it animates
+	for (int i = 0; i < 60 && view->doorTestId() != 0; ++i) settle();
+	CHECK(view->doorTestId() == 0);            // and stops again
+	auto* play = find((QToolButton*)nullptr, "doorPlay:0");
+	REQUIRE(play);
+	QTest::mouseClick(play, Qt::LeftButton);
+	for (int i = 0; i < 100 && !properties->lastPlayedSound(); ++i) settle();
+	CHECK(properties->lastPlayedSound());
+
+	// An areaportal in the doorway: the box offers to link it.
+	auto [portalBlock, portalRef] = edit::createBlock(editor.doc(), box({-32, -1, 0}, {32, 1, 112}), "TOOLS/TOOLSAREAPORTAL");
+	editor.commit(std::move(portalBlock));
+	Selection portalSelection;
+	portalSelection.solids.push_back(portalRef);
+	editor.setSelection(portalSelection);
+	editor.tieSelectionToEntity("func_areaportal");
+	const int portalId = editor.selection().entities.at(0);
+	Selection doorSelection;
+	doorSelection.entities.push_back(doorId);
+	editor.setSelection(doorSelection);
+	auto* link = find((QPushButton*)nullptr, "doorLinkPortal");
+	REQUIRE(link);
+	QTest::mouseClick(link, Qt::LeftButton);
+	settle();
+	CHECK(editor.doc().findEntity(doorId)->get("targetname") == "door_1");
+	CHECK(editor.doc().findEntity(portalId)->get("target") == "door_1");
+	CHECK(find((QLabel*)nullptr, "doorPortalLinked"));
+
+	// Sliding: the class changes and movedir points up.
+	opens = find((QComboBox*)nullptr, "doorOpens");
+	const int up = opens->findText("Slides up");
+	opens->setCurrentIndex(up);
+	emit opens->activated(up);
+	settle();
+	CHECK(editor.doc().findEntity(doorId)->classname() == "func_door");
+	CHECK(editor.doc().findEntity(doorId)->get("movedir") == "-90 0 0");
+	editor.undo();
+	settle();
+	CHECK(editor.doc().findEntity(doorId)->classname() == "func_door_rotating");
+
+	// Connect: a button triggers the door - pick the source, click the target in the view.
+	selectBlock({80, -8, 40}, {96, -4, 56});
+	editor.tieSelectionToEntity("func_button");
+	const int buttonId = editor.selection().entities.at(0);
+	CHECK(editor.doc().findEntity(buttonId)->get("targetname").empty());
+	auto* connectButton = find((QPushButton*)nullptr, "actionConnect");
+	REQUIRE(connectButton);
+	QTest::mouseClick(connectButton, Qt::LeftButton);
+	CHECK(editor.connectSource() == buttonId);
+	QTest::keyClick(view, Qt::Key_Escape);   // Esc cancels
+	CHECK(editor.connectSource() == 0);
+	QTest::mouseClick(connectButton, Qt::LeftButton);
+	QTest::mouseMove(view, screen(view, {-8, -4, 60}));
+	settle();
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, {-8, -4, 60}));
+	settle();
+	CHECK(editor.connectSource() == 0);
+	auto* popup = window.findChild<ConnectPopup*>("connectPopup");
+	REQUIRE(popup);
+	REQUIRE(popup->suggestions()->count() > 0);
+	CHECK(popup->outputBox()->currentText() == "OnPressed");
+	CHECK(popup->inputBox()->currentText() == "Open");
+	popup->delayBox()->setValue(0.5);
+	QTest::keyClick(popup->suggestions(), Qt::Key_Return);
+	settle();
+	CHECK_FALSE(window.findChild<ConnectPopup*>("connectPopup"));
+	{
+		const Entity& button = *editor.doc().findEntity(buttonId);
+		REQUIRE(button.connections.size() == 1);
+		CHECK(button.connections[0].output == "OnPressed");
+		CHECK(button.connections[0].target == "door_1");
+		CHECK(button.connections[0].input == "Open");
+		CHECK(button.connections[0].delay == doctest::Approx(0.5));
+	}
+	CHECK(editor.selection().entities == std::vector<int>{buttonId});
+	auto* card = find((QFrame*)nullptr, "outputCard:0");
+	REQUIRE(card);
+	CHECK(card->isVisible());
+	CHECK(card->property("highlight").toBool());
+	editor.undo();   // one step: the output goes again
+	CHECK(editor.doc().findEntity(buttonId)->connections.empty());
+	editor.redo();
+
+	// Clicking the connection line (door selected) shows the button's output.
+	editor.setSelection(doorSelection);
+	settle();
+	const Vec3 hinge = editor.doc().findEntity(doorId)->origin();
+	const Vec3 buttonCenter{88, -6, 48};
+	const Vec3 middle = (hinge + buttonCenter) * 0.5;
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, middle));
+	settle();
+	CHECK(editor.selection().entities == std::vector<int>{buttonId});
+	card = find((QFrame*)nullptr, "outputCard:0");
+	REQUIRE(card);
+	CHECK(card->property("highlight").toBool());
+
+	// A door placed with the entity tool also works at once (one undo step).
+	editor.setCurrentEntityClass("func_door_rotating");
+	editor.createBrushEntity(box({-200, -4, 0}, {-136, 4, 112}));
+	settle();
+	{
+		const int placed = editor.selection().entities.at(0);
+		const Entity& door = *editor.doc().findEntity(placed);
+		CHECK(door.origin().x == doctest::Approx(-136));
+		CHECK(door.get("noise1") == "Doors.Move1");
+		const std::size_t before = editor.doc().entities.size();
+		editor.undo();
+		CHECK(editor.doc().entities.size() == before - 1);
+	}
+
+	// Double door and prop door from blocks.
+	selectBlock({200, -4, 0}, {328, 4, 112});
+	window.findChild<QAction*>("makeDoorDouble")->trigger();
+	settle();
+	REQUIRE(editor.selection().entities.size() == 2);
+	const Entity& left = *editor.doc().findEntity(editor.selection().entities[0]);
+	const Entity& rightHalf = *editor.doc().findEntity(editor.selection().entities[1]);
+	CHECK(left.get("targetname") == rightHalf.get("targetname"));
+	CHECK(left.origin().x == doctest::Approx(328));
+	CHECK(rightHalf.origin().x == doctest::Approx(200));
+	selectBlock({-400, -4, 0}, {-346, 4, 104});
+	window.findChild<QAction*>("makeDoorProp")->trigger();
+	settle();
+	REQUIRE(editor.selection().entities.size() == 1);
+	const Entity& prop = *editor.doc().findEntity(editor.selection().entities[0]);
+	CHECK(prop.classname() == "prop_door_rotating");
+	CHECK(prop.get("model") == "models/props_demo/door01_left.mdl");
+	CHECK(prop.origin().x == doctest::Approx(-346));
+	CHECK(prop.get("angles") == "0 90 0");   // the leaf (+Y of the model) runs to -X
+	CHECK(find((QComboBox*)nullptr, "doorModel"));
 }
 
 namespace {

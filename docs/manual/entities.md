@@ -97,6 +97,7 @@ Source entities talk to each other with **outputs** and **inputs**: when somethi
 
 The **Outputs** tab shows each output as a readable card: *When OnTrigger tell door_01 to Open*.
 
+- **Connect to ...** (next to *+ Add output*) is the quick way - see [Connecting entities](#connecting-entities).
 - **+ Add output** adds one.
 - The *target* list offers the map's entity names; the *input* list offers that target's inputs.
 - *Parameter* is passed to the input (e.g. a number for `SetSpeed`).
@@ -106,9 +107,70 @@ The **Inputs** tab lists every entity that sends something to this one, with **G
 
 **Connection lines:** with the *connection lines* [view switch](interface.html#view-switches) on, the views draw a
 **green** line from the selected entity to every entity its outputs name, and a **blue** line from every entity that
-fires at it. Names ending in `*` match every entity whose name starts that way, as in the game.
+fires at it. Names ending in `*` match every entity whose name starts that way, as in the game. **Click a line** to
+jump to its output: the entity that sends it is selected and its card in the *Outputs* tab is outlined in green.
 
 See [Source mapping basics](mapping-basics.html#outputs-and-inputs) for examples.
+
+## Doors
+
+A door in Source is an entity that moves: `func_door` slides a brush, `func_door_rotating` turns a brush around its
+hinge, `prop_door_rotating` turns a door *model* (with a handle). Setting one up by hand means getting the move
+direction angles, the sign of the turn, the hinge origin, spawnflags and sounds right. Mapsmith does that for you.
+
+**Make a door:** build a block the size of the door (in the doorway), select it and choose **Make door** in the
+Selection box of the Tool panel, in the right-click menu or in **Brushes > Make door**:
+
+| Choice | What you get |
+| --- | --- |
+| **Swinging door** | `func_door_rotating` with its hinge on the left edge (no origin brush needed), opens 90° away from the player |
+| **Sliding door** | `func_door` that slides up into the wall above |
+| **Double door (swinging)** | the block is cut in the middle; two halves hinged on the outer edges, sharing one name, open together |
+| **Double door (sliding)** | two halves that slide apart to the sides |
+| **Door model (prop_door_rotating)** | a door model of the game stands where the block was, hinge at the block's left edge, with a lever handle |
+
+The new door works right away: the player opens it with **Use**, it closes again after 4 seconds (door models stay
+open, like HL2's), and it gets the game's door sounds (script sounds with "door" in the name: moving, stop, locked).
+A `func_door` or `func_door_rotating` you place with the Entity tool or make with **Tie to** gets the same settings.
+
+**See how it opens:** while a door is selected, the views draw its motion:
+
+- swinging doors and door models: the **hinge** (a yellow line), an **arc with an arrow** for the way the free edge
+  travels and a **ghost** of the open door. A door that opens away from the player shows both ways (the second one
+  fainter).
+- sliding doors: an **arrow** to the open position and a ghost there.
+
+**The Door box** (Object Properties, above the tabs) changes all of it in plain words; each change is one undo step:
+
+- **Opens**: *Swings - hinge on the left/right* or *Slides up/down/left/right*. Left and right are seen from the door's
+  front (the arc shows which side that is). Switching between swing and slide changes the class.
+- **Turns**: *Away from the player*, *Always to the front* or *Always to the back*; **Angle** how far it turns.
+- **Speed** (units or degrees per second), **Closing**: *Stays open* or *closes after* some seconds.
+- Switches: **Opens when the player presses Use**, **Opens when the player walks into it**, **Starts locked**
+  (an `Unlock` input opens it up; the *Locked* sound plays when someone tries it).
+- Door models: **Model** (the game's door models) and **Handle** (none, lever, push bar, keypad).
+- **Sounds**: one list per sound (*Opening*, *Closing*, *Stops*, *Locked*; door models: *Opening*, *Moving*,
+  *Closed*, *Locked* - empty keeps the model's own), door sounds listed, each with **▶** to listen.
+- **Test open** plays the opening in the views at the door's real speed.
+
+**Areaportals:** a door between two rooms should close an *areaportal*, so the game skips drawing what is behind it.
+Put a `func_areaportal` brush (tools/toolsareaportal) into the doorway; the Door box then offers **Link areaportal**
+(it names the door if needed and sets the portal's *target*). The [Problems](compiling.html#problems-and-leaks) list warns about a door
+standing in an areaportal that is not linked to it and links it with one click.
+
+## Connecting entities
+
+To make one entity trigger another (a button opens a door, a trigger plays a sound):
+
+1. Select the entity that sends (the button, the trigger).
+2. Click **Connect to ...** - in the Selection box of the Tool panel, in the right-click menu or in the *Outputs* tab.
+3. Click the entity that should react in a view (a green line follows the mouse; **Esc** cancels).
+4. A small window lists the likely pairs, the best one chosen: *OnPressed → Open* for a button and a door,
+   *OnTrigger → PlaySound* for a trigger and an `ambient_generic`, *OnTrigger → Toggle* for a light. Pick another pair
+   or any output and input from the lists, set a delay, parameter or *Only once*, and press **Enter**.
+
+The output is added in one undo step. If the target has no name yet it gets one (`door_1`, `sound_1`, `button_1`
+...), because outputs find their target by name. The new output is shown in the *Outputs* tab.
 
 ## The Models page
 

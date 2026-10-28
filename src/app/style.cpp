@@ -80,6 +80,7 @@ QTabBar { qproperty-drawBase: 0; }
 QGroupBox { background: #2a2a2a; border: 1px solid #363636; border-radius: 7px; margin-top: 20px; padding: 10px 8px 8px 8px; }
 QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 2px; color: #e3a64f; font-weight: 600; }
 QFrame[role="card"] { background: #2a2a2a; border: 1px solid #363636; border-radius: 7px; }
+QFrame[role="card"][highlight="true"] { border: 1px solid #5ccf7a; }
 
 QPushButton { padding: 5px 12px; border: 1px solid #3e3e3e; border-radius: 5px; background: #343434; color: #e6e6e6; }
 QPushButton:hover { background: #3e3e3e; border-color: #4c4c4c; }

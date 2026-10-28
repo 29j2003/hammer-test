@@ -4,6 +4,7 @@
 
 #include <sme/assets.h>
 #include <sme/brush.h>
+#include <sme/doors.h>
 #include <sme/filesystem.h>
 #include <sme/material.h>
 #include <sme/text.h>
@@ -275,6 +276,25 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 			}
 		}
 	}
+	// A door in an areaportal must be linked to it, else the portal stays shut (or open) for good.
+	for (const auto& entity : doc.entities) {
+		if (!isDoor(entity)) {
+			continue;
+		}
+		const Entity* portal = doorAreaportal(doc, entity);
+		if (!portal || areaportalLinked(*portal, entity) || (!portal->get("target").empty() && !resolveTarget(doc, portal->get("target")).empty())) {
+			continue;
+		}
+		Problem p;
+		p.kind = Problem::Kind::DoorAreaportalNotLinked;
+		p.severity = Problem::Severity::Warning;
+		p.entityId = entity.id;
+		p.objects.entities = {entity.id, portal->id};
+		p.message = describeEntity(entity) + " sits in a func_areaportal that is not linked to it - the portal will not open and close with the door.";
+		p.howToFix = "Set the areaportal's \"target\" to the door's name (the door's Door box links it with one click).";
+		p.fixLabel = "Link areaportal";
+		problems.push_back(std::move(p));
+	}
 	if (!playerStart && doc.solidCount() > 0) {
 		Problem p;
 		p.kind = Problem::Kind::NoPlayerStart;
@@ -360,6 +380,12 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 				}
 			}
 			return edit::setConnections(doc, problem.entityId, connections);
+		}
+		case Problem::Kind::DoorAreaportalNotLinked: {
+			if (problem.objects.entities.size() != 2) {
+				return {};
+			}
+			return edit::linkAreaportal(doc, problem.objects.entities[0], problem.objects.entities[1]);
 		}
 		case Problem::Kind::NoPlayerStart: {
 			// On top of the brush with the largest upward-facing area.
