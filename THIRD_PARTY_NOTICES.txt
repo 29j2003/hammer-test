@@ -19,6 +19,14 @@ stb_vorbis (https://github.com/nothings/stb) - Public Domain (Unlicense) or MIT 
 minimp3 (https://github.com/lieff/minimp3) - CC0 1.0 (public domain dedication)
     MP3 decoding for the sound preview.
 
+Mapbase (https://github.com/mapbase-source/source-sdk-2013) and the Source SDK 2013 - Source 1 SDK License
+    The mod features in the features folder (client.dll, server.dll, game_shader_dx6.dll,
+    vrad.exe, vrad_dll.dll) are built from Mapbase, which is based on Valve's Source SDK 2013,
+    with the mapbase-fidelity add-on (mod/ in the source repository, public domain where it is
+    not derived from the SDK). They may only be used with Source engine games. License text:
+    features/LICENSE_SourceSDK2013.txt, notices: features/thirdpartylegalnotices.txt.
+    Source SDK Copyright (c) Valve Corp.
+
 doctest (https://github.com/doctest/doctest) - MIT License
     Only used by the tests; not part of the released program.
 

@@ -1,0 +1,213 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Pixel shader of Fidelity_Sky: the skybox texture exactly like Valve's sky
+// shaders (8 bit, HDR "RGBS" compressed, HDR float), plus drifting clouds,
+// grey in the brightness of the sky behind them.
+//
+// The clouds fill a layer high above the world, with a thickness: the view
+// goes through it in CLOUD_STEPS steps (Julius: a flat layer looked like a
+// texture). In the layer a cloud needs more density the higher up, so they
+// have flat bottoms and heaped, rounded tops like cumulus. Their position
+// only depends on the view direction in world space, so they are the same
+// from every view and continue across the faces of the skybox. Value noise,
+// no texture needed. Towards the horizon they get small (far away) and fade
+// into the haze of the sky behind them, only right at it. client.dll does the
+// same maths for the sun's direction: clouds in front of it dim its light
+// (fidelity_sky.cpp) - keep both the same.
+//
+// Light (c4: direction to the sun, from client.dll): at every step the
+// density a little towards the sun tells how much cloud the light passes
+// (Beer-Lambert): the sides facing the sun are bright, the far sides and
+// bellies in shadow, thin edges around the sun get a silver lining; tops are
+// lighter than bottoms. The colour comes from the sky behind them, made grey
+// (a little of its colour stays, so a sunset tints them) - a night sky gets
+// dark clouds, a bright day light grey ones, no setting per map. Without a
+// sun: lighter tops, darker bottoms.
+//
+// The sun itself (c5, c6: the env_sun's core and glow, from client.dll) is
+// drawn here, behind the clouds: they cover it pixel by pixel, the light
+// shafts start from the gaps. The engine's sun sprites, drawn on top of the
+// sky, made the clouds seem to part around the sun (Julius); client.dll
+// hides them while this sun is drawn.
+//
+//=============================================================================//
+
+// DYNAMIC: "MODE"						"0..2"
+// DYNAMIC: "CLOUDS"					"0..1"
+// DYNAMIC: "WRITE_DEPTH_TO_DESTALPHA"	"0..1"
+
+#include "common_ps_fxc.h"
+#include "fidelity_common.h"
+
+// MODE: 0 = 8 bit texture (sRGB read), 1 = HDR compressed RGBS (alpha is the
+// scale, filtered by hand like Valve's sky_hdr_compressed_rgbs), 2 = HDR float.
+
+sampler BaseTextureSampler	: register( s0 );
+
+const float4 g_InputScale	: register( c0 );	// colour multiplier
+const float4 g_TexelInfo	: register( c1 );	// RGBS: half texel u, v (minus fudge), width, height
+const float4 g_Clouds		: register( c2 );	// amount, scale, offset x, offset y
+const float4 g_CloudShape	: register( c3 );	// coverage, softness, darkness
+const float4 g_CloudSun		: register( c4 );	// direction to the sun (world), w: 1 = there is a sun
+const float4 g_SunDisc		: register( c5 );	// env_sun drawn here: colour of its core (linear), size (radians); w 0: the engine draws it
+const float4 g_SunHalo		: register( c6 );	// its glow around: colour (linear), size (radians)
+
+struct PS_INPUT
+{
+	float2 baseTexCoord	: TEXCOORD0;
+	float3 worldDir		: TEXCOORD1;
+};
+
+float ValueNoise( float2 p )
+{
+	float2 i = floor( p );
+	float2 f = frac( p );
+	float2 u = f * f * ( 3.0f - 2.0f * f );
+	return lerp( lerp( FidelityHash( i ), FidelityHash( i + float2( 1, 0 ) ), u.x ),
+				 lerp( FidelityHash( i + float2( 0, 1 ) ), FidelityHash( i + float2( 1, 1 ) ), u.x ), u.y );
+}
+
+float CloudNoise( float2 p )
+{
+	float v = 0.0f;
+	float a = 0.5f;
+	for ( int k = 0; k < 4; k++ )
+	{
+		v += a * ValueNoise( p );
+		p = p * 2.03f + float2( 17.1f, 9.3f );
+		a *= 0.5f;
+	}
+	return v;
+}
+
+#define CLOUD_STEPS		6		// steps through the layer
+#define CLOUD_THICKNESS	0.35f	// of the layer, in heights of its bottom above the eye
+
+// Cloud noise 0..1 at a point of the layer: two patterns drifting at different speeds
+float CloudBase( float2 p )
+{
+	return CloudNoise( p + g_Clouds.zw ) * 0.65f + CloudNoise( p * 0.47f + g_Clouds.zw * 0.6f + 31.7f ) * 0.35f;
+}
+
+// Density 0..1 at height h (0 bottom .. 1 top of the layer) where the noise is n:
+// higher up more is needed (heaped tops), right at the bottom it fades in
+float CloudAt( float n, float h )
+{
+	const float need = g_CloudShape.x + h * h * 0.22f;
+	return saturate( ( n - need ) / g_CloudShape.y ) * smoothstep( 0.0f, 0.12f, h );
+}
+
+float3 SkyColor( float2 uv )
+{
+#if MODE == 1
+	float2 uv00 = uv - g_TexelInfo.xy;
+	float2 uv10 = uv00 + float2( 2.0f * g_TexelInfo.x, 0 );
+	float2 uv01 = uv00 + float2( 0, 2.0f * g_TexelInfo.y );
+	float2 uv11 = uv00 + 2.0f * g_TexelInfo.xy;
+	float4 s00 = tex2D( BaseTextureSampler, uv00 );
+	float4 s10 = tex2D( BaseTextureSampler, uv10 );
+	float4 s01 = tex2D( BaseTextureSampler, uv01 );
+	float4 s11 = tex2D( BaseTextureSampler, uv11 );
+	float2 f = frac( uv00 * g_TexelInfo.zw );
+	float3 top = lerp( s00.rgb * s00.a, s10.rgb * s10.a, f.x );
+	float3 bottom = lerp( s01.rgb * s01.a, s11.rgb * s11.a, f.x );
+	return lerp( top, bottom, f.y );
+#else
+	return tex2D( BaseTextureSampler, uv ).rgb;
+#endif
+}
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	float3 color = SkyColor( i.baseTexCoord ) * g_InputScale.rgb;
+
+#if CLOUDS
+	float3 dir = normalize( i.worldDir );
+	float sunThrough = 1.0f;	// how much of the sun the clouds let through
+	// down to the horizon (Julius: further into the distance - a better illusion;
+	// 26.10.2026: "die Wolken können deutlich erweitert werden zum Horizont" -
+	// a big map's sky showed a clear band about 7 degrees high above it)
+	float fade = smoothstep( -0.01f, 0.04f, dir.z );
+	if ( fade > 0.0f )
+	{
+		float lum = dot( color, float3( 0.299f, 0.587f, 0.114f ) );
+		float3 grey = lerp( color, lum.xxx, 0.8f );
+		float3 shadow = grey * ( 1.0f - 0.75f * g_CloudShape.z );
+		float3 lit = grey * 1.3f + 0.02f;
+		const bool bSun = g_CloudSun.w > 0.5f;
+		float2 toSun = g_CloudSun.xy / max( length( g_CloudSun.xy ), 0.05f ) * 0.3f;
+
+		// Through the layer: where the view is at height h, on the pattern.
+		// A high layer: 1.6x smaller than a low one, shrinking towards the
+		// horizon (perspective) instead of stretching.
+		float2 vAlong = dir.xy / max( dir.z, 0.012f ) * g_Clouds.y * 1.6f;
+		// optical depth of one step: longer paths through the layer near the horizon
+		float stepDepth = min( CLOUD_THICKNESS / max( dir.z, 0.012f ), 3.0f ) / CLOUD_STEPS * 12.0f;
+		// the steps a little shifted per pixel: no visible slices
+		float jitter = FidelityHash( floor( dir.xy * 2048.0f ) ) - 0.5f;
+		float transmit = 1.0f;
+		float3 cloud = float3( 0, 0, 0 );
+		[loop]
+		for ( int k = 0; k < CLOUD_STEPS; k++ )
+		{
+			float h = saturate( ( k + 0.5f + jitter * 0.8f ) / CLOUD_STEPS );
+			float2 p = vAlong * ( 1.0f + h * CLOUD_THICKNESS );
+			// fine detail eats into the edges: fluffy instead of smooth blobs
+			float detail = ValueNoise( p * 6.3f + g_Clouds.zw * 1.3f ) - 0.5f;
+			float density = CloudAt( CloudBase( p ) + detail * 0.1f, h );
+			if ( density > 0.001f )
+			{
+				float light;
+				if ( bSun )
+				{
+					// cloud between here and the sun (a step towards it, and up if it is high)
+					float hSun = saturate( h + 0.35f * saturate( g_CloudSun.z ) );
+					float towards = CloudAt( CloudBase( p + toSun ), hSun );
+					light = exp( -towards * 2.5f ) * lerp( 0.75f, 1.0f, h );
+				}
+				else
+				{
+					light = lerp( 0.3f, 0.85f, h );
+				}
+				// thin wisps let light through, dense cores are darker inside (powder)
+				float powder = 1.0f - exp( -density * 3.0f );
+				float3 vSample = lerp( shadow, lit, saturate( light * lerp( 1.0f, 0.75f, powder ) ) );
+				float alpha = 1.0f - exp( -density * stepDepth );
+				cloud += transmit * alpha * vSample;
+				transmit *= 1.0f - alpha;
+				if ( transmit < 0.02f )
+					break;
+			}
+		}
+		float coverage = 1.0f - transmit;
+		if ( bSun )
+		{
+			// Silver lining: thin clouds close to the sun shine
+			float nearSun = pow( saturate( dot( dir, g_CloudSun.xyz ) ), 12.0f );
+			cloud += grey * nearSun * coverage * transmit * 3.0f;
+		}
+		// Far away (towards the horizon) the clouds fade into the sky's haze
+		float haze = smoothstep( 0.0f, 0.15f, dir.z );
+		cloud = lerp( lerp( color, grey, 0.5f ) * coverage, cloud, haze );
+		float amount = fade * g_Clouds.x;
+		color = color * ( 1.0f - coverage * amount ) + cloud * amount;
+
+		// clouds cover it as much as they cover the sky behind them (thin ones
+		// let a little through, glowing: forward scattering)
+		sunThrough = lerp( 1.0f, transmit + ( 1.0f - transmit ) * 0.06f, saturate( amount * 1.2f ) );
+	}
+
+	// The sun behind the clouds (as bright as the engine's sprite: a bright
+	// core and a soft glow around it), dimmed where they cover it
+	if ( g_SunDisc.w > 0.0f )
+	{
+		float angle = acos( saturate( dot( dir, g_CloudSun.xyz ) ) );
+		float core = exp( -pow( angle / ( g_SunDisc.w * 0.25f ), 2.0f ) ) + 0.35f * exp( -pow( angle / ( g_SunDisc.w * 0.6f ), 2.0f ) );
+		float halo = 0.25f * exp( -pow( angle / max( g_SunHalo.w * 0.35f, 0.001f ), 2.0f ) );
+		color += ( g_SunDisc.rgb * core + g_SunHalo.rgb * halo ) * sunThrough;
+	}
+#endif
+
+	// This is never fogged.
+	return FinalOutput( float4( color, 1.0f ), 0, PIXEL_FOG_TYPE_NONE, TONEMAP_SCALE_LINEAR, WRITE_DEPTH_TO_DESTALPHA, 1e20 );
+}

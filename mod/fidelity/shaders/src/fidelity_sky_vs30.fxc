@@ -1,0 +1,39 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Vertex shader of Fidelity_Sky (the 2D skybox with drifting clouds), based on
+// Valve's sky_vs20.fxc: texture coordinates as before, plus the view
+// direction in world space for the cloud layer.
+//
+//=============================================================================//
+
+#include "common_vs_fxc.h"
+
+const float4 cBaseTexCoordTransform[ 2 ]	: register( SHADER_SPECIFIC_CONST_0 );
+
+struct VS_INPUT
+{
+	float4 vPos			: POSITION;
+	float2 vTexCoord0	: TEXCOORD0;
+};
+
+struct VS_OUTPUT
+{
+	float4 projPos		: POSITION;
+	float2 baseTexCoord	: TEXCOORD0;
+	float3 worldDir		: TEXCOORD1;
+};
+
+VS_OUTPUT main( const VS_INPUT v )
+{
+	VS_OUTPUT o = ( VS_OUTPUT )0;
+
+	o.projPos = mul( v.vPos, cModelViewProj );
+
+	float4 vTexCoordInput = { v.vTexCoord0.x, v.vTexCoord0.y, 0.0f, 1.0f };
+	o.baseTexCoord.x = dot( vTexCoordInput, cBaseTexCoordTransform[ 0 ] );
+	o.baseTexCoord.y = dot( vTexCoordInput, cBaseTexCoordTransform[ 1 ] );
+
+	float3 worldPos = mul( float4( v.vPos.xyz, 1.0f ), cModel[ 0 ] );
+	o.worldDir = worldPos - cEyePos;
+	return o;
+}

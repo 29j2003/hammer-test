@@ -1,5 +1,8 @@
-// mod_code_panel.h - Project > Mod code: the mod's source code (a Mapbase checkout with
-// mapbase-fidelity) and its scripts, run by the editor - no .bat file, no console window.
+// mod_code_panel.h - Project > Build from source: the mod's source code (a Mapbase checkout with
+// mapbase-fidelity) and its scripts, run by the editor - no .bat file, no console window. Only for
+// people who build the mod themselves: normally Project > Features installs the features Mapsmith
+// brings along (sme/mod_install.h) - then this tab runs the bundle's deploy.ps1 and report.ps1,
+// and "Update mod" without a checkout installs the bundle.
 // "Update mod" runs fidelity/update.ps1 in the background (Visual Studio 2022 builds the DLLs,
 // they go into the mod, VRAD with baked AO into the SDK, the game files into the mod) with its
 // steps, a progress bar, the log and a summary with advice when something fails; "Install game
@@ -22,6 +25,7 @@
 #include <set>
 
 #include <sme/mod_code.h>
+#include <sme/mod_install.h>
 
 class QCheckBox;
 class QLabel;
@@ -51,6 +55,13 @@ public:
 	~ModCodePanel() override;
 
 	void setCommandFactory(CommandFactory factory);
+	/// The features Mapsmith brings along: their deploy.ps1 and report.ps1 run when the mod has no
+	/// source code of its own, and `install` is what "Update mod" does then.
+	void setFeatureBundle(std::optional<FeatureBundle> bundle, std::function<void()> install);
+	/// The scripts in use: the checkout's, else the bundle's (nullopt: none).
+	[[nodiscard]] std::optional<ModCodeScripts> scripts() const;
+	/// A source code checkout is chosen (not just the bundle).
+	[[nodiscard]] bool hasCheckout() const;
 
 	/// Top folder of the checkout, empty when none is known.
 	[[nodiscard]] QString repository() const { return m_root; }
@@ -112,6 +123,9 @@ private:
 
 	Editor* m_editor;
 	CommandFactory m_factory;
+	std::optional<FeatureBundle> m_bundle;
+	std::function<void()> m_installBundle;
+	QLabel* m_bundleNote;
 	QString m_gameKey;
 	QString m_root;
 	int m_searchGeneration = 0;

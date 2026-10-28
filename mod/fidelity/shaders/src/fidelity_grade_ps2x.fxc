@@ -1,0 +1,90 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Final image pass: contrast-adaptive sharpening, clarity (local contrast
+// over a few pixels: brings out the relief of bump maps and the detail of
+// textures, mostly in the mid-tones), colour balance, exposure,
+// lift / gamma / gain, a soft contrast curve, saturation + vibrance, a
+// vignette and a light dither against banding. Runs after the engine's
+// bloom / tone mapping / colour correction and before the HUD.
+//
+// s0 : _rt_FullFrameFB
+// c0 : 1/width, 1/height, sharpen amount, vignette strength
+// c1 : contrast, saturation, vibrance, vignette softness
+// c2 : colour balance r, g, b (times the exposure), clarity amount
+// c3 : lift, 1/gamma, gain, vignette radius
+//
+//=============================================================================//
+
+#include "fidelity_common.h"
+
+sampler FrameSampler	: register( s0 );
+
+const float4 g_vScreen	: register( c0 );
+const float4 g_vTone	: register( c1 );
+const float4 g_vBalance	: register( c2 );
+const float4 g_vLGG		: register( c3 );
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	float2 vUV = i.vTexCoord;
+	float3 vColor = tex2D( FrameSampler, vUV ).rgb;
+
+	// --- Sharpen: unsharp mask limited to the local min/max (no halos), weaker
+	// where local contrast is already high.
+	float3 vN = tex2D( FrameSampler, vUV + float2( 0.0, -g_vScreen.y ) ).rgb;
+	float3 vS = tex2D( FrameSampler, vUV + float2( 0.0,  g_vScreen.y ) ).rgb;
+	float3 vE = tex2D( FrameSampler, vUV + float2(  g_vScreen.x, 0.0 ) ).rgb;
+	float3 vW = tex2D( FrameSampler, vUV + float2( -g_vScreen.x, 0.0 ) ).rgb;
+
+	float3 vMin = min( vColor, min( min( vN, vS ), min( vE, vW ) ) );
+	float3 vMax = max( vColor, max( max( vN, vS ), max( vE, vW ) ) );
+	float3 vBlur = ( vN + vS + vE + vW ) * 0.25;
+	float3 vAmount = g_vScreen.z * saturate( 1.0 - ( vMax - vMin ) );
+	vColor = clamp( vColor + ( vColor - vBlur ) * vAmount * 2.0, vMin, vMax );
+
+	// --- Clarity: brightness against the average a few pixels around
+	// (diagonals), mid-tones most, limited so edges get no halos; the colour
+	// is scaled, so its hue stays. The same share of the picture at every
+	// resolution: 1/360 of its height (3 pixels at 1080 lines), at least 1.5.
+	float2 vWide = max( g_vScreen.xy * 1.5, float2( g_vScreen.x / g_vScreen.y, 1.0 ) / 360.0 );
+	float3 vAround = ( tex2D( FrameSampler, vUV + vWide ).rgb + tex2D( FrameSampler, vUV - vWide ).rgb +
+		tex2D( FrameSampler, vUV + float2( vWide.x, -vWide.y ) ).rgb + tex2D( FrameSampler, vUV + float2( -vWide.x, vWide.y ) ).rgb ) * 0.25;
+	float flHere = FidelityLuminance( vColor );
+	float flDetail = clamp( flHere - FidelityLuminance( vAround ), -0.12, 0.12 );
+	float flMid = saturate( 4.0 * flHere * ( 1.0 - flHere ) );
+	vColor *= 1.0 + g_vBalance.w * flDetail * flMid / max( flHere, 0.04 );
+
+	// --- Colour balance and exposure
+	vColor *= g_vBalance.rgb;
+
+	// --- Lift / gamma / gain
+	vColor = saturate( vColor * g_vLGG.z + g_vLGG.x * ( 1.0 - vColor ) );
+	vColor = pow( vColor, g_vLGG.y );
+
+	// --- Soft S-curve contrast around mid grey
+	float3 vCurve = vColor * vColor * ( 3.0 - 2.0 * vColor );
+	vColor = lerp( vColor, vCurve, g_vTone.x );
+
+	// --- Saturation and vibrance (vibrance boosts dull colours more than vivid ones)
+	float flLuma = FidelityLuminance( vColor );
+	float flChroma = max( vColor.r, max( vColor.g, vColor.b ) ) - min( vColor.r, min( vColor.g, vColor.b ) );
+	float flSaturation = g_vTone.y * ( 1.0 + g_vTone.z * ( 1.0 - flChroma ) );
+	vColor = lerp( flLuma.xxx, vColor, flSaturation );
+
+	// --- Vignette (aspect corrected)
+	float2 vCentered = ( vUV - 0.5 ) * float2( g_vScreen.y / g_vScreen.x, 1.0 );
+	float flDist = length( vCentered );
+	float flVignette = smoothstep( g_vLGG.w, g_vLGG.w + g_vTone.w, flDist );
+	vColor *= 1.0 - g_vScreen.w * flVignette;
+
+	// --- Dither: +-half a step of the 8 bit output in a 4 x 4 pattern, so smooth
+	// gradients (sky, fog, vignette) show no bands after all the steps above.
+	vColor += ( FidelityTileNoise( vUV / g_vScreen.xy ).x - 0.5 ) * ( 1.0 / 255.0 );
+
+	return float4( saturate( vColor ), 1.0 );
+}

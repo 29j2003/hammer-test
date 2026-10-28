@@ -1,0 +1,53 @@
+//========= mapbase-fidelity ==================================================//
+//
+// The light in the air (fidelity_volumetric_ps30.fxc) marches with a 4 x 4
+// jitter in a quarter-size image. Two passes remove that pattern:
+//
+//   BLUR      quarter size -> quarter size: exactly the 4 x 4 block of
+//             pixels around each one (four bilinear taps, each on the corner
+//             between four pixels: -1.5 and +0.5 pixels off the middle).
+//             That box is half a pixel off the middle, towards the top left.
+//   (default) composite: one filtered tap of the blurred image, half a pixel
+//             further, added onto the frame buffer (the material is additive).
+//             (Blurring while compositing at full size did not hit the
+//             corners exactly and left a faint grid.)
+//
+// BLUR
+//   s0 : the quarter-size march
+//   c0 : one texel of it (u, v), largest valid uv (u, v)
+// composite
+//   s0 : the blurred quarter-size image
+//   c0 : one texel of it (u, v), brightness, -
+//   c1 : largest valid uv (u, v), -, -
+//
+//=============================================================================//
+
+#include "fidelity_common.h"
+
+sampler BaseSampler	: register( s0 );
+
+const float4 g_vParams0	: register( c0 );
+const float4 g_vParams1	: register( c1 );
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	const float2 vTexel = g_vParams0.xy;
+#if defined( BLUR )
+	// (taps past the drawn area read black: clamped to its last pixels)
+	const float2 vMax = g_vParams0.zw;
+	float3 vSum = tex2D( BaseSampler, min( i.vTexCoord + vTexel * float2( -1.5, -1.5 ), vMax ) ).rgb;
+	vSum += tex2D( BaseSampler, min( i.vTexCoord + vTexel * float2( 0.5, -1.5 ), vMax ) ).rgb;
+	vSum += tex2D( BaseSampler, min( i.vTexCoord + vTexel * float2( -1.5, 0.5 ), vMax ) ).rgb;
+	vSum += tex2D( BaseSampler, min( i.vTexCoord + vTexel * float2( 0.5, 0.5 ), vMax ) ).rgb;
+	return float4( vSum * 0.25, 1.0 );
+#else
+	const float3 vLight = tex2D( BaseSampler, min( i.vTexCoord + vTexel * 0.5, g_vParams1.xy ) ).rgb;
+	// alpha only above 0 (the material is alpha tested); adds next to nothing to the depth in alpha
+	return float4( vLight * g_vParams0.z, 1.0 / 255.0 );
+#endif
+}

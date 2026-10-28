@@ -1,0 +1,100 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Light shafts ("god rays") from the sun, as screen-space volumetric light
+// scattering (Mitchell, GPU Gems 3 ch. 13). Runs on a quarter-size image:
+//
+//   MASK      scene -> bright sky around the sun (everything else black)
+//   (default) radial blur of that mask towards the sun; run twice, the second
+//             pass with a much shorter step fills the gaps of the first
+//   COMPOSITE scene + shafts -> frame buffer
+//
+// The sky is where destination alpha (linear depth) is at its maximum, i.e.
+// further away than the encoded range. Far geometry is caught by that test
+// too, so the mask also needs brightness: distant walls rarely are as bright
+// as the sky around the sun.
+//
+// MASK
+//   s0 : _rt_FullFrameFB (colour)
+//   s1 : _rt_FullFrameDepth (linear depth in alpha)
+//   c0 : sun position (uv), 1 / sun radius (uv, aspect corrected), aspect
+//   c1 : brightness threshold, 1 / (1 - threshold), sky depth (0.99, or 0 = no sky test),
+//        one texel of the scene texture (u; v = u * aspect)
+//   A quarter-size pixel covers 4 x 4 scene pixels: four filtered taps one
+//   texel off the middle average all of them (one tap shimmered on leaves
+//   and fences in front of the sun as the view moved)
+// blur
+//   s0 : shaft image
+//   c0 : sun position (uv), step scale, decay
+//   c1 : largest valid uv (clamp), -, -
+// COMPOSITE
+//   s0 : shaft image
+//   s1 : _rt_FullFrameFB (colour)
+//   s2 : _rt_FullFrameDepth (linear depth in alpha, written back unchanged)
+//   c0 : colour r, g, b (already scaled by intensity), scene weight (1, or 0 = debug view)
+//   c1 : uv scale from scene to shaft image, -, -
+//
+//=============================================================================//
+
+#include "fidelity_common.h"
+
+#define NUM_SAMPLES 16
+
+sampler BaseSampler		: register( s0 );
+sampler Texture1Sampler	: register( s1 );
+sampler Texture2Sampler	: register( s2 );
+
+const float4 g_vParams0	: register( c0 );
+const float4 g_vParams1	: register( c1 );
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+#if defined( MASK )
+// bright sky at one tap of the scene (black elsewhere)
+float3 MaskTap( float2 vTap )
+{
+	const float3 vScene = tex2D( BaseSampler, vTap ).rgb;
+	const float flSky = step( g_vParams1.z, tex2D( Texture1Sampler, vTap ).a );
+	return vScene * flSky * saturate( ( FidelityLuminance( vScene ) - g_vParams1.x ) * g_vParams1.y );
+}
+#endif
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	float2 vUV = i.vTexCoord;
+
+#if defined( MASK )
+	const float2 vTexel = float2( g_vParams1.w, g_vParams1.w * g_vParams0.w );
+	float3 vMasked = MaskTap( vUV + vTexel * float2( -1.0, -1.0 ) );
+	vMasked += MaskTap( vUV + vTexel * float2( 1.0, -1.0 ) );
+	vMasked += MaskTap( vUV + vTexel * float2( -1.0, 1.0 ) );
+	vMasked += MaskTap( vUV + vTexel * float2( 1.0, 1.0 ) );
+	float2 vToSun = ( vUV - g_vParams0.xy ) * float2( g_vParams0.w, 1.0 );
+	float flFalloff = saturate( 1.0 - length( vToSun ) * g_vParams0.z );
+	return float4( vMasked * 0.25 * flFalloff * flFalloff, 1.0 );
+
+#elif defined( COMPOSITE )
+	float3 vShafts = tex2D( BaseSampler, vUV * g_vParams1.xy ).rgb;
+	float3 vScene = tex2D( Texture1Sampler, vUV ).rgb;
+	// Keep dest alpha depth intact; never output exactly 0 (alpha test).
+	return float4( vScene * g_vParams0.w + vShafts * g_vParams0.rgb, max( tex2D( Texture2Sampler, vUV ).a, 1.0 / 255.0 ) );
+
+#else
+	// Walk towards the sun, each sample a little weaker than the one before.
+	float2 vStep = ( g_vParams0.xy - vUV ) * g_vParams0.z;
+	float2 vCoord = vUV;
+	float3 vSum = 0;
+	float flWeight = 1.0;
+	float flTotal = 0.0;
+	for ( int n = 0; n < NUM_SAMPLES; n++ )
+	{
+		vSum += tex2D( BaseSampler, min( vCoord, g_vParams1.xy ) ).rgb * flWeight;
+		flTotal += flWeight;
+		flWeight *= g_vParams0.w;
+		vCoord += vStep;
+	}
+	return float4( vSum / flTotal, 1.0 );
+#endif
+}

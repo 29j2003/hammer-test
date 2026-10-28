@@ -1,0 +1,48 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Pixel shader of Fidelity_SoftParticle: base texture x vertex colour (and
+// alpha), as UnlitGeneric with $vertexcolor $vertexalpha - and faded out where
+// the particle comes close to what lies behind it (the scene's depth in the
+// frame buffer's alpha, DepthFeathering as Valve's SpriteCard): smoke and dust
+// no longer show a hard straight line where they cut into a wall or floor.
+//
+// c0 : modulation colour ($color, linear), alpha ($alpha)
+// c1 : 1 = additive (the alpha fades the colour too)
+// c2 : depth feathering constants (SetDepthFeatheringPixelShaderConstant)
+//
+//=============================================================================//
+
+// DYNAMIC: "PIXELFOGTYPE"	"0..1"
+
+#include "common_ps_fxc.h"
+#include "shader_constant_register_map.h"
+
+sampler BaseSampler		: register( s0 );
+sampler DepthSampler	: register( s1 );	// the scene's depth in alpha (_rt_FullFrameDepth)
+
+const float4 g_Modulation				: register( c0 );
+const float4 g_Options					: register( c1 );
+const float4 g_DepthFeatheringConstants	: register( c2 );
+const float4 g_FogParams				: register( PSREG_FOG_PARAMS );
+const float4 g_EyePos					: register( PSREG_EYEPOS_SPEC_EXPONENT );
+
+struct PS_INPUT
+{
+	float2 baseTexCoord	: TEXCOORD0;
+	float4 color		: TEXCOORD1;
+	float4 screenPos	: TEXCOORD2;
+	float3 worldPos		: TEXCOORD3;
+	float3 projPos		: TEXCOORD4;
+};
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	float4 vColor = tex2D( BaseSampler, i.baseTexCoord ) * i.color;
+	vColor.rgb *= g_Modulation.rgb;
+	vColor.a *= g_Modulation.a;
+	vColor.a *= DepthFeathering( DepthSampler, i.screenPos.xy / i.screenPos.w, i.screenPos.z, i.screenPos.w, g_DepthFeatheringConstants );
+	if ( g_Options.x > 0.5 )
+		vColor.rgb *= vColor.a;		// additive: blended ONE, ONE
+	const float flFogFactor = CalcPixelFogFactor( PIXELFOGTYPE, g_FogParams, g_EyePos.xyz, i.worldPos, i.projPos.z );
+	return FinalOutput( vColor, flFogFactor, PIXELFOGTYPE, TONEMAP_SCALE_LINEAR );
+}

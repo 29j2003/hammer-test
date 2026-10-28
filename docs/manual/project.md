@@ -7,8 +7,8 @@ nav_order: 9
 {: .no_toc }
 
 The **Project** page in the side bar is about your mod as a whole: its maps, its main menu, its source code and how to
-share it. It has eight tabs: **Overview**, **Features**, **Maps**, **Menu**, **Texts**, **Source control**, **Mod code**
-and **Ship**.
+share it. It has eight tabs: **Overview**, **Features**, **Maps**, **Menu**, **Texts**, **Source control**, **Ship**
+and **Build from source** (only for building the mod from its own code).
 
 ![The Project page](images/project.png)
 
@@ -166,17 +166,93 @@ Mapsmith).
 
 Other buttons appear when they make sense: **Open on GitHub** (the repository's page), **Open in Visual Studio** (when
 a `.sln` solution is in the folder) and **Update mod** (when the repository is the mod's source code, see
-[Mod code](#mod-code-update-without-bat-files)).
+[Build from source](#build-from-source-advanced)).
 
 {: .note }
 Mapsmith only talks to the network through git, and only when you press Fetch, Pull or Push. Git uses your own
 login; Mapsmith never sees a password.
 
-## Mod code: update without .bat files
+## Features: install mapbase-fidelity and choose what it does
 
-If your mod is built from its own source code – a Mapbase checkout with mapbase-fidelity, which has `update.bat`,
-`deploy.bat` and `report.bat` – the **Mod code** tab does what those scripts do, inside Mapsmith: in the background,
-without a console window and without "Press any key".
+### Install
+
+Mapsmith brings mapbase-fidelity ready-built – the mod's graphics and sound add-on: ambient occlusion, light shafts,
+the sound mixer, liquid in bottles and more. **Install features** (on the **Features** tab, right after *Overview*)
+puts it into the open mod with one click:
+
+- the game code: `bin/client.dll` and `bin/server.dll` (Mapbase with the add-on, for Half-Life 2 or Episode Two mods –
+  Mapsmith reads which one from the mod's `gameinfo.txt`) and the add-on's shaders (`bin/game_shader_dx6.dll`,
+  `shaders/fxc`);
+- its settings (`cfg/fidelity.cfg`, run from `autoexec.cfg`);
+- VRAD with baked ambient occlusion, into the compile tools' folder (Source SDK Base 2013 Singleplayer's `bin`), so
+  your map compiles bake it;
+- then the generated materials (liquid in bottles, sheen, relief ...), made from the game's own.
+
+No compiler, no git, no scripts to start. A Mapbase mod without the features shows a line **Give this mod Mapsmith's
+features** on the Overview with the same button, and a **New mod** with Mapbase gets them right away.
+
+What the mod had before (Mapbase's own DLLs, for example) is kept as `<file>.mapsmith-backup` and comes back with
+**Remove features**. `cfg/mapsmith_installed.txt` in the mod lists what Mapsmith put there, so an update replaces only
+its own files and never yours.
+
+**Updates come by themselves:** when a newer Mapsmith brings newer features, the mod gets them the next time you open
+it (switch *Update the mod's features by themselves ...* off to do it by hand with **Update features**).
+
+{: .important }
+The ready-built features come with the Windows version of Mapsmith (the installer and the ZIP from the releases).
+A copy you built yourself has none; the tab says so.
+
+### Choose what it does
+
+The checklist below the install is everything mapbase-fidelity can do in the mod,
+grouped into *Graphics* (ambient occlusion, light shafts, light in the air, sun shadows, drifting clouds, FXAA, ...),
+*Effects* (glowing things light the room, muzzle flash light, impact dust, blood pools, weapon sway, ...), *Sound*
+(the mixer, sounds behind walls, room reverb, distant shots, ...) and *Materials* (liquid in bottles, swaying plants,
+water with sun glint and foam, walls with depth). Each has a line saying what the player sees or hears.
+
+Everything is on. Untick what the mod should not have – it is switched off for everyone who plays the mod. A tick is
+saved at once and the game uses it from its next start:
+
+- the graphics, effect and sound switches go into `cfg/mapsmith_features.cfg`, which the game runs from `autoexec.cfg`
+  when it starts (a player can still change a switch in the console until the next start);
+- the material features are the [Game enhancements](mapbase-fidelity.html#game-enhancements): unticking *Liquid in
+  bottles* is the same as switching that enhancement off on the Overview.
+
+The first time you open a mod that has mapbase-fidelity, the Overview shows a line **Choose this mod's features** with
+**Choose features** (opens this tab) and **Keep all on** – once; after that the tab is always there to change them.
+A **New mod** can get its features right away too (*Choose features ...* in the dialog): they wait in the mod and are
+used as soon as mapbase-fidelity is installed there.
+
+### Fresh install
+
+When something got mixed up, **Fresh install ...** starts mapbase-fidelity over in the mod:
+
+1. It first **lists** everything the add-on and Mapsmith made in the mod – generated materials, height maps and bump
+   maps, model copies, the add-on's shaders, its `fidelity.cfg` and shader DLL – and nothing else: your own maps,
+   materials and files are never in the list. Nothing happens until you press **Remove and install again**.
+2. It **removes** them (what was there before the install comes back).
+3. It **writes the features** of the checklist again.
+4. It **installs the features again** (with *Build the game code from the mod's own source* – shown only when you
+   build the mod yourself – it builds from source instead).
+
+The steps tick off on the tab; *Show details* opens the Build from source tab with the full output.
+
+### Make report
+
+Something looks wrong in the game – a wall, an effect, a sound? In the game, stand where it happens,
+open the console and type `fidelity_report`. Close the game and press **Make report**: Mapsmith packs what it wrote
+into `fidelity_report.zip` and opens its folder, ready to send. The button is where you look after testing a map:
+*Map › Make report from the game*, the **Compile** panel (after a run) and the **Problems** panel. It works for every
+mod with the features – no source code needed; the run shows on the Build from source tab.
+
+## Build from source (advanced)
+
+**You do not need this tab to get the features** – [Features](#features-install-mapbase-fidelity-and-choose-what-it-does)
+installs them. It is for people who change and build the mod's code themselves: if your mod is built from its own
+source code – a Mapbase checkout with mapbase-fidelity, which has `update.bat`, `deploy.bat` and `report.bat` – the
+**Build from source** tab (the last one) does what those scripts do, inside Mapsmith: in the background, without a
+console window and without "Press any key". Without a checkout, its **Install features** button does what the
+Features tab does.
 
 **Source code of the mod.** Mapsmith looks for the checkout by itself: in the Source control folder of this mod (and
 the folder it is in), in `Documents\GitHub`, `source\repos` and similar folders in your home folder, and in folders
@@ -221,48 +297,6 @@ On Linux and macOS the build is not possible; Install game files only and Make r
 {: .note }
 Mapsmith uses your own git for this and only contacts the remote when one of the automatic options is on or you press
 Check now, Pull & update or Pull.
-
-**Make report.** Something looks wrong in the game – a wall, an effect, a sound? In the game, stand where it happens,
-open the console and type `fidelity_report`. Close the game and press **Make report**: Mapsmith packs what it wrote
-into `fidelity_report.zip` and opens its folder, ready to send. The button is where you look after testing a map:
-*Map › Make report from the game*, the **Compile** panel (after a run) and the **Problems** panel – each runs the
-report here, on the Mod code tab.
-
-## Features: what mapbase-fidelity does in your mod
-
-The **Features** tab (right after *Overview*) is one checklist of everything mapbase-fidelity can do in the mod,
-grouped into *Graphics* (ambient occlusion, light shafts, light in the air, sun shadows, drifting clouds, FXAA, ...),
-*Effects* (glowing things light the room, muzzle flash light, impact dust, blood pools, weapon sway, ...), *Sound*
-(the mixer, sounds behind walls, room reverb, distant shots, ...) and *Materials* (liquid in bottles, swaying plants,
-water with sun glint and foam, walls with depth). Each has a line saying what the player sees or hears.
-
-Everything is on. Untick what the mod should not have – it is switched off for everyone who plays the mod. A tick is
-saved at once and the game uses it from its next start:
-
-- the graphics, effect and sound switches go into `cfg/mapsmith_features.cfg`, which the game runs from `autoexec.cfg`
-  when it starts (a player can still change a switch in the console until the next start);
-- the material features are the [Game enhancements](mapbase-fidelity.html#game-enhancements): unticking *Liquid in
-  bottles* is the same as switching that enhancement off on the Overview.
-
-The first time you open a mod that has mapbase-fidelity, the Overview shows a line **Choose this mod's features** with
-**Choose features** (opens this tab) and **Keep all on** – once; after that the tab is always there to change them.
-A **New mod** can get its features right away too (*Choose features ...* in the dialog): they wait in the mod and are
-used as soon as mapbase-fidelity is installed there.
-
-### Fresh install
-
-When something got mixed up, **Fresh install ...** starts mapbase-fidelity over in the mod:
-
-1. It first **lists** everything `deploy.bat` and Mapsmith made in the mod – generated materials, height maps and bump
-   maps, model copies, the add-on's shaders, its `fidelity.cfg` and shader DLL – and nothing else: your own maps,
-   materials and files are never in the list. Nothing happens until you press **Remove and install again**.
-2. It **removes** them (`deploy.ps1 -Remove` and Mapsmith's own files).
-3. It **writes the features** of the checklist again.
-4. It **installs again**: with *Build the game code too* it runs Update mod (Windows with Visual Studio 2022), else
-   Install game files only.
-
-The steps tick off on the tab; *Show details* opens the Mod code tab with the full output. A fresh install needs the
-mod's source code (Project › Mod code).
 
 ## Ship
 

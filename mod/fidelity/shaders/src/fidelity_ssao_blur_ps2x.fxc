@@ -1,0 +1,86 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Depth-aware (bilateral) separable blur for the occlusion buffer.
+// Run once horizontally and once vertically. Eight bilinear taps at
+// +-0.5 .. +-3.5 pixels weigh every pixel of a 4 pixel period equally, which
+// removes the 4 x 4 sampling pattern of the occlusion pass completely on smooth
+// surfaces; taps across a depth edge are dropped. With COMPOSITE defined, the
+// vertical pass also multiplies the blurred occlusion onto the scene colour
+// and writes the result back to the frame buffer, keeping the depth that lives
+// in destination alpha untouched.
+//
+// s0 : occlusion buffer
+// s1 : _rt_FullFrameDepth (linear depth in alpha)
+// s2 : (COMPOSITE) _rt_FullFrameFB (scene colour)
+// c0 : step in uv for one tap (x, y), depth sharpness, -
+// c1 : depth scale, zNear, -, -
+// c2 : (COMPOSITE) debug view 0/1, luminance protection, -, -
+//
+//=============================================================================//
+
+#include "fidelity_common.h"
+
+sampler AOSampler		: register( s0 );
+sampler DepthSampler	: register( s1 );
+sampler SceneSampler	: register( s2 );
+
+const float4 g_vStep	: register( c0 );
+const float4 g_vDepth	: register( c1 );
+const float4 g_vMode	: register( c2 );
+
+struct PS_INPUT
+{
+	float2 vTexCoord	: TEXCOORD0;
+};
+
+float SampleDepth( float2 vUV )
+{
+	return FidelityViewDepth( tex2D( DepthSampler, vUV ).a, g_vDepth.x, g_vDepth.y );
+}
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	float2 vUV = i.vTexCoord;
+	float flCenterDepth = SampleDepth( vUV );
+
+	// A tiny weight on the pixel itself keeps 1 pixel wide objects defined
+	// when every tap lands on a different depth.
+	float flSum = tex2D( AOSampler, vUV ).r * 0.001;
+	float flTotal = 0.001;
+
+	// Relative depth difference: the same sharpness works near and far away.
+	float flSharpness = g_vStep.z / flCenterDepth;
+
+	[unroll]
+	for ( int k = 0; k < 4; k++ )
+	{
+		float2 vOffset = g_vStep.xy * ( k + 0.5 );
+
+		float2 vUVA = vUV + vOffset;
+		float2 vUVB = vUV - vOffset;
+
+		float flWeightA = saturate( 1.0 - abs( SampleDepth( vUVA ) - flCenterDepth ) * flSharpness );
+		float flWeightB = saturate( 1.0 - abs( SampleDepth( vUVB ) - flCenterDepth ) * flSharpness );
+
+		flSum += tex2D( AOSampler, vUVA ).r * flWeightA + tex2D( AOSampler, vUVB ).r * flWeightB;
+		flTotal += flWeightA + flWeightB;
+	}
+
+	float flAO = flSum / flTotal;
+
+#ifdef COMPOSITE
+	float3 vScene = tex2D( SceneSampler, vUV ).rgb;
+
+	// Bright, directly lit pixels get less occlusion: AO belongs to ambient light.
+	float flProtect = saturate( FidelityLuminance( vScene ) * g_vMode.y );
+	flAO = lerp( flAO, 1.0, flProtect );
+
+	float3 vResult = lerp( vScene * flAO, flAO.xxx, g_vMode.x );
+
+	// Keep dest alpha depth intact (later passes such as depth of field read it).
+	// The shader enables alpha testing (alpha > 0), so never output exactly 0.
+	return float4( vResult, max( tex2D( DepthSampler, vUV ).a, 1.0 / 255.0 ) );
+#else
+	return float4( flAO, flAO, flAO, 1.0 );
+#endif
+}

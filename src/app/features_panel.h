@@ -1,12 +1,20 @@
-// features_panel.h - Project > Features: which features of mapbase-fidelity (the mod's graphics
-// and sound add-on) the mod has, as one checklist - ambient occlusion, light shafts, the sound
-// mixer, liquid in bottles ... (sme/mod_features.h). A tick is saved at once: the switches go
-// into cfg/mapsmith_features.cfg (the game runs it at start), the material effects into the Game
+// features_panel.h - Project > Features: the mod's features (mapbase-fidelity, its graphics and
+// sound add-on) - installed from Mapsmith itself, and which of them the mod has.
+//
+// Install: Mapsmith brings the add-on ready-built (the feature bundle next to Mapsmith.exe,
+// sme/mod_install.h). "Install features" copies its DLLs, shaders, cfg and VRAD into the mod and
+// then runs the bundle's deploy.ps1 for the generated materials (through the Build from source
+// tab's runner); a newer Mapsmith updates the mod by itself when it is opened (switchable). No
+// compiler, git or script is needed. A Mapbase mod without the features gets one line on the
+// Overview offering the install.
+//
+// The checklist (sme/mod_features.h): a tick is saved at once - the switches go into
+// cfg/mapsmith_features.cfg (the game runs it at start), the material effects into the Game
 // enhancements' settings. The first time a mod with the add-on is opened, a line on the
-// Overview offers the checklist once. "Fresh install" starts the add-on over: it shows what
-// deploy.bat and Mapsmith made in the mod, removes it (deploy.ps1 -Remove and Mapsmith's own
-// files - never the mapper's), writes the features again and installs anew through the Mod code
-// tab. FeatureChecklist is the list itself, also used by the New mod dialog.
+// Overview offers the checklist once. "Fresh install" starts the add-on over: it shows what the
+// add-on's scripts and Mapsmith made in the mod, removes it (never the mapper's files), writes
+// the features again and installs anew. FeatureChecklist is the list itself, also used by the
+// New mod dialog.
 
 #pragma once
 
@@ -19,6 +27,7 @@
 #include <string>
 
 #include <sme/mod_features.h>
+#include <sme/mod_install.h>
 
 class QCheckBox;
 class QLabel;
@@ -29,6 +38,9 @@ namespace sme::app {
 
 class Editor;
 class ModCodePanel;
+
+/// Where Mapsmith's feature bundle is: $SME_FEATURES_DIR, else features/ next to the program.
+[[nodiscard]] std::filesystem::path featureBundleDir();
 
 /// The features grouped (Graphics, Effects, Sound, Materials) with a checkbox each.
 class FeatureChecklist : public QWidget {
@@ -57,6 +69,19 @@ class FeaturesPanel : public QWidget {
 
 public:
 	FeaturesPanel(Editor* editor, ModCodePanel* modCode, QWidget* parent = nullptr);
+
+	/// The features this Mapsmith brings (nullopt: none - only the Windows package has them).
+	[[nodiscard]] const std::optional<FeatureBundle>& bundle() const { return m_bundle; }
+	/// Reads the bundle again (from featureBundleDir()).
+	void reloadBundle();
+	/// Where the open mod stands.
+	enum class InstallState { NoBundle, NoMod, NotInstalled, Current, Outdated };
+	[[nodiscard]] InstallState installState() const;
+	/// Installs (or updates) the features in the open mod, then the generated materials
+	/// (deploy.ps1). False with the reason shown when it cannot.
+	bool installNow();
+	/// Takes them out again (what was there before comes back), then deploy.ps1 -Remove.
+	bool removeNow();
 
 	/// Whether a feature is on for the open mod.
 	[[nodiscard]] bool isOn(const QString& id) const;
@@ -90,6 +115,8 @@ signals:
 	void modCodeRequested();
 	/// A fresh install ended.
 	void freshInstallFinished(bool ok);
+	/// Features were installed, updated or removed: the mod's files are new (read the game again).
+	void installed();
 
 private:
 	void load();
@@ -97,6 +124,10 @@ private:
 	void updateFresh();
 	void scriptFinished(bool ok);
 	void setFreshStep(FreshStep step, const QString& detail = {});
+	void showInstall();
+	/// After the files are in: the generated materials (deploy.ps1), then installed().
+	void runAfterInstall(ModCodeAction action);
+	[[nodiscard]] std::filesystem::path sdkBin() const;
 
 	Editor* m_editor;
 	QPointer<ModCodePanel> m_modCode;
@@ -106,6 +137,20 @@ private:
 	bool m_loading = false;
 	FreshStep m_fresh = FreshStep::Idle;
 	bool m_freshBuild = false;
+	std::optional<FeatureBundle> m_bundle;
+	QString m_bundleError;
+	/// What the script runner does for this tab after an install or removal.
+	enum class AfterRun { None, Deploy, Remove } m_afterRun = AfterRun::None;
+	std::set<std::string> m_autoUpdated;   ///< Mods updated by themselves this session
+
+	QLabel* m_installState;
+	QPushButton* m_installButton;
+	QPushButton* m_removeButton;
+	QCheckBox* m_autoUpdate;
+	QLabel* m_offerText;
+	QPushButton* m_offerInstall;
+	QPushButton* m_offerChoose;
+	QPushButton* m_offerKeep;
 
 	QLabel* m_note;
 	QLabel* m_status;

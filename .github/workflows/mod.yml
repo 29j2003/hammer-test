@@ -1,0 +1,95 @@
+# The mod's features (mapbase-fidelity, the add-on in mod/) built on Mapbase for Windows, so that
+# Mapsmith can install them into a mod without a compiler on the user's PC.
+#   1. Mapbase at the commit in mod/MAPBASE, with mod/mapbase.patch and the add-on's files
+#   2. VPC (Mapbase's creategameprojects / createmaptoolsprojects) and MSBuild with Visual Studio
+#      2022 (toolset v143): client and server for HL2 and Episodic, the shader DLL, VRAD
+#   3. tools/collect_mod_build.py packs the result as the feature bundle (artifact
+#      "mapsmith-features"); the Windows package puts it next to Mapsmith.exe as features/
+# The bundle is cached by the add-on's files: it is only built again when mod/ (or this build)
+# changes. Called by ci.yml and release.yml; can also be started by hand.
+name: Mod features
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022   # has Visual Studio 2022 with the v143 toolset Mapbase's VS2022 projects use
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Mapbase commit
+        id: base
+        shell: bash
+        run: echo "sha=$(awk '/^base /{print $2}' mod/MAPBASE)" >> "$GITHUB_OUTPUT"
+      - name: Cached bundle
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: features
+          key: mod-features-${{ hashFiles('mod/**', 'tools/collect_mod_build.py', 'tools/repair_vpc_solution.py', '.github/workflows/mod.yml') }}
+      - name: Line endings as stored (the patch is made from them)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: git config --global core.autocrlf false
+      - name: Mapbase
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mapbase-source/source-sdk-2013
+          ref: ${{ steps.base.outputs.sha }}
+          path: mapbase
+          persist-credentials: false
+          sparse-checkout: sp
+      - name: The add-on into Mapbase
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        working-directory: mapbase
+        run: |
+          git apply --whitespace=nowarn ../mod/mapbase.patch
+          cp -r ../mod/sp/. sp/
+      - name: Project files (VPC)
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: cmd
+        working-directory: mapbase/sp/src
+        # https://github.com/ValveSoftware/source-sdk-2013/issues/72 (as Mapbase's own CI does)
+        run: |
+          reg add "HKLM\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\10.0\Projects\{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}" /v DefaultProjectExtension /t REG_SZ /d vcproj /f
+          call creategameprojects.bat || exit /b 1
+          call createmaptoolsprojects.bat || exit /b 1
+          python ..\..\..\tools\repair_vpc_solution.py games.sln maptools.sln || exit /b 1
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        working-directory: mapbase/sp/src
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -version '[17.0,18.0)' -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -latest -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild of Visual Studio 2022 not found" }
+          function Get-Platform([string]$Solution) {
+            if ((Get-Content $Solution -Raw) -match 'Release\|([A-Za-z0-9]+)\s*=') { return $Matches[1] } else { return 'Win32' }
+          }
+          # Client and server (HL2, Episodic) and the add-on's shaders.
+          & $msbuild games.sln -m -nologo -v:minimal "-p:Configuration=Release;Platform=$(Get-Platform games.sln)"
+          if ($LASTEXITCODE -ne 0) { throw "games.sln failed" }
+          # VRAD only (the other map tools stay Mapbase's).
+          $projects = [regex]::Matches((Get-Content maptools.sln -Raw), 'Project\("\{[^}]+\}"\)\s*=\s*"([^"]+)"') |
+            ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '^(?i)vrad_(dll|launcher)$' }
+          if (@($projects).Count -lt 2) { throw "maptools.sln has no Vrad_dll / Vrad_launcher projects" }
+          $targets = ($projects | ForEach-Object { $_ -replace '[.%$@;'']', '_' }) -join ';'
+          & $msbuild maptools.sln -m -nologo -v:minimal "-t:$targets" "-p:Configuration=Release;Platform=$(Get-Platform maptools.sln)"
+          if ($LASTEXITCODE -ne 0) { throw "maptools.sln failed" }
+      - name: Bundle
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: python tools/collect_mod_build.py --source mapbase --out features
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mapsmith-features
+          path: features
+          if-no-files-found: error
+          retention-days: 30

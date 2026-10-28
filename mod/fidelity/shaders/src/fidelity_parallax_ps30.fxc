@@ -1,0 +1,381 @@
+//========= mapbase-fidelity ==================================================//
+//
+// Pixel shader of Fidelity_Parallax: a world surface (like Mapbase's
+// LightmappedGeneric with a bump map) with parallax occlusion mapping - the
+// texture gets real depth: bricks stand out of the mortar, stones out of the
+// ground, and hide each other as the view moves.
+//
+// The height map (s3, white = top; made from the normal map by deploy.bat)
+// is walked along the view in the texture's own space, 8 to 32 steps (more
+// when looking at a flat angle), then the last step is interpolated. The
+// texture's own axes come from the screen-space derivatives of position and
+// texture coordinate (no vertex tangents needed; they always fit the
+// texture). Base texture and normal map are read at the shifted point, the
+// bumped lightmaps as Valve does (three directions, squared weights). Deep
+// parts get a little darker (c1.y), which helps the depth read in flat light.
+// Far away (c1.z, c1.w) the effect fades out: there it costs and shows
+// nothing.
+//
+// As LightmappedGeneric it also takes a reflection ($envmap: the map's
+// cubemaps, masked by the normal map's or the base texture's alpha, with tint,
+// contrast, saturation and Fresnel), a detail texture ($detail, mode 0: base
+// x detail x 2) and self-shadowed bump maps ($ssbump: the three lightmap
+// weights instead of a normal). Without them the samplers hold neutral
+// textures and the constants switch them off (no combos: one shader for all).
+//
+// Walls without a bump map (most of a map's bricks, stones and tiles): the
+// height map comes from the base texture (deploy.bat), the light from the
+// single plain lightmap (c4.w = 0). Their relief then gets its normal from the
+// height map's slopes (two more samples): a little light from above and the
+// reflection follow it.
+//
+// The flashlight, projected textures and the sun's shadows have a pass of
+// their own (fidelity_parallax_flashlight_ps30.fxc) with the same shift.
+//
+// Dynamic lights (muzzle flashes, explosions, sparks, glowing things - the
+// engine's dlights): the engine adds them to the lightmap, flat. client.dll
+// hands over the nearest four (c32..c39: position and radius, colour); here
+// each adds what the flat light lacks - the relief (it only shapes the
+// light already there: slopes facing the light brighter, slopes turned away
+// darker, by at most half, never in its colour) and a highlight (no
+// brighter than the light there; glossier where the surface reflects: its
+// envmap mask).
+//
+// Rain (c40, c41, s11 - client.dll's fidelity_wetness.cpp): while it rains
+// the surfaces open to the sky get wet - darker, glossier, reflecting more
+// (with Fresnel) - and on floors the hollows of the relief (low in the height
+// map) fill with puddles: flat, dark, a mirror of the cubemap. Open to the sky
+// means: the rain map (the highest surface below the sky, in cells round the
+// player) says this is that surface - looked up a little in front of the
+// surface, so a wall gets the cell before it, not the roof above it. Walls
+// get half as wet as floors. Walls without a cubemap of their own got
+// env_cubemap from deploy.bat for this, shown only where wet (c41.z).
+//
+// Blended surfaces (BLEND, Fidelity_WorldVertexTransition: displacements
+// painted from $basetexture to $basetexture2): both layers have depth; the
+// painted blend (vertex alpha, sharpened by $blendmodulatetexture as
+// WorldVertexTransition does) is tipped by the two heights
+// (fidelity_parallax_common.h), the normal, the reflection mask and the base
+// colour blend the same way. As LightmappedGeneric also self-illuminated
+// walls ($selfillum: the base texture's alpha shows it in $selfillumtint
+// instead of the lightmap) and an additive detail texture ($detailblendmode 1).
+//
+//=============================================================================//
+
+// DYNAMIC: "PIXELFOGTYPE"				"0..1"
+// DYNAMIC: "WRITE_DEPTH_TO_DESTALPHA"	"0..1"
+// DYNAMIC: "BLEND"						"0..1"
+
+#define FIDELITY_BLEND BLEND
+
+#include "common_ps_fxc.h"
+#include "shader_constant_register_map.h"
+#include "fidelity_parallax_common.h"
+
+sampler BaseTextureSampler	: register( s0 );
+sampler LightmapSampler		: register( s1 );
+sampler BumpmapSampler		: register( s2 );
+sampler HeightSampler		: register( s3 );
+sampler EnvmapSampler		: register( s4 );	// the cubemap, or any cube (switched off)
+sampler DetailSampler		: register( s5 );	// the detail texture, or grey
+sampler EnvmapMaskSampler	: register( s6 );	// $envmapmask (walls without a bump map), or white
+sampler BaseTexture2Sampler	: register( s7 );	// blended: $basetexture2
+sampler Bumpmap2Sampler		: register( s8 );	// blended: $bumpmap2, or flat
+sampler Height2Sampler		: register( s9 );	// blended: the second layer's height map
+sampler BlendModulateSampler	: register( s10 );
+sampler RainMapSampler			: register( s11 );	// where the rain reaches: the highest surface below the sky (point sampled)	// blended: $blendmodulatetexture, or any (c20.y = 0)
+
+const float4 g_TintAndLightmapScale	: register( c0 );	// modulation colour x lightmap scale (rgb), alpha
+const float4 g_Parallax				: register( c1 );	// depth (in bump map texture units), darkening of deep parts, fade start (units), 1 / fade length
+const float4 g_EnvmapTint			: register( c2 );	// $envmaptint (rgb)
+const float4 g_Envmap				: register( c3 );	// reflection on (0/1), masked by the normal map's alpha (0/1), by the base texture's alpha (0/1), $envmapcontrast
+const float4 g_Options				: register( c4 );	// $envmapsaturation, $fresnelreflection, $ssbump (0/1), bumped lightmaps (1) or the plain one (0)
+const float4 g_Detail				: register( c5 );	// $detailtint (rgb), $detailblendfactor (0 = no detail)
+const float4 g_DetailScale			: register( c6 );	// $detailscale (u, v)
+const float4 g_HeightTexel			: register( c7 );	// one texel of the height map (u, v)
+const float4 g_Modulate				: register( c8 );	// 1: a decal multiplied onto the wall (as DecalModulate), 0: lit
+const float4 g_Plane				: register( c9 );	// reference plane on walls, on floors and ceilings (1 = top on the polygon), most shift (world units)
+const float4 g_CubemapPos			: register( c13 );	// parallax-corrected cubemap: the env_cubemap's place (xyz), on (w = 1)
+const float4 g_CubemapBox[ 3 ]		: register( c14 );	// world -> its box (0..1 inside), rows (c14..c16)
+const float4 g_Blend				: register( c20 );	// blended: -, $blendmodulatetexture (0/1), blend reversed (Hammer, 0/1), height blend depth
+const float4 g_Layer2				: register( c21 );	// blended: second layer bump-mapped (0/1), $basetexturenoenvmap, $basetexture2noenvmap, -
+const float4 g_Height2Texel			: register( c22 );	// blended: one texel of the second height map (u, v)
+const float4 g_LayerStep				: register( c25 );	// blended: a step in the first height map's coordinates in the second's (xy for (1, 0), zw for (0, 1))
+const float4 g_Base2Step				: register( c26 );
+const float4 g_BakedShadow			: register( c27 );	// strength of the relief's shadows from the baked light (0 = none)	// the same into the second base texture's
+const float4 g_DynLights[ 8 ]		: register( c32 );
+const float4 g_Wet					: register( c40 );	// rain: how wet (0..1), the rain map's corner (x, y), 1 / its size
+const float4 g_WetMap				: register( c41 );	// rain map: height of value 0, heights it holds; cubemap only for wet (0/1), a cubemap bound (0/1)	// dynamic lights: position, radius (0 = none); colour (linear) - four
+const float4 g_SelfIllum			: register( c23 );	// $selfillumtint (rgb), $selfillum (0/1)
+const float4 g_DetailMode			: register( c24 );	// $detailblendmode 1 (additive) (0/1)
+const float4 g_EyePos				: register( PSREG_EYEPOS_SPEC_EXPONENT );
+const float4 g_FogParams			: register( PSREG_FOG_PARAMS );
+
+struct PS_INPUT
+{
+	float4 baseAndBumpTexCoord	: TEXCOORD0;
+	float4 lightmapTexCoord12	: TEXCOORD1;
+	float2 lightmapTexCoord3	: TEXCOORD2;
+	float4 worldPos_projPosZ	: TEXCOORD3;
+	float4 worldNormal			: TEXCOORD4;	// w: painted blend (blended surfaces)
+	float4 base2AndBump2TexCoord	: TEXCOORD5;	// blended: second base texture (xy), second height and bump map (zw)
+};
+
+// The blend painted here (0 = first layer, 1 = second), as WorldVertexTransition
+float FidelityPaintedBlend( float flVertex, float2 vBaseUV, float4 vBlend, sampler BlendModulateSampler )
+{
+	const float flBlend = vBlend.z > 0.5 ? 1.0 - flVertex : flVertex;
+	const float4 vModulate = tex2D( BlendModulateSampler, vBaseUV );
+	const float flModulated = smoothstep( max( 0.0, vModulate.g - vModulate.r ), min( 1.0, vModulate.g + vModulate.r ), flBlend );
+	return vBlend.y > 0.5 ? flModulated : flBlend;
+}
+
+float4 main( PS_INPUT i ) : COLOR
+{
+	const float3 vWorldPos = i.worldPos_projPosZ.xyz;
+	float3 vView = g_EyePos.xyz - vWorldPos;
+	const float flDistance = length( vView );
+	vView /= max( flDistance, 0.001 );
+
+	float2 vBaseUV = i.baseAndBumpTexCoord.xy;
+	float2 vBumpUV = i.baseAndBumpTexCoord.zw;
+	float2 vBase2UV = i.base2AndBump2TexCoord.xy;
+	float2 vUV2 = i.base2AndBump2TexCoord.zw;
+
+	// The texture's axes, then the walk into the height map (shared with the
+	// flashlight pass: fidelity_parallax_common.h); derivatives first, outside
+	// any branch
+	const FidelityParallaxFrame f = FidelityParallaxAxes( vWorldPos, i.worldNormal.xyz, vBaseUV, vBumpUV );
+	const float3 T = f.T, B = f.B, N = f.N;
+	const float2 duv1 = f.duv1, duv2 = f.duv2, dBase1 = f.dBase1, dBase2 = f.dBase2;
+	FidelityParallaxBlend b = ( FidelityParallaxBlend )0;
+#if BLEND
+	const float2 dBase2a = ddx( vBase2UV ), dBase2b = ddy( vBase2UV );
+	// (a second layer without a height map lies on the reference plane: else it slid with the view)
+	b = FidelityParallaxBlendSetup( vBumpUV, vUV2, g_LayerStep, g_Base2Step, FidelityPaintedBlend( i.worldNormal.w, vBaseUV, g_Blend, BlendModulateSampler ),
+		g_Blend.w, g_Layer2.w > 0.5 ? -1.0 : FidelityParallaxPlane( f, g_Plane.xy ) );
+#endif
+	// Far away and at very flat angles the relief fades out: seen nearly
+	// edge-on, narrow faces (sills, frames) pulled texture in from beyond
+	// their edges (Julius: bright stretched stripes)
+	const float flStrength = saturate( 1.0 - ( flDistance - g_Parallax.z ) * g_Parallax.w ) * smoothstep( 0.08, 0.3, abs( dot( f.N, vView ) ) ) * f.flEven;
+	const float flDepth = g_Parallax.x * flStrength;
+	const float flHeight = FidelityParallaxShift( f, HeightSampler, Height2Sampler, b, vView, flDepth, FidelityParallaxPlane( f, g_Plane.xy ), g_Plane.z, vBaseUV, vBumpUV );
+
+	float4 vBase = tex2Dgrad( BaseTextureSampler, vBaseUV, dBase1, dBase2 );
+	float4 vBump = tex2Dgrad( BumpmapSampler, vBumpUV, duv1, duv2 );
+	const bool bBumped = g_Options.w > 0.5;
+	const bool bSSBump = g_Options.z > 0.5;
+	// Without a bump map: the normal from the height map's slopes (four
+	// reads, so only then)
+	float3 vNormal = vBump.xyz * 2.0 - 1.0;
+	if ( !bBumped )
+		vNormal = FidelityParallaxHeightNormal( HeightSampler, vBumpUV, duv1, duv2, g_HeightTexel.xy, flDepth );
+	// how much of the reflection this layer lets through ($basetexturenoenvmap)
+	float flEnvmapLayer = 1.0 - g_Layer2.y;
+
+#if BLEND
+	// Blended: the second layer where the walk ended, mixed by both heights there
+	FidelityParallaxLayer2Shift( b, vBumpUV, vUV2, vBase2UV );
+	const float flLayer2 = FidelityHeightBlend( b.flBlend, b.flH1, b.flH2, b.flDepth );
+	// (its own height map's slopes in its own units: the depth scaled by how much bigger a step is there)
+	const float flDepth2 = flDepth * sqrt( abs( g_LayerStep.x * g_LayerStep.w - g_LayerStep.z * g_LayerStep.y ) );
+	vBase = lerp( vBase, tex2Dgrad( BaseTexture2Sampler, vBase2UV, dBase2a, dBase2b ), flLayer2 );
+	if ( g_Layer2.x > 0.5 )
+	{
+		const float4 vBump2 = tex2Dgrad( Bumpmap2Sampler, vUV2, b.d2a, b.d2b );
+		vBump = lerp( vBump, vBump2, flLayer2 );
+		vNormal = lerp( vNormal, vBump2.xyz * 2.0 - 1.0, flLayer2 );
+	}
+	else if ( !bSSBump )
+	{
+		// a second layer without a bump map: its relief's normal from its height map
+		vNormal = lerp( vNormal, FidelityParallaxHeightNormal( Height2Sampler, vUV2, b.d2a, b.d2b, g_Height2Texel.xy, flDepth2 ), flLayer2 );
+	}
+	flEnvmapLayer = lerp( flEnvmapLayer, 1.0 - g_Layer2.z, flLayer2 );
+#endif
+	vNormal = normalize( vNormal );
+
+	// Detail texture, moved with the base texture: mode 0 base x detail x 2,
+	// mode 1 base + detail (as LightmappedGeneric)
+	const float3 vDetail = tex2Dgrad( DetailSampler, vBaseUV * g_DetailScale.xy, dBase1 * g_DetailScale.xy, dBase2 * g_DetailScale.xy ).rgb * g_Detail.rgb;
+	if ( g_DetailMode.x > 0.5 )
+		vBase.rgb += vDetail * g_Detail.w;
+	else
+		vBase.rgb *= lerp( float3( 1, 1, 1 ), 2.0 * vDetail, g_Detail.w );
+
+	// Bumped lightmaps (as LightmappedGeneric): a normal map weights the
+	// three directions by its normal (squared), a self-shadowed bump map holds
+	// the weights itself
+	const float3 vLight1 = tex2D( LightmapSampler, i.lightmapTexCoord12.xy ).rgb;
+	const float3 vLight2 = tex2D( LightmapSampler, i.lightmapTexCoord12.zw ).rgb;
+	const float3 vLight3 = tex2D( LightmapSampler, i.lightmapTexCoord3 ).rgb;
+	// the plain lightmap lies one offset before the first bumped one
+	const float3 vLight0 = tex2D( LightmapSampler, i.lightmapTexCoord12.xy * 2.0 - i.lightmapTexCoord12.zw ).rgb;
+	float3 dp;
+	dp.x = saturate( dot( vNormal, bumpBasis[ 0 ] ) );
+	dp.y = saturate( dot( vNormal, bumpBasis[ 1 ] ) );
+	dp.z = saturate( dot( vNormal, bumpBasis[ 2 ] ) );
+	dp *= dp;
+	dp /= max( dot( dp, float3( 1, 1, 1 ) ), 0.0001 );
+	if ( bSSBump )
+	{
+		dp = vBump.xyz;
+		vNormal = bumpBasis[ 0 ] * vBump.x + bumpBasis[ 1 ] * vBump.y + bumpBasis[ 2 ] * vBump.z;
+	}
+	const float3 vWorldNormal = normalize( vNormal.x * T * rsqrt( max( dot( T, T ), 1e-12 ) ) + vNormal.y * B * rsqrt( max( dot( B, B ), 1e-12 ) ) + vNormal.z * N );
+	// Rain: how wet this pixel is, and how much of it is a puddle (see top)
+	float flWet = 0.0;
+	float flPuddle = 0.0;
+	[branch]
+	if ( g_Wet.x > 0.001 )
+	{
+		const float3 vProbe = vWorldPos + N * 12.0;
+		const float2 vMapUV = ( vProbe.xy - g_Wet.yz ) * g_Wet.w;
+		const float4 vCell = tex2Dlod( RainMapSampler, float4( vMapUV, 0, 0 ) );
+		const float flTop = g_WetMap.x + ( vCell.r * 65280.0 + vCell.g * 255.0 ) / 65535.0 * g_WetMap.y;
+		const float flOnMap = ( vMapUV.x == saturate( vMapUV.x ) && vMapUV.y == saturate( vMapUV.y ) ) ? 1.0 : 0.0;
+		const float flOpen = flOnMap * step( 0.5, vCell.b ) * saturate( ( vWorldPos.z - flTop + 12.0 ) * 0.125 );
+		flWet = g_Wet.x * flOpen * lerp( 0.5, 1.0, saturate( N.z ) );
+		// puddles: floors only, the hollows first, filling as the rain goes on
+		const float flFloor = saturate( ( N.z - 0.75 ) * 5.0 );
+		const float flLevel = 0.42 * saturate( g_Wet.x * 1.4 - 0.25 );
+		flPuddle = flOpen * flFloor * saturate( ( flLevel - flHeight ) * 12.0 );
+	}
+	// a puddle is flat
+	const float3 vSurfaceNormal = normalize( lerp( vWorldNormal, N, flPuddle ) );
+
+	float3 vDiffuse = dp.x * vLight1 + dp.y * vLight2 + dp.z * vLight3;
+	// Plain lightmap: no direction in it - the relief gets a little light
+	// from above (most light comes from there), faces turned down darker.
+	// Only a little: the lightmap may hold a low sun from the side, and with
+	// 0.6 to 1.3 every brick had a bright rim above and a dark one below
+	// (Julius: "comichaft")
+	if ( !bBumped )
+		vDiffuse = vLight0 * clamp( 1.0 + 0.35 * ( vWorldNormal.z - N.z ), 0.85, 1.12 );
+	vDiffuse *= g_TintAndLightmapScale.rgb;
+
+	// Deep parts a little darker (less light gets in)
+	vDiffuse *= lerp( 1.0, flHeight, g_Parallax.y * flStrength );
+
+	// Relief shadows from the baked light: the three bumped lightmaps hold the
+	// light arriving from three directions (VRAD lays them along the texture's
+	// u and v, as T and B here: mathlib/bumpvects.cpp). Their brightness
+	// weights the directions into the main light's; the relief throws short
+	// shadows away from it - as much as the light comes from one side (even
+	// light from all three throws none). Not on self-shadowed bump maps: they
+	// have their shadows in them already.
+	[branch]
+	if ( g_BakedShadow.x > 0.0 && bBumped && !bSSBump && flDepth > 0.0001 )
+	{
+		const float3 vLum = float3( dot( vLight1, float3( 0.299, 0.587, 0.114 ) ), dot( vLight2, float3( 0.299, 0.587, 0.114 ) ),
+			dot( vLight3, float3( 0.299, 0.587, 0.114 ) ) );
+		const float flMost = max( vLum.x, max( vLum.y, vLum.z ) );
+		const float flOneSided = 1.0 - min( vLum.x, min( vLum.y, vLum.z ) ) / max( flMost, 1e-4 );
+		const float3 vLightTS = bumpBasis[ 0 ] * vLum.x + bumpBasis[ 1 ] * vLum.y + bumpBasis[ 2 ] * vLum.z;
+		const float3 vToLight = normalize( vLightTS.x * T * rsqrt( max( dot( T, T ), 1e-12 ) ) + vLightTS.y * B * rsqrt( max( dot( B, B ), 1e-12 ) ) + vLightTS.z * N );
+		const float flShadow = FidelityParallaxShadow( f, HeightSampler, Height2Sampler, b, vToLight, flDepth, vBumpUV, flHeight );
+		vDiffuse *= lerp( 1.0, flShadow, g_BakedShadow.x * flOneSided );
+	}
+
+	// Reflection (as LightmappedGeneric): the cubemap in the bumped normal's
+	// direction, masked, tinted, contrast, saturation, Fresnel
+	// The reflection follows the relief half-way (steep edges caught the
+	// bright horizon: golden glints along the stones, repeating with the
+	// texture - Julius: "an manchen Stellen glänzt er")
+	const float3 vReflectNormal = normalize( lerp( N, vSurfaceNormal, 0.5 ) );
+	float3 vReflect = reflect( -vView, vReflectNormal );
+	// Parallax-corrected cubemap (as Mapbase's LightmappedGeneric, after
+	// Lagarde 2012): where the reflected ray leaves the room's box, seen from
+	// the cubemap - the reflection sits where the room really is. The box
+	// comes from a parallax_obb in Hammer or, without one, from client.dll
+	// (fidelity_cubemaps.cpp: measured around each env_cubemap).
+	if ( g_CubemapPos.w > 0.5 )
+	{
+		const float4 vWorld = float4( vWorldPos, 1.0 );
+		const float3 vLocal = float3( dot( g_CubemapBox[ 0 ], vWorld ), dot( g_CubemapBox[ 1 ], vWorld ), dot( g_CubemapBox[ 2 ], vWorld ) );
+		const float3 vRayLocal = float3( dot( g_CubemapBox[ 0 ].xyz, vReflect ), dot( g_CubemapBox[ 1 ].xyz, vReflect ), dot( g_CubemapBox[ 2 ].xyz, vReflect ) );
+		const float3 vFar = max( ( 1.0 - vLocal ) / vRayLocal, -vLocal / vRayLocal );
+		const float flExit = min( vFar.x, min( vFar.y, vFar.z ) );
+		vReflect = vWorldPos + vReflect * flExit - g_CubemapPos.xyz;
+	}
+	const float3 vCube = ENV_MAP_SCALE * texCUBE( EnvmapSampler, vReflect ).rgb;
+	float3 vSpecular = vCube;
+	float flMask = g_Envmap.x * flEnvmapLayer;
+	if ( g_Envmap.y > 0.5 )
+		flMask *= vBump.a;
+	if ( g_Envmap.z > 0.5 )
+		flMask *= 1.0 - vBase.a;
+	vSpecular *= flMask * g_EnvmapTint.rgb * tex2Dgrad( EnvmapMaskSampler, vBaseUV, dBase1, dBase2 ).rgb;
+	vSpecular = lerp( vSpecular, vSpecular * vSpecular, g_Envmap.w );
+	vSpecular = lerp( dot( vSpecular, float3( 0.299, 0.587, 0.114 ) ).xxx, vSpecular, g_Options.x );
+	vSpecular *= lerp( pow( 1.0 - saturate( dot( vReflectNormal, vView ) ), 5.0 ), 1.0, g_Options.y );
+	// joints and hollows see little of the sky
+	vSpecular *= lerp( 1.0, flHeight * flHeight, 0.85 * flStrength );
+	// wet: the cubemap with Fresnel, a mirror in the puddles
+	const float flWetFresnel = 0.15 + 0.85 * pow( 1.0 - saturate( dot( vReflectNormal, vView ) ), 5.0 );
+	vSpecular += vCube * ( g_WetMap.w * ( flWet * 0.35 + flPuddle * 0.65 ) * flWetFresnel );
+
+	// A bullet hole from the decal atlas, as DecalModulate: multiplied onto
+	// the (already lit) wall, grey changes nothing. The hole's own walls take
+	// a little light from above, its deep parts are darker. A quarter more
+	// see-through than the game's (towards grey) and the depth darkens less
+	// (down to 0.35 the holes were black blots - Julius 25.10.2026: "vielleicht
+	// transparenter"); the colour stays the decal's, one per surface.
+	if ( g_Modulate.x > 0.5 )
+	{
+		const float3 vModulated = lerp( float3( 0.5, 0.5, 0.5 ), vBase.rgb, 0.75 ) * clamp( 1.0 + 0.8 * ( vWorldNormal.z - N.z ), 0.6, 1.3 )
+			* lerp( 1.0, 0.6 + 0.4 * flHeight, flStrength );
+		const float flModulateFog = CalcPixelFogFactor( PIXELFOGTYPE, g_FogParams, g_EyePos.xyz, vWorldPos, i.worldPos_projPosZ.w );
+		return FinalOutput( float4( vModulated, vBase.a ), flModulateFog, PIXELFOGTYPE, TONEMAP_SCALE_NONE );
+	}
+
+	// Dynamic lights per pixel: relief and highlight (see top)
+	const float3 vHalfDir = vView;
+	const float flGloss = 0.08 + 0.6 * saturate( dot( g_EnvmapTint.rgb, float3( 0.299, 0.587, 0.114 ) ) * flMask * 4.0 ) + 0.8 * flWet;
+	// Each light only shapes the light that is already there (the engine put
+	// it on the lightmap, flat): slopes facing it get brighter, slopes turned
+	// away darker, by at most half, never in its colour - and its highlight is
+	// never brighter than the light here. Added on top, a muzzle flash lit up
+	// every wall (Julius 25.10.2026: "erleuchtet alles"); taken away per colour,
+	// an orange light left its opposite behind (blue stones by the crossbow).
+	const float3 vLum = float3( 0.299, 0.587, 0.114 );
+	const float flLightHere = max( dot( vDiffuse, vLum ), 0.001 );
+	float flDynRelief = 0;
+	float3 vDynSpecular = 0;
+	[loop]
+	for ( int n = 0; n < 4; n++ )
+	{
+		const float4 vLightPos = g_DynLights[ n * 2 ];
+		[branch]
+		if ( vLightPos.w > 0.0 )
+		{
+			float3 vToLight = vLightPos.xyz - vWorldPos;
+			const float flDist = length( vToLight );
+			vToLight /= max( flDist, 0.001 );
+			float flAtten = saturate( 1.0 - flDist * flDist / ( vLightPos.w * vLightPos.w ) );
+			flAtten *= saturate( dot( N, vToLight ) * 4.0 );	// not through the wall (soft at grazing light)
+			float3 vColor = g_DynLights[ n * 2 + 1 ].rgb * flAtten;
+			vColor *= min( 1.0, flLightHere / max( dot( vColor, vLum ), 0.001 ) );	// no more than the light here
+			flDynRelief += dot( vColor, vLum ) * ( saturate( dot( vSurfaceNormal, vToLight ) ) - saturate( dot( N, vToLight ) ) );
+			const float3 vHalf = normalize( vToLight + vHalfDir );
+			vDynSpecular += vColor * pow( saturate( dot( vSurfaceNormal, vHalf ) ), lerp( 24.0, 64.0, flWet ) ) * flGloss;
+		}
+	}
+	vDiffuse *= 1.0 + clamp( flDynRelief / flLightHere, -0.5, 0.5 ) * lerp( 1.0, flHeight, g_Parallax.y * flStrength );
+	vSpecular += vDynSpecular * lerp( 1.0, flHeight * flHeight, 0.85 * flStrength );
+
+	// wet surfaces are darker, puddles more so
+	vBase.rgb *= lerp( 1.0, 0.55, flWet ) * lerp( 1.0, 0.6, flPuddle );
+	float3 vLit = vBase.rgb * vDiffuse;
+	// Self-illuminated (as LightmappedGeneric): where the base texture's alpha
+	// says, the wall shows its own colour times $selfillumtint, not the lightmap
+	if ( g_SelfIllum.w > 0.5 )
+		vLit = lerp( vLit, g_SelfIllum.rgb * vBase.rgb, vBase.a );
+	const float3 vResult = vLit + vSpecular;
+	const float flFogFactor = CalcPixelFogFactor( PIXELFOGTYPE, g_FogParams, g_EyePos.xyz, vWorldPos, i.worldPos_projPosZ.w );
+	// (the base texture's alpha is a mask then, not see-through)
+	const float flAlpha = ( g_Envmap.z > 0.5 || g_SelfIllum.w > 0.5 ) ? 1.0 : vBase.a;
+	return FinalOutput( float4( vResult, flAlpha * g_TintAndLightmapScale.a ), flFogFactor, PIXELFOGTYPE, TONEMAP_SCALE_LINEAR,
+		WRITE_DEPTH_TO_DESTALPHA, i.worldPos_projPosZ.w );
+}

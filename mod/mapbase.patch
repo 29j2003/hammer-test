@@ -1,0 +1,743 @@
+diff --git a/sp/src/game/client/c_baseanimating.cpp b/sp/src/game/client/c_baseanimating.cpp
+index f74f4107a902181976df656447a5c7c8f2b53d9a..aefb254ffde6cc3b3b300ada5d9aff423f17bd4f 100644
+--- a/sp/src/game/client/c_baseanimating.cpp
++++ b/sp/src/game/client/c_baseanimating.cpp
+@@ -54,6 +54,7 @@
+ #include "replay/replay_ragdoll.h"
+ #include "studio_stats.h"
+ #include "tier1/callqueue.h"
++#include "fidelity/fidelity_animation.h"	// mapbase-fidelity
+ #ifdef MAPBASE
+ #include "viewrender.h"
+ #endif
+@@ -2033,6 +2034,7 @@ void C_BaseAnimating::MaintainSequenceTransitions( IBoneSetup &boneSetup, float
+ 		);
+ 
+ 	m_nPrevNewSequenceParity = m_nNewSequenceParity;
++	Fidelity_SequenceBlend( this, m_SequenceTransitioner );	// mapbase-fidelity
+ 
+ 	// Update the transition sequence list.
+ 	m_SequenceTransitioner.UpdateCurrent( 
+diff --git a/sp/src/game/client/c_effects.cpp b/sp/src/game/client/c_effects.cpp
+index a273cb286bdf5b4eee00861909a9b02decb1d117..2cbcb1cd775e7a4cf63df1c97b34ff5760c6fbe5 100644
+--- a/sp/src/game/client/c_effects.cpp
++++ b/sp/src/game/client/c_effects.cpp
+@@ -24,6 +24,7 @@
+ #include "tier0/vprof.h"
+ #include "viewrender.h"
+ #include "raytrace.h"
++#include "fidelity/fidelity_effects.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -215,6 +216,7 @@ inline bool CClient_Precipitation::SimulateRain( CPrecipitationParticle* pPartic
+ 				}
+ 			}
+ 
++			Fidelity_RainHit( vOldPos, pParticle->m_Pos );	// mapbase-fidelity
+ 			// Tell the framework it's time to remove the particle from the list
+ 			return false;
+ 		}
+diff --git a/sp/src/game/client/c_env_global_light.cpp b/sp/src/game/client/c_env_global_light.cpp
+index b143a79dd0e275ce807e756e9e6c3d8f2f1435e0..0808a83e6a366ef05618290f4f6d162799631a3c 100644
+--- a/sp/src/game/client/c_env_global_light.cpp
++++ b/sp/src/game/client/c_env_global_light.cpp
+@@ -11,6 +11,7 @@
+ #ifdef MAPBASE
+ #include "materialsystem/itexture.h"
+ #endif
++#include "fidelity/fidelity_shadows.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -310,6 +311,7 @@ void C_GlobalLight::ClientThink()
+ #endif
+ 
+ 		state.m_nShadowQuality = 1; // Allow entity to affect shadow quality
++		Fidelity_AdjustGlobalLight( state, vRight, vUp );	// mapbase-fidelity
+ //		state.m_bShadowHighRes = true;
+ 
+ 		if ( m_bOldEnableShadows != m_bEnableShadows )
+diff --git a/sp/src/game/client/c_env_projectedtexture.cpp b/sp/src/game/client/c_env_projectedtexture.cpp
+index 6644965265aecc8e0aadfc205fd4fee1985a0812..eba99133a108f6588bc72e72ea036769bea25d66 100644
+--- a/sp/src/game/client/c_env_projectedtexture.cpp
++++ b/sp/src/game/client/c_env_projectedtexture.cpp
+@@ -20,6 +20,7 @@
+ #include "view_shared.h"
+ #include "texture_group_names.h"
+ #include "tier0/icommandline.h"
++#include "fidelity/fidelity_shadows.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -424,6 +425,7 @@ void C_EnvProjectedTexture::UpdateLight( void )
+ 		state.m_nSpotlightTextureFrame = m_nSpotlightTextureFrame;
+ 
+ 		state.m_nShadowQuality = m_nShadowQuality; // Allow entity to affect shadow quality
++		Fidelity_AdjustProjectedTexture( state );	// mapbase-fidelity
+ 
+ #ifdef MAPBASE
+ 		state.m_bAlwaysDraw = m_bAlwaysDraw;
+diff --git a/sp/src/game/client/c_physicsprop.cpp b/sp/src/game/client/c_physicsprop.cpp
+index 7727be660c50c0e39b4094d3ed8ead6c5d862985..bbf628be269270c172b5bccbf44494dcfab5befd 100644
+--- a/sp/src/game/client/c_physicsprop.cpp
++++ b/sp/src/game/client/c_physicsprop.cpp
+@@ -16,6 +16,7 @@
+ #include "c_physicsprop.h"
+ #include "tier0/vprof.h"
+ #include "ivrenderview.h"
++#include "fidelity/fidelity_liquid.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -58,6 +59,9 @@ bool C_PhysicsProp::OnInternalDrawModel( ClientModelRenderInfo_t *pInfo )
+ {
+ 	CreateModelInstance();
+ 
++	if ( Fidelity_KeepsDynamicLight( GetModel() ) )	// mapbase-fidelity
++		return true;	// mapbase-fidelity
++
+ 	if ( r_PhysPropStaticLighting.GetBool() && m_bAwakeLastTime != m_bAwake )
+ 	{
+ 		if ( m_bAwakeLastTime && !m_bAwake )
+diff --git a/sp/src/game/client/c_soundscape.cpp b/sp/src/game/client/c_soundscape.cpp
+index 93a8aa2bceb03e6b95ba511a52d88cb701ad960e..43715286fce953eb85a438b7e30003f543bee56a 100644
+--- a/sp/src/game/client/c_soundscape.cpp
++++ b/sp/src/game/client/c_soundscape.cpp
+@@ -15,6 +15,7 @@
+ #include "view.h"
+ #include "engine/ivdebugoverlay.h"
+ #include "tier0/icommandline.h"
++#include "fidelity/fidelity_reverb.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -604,6 +605,8 @@ void C_SoundscapeSystem::StartNewSoundscape( KeyValues *pSoundscape )
+ {
+ 	int i;
+ 
++	Fidelity_SoundscapeStarted();	// mapbase-fidelity
++
+ 	// Reset the system
+ 	// fade out the current loops
+ 	for ( i = m_loopingSounds.Count()-1; i >= 0; --i )
+@@ -710,6 +713,7 @@ void C_SoundscapeSystem::ProcessDSP( KeyValues *pDSP )
+ 	int roomType = pDSP->GetInt();
+ 	CLocalPlayerFilter filter;
+ 	enginesound->SetRoomType( filter, roomType );
++	Fidelity_SoundscapeSetDSP( roomType );	// mapbase-fidelity
+ }
+ 
+ //-----------------------------------------------------------------------------
+diff --git a/sp/src/game/client/c_stickybolt.cpp b/sp/src/game/client/c_stickybolt.cpp
+index 7b710f7908489c881746258d2fc461976a32b80d..9b6c179df9def8cbe6ffa89c1869b2950b616036 100644
+--- a/sp/src/game/client/c_stickybolt.cpp
++++ b/sp/src/game/client/c_stickybolt.cpp
+@@ -28,6 +28,8 @@
+ #include "engine/ivdebugoverlay.h"
+ #include "c_te_effect_dispatch.h"
+ 
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -170,6 +172,7 @@ void StickRagdollNow( const Vector &vecOrigin, const Vector &vecDirection )
+ //-----------------------------------------------------------------------------
+ void StickyBoltCallback( const CEffectData &data )
+ {
++	Fidelity_BoltImpact( data.m_vOrigin, data.m_vNormal );	// mapbase-fidelity
+ 	 StickRagdollNow( data.m_vOrigin, data.m_vNormal );
+ }
+ 
+diff --git a/sp/src/game/client/c_te_legacytempents.cpp b/sp/src/game/client/c_te_legacytempents.cpp
+index 8c7a8551f4aa82b23283ba6c51a5367ef37f3aac..f7b60030522f0b3580eaf299115834f11a518844 100644
+--- a/sp/src/game/client/c_te_legacytempents.cpp
++++ b/sp/src/game/client/c_te_legacytempents.cpp
+@@ -35,6 +35,7 @@
+ #include "c_te_effect_dispatch.h"
+ #include "c_props.h"
+ #include "c_basedoor.h"
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
+ 
+ // NOTE: Always include this last!
+ #include "tier0/memdbgon.h"
+@@ -1730,6 +1731,7 @@ C_LocalTempEntity * CTempEnts::SpawnTempModel( const model_t *pModel, const Vect
+ //-----------------------------------------------------------------------------
+ void CTempEnts::MuzzleFlash( int type, ClientEntityHandle_t hEntity, int attachmentIndex, bool firstPerson )
+ {
++	Fidelity_MuzzleFlash( type, hEntity, attachmentIndex, firstPerson );	// mapbase-fidelity
+ 	switch( type )
+ 	{
+ 	case MUZZLEFLASH_COMBINE:
+@@ -1807,6 +1809,7 @@ void CTempEnts::MuzzleFlash( int type, ClientEntityHandle_t hEntity, int attachm
+ //-----------------------------------------------------------------------------
+ void CTempEnts::MuzzleFlash( const Vector& pos1, const QAngle& angles, int type, ClientEntityHandle_t hEntity, bool firstPerson )
+ {
++	Fidelity_MuzzleFlashAt( pos1, type, hEntity, firstPerson );	// mapbase-fidelity
+ #ifdef CSTRIKE_DLL
+ 
+ 	return;
+diff --git a/sp/src/game/client/client_base.vpc b/sp/src/game/client/client_base.vpc
+index 9eae51f123d88f0a1ab1e680612d55a0ab572b76..aa98d043ae8f5935cec1b4598f9c2595af6666f4 100644
+--- a/sp/src/game/client/client_base.vpc
++++ b/sp/src/game/client/client_base.vpc
+@@ -20,6 +20,8 @@ $Include "$SRCDIR\game\protobuf_include.vpc"
+ 
+ // Mapbase stuff
+ $Include "$SRCDIR\game\client\client_mapbase.vpc"	 [$MAPBASE]
++// mapbase-fidelity: next line
++$Include "$SRCDIR\game\client\fidelity\fidelity_client.vpc"
+ 
+ $Configuration	"Debug"
+ {
+diff --git a/sp/src/game/client/clientshadowmgr.cpp b/sp/src/game/client/clientshadowmgr.cpp
+index 2d016f489d1de7bbcf85682e82b19e110a4e2ad1..b39a051215c786a274c003eb631c2d7c57474bdd 100644
+--- a/sp/src/game/client/clientshadowmgr.cpp
++++ b/sp/src/game/client/clientshadowmgr.cpp
+@@ -91,6 +91,7 @@
+ #include "debugoverlay_shared.h"
+ #include "worldlight.h"
+ #endif
++#include "fidelity/fidelity_volumetric.h"	// mapbase-fidelity
+ 
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+@@ -4560,6 +4561,7 @@ void CClientShadowMgr::ComputeShadowDepthTextures( const CViewSetup &viewSetup )
+ 
+ 		// Associate the shadow depth texture and stencil bit with the flashlight for use during scene rendering
+ 		shadowmgr->SetFlashlightDepthTexture( shadow.m_ShadowHandle, shadowDepthTexture, 0 );
++		Fidelity_VolumetricShadow( pActiveDepthShadows[j], flashlightState, shadow.m_WorldToShadow, shadowDepthTexture );	// mapbase-fidelity
+ 	}
+ 
+ 	SetViewFlashlightState( nActiveDepthShadowCount, pActiveDepthShadows );
+diff --git a/sp/src/game/client/episodic/c_vort_charge_token.cpp b/sp/src/game/client/episodic/c_vort_charge_token.cpp
+index fa769fa05503d64b94d679068fcbdcef74a37ec2..ce4774c0b19c1fcb84a51c7fcb24c03aca5885a6 100644
+--- a/sp/src/game/client/episodic/c_vort_charge_token.cpp
++++ b/sp/src/game/client/episodic/c_vort_charge_token.cpp
+@@ -20,6 +20,7 @@
+ #include "proxyentity.h"
+ #include "materialsystem/imaterial.h"
+ #include "materialsystem/imaterialvar.h"
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
+ 
+ #define NUM_INTERIOR_PARTICLES	8
+ 
+@@ -157,6 +158,7 @@ void C_NPC_Vortigaunt::ReceiveMessage( int classID, bf_read &msg )
+ 				pEffect->SetControlPoint( 0, vecStart );
+ 				pEffect->SetControlPoint( 1, vecEndPos );
+ 			}
++			Fidelity_ZapLight( vecStart, vecEndPos, 1.0f );	// mapbase-fidelity
+ 		}
+ 		break;
+ 
+@@ -183,6 +185,7 @@ void C_NPC_Vortigaunt::ReceiveMessage( int classID, bf_read &msg )
+ 					pEffect->SetControlPointOrientation( 1, vecNormal, vecRight, vecUp );
+ 					pEffect->SetControlPoint( 1, vecEndPos );
+ 				}
++				Fidelity_ZapLight( vecEndPos + vecNormal * 32.0f, vecEndPos, 0.5f );	// mapbase-fidelity
+ 			}
+ 		}
+ 		break;
+diff --git a/sp/src/game/client/fx.cpp b/sp/src/game/client/fx.cpp
+index 78a70a779979a245461f8d65c09db2524f1f24d2..28630a0515f258689be4e9b938b5be6b1b2ae189 100644
+--- a/sp/src/game/client/fx.cpp
++++ b/sp/src/game/client/fx.cpp
+@@ -25,6 +25,7 @@
+ #include "fx.h"
+ #include "c_te_legacytempents.h"
+ #include "toolframework_client.h"
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -881,6 +882,7 @@ void FX_GunshipTracer( Vector& start, Vector& end, int velocity, bool makeWhiz )
+ 	
+ 	//Add it
+ 	FX_AddDiscreetLine( start, shotDir, velocity, length, totalDist, 5.0f, life, "effects/gunshiptracer" );
++	Fidelity_TracerLight( start, shotDir, velocity, totalDist, "effects/gunshiptracer", 1.3f );	// mapbase-fidelity
+ 
+ 	if( makeWhiz )
+ 	{
+@@ -931,6 +933,7 @@ void FX_StriderTracer( Vector& start, Vector& end, int velocity, bool makeWhiz )
+ 	
+ 	//Add it
+ 	FX_AddDiscreetLine( start, shotDir, velocity, length, totalDist, 2.5f, life, "effects/gunshiptracer" );
++	Fidelity_TracerLight( start, shotDir, velocity, totalDist, "effects/gunshiptracer", 1.0f );	// mapbase-fidelity
+ 
+ 	if( makeWhiz )
+ 	{
+@@ -965,6 +968,7 @@ void FX_HunterTracer( Vector& start, Vector& end, int velocity, bool makeWhiz )
+ 	
+ 	// Add it
+ 	FX_AddDiscreetLine( start, shotDir, velocity*0.5f, length, totalDist, 2.0f, life, "effects/huntertracer" );
++	Fidelity_TracerLight( start, shotDir, velocity * 0.5f, totalDist, "effects/huntertracer", 0.8f );	// mapbase-fidelity
+ 
+ 	if( makeWhiz ) 
+ 	{
+diff --git a/sp/src/game/client/fx_explosion.cpp b/sp/src/game/client/fx_explosion.cpp
+index ef322e8ca4de7d9b5ca1b30830e2f34391dd9125..55f63930a1487b65ffd3b2ed68b1fdbb9a1c1153 100644
+--- a/sp/src/game/client/fx_explosion.cpp
++++ b/sp/src/game/client/fx_explosion.cpp
+@@ -19,6 +19,8 @@
+ #include "fx_line.h"
+ #include "fx_water.h"
+ 
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -191,6 +193,7 @@ void C_BaseExplosionEffect::Create( const Vector &position, float force, float s
+ 
+ 	CreateDebris();
+ 	//FIXME: CreateDynamicLight();
++	Fidelity_ExplosionLight( m_vecOrigin, ( m_fFlags & TE_EXPLFLAG_NODLIGHTS ) == 0 );	// mapbase-fidelity
+ 	CreateMisc();
+ }
+ 
+diff --git a/sp/src/game/client/fx_impact.cpp b/sp/src/game/client/fx_impact.cpp
+index 236e39b4dd205433594126e5c85e7f854f7b2240..e3f20079ac376664ed09ea9a8ee0a4697320a52f 100644
+--- a/sp/src/game/client/fx_impact.cpp
++++ b/sp/src/game/client/fx_impact.cpp
+@@ -17,6 +17,9 @@
+ #include "c_impact_effects.h"
+ #include "tier0/vprof.h"
+ 
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
++#include "fidelity/fidelity_effects.h"	// mapbase-fidelity
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -432,6 +435,7 @@ void PerformCustomEffects( const Vector &vecOrigin, trace_t &tr, const Vector &s
+ 		reflect[2] += random->RandomFloat( -0.2f, 0.2f );
+ 
+ 		FX_MetalSpark( vecOrigin, reflect, tr.plane.normal, iScale );
++		Fidelity_SparkLight( vecOrigin, tr.plane.normal );	// mapbase-fidelity
+ 	}
+ 	else if ( iMaterial == CHAR_TEX_COMPUTER )
+ 	{
+@@ -445,6 +449,8 @@ void PerformCustomEffects( const Vector &vecOrigin, trace_t &tr, const Vector &s
+ 		VectorAngles( -shotDir, vecAngles );
+ 		DispatchParticleEffect( "warp_shield_impact", vecOrigin, vecAngles );
+ 	}
++
++	Fidelity_ImpactDust( vecOrigin, tr, iMaterial, iScale );	// mapbase-fidelity
+ }
+ 
+ //-----------------------------------------------------------------------------
+diff --git a/sp/src/game/client/fx_sparks.cpp b/sp/src/game/client/fx_sparks.cpp
+index 38df4dbd0c5d340fe8cee672cccc86ac495d6473..7ca751e3ab9332336e0179f62ae6a6556ca46d73 100644
+--- a/sp/src/game/client/fx_sparks.cpp
++++ b/sp/src/game/client/fx_sparks.cpp
+@@ -19,6 +19,8 @@
+ #include "c_pixel_visibility.h"
+ #include "particles_ez.h"
+ 
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -300,6 +302,7 @@ void CTrailParticles::SimulateParticles( CParticleSimulateIterator *pIterator )
+ void FX_ElectricSpark( const Vector &pos, int nMagnitude, int nTrailLength, const Vector *vecDir )
+ {
+ 	VPROF_BUDGET( "FX_ElectricSpark", VPROF_BUDGETGROUP_PARTICLE_RENDERING );
++	Fidelity_SparkLight( pos, vecDir ? *vecDir : Vector( 0, 0, 1 ), true );	// mapbase-fidelity
+ 	CSmartPtr<CTrailParticles> pSparkEmitter	= CTrailParticles::Create( "FX_ElectricSpark 1" );
+ 
+ 	if ( !pSparkEmitter )
+diff --git a/sp/src/game/client/glow_overlay.cpp b/sp/src/game/client/glow_overlay.cpp
+index 72915e3c5a691bc44e08370ddc8d31fb3dad4832..bc7cdac090ca2fe5f07e2761515f2303b9c7376f 100644
+--- a/sp/src/game/client/glow_overlay.cpp
++++ b/sp/src/game/client/glow_overlay.cpp
+@@ -16,6 +16,7 @@
+ #include "view_shared.h"
+ #include "tier0/vprof.h"
+ #include "materialsystem/imaterialvar.h"
++#include "fidelity/fidelity_godrays.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -377,6 +378,7 @@ void CGlowOverlay::Draw( bool bCacheFullSceneState )
+ 		float flHorzSize, flVertSize;
+ 		Vector vColor;
+ 		CalcSpriteColorAndSize( flDot, pSprite, &flHorzSize, &flVertSize, &vColor );
++		vColor *= Fidelity_GlassTransmission( vToGlow, m_bDirectional ? MAX_TRACE_LENGTH : ( m_vPos - CurrentViewOrigin() ).Length() );	// mapbase-fidelity
+ 	
+ 		// If we're alpha'd out, then don't bother
+ 		if ( vColor.LengthSqr() < 0.00001f )
+diff --git a/sp/src/game/client/hl2/c_strider.cpp b/sp/src/game/client/hl2/c_strider.cpp
+index 3ea3f733ad4d465cf9de0c6153d17079bf821746..80117507e7b96ccc86daf280a9355d7c1de835bd 100644
+--- a/sp/src/game/client/hl2/c_strider.cpp
++++ b/sp/src/game/client/hl2/c_strider.cpp
+@@ -32,6 +32,7 @@
+ #include "clienteffectprecachesystem.h"
+ #include <bitbuf.h>
+ #include "fx_water.h"
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -924,6 +925,7 @@ void MuzzleFlash_Strider( ClientEntityHandle_t hEntity, int attachmentIndex )
+ 	Vector		origin;
+ 	MatrixGetColumn( matAttachment, 3, &origin );
+ 
++	Fidelity_MuzzleLight( origin, "effects/strider_muzzle", Vector( 0.4f, 0.6f, 1.0f ), 280.0f, hEntity );	// mapbase-fidelity
+ 	int entityIndex = ClientEntityList().HandleToEntIndex( hEntity );
+ 	if ( entityIndex >= 0 )
+ 	{
+diff --git a/sp/src/game/client/hl2/fx_hl2_tracers.cpp b/sp/src/game/client/hl2/fx_hl2_tracers.cpp
+index c252937ae81a0b12f1d6616d01b477e5477e2c5c..abbae4affa1af0ed53c825d6c26a5b3521679dc5 100644
+--- a/sp/src/game/client/hl2/fx_hl2_tracers.cpp
++++ b/sp/src/game/client/hl2/fx_hl2_tracers.cpp
+@@ -15,6 +15,8 @@
+ #include "iefx.h"
+ #include "clienteffectprecachesystem.h"
+ 
++#include "fidelity/fidelity_glow.h"	// mapbase-fidelity
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -111,6 +113,7 @@ void AirboatGunHeavyTracerCallback( const CEffectData &data )
+ 	
+ 	// Add it
+ 	FX_AddDiscreetLine( vecStart, vecShotDir, flVelocity, flLength, flTotalDist, 5.0f, flLife, "effects/gunshiptracer" );
++	Fidelity_TracerLight( vecStart, vecShotDir, flVelocity, flTotalDist, "effects/gunshiptracer", 1.2f );	// mapbase-fidelity
+ }
+ 
+ DECLARE_CLIENT_EFFECT( "AirboatGunHeavyTracer", AirboatGunHeavyTracerCallback );
+@@ -144,6 +147,7 @@ void AirboatGunTracerCallback( const CEffectData &data )
+ 	
+ 	// Add it
+ 	FX_AddDiscreetLine( vecStart, vecShotDir, flVelocity, flLength, flTotalDist, 2.0f, flLife, "effects/gunshiptracer" );
++	Fidelity_TracerLight( vecStart, vecShotDir, flVelocity, flTotalDist, "effects/gunshiptracer", 0.9f );	// mapbase-fidelity
+ }
+ 
+ DECLARE_CLIENT_EFFECT( "AirboatGunTracer", AirboatGunTracerCallback );
+@@ -178,6 +182,7 @@ void HelicopterTracerCallback( const CEffectData &data )
+ 	
+ 	// Add it
+ 	FX_AddDiscreetLine( vecStart, vecShotDir, flVelocity, flLength, flTotalDist, 5.0f, flLife, "effects/gunshiptracer" );
++	Fidelity_TracerLight( vecStart, vecShotDir, flVelocity, flTotalDist, "effects/gunshiptracer", 1.2f );	// mapbase-fidelity
+ 
+ 	if (data.m_fFlags & TRACER_FLAG_WHIZ)
+ 	{
+@@ -247,6 +252,7 @@ void FX_AR2Tracer( Vector& start, Vector& end, int velocity, bool makeWhiz )
+ 	
+ 	//Add it
+ 	FX_AddDiscreetLine( start, dir, velocity, length, dist, random->RandomFloat( 0.5f, 1.5f ), life, "effects/gunshiptracer" );
++	Fidelity_TracerLight( start, dir, velocity, dist );	// mapbase-fidelity
+ 
+ 	if( makeWhiz )
+ 	{
+@@ -512,6 +518,7 @@ void MuzzleFlash_Airboat( ClientEntityHandle_t hEntity, int attachmentIndex )
+ 			Vector		origin;
+ 			MatrixGetColumn( matAttachment, 3, &origin );
+ 			CreateMuzzleflashELight( origin, 5, 64, 128, hEntity );
++			Fidelity_MuzzleLight( origin, "effects/combinemuzzle1", Vector( 0.55f, 0.75f, 1.0f ), 220.0f, hEntity );	// mapbase-fidelity
+ 		}
+ 	}
+ #endif
+@@ -579,6 +586,7 @@ void MuzzleFlash_Chopper( ClientEntityHandle_t hEntity, int attachmentIndex )
+ 	Vector		origin;
+ 	MatrixGetColumn( matAttachment, 3, &origin );	
+ 	CreateMuzzleflashELight( origin, 6, 128, 256, hEntity );
++	Fidelity_MuzzleLight( origin, "effects/combinemuzzle1", Vector( 1.0f, 0.8f, 0.45f ), 320.0f, hEntity );	// mapbase-fidelity
+ }
+ 
+ 
+@@ -640,6 +648,7 @@ void MuzzleFlash_Gunship( ClientEntityHandle_t hEntity, int attachmentIndex )
+ 	Vector		origin;
+ 	MatrixGetColumn( matAttachment, 3, &origin );	
+ 	CreateMuzzleflashELight( origin, 6, 128, 256, hEntity );
++	Fidelity_MuzzleLight( origin, "effects/gunshipmuzzle", Vector( 0.55f, 0.75f, 1.0f ), 320.0f, hEntity );	// mapbase-fidelity
+ }
+ 
+ 
+@@ -681,6 +690,7 @@ void MuzzleFlash_Hunter( ClientEntityHandle_t hEntity, int attachmentIndex )
+ 	el->radius = random->RandomInt( 120, 200 );
+ 	el->decay = el->radius / 0.05f;
+ 	el->die = gpGlobals->curtime + 0.05f;
++	Fidelity_MuzzleLight( origin, NULL, Vector( 0.23f, 1.0f, 0.96f ), 220.0f, hEntity );	// mapbase-fidelity
+ }
+ 
+ 
+diff --git a/sp/src/game/client/viewpostprocess.cpp b/sp/src/game/client/viewpostprocess.cpp
+index e1845d8dd0cba1bb6986f112ef652b7dbad65f88..1ecbdf13e9805ed40c1587b886592a2479d0ae97 100644
+--- a/sp/src/game/client/viewpostprocess.cpp
++++ b/sp/src/game/client/viewpostprocess.cpp
+@@ -25,6 +25,7 @@
+ #include "tier0/vprof.h"
+ 
+ #include "proxyentity.h"
++#include "fidelity/fidelity_exposure.h"	// mapbase-fidelity
+ 
+ //-----------------------------------------------------------------------------
+ // Globals
+@@ -1191,6 +1192,7 @@ void ResetToneMapping(float value)
+ {
+ 	CMatRenderContextPtr pRenderContext( materials );
+ 	s_nInAverage = 0;
++	Fidelity_ResetExposure();	// mapbase-fidelity
+ 	pRenderContext->ResetToneMappingScale(value);
+ }
+ 
+@@ -1216,6 +1218,7 @@ static void SetToneMapScale(IMatRenderContext *pRenderContext, float newvalue, f
+ 		return;
+ 	}
+ 
++	newvalue = Fidelity_StabilizeExposure( newvalue, minvalue, maxvalue );	// mapbase-fidelity
+ 	mat_hdr_tonemapscale.SetValue( newvalue );
+ 	pRenderContext->SetGoalToneMappingScale( newvalue );
+ 
+diff --git a/sp/src/game/client/viewrender.cpp b/sp/src/game/client/viewrender.cpp
+index 6bcff8da90e1dac54ec3b219b7a6fffb71d82d20..27a6f4d539b7f2aa2063250fe5e9e6fb6d15e4b8 100644
+--- a/sp/src/game/client/viewrender.cpp
++++ b/sp/src/game/client/viewrender.cpp
+@@ -14,6 +14,7 @@
+ #include "clientsideeffects.h"
+ #include "particlemgr.h"
+ #include "viewrender.h"
++#include "fidelity/fidelity_ssao.h"	// mapbase-fidelity
+ #include "iclientmode.h"
+ #include "voice_status.h"
+ #include "glow_overlay.h"
+@@ -4972,6 +4973,7 @@ void CRendering3dView::DrawTranslucentRenderables( bool bInSkybox, bool bShadowD
+ 		case VIEW_INTRO_PLAYER:
+ #endif
+ 			UpdateFullScreenDepthTexture();
++			Fidelity_RenderSSAO( *this );	// mapbase-fidelity
+ 			break;
+ 
+ 		default:
+diff --git a/sp/src/game/server/BaseAnimatingOverlay.cpp b/sp/src/game/server/BaseAnimatingOverlay.cpp
+index d399d5114104d6d1a34e67c1ea372a399698047f..e291cacc45c150ab4bc9fa97b821baf87a7a53eb 100644
+--- a/sp/src/game/server/BaseAnimatingOverlay.cpp
++++ b/sp/src/game/server/BaseAnimatingOverlay.cpp
+@@ -19,6 +19,7 @@
+ #ifdef MAPBASE_VSCRIPT
+ #include "mapbase/vscript_funcs_shared.h"
+ #endif
++#include "fidelity/fidelity_animation.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -636,6 +637,7 @@ int CBaseAnimatingOverlay::AddGesture( Activity activity, bool autokill /*= true
+ 	if ( i != -1 )
+ 	{
+ 		m_AnimOverlay[ i ].m_nActivity = activity;
++		Fidelity_GestureBlend( this, m_AnimOverlay[ i ], GetLayerDuration( i ) );	// mapbase-fidelity
+ 	}
+ 
+ 	return i;
+diff --git a/sp/src/game/server/hl2/npc_combine.cpp b/sp/src/game/server/hl2/npc_combine.cpp
+index c1375eb7348a49ce3873c2e3314fb01220c3e0a8..adbe7c451c9178fc5e35abfb07c24ea3d823a7ad 100644
+--- a/sp/src/game/server/hl2/npc_combine.cpp
++++ b/sp/src/game/server/hl2/npc_combine.cpp
+@@ -34,6 +34,7 @@
+ #include "globalstate.h"
+ #include "sceneentity.h"
+ #endif
++#include "fidelity/fidelity_ai.h"	// mapbase-fidelity
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -453,6 +454,7 @@ void CNPC_Combine::Spawn( void )
+ 	m_flFieldOfView			= -0.2;// indicates the width of this NPC's forward view cone ( as a dotproduct result )
+ 	m_NPCState				= NPC_STATE_NONE;
+ 	m_flNextGrenadeCheck	= gpGlobals->curtime + 1;
++	m_flFidelityNextHunt = m_flFidelityNextFallBack = 0.0f;	// mapbase-fidelity
+ 	m_flNextPainSoundTime	= 0;
+ 	m_flNextAlertSoundTime	= 0;
+ 	m_bShouldPatrol			= false;
+@@ -1517,6 +1519,7 @@ void CNPC_Combine::BuildScheduleTestBits( void )
+ 	}
+ 
+ 	SetCustomInterruptCondition( COND_COMBINE_HIT_BY_BUGBAIT );
++	Fidelity_CombineInterrupts( this, m_flFidelityNextFallBack );	// mapbase-fidelity
+ 
+ 	if ( !IsCurSchedule( SCHED_COMBINE_BURNING_STAND ) )
+ 	{
+@@ -1909,6 +1912,9 @@ int CNPC_Combine::SelectCombatSchedule()
+ 		return SCHED_HIDE_AND_RELOAD;
+ 	}
+ 
++	if ( Fidelity_CombineFallBack( this, m_flFidelityNextFallBack ) )	// mapbase-fidelity
++		return SCHED_TAKE_COVER_FROM_ENEMY;	// mapbase-fidelity
++
+ 	// ----------------------
+ 	// LIGHT DAMAGE
+ 	// ----------------------
+@@ -1989,6 +1995,8 @@ int CNPC_Combine::SelectCombatSchedule()
+ 		float flDistSq = GetEnemy()->WorldSpaceCenter().DistToSqr( WorldSpaceCenter() );
+ 		if ( flDistSq > Square(3000) )
+ 			return SCHED_ESTABLISH_LINE_OF_FIRE;
++		if ( Fidelity_CombineHunt( this, m_flFidelityNextHunt ) )	// mapbase-fidelity
++			return SCHED_ESTABLISH_LINE_OF_FIRE;	// mapbase-fidelity
+ 
+ 		// Otherwise tuck in.
+ 		Remember( bits_MEMORY_INCOVER );
+diff --git a/sp/src/game/server/hl2/npc_combine.h b/sp/src/game/server/hl2/npc_combine.h
+index c19b4ba468cb23d50230cf689ffe7cfb7ced5e5a..5d628e524c72354f04a73f9cbfdf8e98d04684be 100644
+--- a/sp/src/game/server/hl2/npc_combine.h
++++ b/sp/src/game/server/hl2/npc_combine.h
+@@ -297,6 +297,8 @@ private:
+ 	};
+ 
+ private:
++	float m_flFidelityNextHunt, m_flFidelityNextFallBack;	// mapbase-fidelity: fidelity/fidelity_ai.h (not saved: a loaded game starts them anew)
++
+ 	// Select the combat schedule
+ 	int SelectCombatSchedule();
+ 
+diff --git a/sp/src/game/shared/baseviewmodel_shared.cpp b/sp/src/game/shared/baseviewmodel_shared.cpp
+index 5f9c0f10c642d282f23cdb9faa66ddfcddd3d319..ec988c736103bfd434788d81ba0a1f81fdf85f8f 100644
+--- a/sp/src/game/shared/baseviewmodel_shared.cpp
++++ b/sp/src/game/shared/baseviewmodel_shared.cpp
+@@ -27,6 +27,10 @@ extern ConVar in_forceuser;
+ #include "iclientmode.h"
+ #endif
+ 
++#ifdef CLIENT_DLL	// mapbase-fidelity
++#include "fidelity/fidelity_viewmodel.h"	// mapbase-fidelity
++#endif	// mapbase-fidelity
++
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
+@@ -477,6 +481,8 @@ void CBaseViewModel::CalcViewModelView( CBasePlayer *owner, const Vector& eyePos
+ 	}
+ #endif
+ 
++	Fidelity_ViewModelPlace( owner, eyePosition, eyeAngles, vmorigin, vmangles );	// mapbase-fidelity
++
+ 	SetLocalOrigin( vmorigin );
+ 	SetLocalAngles( vmangles );
+ 
+diff --git a/sp/src/utils/vrad/radial.cpp b/sp/src/utils/vrad/radial.cpp
+index 5dc99b50e94e09cae01aeec21bdbd4665d755925..9f08c70685b23947bc97ea64d6e81a77e49a438a 100644
+--- a/sp/src/utils/vrad/radial.cpp
++++ b/sp/src/utils/vrad/radial.cpp
+@@ -13,6 +13,7 @@
+ #include "utlrbtree.h"
+ #include "mathlib/VMatrix.h"
+ #include "macro_texture.h"
++#include "fidelity_ao.h"	// mapbase-fidelity
+ 
+ 
+ void WorldToLuxelSpace( lightinfo_t const *l, Vector const &world, Vector2D &coord )
+@@ -780,8 +781,10 @@ void FinalLightFace( int iThread, int facenum )
+ 					StaticDispMgr()->SampleRadial( facenum, prad, fl->luxel[j], j, v, bumpSampleCount, true );
+ 				}
+ 
++				const float flFidelityAO = Fidelity_LuxelAO( fl->luxel[j], fl->luxelNormals ? fl->luxelNormals[j] : dplanes[f->planenum].normal );	// mapbase-fidelity
+ 				for( bumpSample = 0; bumpSample < bumpSampleCount; ++bumpSample )
+ 				{
++					v[bumpSample].Scale( flFidelityAO );	// mapbase-fidelity
+ 					lb[bumpSample].AddLight( v[bumpSample] );
+ 				}
+ 			}
+diff --git a/sp/src/utils/vrad/vrad.cpp b/sp/src/utils/vrad/vrad.cpp
+index 774af24778c069e5bb9ab071b2852d644e316077..80a1e8f3f3863a9ae66de923df855281567775d2 100644
+--- a/sp/src/utils/vrad/vrad.cpp
++++ b/sp/src/utils/vrad/vrad.cpp
+@@ -19,6 +19,7 @@
+ #include "tools_minidump.h"
+ #include "loadcmdline.h"
+ #include "byteswap.h"
++#include "fidelity_ao.h"	// mapbase-fidelity
+ 
+ #define ALLOWDEBUGOPTIONS (0 || _DEBUG)
+ 
+@@ -2172,6 +2173,17 @@ void VRAD_LoadBSP( char const *pFilename )
+ 
+ 	ReadLightFile(global_lights);							// Required
+ 	if ( *designer_lights ) ReadLightFile(designer_lights);	// Command-line
++	if ( FidelityAO().m_bLights && !Q_stristr( designer_lights, "fidelity_lights.rad" ) && g_pFileSystem->FileExists( "fidelity_lights.rad" ) )	// mapbase-fidelity
++	{	// mapbase-fidelity
++		ReadLightFile( (char *)"fidelity_lights.rad" );	// mapbase-fidelity
++		g_bTextureShadows = true;	// mapbase-fidelity
++	}	// mapbase-fidelity
++	FidelityAOResolve( do_fast != 0 );	// mapbase-fidelity
++	if ( FidelityAO().m_bDefaults && !do_fast )	// mapbase-fidelity
++	{	// mapbase-fidelity
++		g_bStaticPropLighting = g_bStaticPropPolys = true;	// mapbase-fidelity
++		Msg( "[fidelity] release settings: -StaticPropLighting -StaticPropPolys (-nofidelitydefaults: off)\n" );	// mapbase-fidelity
++	}	// mapbase-fidelity
+ 	if ( *level_lights )	ReadLightFile(level_lights);	// Optional & implied
+ 
+ 	strcpy(incrementfile, source);
+@@ -2380,6 +2392,18 @@ int ParseCommandLine( int argc, char **argv, bool *onlydetail )
+ 		{
+ 			g_bTextureShadows = true;
+ 		}
++		else if ( !Q_stricmp( argv[i], "-fidelityao" ) )	// mapbase-fidelity
++			FidelityAO().m_nMode = 1;	// mapbase-fidelity
++		else if ( !Q_stricmp( argv[i], "-nofidelityao" ) )	// mapbase-fidelity
++			FidelityAO().m_nMode = 0;	// mapbase-fidelity
++		else if ( !Q_stricmp( argv[i], "-nofidelitylights" ) )	// mapbase-fidelity
++			FidelityAO().m_bLights = false;	// mapbase-fidelity
++		else if ( !Q_stricmp( argv[i], "-nofidelitydefaults" ) )	// mapbase-fidelity
++			FidelityAO().m_bDefaults = false;	// mapbase-fidelity
++		else if ( !Q_stricmp( argv[i], "-fidelityao_radius" ) && i + 1 < argc )	// mapbase-fidelity
++			FidelityAO().m_flRadius = MAX( (float)atof( argv[ ++i ] ), 1.0f );	// mapbase-fidelity
++		else if ( !Q_stricmp( argv[i], "-fidelityao_strength" ) && i + 1 < argc )	// mapbase-fidelity
++			FidelityAO().m_flStrength = (float)atof( argv[ ++i ] );	// mapbase-fidelity
+ 		else if ( !strcmp(argv[i], "-dump") )
+ 		{
+ 			g_bDumpPatches = true;
+@@ -2866,6 +2890,9 @@ void PrintUsage( int argc, char **argv )
+         "  -OnlyStaticProps   : Only perform direct static prop lighting (vrad debug option)\n"
+ 		"  -StaticPropNormals : when lighting static props, just show their normal vector\n"
+ 		"  -textureshadows : Allows texture alpha channels to block light - rays intersecting alpha surfaces will sample the texture\n"
++		"  -nofidelityao   : No baked ambient occlusion in the bounced light (on by default, not with -fast; -fidelityao_radius 48, -fidelityao_strength 0.8)\n"	// mapbase-fidelity
++		"  -nofidelitylights : Do not read deploy.bat's fidelity_lights.rad from the mod folder (read by default, with -textureshadows)\n"	// mapbase-fidelity
++		"  -nofidelitydefaults : Do not switch on -StaticPropLighting -StaticPropPolys (on by default, not with -fast)\n"	// mapbase-fidelity
+ 		"  -noskyboxrecurse : Turn off recursion into 3d skybox (skybox shadows on world)\n"
+ 		"  -nossprops      : Globally disable self-shadowing on static props\n"
+ 		"\n"
+diff --git a/sp/src/vpc_scripts/groups.vgc b/sp/src/vpc_scripts/groups.vgc
+index b58dc41632d104d24e643ca38a200c244bfa6aed..621c8b2c96c889b9fbb267ae8d4b2286debafb50 100644
+--- a/sp/src/vpc_scripts/groups.vgc
++++ b/sp/src/vpc_scripts/groups.vgc
+@@ -17,6 +17,7 @@ $Group "gamedlls"
+ $Group "game"
+ {
+ 	"client"
++	"game_shader_dx9_fidelity"	// mapbase-fidelity
+ 	"mathlib"
+ 	"raytrace"
+ 	"server"
+diff --git a/sp/src/vpc_scripts/newer_vs_toolsets.vpc b/sp/src/vpc_scripts/newer_vs_toolsets.vpc
+index 5e75a4947d24a22e0b4a7ba07d5e4d7694bc8e62..575a080cc0afd050728337eeb80f961d27c69097 100644
+--- a/sp/src/vpc_scripts/newer_vs_toolsets.vpc
++++ b/sp/src/vpc_scripts/newer_vs_toolsets.vpc
+@@ -10,7 +10,7 @@
+ $Conditional VS2015	"0" // Toggles Visual Studio 2015 (v140) toolset
+ $Conditional VS2017	"0" // Toggles Visual Studio 2017 (v141) toolset
+ $Conditional VS2019	"0" // Toggles Visual Studio 2019 (v142) toolset
+-$Conditional VS2022	"0" // Toggles Visual Studio 2022 (v143) toolset
++$Conditional VS2022	"1" // Toggles Visual Studio 2022 (v143) toolset
+ 
+ // 
+ // WARNING: If you do not have Visual Studio 2013 installed and try to use VPC, it may produce an error about a missing RegKey.
+diff --git a/sp/src/vpc_scripts/projects.vgc b/sp/src/vpc_scripts/projects.vgc
+index 8ea011478b2862fd516fff48df5b90518a3e96c1..30ae65d4e363e4448cd390ffbede84842cf3417f 100644
+--- a/sp/src/vpc_scripts/projects.vgc
++++ b/sp/src/vpc_scripts/projects.vgc
+@@ -30,6 +30,12 @@ $Project "game_shader_dx9"
+ 	"materialsystem\stdshaders\game_shader_dx9_episodic.vpc"  [$EPISODIC]
+ }
+ 
++// mapbase-fidelity: next line
++$Project "game_shader_dx9_fidelity"
++{
++	"materialsystem\fidelity\game_shader_dx9_fidelity.vpc"	// mapbase-fidelity
++}
++
+ $Project "glview"
+ {
+ 	"utils\glview\glview.vpc" [$WIN32]

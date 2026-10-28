@@ -175,7 +175,7 @@ void MapLookPanel::refresh() {
 	                    ? tr("What mapbase-fidelity shows in this map. The map sets these when it loads (a logic_auto sends them to a "
 	                         "point_clientcommand - both are kept by the editor). Grey values are the mod's own.")
 	                    : tr("This mod does not have mapbase-fidelity: the values only show in the preview here. Players see them once the "
-	                         "mod has it (deploy.bat)."));
+	                         "mod has it (Project > Features > Install features)."));
 	for (const auto& setting : lookSettings()) {
 		auto& row = m_rows.at(setting.cvar);
 		const bool own = values.contains(setting.cvar);

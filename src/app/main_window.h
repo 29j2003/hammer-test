@@ -170,6 +170,7 @@ private:
 	QList<QPointer<QWidget>> m_hiddenForTab;    ///< Docks and tool bars put away for another tab
 	QList<QPointer<QAction>> m_disabledForTab;  ///< Map keys switched off for another tab
 	bool m_mapHidden = false;
+	bool m_reloadPending = false;               ///< The game is read again soon (the mod's files changed)
 	bool m_quad = false;
 	QPointer<Viewport> m_active;
 
