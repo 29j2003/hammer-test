@@ -656,8 +656,8 @@ void FeaturesPanel::askFreshInstall() {
 	}
 	const auto files = generatedModFiles(m_modDir);
 	for (const auto& file : files) {
-		auto* item = new QListWidgetItem(QStringLiteral("%1   -   %2").arg(QString::fromStdString(file.path.generic_string()), QString::fromStdString(file.what)));
-		item->setData(Qt::UserRole, QString::fromStdString(file.path.generic_string()));
+		auto* item = new QListWidgetItem(QStringLiteral("%1   -   %2").arg(fromPath(file.path), QString::fromStdString(file.what)));
+		item->setData(Qt::UserRole, fromPath(file.path));
 		m_freshList->addItem(item);
 	}
 	m_freshCount->setText(files.empty()

@@ -839,7 +839,7 @@ bool AnimationsPage::compileImports() {
 		                .arg(program.isEmpty() ? tr("no SDK tools set") : program));
 	}
 	const QString original = m_importModel;
-	const QString gameDir = QString::fromStdString(entry->gameDir.generic_string());
+	const QString gameDir = fromPath(entry->gameDir);   // (generic_string() is the ANSI code page on Windows: a folder with umlauts broke)
 	const QString folder = QDir(gameDir).filePath(qs(animationSourceFolder(original.toStdString())));
 	if (!QDir().mkpath(folder)) return fail(tr("Cannot create %1").arg(folder));
 	const auto write = [](const QString& path, const QString& text) {
