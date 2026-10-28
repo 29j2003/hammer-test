@@ -323,7 +323,11 @@ std::optional<std::vector<std::byte>> GameFileSystem::readMount(std::size_t moun
 	auto& data = *m_data[mountIndex];
 	if (m_mounts[mountIndex].kind == Mount::Kind::Vpk) {
 		const std::lock_guard lock(data.mutex);
-		return data.vpk->readEntry(relative);
+		try {
+			return data.vpk->readEntry(relative);
+		} catch (const std::exception&) {
+			return std::nullopt;   // a damaged archive part: the file is missing, the editor goes on
+		}
 	}
 
 	std::filesystem::path file;
