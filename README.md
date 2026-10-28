@@ -24,7 +24,10 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   The menu in the top left corner of each view switches between 3D, top, front and side, and between lighting preview,
   textured and wireframe. Its **Show** section (also View > Show) hides kinds of objects while you map: world brushes,
   brush entities, triggers, tool brushes and faces (clip, nodraw, hint …), sky brushes, models, NPCs, lights, cubemaps
-  and other entities. The view's button says how many kinds are hidden.
+  and other entities. The view's button says how many kinds are hidden. **Hide tools** (Ctrl+Alt+T) in the top bar
+  hides triggers, clips and other tool brushes with one click.
+- **Frame rate limit** (View menu, 30–240 fps or none, default 144): the views draw only when something changes, and
+  never faster than this.
 - **Snap to corners**: the move tool shows small squares on the corners of the selection; drag one onto a corner of
   another brush or model and they line up exactly.
 - **Resize right away**: selected brushes show squares on their sides in the select tool too; drag one to make the
@@ -167,7 +170,7 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
   *Open in Visual Studio* appears when the folder has a solution; *Run update.bat* appears when it has that script
   (Windows). Needs Git installed.
 - **Material editor**: the *Materials* page (right-click a material > *Edit material*, *Edit* next to a selected
-  face, or *View > Material Editor*). On the left: *Open a material ...* and the materials you edited lately. In the
+  face, or *View > Material Editor*). On the left: every material of the game with search, filters and pictures (click one to edit it) and the ones you edited lately. In the
   middle the parameters in groups; a group with a switch in its header is a feature (*Normal map*, *Relief*,
   *Reflections*, *Detail texture*, *Shiny highlights*, ...) and folds away while it is off - turning it off and on again
   brings its values back. Texture fields show a small picture of the texture. On the right a big live preview (wall,

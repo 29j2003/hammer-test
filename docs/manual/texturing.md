@@ -74,12 +74,15 @@ Scaling with texture lock keeps the texture size: the texture is not stretched w
 
 ## The Material Editor
 
-The **Materials** page in the side bar is the Material Editor. Open a material by:
+The **Materials** page in the side bar is the Material Editor. On the left it lists every material of the game, with
+the same search, filters and pictures as the Asset Browser; **click one** to edit it. The page always opens with a
+material, never empty. Other ways to open one:
 
 - right-clicking it in the Asset Browser, **Edit material ...**;
 - clicking **Edit** next to a selected face's material;
-- **View > Material Editor**;
-- typing its name in **Open a material ...** on the left. *Recent* lists the materials you edited lately.
+- **View > Material Editor**.
+
+*Edited lately* under the list holds the materials you opened last.
 
 ![The Material Editor](images/material-editor.png)
 

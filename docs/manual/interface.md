@@ -13,7 +13,7 @@ nav_order: 3
 
 The window has six parts, from left to right and top to bottom:
 
-1. **Side bar**: the pages *Map*, *Materials*, *Sounds*, *Particles* and *Project*.
+1. **Side bar**: the pages *Map*, *Materials*, *Models*, *Sounds*, *Particles* and *Project*.
 2. **Tool strip**: the tools for building the map.
 3. **Top bar**: the game, undo and redo, selection modes, grid and snapping, view switches, *Check* and *Run map*.
 4. **Left panel**: the *Tool*, *Outliner*, *VisGroups*, *Map Look* and *History* tabs.
@@ -27,7 +27,7 @@ Each button fills the window with one page:
 | Page | What it is for |
 |---|---|
 | **Map** | Building the map: the views, tools and panels. |
-| **Materials** | The Material Editor. See [Texturing and materials](texturing.html#the-material-editor). |
+| **Materials** | Every material of the game on the left; click one to edit it. See [Texturing and materials](texturing.html#the-material-editor). |
 | **Models** | Every model in 3D, with skins and body groups. See [Models](entities.html#the-models-page). |
 | **Sounds** | Sounds, sound scripts and soundscapes. See [Sounds](sounds-particles.html). |
 | **Particles** | The particle viewer. See [Particles](sounds-particles.html#particles). |
@@ -79,6 +79,9 @@ From left to right:
 
 ### View switches
 
+**Hide tools** (Ctrl+Alt+T) hides triggers, clips and every other tool brush with one click, so you can build
+without them in the way. Click it again to bring them back. They stay in the map and in the compile.
+
 These icons decide what the views show. They only change the views, not the map or the compile.
 
 | Switch | Shows or hides |
@@ -94,9 +97,17 @@ These icons decide what the views show. They only change the views, not the map 
 | Connection lines | lines from the selected entities: **green** to what their outputs fire at, **blue** from what fires at them |
 | 3D grid | the grid in the 3D view |
 
-The **eye** button at the end opens the full *Show* list with every kind of object: world brushes, brush entities,
-triggers, tool brushes and faces, sky brushes, models, NPCs, lights, cubemaps and other entities. **Show everything**
-brings everything back. The same list is in **View > Show** and in each view's corner menu.
+The **Show** button at the end opens the full list with every kind of object: world brushes, brush entities,
+triggers, tool brushes and faces, sky brushes, models, NPCs, lights, cubemaps and other entities. At the top of the
+list, **Hide triggers and tool brushes** and **Only geometry** hide several kinds at once; **Show everything** brings
+everything back. The same list is in **View > Show** and in each view's corner menu. While anything is hidden, the
+top right corner of each view says what (*Hidden: triggers, tool brushes*).
+
+### Frame rate limit
+
+The views only draw when something changes. While you fly, drag or move things they draw at most as often as
+**View > Frame rate limit** allows: 30, 60, 120, **144** (the default), 200 or 240 frames per second, or *No limit*.
+A lower limit keeps the graphics card cooler and quieter.
 
 ![Four views with the connection lines of a logic_relay](images/quad-connections.png)
 
@@ -177,6 +188,6 @@ At the bottom, from left to right:
 - its size (width, length, height) and center;
 - where the mouse points in the 3D view and how far away that is;
 - grid, snap, angle and texture lock, with **on** in green and **off** in grey;
-- how long a frame takes and how many frames per second that allows. Hover over it for triangles, draw calls and
-  lights;
+- how long a frame takes and the frame rate limit. Hover over it for triangles, draw calls, lights and how many
+  frames were really drawn;
 - the version. When an update is out, it turns into an **Update to …** button.
