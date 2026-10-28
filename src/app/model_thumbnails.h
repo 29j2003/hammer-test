@@ -40,6 +40,8 @@ public:
 	[[nodiscard]] QPixmap get(const QString& path);
 	/// A real picture is ready (not the placeholder, "cannot load" or "animations only").
 	[[nodiscard]] bool hasPreview(const QString& path) const;
+	/// The model turned out to hold only animations (an $includemodel file, nothing to place).
+	[[nodiscard]] bool animationsOnly(const QString& path) const;
 	void clear();
 
 signals:

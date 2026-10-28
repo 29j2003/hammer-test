@@ -70,7 +70,7 @@ bool ModelFolderFilter::filterAcceptsRow(int row, const QModelIndex& parent) con
 	for (const auto& word : m_words) {
 		if (!path.contains(word, Qt::CaseInsensitive)) return false;
 	}
-	return true;
+	return !m_thumbnails || !m_thumbnails->animationsOnly(path);
 }
 
 // --- Page ----------------------------------------------------------------------------
@@ -138,6 +138,10 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	middleLayout->addWidget(m_count);
 	split->addWidget(middle);
 	connect(assets->modelThumbnails(), &ModelThumbnails::thumbnailReady, m_model, &ModelListModel::thumbnailReady);
+	m_filter->setThumbnails(assets->modelThumbnails());
+	connect(assets->modelThumbnails(), &ModelThumbnails::thumbnailReady, this, [this](const QString& path) {
+		if (m_assets->modelThumbnails()->animationsOnly(path)) applyFilter();   // nothing to place: leave it out
+	});
 
 	// Right: the model in 3D and what it is made of.
 	auto* right = new QWidget;
@@ -317,6 +321,8 @@ void ModelsPage::setModels(const QStringList& models) {
 		updateDetails();
 	} else if (!m_current.isEmpty() && models.contains(m_current)) {
 		selectModel(m_current);
+	} else if (m_filter->rowCount() > 0) {
+		m_list->setCurrentIndex(m_filter->index(0, 0));   // the page never starts empty
 	}
 }
 

@@ -45,6 +45,8 @@ public:
 	using QSortFilterProxyModel::QSortFilterProxyModel;
 	/// "models/props_c17/" (empty: all) and the search text (words, any order).
 	void setFilter(const QString& folder, const QString& words);
+	/// Leaves out models that hold only animations (once their preview found out).
+	void setThumbnails(const class ModelThumbnails* thumbnails) { m_thumbnails = thumbnails; }
 
 protected:
 	[[nodiscard]] bool filterAcceptsRow(int row, const QModelIndex& parent) const override;
@@ -52,6 +54,7 @@ protected:
 private:
 	QString m_folder;
 	QStringList m_words;
+	const class ModelThumbnails* m_thumbnails = nullptr;
 };
 
 /// The Models page (see the file comment).
