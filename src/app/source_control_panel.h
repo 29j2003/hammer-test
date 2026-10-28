@@ -46,6 +46,10 @@ signals:
 	void refreshed();
 	/// A command the user started (commit, pull, ...) is done.
 	void commandFinished(bool ok);
+	/// A pull went through; `changed`: it brought new commits.
+	void pulled(const QString& root, bool changed);
+	/// "Update mod": the repository is the mod's source code (Project > Mod code runs it).
+	void updateModRequested(const QString& root);
 
 private:
 	using Done = std::function<void(int exitCode, const QByteArray& out, const QByteArray& err)>;
@@ -62,6 +66,7 @@ private:
 	void setBusy(bool busy);
 	void log(const QString& text, bool error = false);
 	void commit();
+	void pull();
 	void network(const QStringList& args);
 	void updateTools();
 	[[nodiscard]] QStringList checkedPaths() const;

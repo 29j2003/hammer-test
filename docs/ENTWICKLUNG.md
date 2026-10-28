@@ -107,6 +107,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `material_replace` | Material ersetzen (ganze Karte, Auswahl oder gewählte Flächen; exakt oder Platzhalter; Ausrichtung behalten oder an der Welt ausrichten; Overlays/Decals), `countMaterialMatches` für die Vorschau |
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
 | `git_status` | Git-Ausgaben lesen (`status`, `log` ohne E-Mail), Remote → Web-Adresse |
+| `mod_code` | Quellcode der Mod (Mapbase-Checkout mit mapbase-fidelity): `modCodeScripts` (erkannt an `fidelity/update.ps1` + `sp/src` oder `update.bat`), `findModCode` (Suchwurzeln selbst, dann Unterordner – der Name der Mod zuerst, max. 300 je Wurzel), `modCodeSearchRoots` (GitHub Desktop, Visual Studio, Laufwerks-Ordner), `modCodeCommand` (PowerShell mit `-NoProfile -NonInteractive -File … -GamePath <mod>`, Windows mit `-ExecutionPolicy Bypass`, sonst `pwsh`; nie `pause`, nie `Read-Host`), `classifyScriptLine` (Statuswörter von `update.ps1`/`deploy.ps1`/`report.ps1` → Schritt + Art), `ScriptRun` (Schritt nur vorwärts, Fehlerzeilen ohne Dopplung, Zips des Berichts, `advice()` über `updateFailureAdvice`) |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
 | `localization` | Texte der Mod: Lokalisierungsdateien verlustfrei (Kommentare, `[$X360]`-Bedingungen, Reihenfolge), Dateisätze `<name>_<sprache>.txt`, Caption-Tags, Captions → `.dat` (VCCD) |
@@ -143,7 +144,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `maps_panel` | Project › Maps: alle Karten, Stapel-Kompilieren, Dateiaktionen |
 | `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
 | `texts_panel` | Project › Texts: Lokalisierung und Captions der Mod (Tabelle Token × Sprache, Caption-Vorschau, Speichern, Captions kompilieren) |
-| `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf) |
+| `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf); meldet `pulled(root, changed)` und „Update mod“ (`updateModRequested`) an Mod code |
+| `mod_code_panel` | Project › Mod code: `update.ps1`/`deploy.ps1`/`report.ps1` per `QProcess` ohne Konsole (Schritte, Fortschritt, Log, Zusammenfassung mit Rat, Cancel beendet den ganzen Prozessbaum), Checkout finden/wählen je Mod, Optionen je Mod (nach Pull aktualisieren, beim Start `git fetch` bzw. Pull & Update), Zeile auf dem Overview (`banner()`); nach Erfolg `modUpdated` → `MainWindow` öffnet das Spiel neu (Caches, Game enhancements) |
 | `ship_panel` | Project › Ship: Abhängigkeiten, bspzip, ZIPs, Workshop |
 | `new_mod_dialog` | „New mod …“: neue Mod aus Karten |
 | `find_dialog`, `replace_materials_dialog` | Entities finden + Entity-Bericht; Materialien ersetzen |
@@ -340,6 +342,22 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   `games/<key>/repository`, Standard = Mod-Ordner. Commit = `add -A -- <angehakte Pfade>` + `commit -m … -- <Pfade>`,
   also nur die angehakten Dateien. Netzwerk nur bei Fetch/Pull/Push durch den Nutzer. Test: `test_git.cpp` (Parser),
   `test_app.cpp` („source control“: echtes Repo im Temp-Ordner, Identität über Umgebungsvariablen).
+- Mod code (`ModCodePanel`, `mod_code_panel.cpp`; Kern `mod_code`): Julius soll nie eine `.bat` starten. Die `.bat`
+  rufen nur `powershell … -File <x>.ps1 %*` und dann `pause` – Mapsmith ruft die `.ps1` direkt (`modCodeCommand`),
+  immer mit `-GamePath` (sonst fragt das Skript per `Read-Host`) und `-NonInteractive`, Standard-Eingabe leer, unter
+  Windows `CREATE_NO_WINDOW`; Ausgabe zeilenweise (Windows: OEM-Codepage) → `ScriptRun::feed`, Fehlerkanal →
+  `feedError`. Cancel: `taskkill /T /F` (MSBuild und Compiler hängen am Prozess) plus `kill()`. Schritte kommen aus
+  den Statuswörtern von `update.ps1` (`found`, `making`/`ok … .sln`, `building games.sln`, `copied bin\…`,
+  `maptools.sln`/`vrad`/`saved` → VRAD, `mapbase-fidelity game files ->` → Spieldateien, `All set.` → fertig); ändert
+  `update.ps1` seine Ausgaben, `classifyScriptLine` und `test_mod_code.cpp` mitziehen. Einstellungen je Mod in
+  `QSettings` `games/<key>/modCode/…` (`folder`, `noVrad`, `autoAfterPull`, `checkOnStart`, `pullOnStart`,
+  `updatedHead` = Commit des letzten erfolgreichen Updates, `updatedAt`). Suche nach dem Checkout im Hintergrund
+  (`QtConcurrent`), ein gewählter Ordner gewinnt (`m_searchGeneration`). Netzwerk nur über das System-`git` und nur,
+  wenn eine Automatik eingeschaltet ist oder der Nutzer Check now / Pull & update drückt; ohne Automatik nur lokal
+  `rev-parse HEAD` gegen `updatedHead` („changed since its last update“). Nach Erfolg (`Update`/`Deploy`)
+  `modUpdated` → `MainWindow::selectGame(gleiches Spiel)`: Dateisystem, Material-/Modell-Caches und Game enhancements
+  neu, die offene Karte bleibt. Der Bau selbst (VS 2022, MSBuild) ist nur unter Windows prüfbar; der UI-Test
+  („mod code“) setzt mit `setCommandFactory` ein Shell-Kommando ein, das die Zeilen der „Skripte“ ausgibt.
 - Material-Editor (`MaterialEditor` + `MaterialPreview`): Felder für die häufigen Parameter, Tabelle für den Rest,
   Vorschau (Wand/Würfel/Kugel, Sonne/Lampe/Nacht/unbeleuchtet; ssbump über die drei Basisvektoren). Speichern schreibt
   nach `<mod>/materials/<name>.vmt` (VPK-Material → Kopie in der Mod) und meldet `materialSaved` → `MaterialCache::reload`.

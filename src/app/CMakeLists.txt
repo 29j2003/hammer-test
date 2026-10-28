@@ -21,6 +21,7 @@ add_library(smeapp STATIC
 	maps_panel.cpp
 	menu_editor.cpp
 	texts_panel.cpp
+	mod_code_panel.cpp
 	mod_page.cpp
 	new_mod_dialog.cpp
 	icons.cpp

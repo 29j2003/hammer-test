@@ -24,6 +24,8 @@ public:
 
 	/// Reads everything again (game changed, map saved, page shown).
 	void refresh();
+	/// A line under the title (e.g. Mod code's "new changes"); it shows and hides itself.
+	void addBanner(QWidget* banner);
 
 signals:
 	/// Buttons: open a map, make a new mod, open the compile settings.

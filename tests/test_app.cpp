@@ -94,6 +94,7 @@
 #include "editor.h"
 #include "enhancements.h"
 #include "main_window.h"
+#include "mod_code_panel.h"
 #include "mod_page.h"
 #include "model_viewer.h"
 #include "models_page.h"
@@ -4305,6 +4306,215 @@ TEST_CASE("quick wins: make water, map budget, lightmap density, loop and prop c
 	usedOnly->setChecked(false);
 	settle();
 	CHECK(models->rowCount() == all);
+}
+
+TEST_CASE("mod code: update the mod from the editor - steps, failure advice, cancel, after a pull, game files") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());   // the search for the source code stays in here
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	// A fake checkout of the mod's source code. Its "scripts" are the lines the real ones print;
+	// the runner put in below prints them with the system's shell (PowerShell is not needed).
+	QTemporaryDir repo;
+	const auto root = toPath(repo.path());
+	test::writeText(root / "update.bat", "@echo off\r\n");
+	test::writeText(root / "sp" / "src" / "readme.txt", "source\n");
+	const auto updateScript = root / "fidelity" / "update.ps1";
+	const std::string success = "mapbase-fidelity update -> mymod\n"
+	                            "  found    C:\\VS\\MSBuild.exe\n"
+	                            "  ok       games.sln is up to date\n"
+	                            "  building games.sln\n"
+	                            "  copied   bin\\client.dll (episodic)\n"
+	                            "  copied   bin\\server.dll (episodic)\n"
+	                            "  skipped  VRAD - Source SDK Base 2013 Singleplayer not found (Steam library)\n"
+	                            "mapbase-fidelity game files -> mymod\n"
+	                            "Done. Start the mod\n"
+	                            "All set. Start the mod, or compile a map - nothing else to do.\n";
+	test::writeText(updateScript, success);
+	test::writeText(root / "fidelity" / "deploy.ps1", "mapbase-fidelity game files -> mymod\n  copied   shaders\nDone. Start the mod\n");
+	test::writeText(root / "fidelity" / "report.ps1", "mapbase-fidelity report -> mymod\n");
+
+	test::Fixture f;
+	test::createFixture(f);
+	// Declared before the window: the runner below keeps references to them.
+	int exitCode = 0;
+	bool slow = false;
+	std::vector<std::filesystem::path> ranScripts;
+	std::filesystem::path ranFor;
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	auto* panel = window.modCodePanel();
+	REQUIRE(panel);
+	panel->setCommandFactory([&](ModCodeAction action, const ModCodeScripts& scripts, const std::filesystem::path& modDir) {
+		const auto script = action == ModCodeAction::Deploy ? scripts.deploy : action == ModCodeAction::Report ? scripts.report : scripts.update;
+		ranScripts.push_back(script);
+		ranFor = modDir;
+		ScriptCommand command;
+		command.workingDir = scripts.root;
+#ifdef Q_OS_WIN
+		command.program = "cmd.exe";
+		command.args = {"/c", "type", fromPath(script).replace('/', '\\').toStdString(), "&"};
+		if (slow) command.args.insert(command.args.end(), {"ping", "-n", "30", "127.0.0.1", ">nul", "&"});
+		command.args.insert(command.args.end(), {"exit", "/b", std::to_string(exitCode)});
+#else
+		command.program = "sh";
+		command.args = {"-c", slow ? "cat \"$1\"; sleep 30; exit \"$2\"" : "cat \"$1\"; exit \"$2\"", "sh", fromPath(script).toStdString(),
+		                std::to_string(exitCode)};
+#endif
+		return std::optional<ScriptCommand>(command);
+	});
+	const auto waitDone = [&] {
+		for (int i = 0; i < 1000 && panel->running(); ++i) QTest::qWait(20);
+		settle();
+		return !panel->running();
+	};
+	auto* state = panel->findChild<QLabel*>("modCodeState");
+	auto* update = panel->findChild<QPushButton*>("modCodeUpdate");
+	auto* deploy = panel->findChild<QPushButton*>("modCodeDeploy");
+	auto* steps = panel->findChild<QListWidget*>("modCodeSteps");
+	auto* summary = panel->findChild<QLabel*>("modCodeSummary");
+	auto* log = panel->findChild<QPlainTextEdit*>("modCodeLog");
+	auto* afterPull = panel->findChild<QCheckBox*>("modCodeAutoAfterPull");
+	REQUIRE(state);
+	REQUIRE(update);
+	REQUIRE(deploy);
+	REQUIRE(steps);
+	REQUIRE(summary);
+	REQUIRE(log);
+	REQUIRE(afterPull);
+	const auto marks = [&] {
+		QStringList out;
+		for (int i = 0; i < steps->count(); ++i) out << steps->item(i)->data(Qt::UserRole).toString();
+		return out;
+	};
+
+	// Nothing found in the (empty) home folder: chosen by hand, remembered for the mod.
+	settle();
+	CHECK(panel->repository().isEmpty());
+	CHECK_FALSE(update->isEnabled());
+	panel->setRepository(repo.path());
+	CHECK(state->text().contains("update, deploy, report"));
+	CHECK(QSettings().value("games/sourcemods_mymod/modCode/folder").toString() == QDir::cleanPath(repo.path()));
+	window.showPage(MainWindow::Page::Project);
+	window.projectTabs()->setCurrentWidget(panel);
+	settle();
+	REQUIRE(update->isEnabled());
+
+	// Update mod: runs in the background, every step ticks off, the game is read again.
+	QSignalSpy finished(panel, &ModCodePanel::finished);
+	QSignalSpy updated(panel, &ModCodePanel::modUpdated);
+	QSignalSpy reloaded(&editor, &Editor::gameChanged);
+	QTest::mouseClick(update, Qt::LeftButton);
+	CHECK(panel->running());
+	CHECK_FALSE(update->isEnabled());
+	REQUIRE(waitDone());
+	REQUIRE(finished.count() == 1);
+	CHECK(finished.last().at(0).toBool());
+	CHECK(updated.count() == 1);
+	CHECK(reloaded.count() >= 1);
+	REQUIRE(editor.game());
+	CHECK(ranScripts.back() == updateScript);
+	CHECK(ranFor == f.mod);
+	CHECK(marks() == QStringList{"✓", "✓", "✓", "✓", "–", "✓", "✓"});   // VRAD skipped
+	CHECK(summary->text().contains("The mod is up to date"));
+	CHECK(summary->text().contains("Source SDK Base 2013 Singleplayer not found"));
+	CHECK(log->toPlainText().contains("All set."));
+	CHECK(update->isEnabled());
+	CHECK(panel->repository() == QDir::cleanPath(repo.path()));   // reading the game again keeps it
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		window.grab().save(QDir(shots).filePath("mod_code.png"));
+	}
+
+	// Visual Studio missing: the step it stopped at, the advice, and a line on the Overview.
+	test::writeText(updateScript, "mapbase-fidelity update -> mymod\n"
+	                              "\n"
+	                              "  FAILED   Visual Studio 2022 with 'Desktop development with C++' not found (Visual Studio Installer)\n");
+	exitCode = 1;
+	QTest::mouseClick(update, Qt::LeftButton);
+	REQUIRE(waitDone());
+	CHECK_FALSE(finished.last().at(0).toBool());
+	CHECK(updated.count() == 1);
+	CHECK(marks().front() == "✗");
+	CHECK(summary->text().contains("Visual Studio 2022 was not found"));
+	CHECK(summary->text().contains("Desktop development with C++"));
+	window.projectTabs()->setCurrentWidget(window.modPage());
+	settle();
+	auto* banner = window.modPage()->findChild<QFrame*>("modCodeBanner");
+	REQUIRE(banner);
+	CHECK(banner->isVisible());
+	CHECK(banner->findChild<QLabel*>("modCodeBannerText")->text().contains("failed"));
+	CHECK(banner->findChild<QPushButton*>("modCodeBannerUpdate")->isVisible());
+	QTest::mouseClick(banner->findChild<QPushButton*>("modCodeBannerShow"), Qt::LeftButton);
+	settle();
+	CHECK(window.projectTabs()->currentWidget() == panel);
+
+	// Cancel stops it (and what it started).
+	test::writeText(updateScript, success);
+	exitCode = 0;
+	slow = true;
+	REQUIRE(panel->start(ModCodeAction::Update));
+	QTest::qWait(150);
+	CHECK(panel->running());
+	QTest::mouseClick(panel->findChild<QPushButton*>("modCodeCancel"), Qt::LeftButton);
+	REQUIRE(waitDone());
+	CHECK_FALSE(finished.last().at(0).toBool());
+	CHECK(panel->lastRun().advice().find("stopped") != std::string::npos);
+	slow = false;
+
+	// After a pull: only when switched on, only for this checkout, only with new code.
+	const int runs = int(ranScripts.size());
+	panel->afterPull(repo.path(), true);
+	CHECK_FALSE(panel->running());
+	afterPull->click();
+	CHECK(afterPull->isChecked());
+	CHECK(QSettings().value("games/sourcemods_mymod/modCode/autoAfterPull").toBool());
+	panel->afterPull(repo.path(), false);
+	panel->afterPull(home.path(), true);
+	CHECK_FALSE(panel->running());
+	CHECK(int(ranScripts.size()) == runs);
+	panel->afterPull(repo.path(), true);
+	CHECK(panel->running());
+	REQUIRE(waitDone());
+	CHECK(finished.last().at(0).toBool());
+	CHECK(updated.count() == 2);
+
+	// Game files only: deploy.ps1, no steps of its own.
+	QTest::mouseClick(deploy, Qt::LeftButton);
+	REQUIRE(waitDone());
+	CHECK(ranScripts.back() == root / "fidelity" / "deploy.ps1");
+	CHECK(finished.last().at(0).toBool());
+	CHECK(updated.count() == 3);
+	CHECK(summary->text().contains("Game files installed"));
+	CHECK_FALSE(steps->isVisible());
+
+	// Source control's "Update mod" (shown for this checkout) runs the same thing here.
+	if (const QString gitProgram = SourceControlPanel::gitProgram(); !gitProgram.isEmpty()) {
+		QProcess git;
+		git.setWorkingDirectory(repo.path());
+		git.start(gitProgram, {"init", "-q"});
+		REQUIRE(git.waitForFinished(10000));
+		auto* sourceControl = window.findChild<SourceControlPanel*>("sourceControl");
+		REQUIRE(sourceControl);
+		window.projectTabs()->setCurrentWidget(sourceControl);
+		sourceControl->setRepository(repo.path());
+		for (int i = 0; i < 250 && sourceControl->busy(); ++i) QTest::qWait(20);
+		settle();
+		auto* scmUpdate = sourceControl->findChild<QPushButton*>("scmUpdate");
+		REQUIRE(scmUpdate);
+		CHECK(scmUpdate->isVisible());
+		QTest::mouseClick(scmUpdate, Qt::LeftButton);
+		CHECK(window.projectTabs()->currentWidget() == panel);
+		CHECK(panel->running());
+		REQUIRE(waitDone());
+		CHECK(finished.last().at(0).toBool());
+	}
 }
 
 namespace {
