@@ -30,6 +30,8 @@ class SourceControlPanel : public QWidget {
 
 public:
 	explicit SourceControlPanel(Editor* editor, QWidget* parent = nullptr);
+	/// Stops a git that still runs (its reply would reach a panel that is gone).
+	~SourceControlPanel() override;
 
 	/// Path of the git program, empty when none is installed.
 	[[nodiscard]] static QString gitProgram();

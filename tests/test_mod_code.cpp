@@ -63,7 +63,10 @@ TEST_CASE("mod code: found in the search roots, the folder named like the mod fi
 	fs::create_directories(github / "unrelated");
 	const auto roots = modCodeSearchRoots(dir / "home", {drive});
 	// The mod's name beats an earlier root with another checkout (case does not matter).
-	CHECK(findModCode("mymod", roots) == drive / "GitHub" / "MyMod");
+	// (Windows finds "mymod" directly - same folder, other spelling, so compare the folders.)
+	const auto named = findModCode("mymod", roots);
+	REQUIRE(named);
+	CHECK(fs::equivalent(*named, drive / "GitHub" / "MyMod"));
 	// Another name: the first checkout of any name.
 	CHECK(findModCode("othermod", roots) == github / "aaa-other-mod");
 	// A root that is itself the checkout.

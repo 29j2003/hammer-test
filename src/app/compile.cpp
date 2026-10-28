@@ -108,6 +108,14 @@ QStringList CompileRunner::stepNames() const {
 	return names;
 }
 
+CompileRunner::~CompileRunner() {
+	if (m_process) {
+		m_process->disconnect(this);
+		m_process->kill();
+		m_process->waitForFinished(2000);
+	}
+}
+
 void CompileRunner::start(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options) {
 	if (running()) {
 		return;

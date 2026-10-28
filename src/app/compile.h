@@ -45,6 +45,8 @@ class CompileRunner : public QObject {
 
 public:
 	using QObject::QObject;
+	/// Stops a tool that still runs (its output would reach a runner that is gone).
+	~CompileRunner() override;
 
 	/// Starts compiling a map / stops the running compile / whether one is running.
 	void start(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options);

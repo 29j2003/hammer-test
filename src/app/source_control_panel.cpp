@@ -412,6 +412,15 @@ void SourceControlPanel::refresh() {
 	});
 }
 
+SourceControlPanel::~SourceControlPanel() {
+	std::queue<Job>().swap(m_jobs);
+	if (m_process) {
+		m_process->disconnect(this);
+		m_process->kill();
+		m_process->waitForFinished(2000);
+	}
+}
+
 void SourceControlPanel::run(const QStringList& args, Done done, bool logged) {
 	m_jobs.push({args, std::move(done), logged});
 	if (!m_process) startNext();
