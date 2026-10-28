@@ -994,6 +994,14 @@ void MainWindow::createActions() {
 	auto* water = action(tr("Make water"), QKeySequence(), [this] { m_editor->makeWaterFromSelection(m_assets->materialNames()); });
 	water->setToolTip(tr("Top face water, the other faces nodraw; adds a water_lod_control and a cubemap above the water if missing"));
 	brushes->addAction(water);
+	auto* rope = action(tr("Make rope"), QKeySequence(), [this] { m_editor->makeRopeFromSelection(); });
+	rope->setObjectName("brushesMakeRope");
+	rope->setToolTip(tr("A rope hanging between the selected objects (two or more), drawn sagging in the views"));
+	brushes->addAction(rope);
+	auto* ladder = action(tr("Make ladder"), QKeySequence(), [this] { m_editor->makeLadderFromSelection(); });
+	ladder->setObjectName("brushesMakeLadder");
+	ladder->setToolTip(tr("The selected ladder brush or model becomes climbable (Half-Life 2): func_useableladder and dismount points"));
+	brushes->addAction(ladder);
 	brushes->addSeparator();
 	m_doorMenu = brushes->addMenu(tr("Make door"));
 	m_doorMenu->setObjectName("brushesMakeDoor");
