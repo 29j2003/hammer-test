@@ -185,6 +185,20 @@ Each view has a small menu in its top left corner, for example *3D · Lighting p
 A quick right click without moving opens the menu for the object under the cursor. Holding the right button to look
 around never opens it.
 
+### Show in … and Find in map
+
+Wherever an asset appears, its right-click menu leads to it:
+
+| Right-click on | Entries |
+|---|---|
+| a face or brush in a view | **Show in Asset Browser**, **Edit in Materials page**, **Find in map**, **Copy name** for each of its materials |
+| a prop or other entity in a view | **Show in Asset Browser** and **Show in Models page** for its model; **Show in Sounds page** for its sounds; **Show in Particles page** for its particle system; **Edit soundscape in Sounds page** for a soundscape |
+| a material, model, sound or particle field in Object Properties, the brush's material list | the same entries |
+| a material or model in the Asset Browser, the Materials page or the Models page | the other places, **Find in map**, **Copy name** |
+
+With several objects selected, each asset gets its own submenu. **Find in map** selects everything that uses the
+asset: every face with the material (in face mode), or every entity with the model, sound or particle system.
+
 ## The status bar
 
 At the bottom, from left to right:

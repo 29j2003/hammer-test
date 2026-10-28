@@ -378,6 +378,10 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 			QMenu menu;
 			menu.addAction(tr("Edit material ..."), this, [this, name] { emit editMaterialRequested(name); });
 			menu.addAction(tr("Copy name"), this, [name] { QApplication::clipboard()->setText(name); });
+			if (m_menuFiller) {
+				menu.addSeparator();
+				m_menuFiller(&menu, {AssetKind::Material, name.toStdString()}, m_pageMode ? AssetPlace::MaterialsPage : AssetPlace::AssetBrowser);
+			}
 			menu.exec(m_materialView->viewport()->mapToGlobal(pos));
 		});
 		v->addWidget(m_materialView, 1);
@@ -433,6 +437,19 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		addCopyShortcut(m_modelView, Qt::UserRole);      // Ctrl+C: the model's path
 		m_modelView->setModel(proxy);
 		v->addWidget(m_modelView, 1);
+		m_modelView->setContextMenuPolicy(Qt::CustomContextMenu);
+		connect(m_modelView, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+			const QModelIndex index = m_modelView->indexAt(pos);
+			if (!index.isValid()) return;
+			const QString path = index.data(Qt::UserRole).toString();
+			QMenu menu;
+			menu.addAction(tr("Copy path"), this, [path] { QApplication::clipboard()->setText(path); });
+			if (m_menuFiller) {
+				menu.addSeparator();
+				m_menuFiller(&menu, {AssetKind::Model, path.toStdString()}, AssetPlace::AssetBrowser);
+			}
+			menu.exec(m_modelView->viewport()->mapToGlobal(pos));
+		});
 		m_modelInfo = new QLabel(tr("No game loaded"));
 		m_modelInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 		m_modelInfo->setWordWrap(true);
@@ -529,6 +546,46 @@ void AssetBrowser::setPageMode(bool page) {
 	m_tabs->tabBar()->setVisible(!page);
 	updateRecent();   // the page has its own list of what was edited
 	if (page) showMaterials();
+}
+
+bool AssetBrowser::selectMaterial(const QString& name) {
+	const QString wanted = QString::fromStdString(normalizedMaterial(name.toStdString()));
+	const auto find = [&]() -> QModelIndex {
+		for (int row = 0; row < m_materialFilter->rowCount(); ++row) {
+			const QModelIndex index = m_materialFilter->index(row, 0);
+			if (index.data(Qt::UserRole).toString().compare(wanted, Qt::CaseInsensitive) == 0) return index;
+		}
+		return {};
+	};
+	m_materialSearch->clear();
+	QModelIndex index = find();
+	if (!index.isValid()) {
+		// Hidden by the category: show all.
+		m_materialCategory->setCurrentIndex(m_materialCategory->findData(int(MaterialFilter::Category::All)));
+		index = find();
+	}
+	if (!index.isValid()) return false;
+	showMaterials();
+	m_materialView->setCurrentIndex(index);
+	m_materialView->scrollTo(index, QAbstractItemView::PositionAtCenter);
+	return true;
+}
+
+bool AssetBrowser::selectModel(const QString& path) {
+	m_modelSearch->clear();
+	auto* model = m_modelView->model();
+	QString wanted = path;
+	wanted.replace('\\', '/');
+	for (int row = 0; row < model->rowCount(); ++row) {
+		const QModelIndex index = model->index(row, 0);
+		if (index.data(Qt::UserRole).toString().compare(wanted, Qt::CaseInsensitive) == 0) {
+			showModels();
+			m_modelView->setCurrentIndex(index);
+			m_modelView->scrollTo(index, QAbstractItemView::PositionAtCenter);
+			return true;
+		}
+	}
+	return false;
 }
 
 QString AssetBrowser::shownMaterial() const {

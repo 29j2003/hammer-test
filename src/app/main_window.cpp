@@ -75,6 +75,8 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
+#include <QClipboard>
 
 #include <QEnterEvent>
 #include <QMouseEvent>
@@ -509,6 +511,11 @@ void MainWindow::createDocks() {
 		m_sounds->reveal(name, SoundBrowser::SoundscapeEntry);
 	});
 	connect(m_sounds, &SoundBrowser::pageRequested, this, [this] { showPage(Page::Sounds); });
+	// One source for every "Show in ..." menu.
+	const AssetMenuFiller filler = [this](QMenu* menu, const AssetRef& asset, AssetPlace from) { fillAssetMenu(menu, asset, from); };
+	m_assets->setAssetMenuFiller(filler);
+	m_properties->setAssetMenuFiller(filler);
+	m_modelsPage->setAssetMenuFiller(filler);
 	connect(m_properties, &PropertiesPanel::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
@@ -1561,7 +1568,93 @@ void MainWindow::compile() {
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos) {
-	QMenu menu(this);
+	std::unique_ptr<QMenu> menu(buildContextMenu());
+	menu->exec(globalPos);
+}
+
+bool MainWindow::revealAsset(const AssetRef& asset, RevealIn where) {
+	const QString name = QString::fromStdString(asset.name);
+	switch (asset.kind) {
+	case AssetKind::Material:
+		if (where == RevealIn::Page) {
+			showPage(Page::Materials);
+			m_materialEditor->openMaterial(name);
+			m_assets->selectMaterial(name);   // the browser is on the page too
+			return true;
+		}
+		if (currentPage() != Page::Map) showPage(Page::Map);
+		raiseDock("Asset Browser");
+		return m_assets->selectMaterial(name);
+	case AssetKind::Model:
+		if (where == RevealIn::Page) {
+			showPage(Page::Models);
+			m_modelsPage->selectModel(name);
+			return m_modelsPage->currentModel().compare(name, Qt::CaseInsensitive) == 0;
+		}
+		if (currentPage() != Page::Map) showPage(Page::Map);
+		raiseDock("Asset Browser");
+		return m_assets->selectModel(name);
+	case AssetKind::Sound:
+		showPage(Page::Sounds);
+		return m_sounds->reveal(name) != nullptr;
+	case AssetKind::Soundscape:
+		showPage(Page::Sounds);
+		return m_sounds->reveal(name, SoundBrowser::SoundscapeEntry) != nullptr;
+	case AssetKind::Particle:
+		showPage(Page::Particles);
+		return m_particles->selectSystem(name);
+	}
+	return false;
+}
+
+int MainWindow::findInMap(const AssetRef& asset) {
+	Selection found = objectsUsing(m_editor->doc(), asset, m_editor->entities());
+	if (currentPage() != Page::Map) showPage(Page::Map);
+	// Faces of a material are picked in face mode; decals and overlays naming it in object mode.
+	if (!found.faces.empty()) {
+		m_editor->setSelectMode(Editor::SelectMode::Face);
+		found.entities.clear();
+	} else if (!found.entities.empty()) {
+		m_editor->setSelectMode(Editor::SelectMode::Object);
+	}
+	const int count = int(found.faces.size() + found.entities.size());
+	m_editor->setSelection(std::move(found));
+	emit m_editor->message(count ? tr("%n object(s) use %1", nullptr, count).arg(QString::fromStdString(asset.name))
+	                             : tr("Nothing in the map uses %1").arg(QString::fromStdString(asset.name)));
+	return count;
+}
+
+void MainWindow::fillAssetMenu(QMenu* menu, const AssetRef& asset, AssetPlace from) {
+	const auto add = [&](const QString& text, const char* objectName, std::function<void()> run) {
+		auto* action = menu->addAction(text, this, std::move(run));
+		action->setObjectName(QString::fromLatin1(objectName));
+	};
+	switch (asset.kind) {
+	case AssetKind::Material:
+		if (from != AssetPlace::AssetBrowser) add(tr("Show in Asset Browser"), "showInAssetBrowser", [this, asset] { revealAsset(asset, RevealIn::AssetBrowser); });
+		if (from != AssetPlace::MaterialsPage) add(tr("Edit in Materials page"), "showInPage", [this, asset] { revealAsset(asset, RevealIn::Page); });
+		break;
+	case AssetKind::Model:
+		if (from != AssetPlace::AssetBrowser) add(tr("Show in Asset Browser"), "showInAssetBrowser", [this, asset] { revealAsset(asset, RevealIn::AssetBrowser); });
+		if (from != AssetPlace::ModelsPage) add(tr("Show in Models page"), "showInPage", [this, asset] { revealAsset(asset, RevealIn::Page); });
+		break;
+	case AssetKind::Sound:
+		add(tr("Show in Sounds page"), "showInPage", [this, asset] { revealAsset(asset, RevealIn::Page); });
+		break;
+	case AssetKind::Soundscape:
+		add(tr("Edit soundscape in Sounds page"), "showInPage", [this, asset] { revealAsset(asset, RevealIn::Page); });
+		break;
+	case AssetKind::Particle:
+		add(tr("Show in Particles page"), "showInPage", [this, asset] { revealAsset(asset, RevealIn::Page); });
+		break;
+	}
+	add(tr("Find in map"), "findInMap", [this, asset] { findInMap(asset); });
+	add(tr("Copy name"), "copyAssetName", [asset] { QApplication::clipboard()->setText(QString::fromStdString(asset.name)); });
+}
+
+QMenu* MainWindow::buildContextMenu() {
+	auto* menuPointer = new QMenu(this);
+	QMenu& menu = *menuPointer;
 	const auto& selection = m_editor->selection();
 	if (selection.empty()) {
 		menu.addAction(tr("Nothing selected - right click an object"))->setEnabled(false);
@@ -1590,7 +1683,30 @@ void MainWindow::showContextMenu(const QPoint& globalPos) {
 			               [this, size, segments] { m_editor->shapeSelectedEdges(edit::EdgeShape::Round, size, segments); });
 		}
 	}
-	menu.exec(globalPos);
+	// What the selection uses: each asset with its "Show in ..." entries.
+	const auto kindName = [](AssetKind kind) {
+		switch (kind) {
+		case AssetKind::Material: return tr("Material");
+		case AssetKind::Model: return tr("Model");
+		case AssetKind::Sound: return tr("Sound");
+		case AssetKind::Particle: return tr("Particle system");
+		case AssetKind::Soundscape: return tr("Soundscape");
+		}
+		return QString();
+	};
+	const auto assets = selectionAssets(m_editor->doc(), selection, m_editor->entities());
+	for (const auto& asset : assets) {
+		const QString title = tr("%1: %2").arg(kindName(asset.kind), QString::fromStdString(asset.name));
+		if (assets.size() == 1) {
+			menu.addSection(title);
+			fillAssetMenu(&menu, asset, AssetPlace::View);
+		} else {
+			auto* sub = menu.addMenu(title);
+			sub->setObjectName(QStringLiteral("asset:") + QString::fromStdString(asset.name));
+			fillAssetMenu(sub, asset, AssetPlace::View);
+		}
+	}
+	return menuPointer;
 }
 
 void MainWindow::updateStatusInfo() {

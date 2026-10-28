@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include "asset_menu.h"
+
 #include <QFutureWatcher>
 #include <QImage>
 #include <QPointer>
@@ -34,6 +36,7 @@ class QLabel;
 class QScrollArea;
 class QVBoxLayout;
 class QLineEdit;
+class QMenu;
 
 namespace sme::app {
 
@@ -50,6 +53,10 @@ public:
 
 	/// Rebuilds the panel from the current selection (deferred, so editors can finish their signal).
 	void scheduleRebuild();
+	/// Where the right-click menus of asset fields get their "Show in ..." entries from.
+	void setAssetMenuFiller(AssetMenuFiller filler) { m_menuFiller = std::move(filler); }
+	/// The right-click menu of a field naming an asset (for tests; the caller owns the menu).
+	[[nodiscard]] QMenu* assetFieldMenu(QLineEdit* field, AssetKind kind) const;
 
 signals:
 	/// "Edit material" on selected faces.
@@ -62,6 +69,9 @@ protected:
 	bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+	/// Gives a field or label naming an asset the "Show in ..." entries in its right-click menu.
+	void attachAssetMenu(QLineEdit* field, AssetKind kind);
+	void attachAssetMenu(QWidget* widget, const AssetRef& asset);
 	void rebuild();
 	void buildEntity(QVBoxLayout* layout, const std::vector<int>& entityIds);
 	/// Keyvalues tab: groups by defining FGD class, flags, other keys, position, add-key row.
@@ -108,6 +118,7 @@ private:
 	Editor* m_editor;
 	AssetBrowser* m_assets;
 	std::map<QString, std::pair<QStringListModel*, qsizetype>> m_sharedNames;   ///< kind -> model, name count
+	AssetMenuFiller m_menuFiller;
 	MaterialCache* m_materials;
 	QScrollArea* m_scroll;
 	QLineEdit* m_filter;

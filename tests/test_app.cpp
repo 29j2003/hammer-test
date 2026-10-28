@@ -57,6 +57,7 @@
 #include <QWheelEvent>
 
 #include <sme/audio.h>
+#include <sme/asset_refs.h>
 #include <sme/brush.h>
 #include <sme/displacement.h>
 #include <sme/entity_search.h>
@@ -71,6 +72,7 @@
 #include <sme/soundscape_area.h>
 
 #include <cmath>
+#include <memory>
 #include <cstdio>
 #include <functional>
 
@@ -3139,6 +3141,156 @@ TEST_CASE("models page: folders, search, 3D view with skins and body groups, pla
 	QApplication::sendEvent(mapButton, &enter);
 	CHECK(window.currentPage() == MainWindow::Page::Map);
 	CHECK(enter.isAccepted());
+}
+
+TEST_CASE("show in ...: right-click menus lead to the asset in the browsers and pages, find in map") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QSignalSpy indexed(window.assets(), &AssetBrowser::materialsIndexed);
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	REQUIRE((indexed.count() > 0 || indexed.wait(10000)));
+	settle();
+
+	const auto action = [](QMenu* menu, const QString& name) -> QAction* {
+		for (auto* a : menu->findChildren<QAction*>()) {
+			if (a->objectName() == name) return a;
+		}
+		return nullptr;
+	};
+
+	// A face of the brick wall: its material in the Asset Browser, then everything that uses it.
+	FaceRef brick;
+	for (const auto& solid : editor.doc().world.solids) {
+		for (const auto& side : solid.sides) {
+			if (normalizedMaterial(side.material) == "demo/brickwall001" && brick.sideId == 0) brick = {{0, solid.id}, side.id};
+		}
+	}
+	REQUIRE(brick.sideId != 0);
+	editor.setSelectMode(Editor::SelectMode::Face);
+	Selection faceSelection;
+	faceSelection.faces.push_back(brick);
+	editor.setSelection(faceSelection);
+	settle();
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		QAction* show = action(menu.get(), "showInAssetBrowser");
+		REQUIRE(show);
+		CHECK(action(menu.get(), "showInPage"));
+		CHECK(action(menu.get(), "findInMap"));
+		show->trigger();
+		settle();
+		CHECK(window.currentPage() == MainWindow::Page::Map);
+		auto* list = window.assets()->findChild<QListView*>("materialList");
+		REQUIRE(list);
+		CHECK(list->currentIndex().data(Qt::UserRole).toString().compare("demo/brickwall001", Qt::CaseInsensitive) == 0);
+		CHECK(list->isVisible());
+	}
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		QAction* find = action(menu.get(), "findInMap");
+		REQUIRE(find);
+		find->trigger();
+		settle();
+		const auto expected = objectsUsing(editor.doc(), {AssetKind::Material, "demo/brickwall001"}, editor.entities());
+		CHECK(editor.selection().faces.size() == expected.faces.size());
+		CHECK(editor.selection().faces.size() > 1);
+		CHECK(editor.selectMode() == Editor::SelectMode::Face);
+	}
+	{
+		// The face's material field in Object Properties has the same entries.
+		editor.setSelection(faceSelection);
+		settle();
+		auto* field = window.findChild<QLineEdit*>("faceMaterial");
+		REQUIRE(field);
+		std::unique_ptr<QMenu> menu(window.findChild<PropertiesPanel*>()->assetFieldMenu(field, AssetKind::Material));
+		CHECK(action(menu.get(), "showInAssetBrowser"));
+		QAction* edit = action(menu.get(), "showInPage");
+		REQUIRE(edit);
+		edit->trigger();
+		settle();
+		CHECK(window.currentPage() == MainWindow::Page::Materials);
+		CHECK(window.materialEditor()->materialName().compare("demo/brickwall001", Qt::CaseInsensitive) == 0);
+		window.showPage(MainWindow::Page::Map);
+		settle();
+	}
+
+	// A prop: its model on the Models page (and no Asset Browser entry where it already is).
+	editor.setSelectMode(Editor::SelectMode::Object);
+	const auto entityOf = [&](const std::string& cls) {
+		for (const auto& entity : editor.doc().entities) {
+			if (entity.classname() == cls) return entity.id;
+		}
+		return 0;
+	};
+	const int prop = entityOf("prop_static");
+	REQUIRE(prop);
+	const std::string model = editor.doc().findEntity(prop)->get("model");
+	Selection propSelection;
+	propSelection.entities.push_back(prop);
+	editor.setSelection(propSelection);
+	settle();
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		QAction* show = action(menu.get(), "showInPage");
+		REQUIRE(show);
+		CHECK(show->text().contains("Models page"));
+		show->trigger();
+		settle();
+		CHECK(window.currentPage() == MainWindow::Page::Models);
+		CHECK(window.modelsPage()->currentModel().compare(QString::fromStdString(model), Qt::CaseInsensitive) == 0);
+		window.showPage(MainWindow::Page::Map);
+		settle();
+		CHECK(window.revealAsset({AssetKind::Model, model}, MainWindow::RevealIn::AssetBrowser));
+		CHECK(window.assets()->modelView()->currentIndex().data(Qt::UserRole).toString().compare(QString::fromStdString(model), Qt::CaseInsensitive) == 0);
+		QMenu fromBrowser;
+		window.fillAssetMenu(&fromBrowser, {AssetKind::Model, model}, AssetPlace::AssetBrowser);
+		CHECK_FALSE(action(&fromBrowser, "showInAssetBrowser"));
+		CHECK(action(&fromBrowser, "showInPage"));
+		QMenu fromPage;
+		window.fillAssetMenu(&fromPage, {AssetKind::Model, model}, AssetPlace::ModelsPage);
+		CHECK(action(&fromPage, "showInAssetBrowser"));
+		CHECK_FALSE(action(&fromPage, "showInPage"));
+		// Find in map: every prop with this model.
+		CHECK(window.findInMap({AssetKind::Model, model}) == int(objectsUsing(editor.doc(), {AssetKind::Model, model}, editor.entities()).entities.size()));
+		CHECK(editor.selection().entities.size() >= 2);
+	}
+
+	// A sound entity: its sound on the Sounds page.
+	const int ambient = entityOf("ambient_generic");
+	REQUIRE(ambient);
+	Selection soundSelection;
+	soundSelection.entities.push_back(ambient);
+	editor.setSelection(soundSelection);
+	settle();
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		QAction* show = action(menu.get(), "showInPage");
+		REQUIRE(show);
+		CHECK(show->text().contains("Sounds page"));
+		show->trigger();
+		settle();
+		CHECK(window.currentPage() == MainWindow::Page::Sounds);
+		REQUIRE(window.sounds()->tree()->currentItem());
+		CHECK(window.sounds()->tree()->currentItem()->text(0).contains("Demo.Wind"));
+		window.showPage(MainWindow::Page::Map);
+		settle();
+	}
 }
 
 TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's files") {
