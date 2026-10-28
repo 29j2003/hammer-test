@@ -12,6 +12,9 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDrag>
+#include <QIcon>
+#include <QPainterPath>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -66,8 +69,31 @@ QString categoryText(const MaterialCategory& c) {
 	return parts.join(", ");
 }
 
+/// Icon grid whose drags show a card with the preview and name instead of the bare tile.
+class AssetIconView : public QListView {
+public:
+	using QListView::QListView;
+
+protected:
+	void startDrag(Qt::DropActions actions) override {
+		const QModelIndexList indexes = selectedIndexes();
+		if (indexes.isEmpty()) return;
+		QMimeData* mime = model()->mimeData(indexes);
+		if (!mime) return;
+		const QModelIndex& index = indexes.first();
+		const QVariant decoration = index.data(Qt::DecorationRole);
+		QPixmap preview = decoration.value<QPixmap>();
+		if (preview.isNull()) preview = decoration.value<QIcon>().pixmap(QSize(THUMB, THUMB), devicePixelRatioF());
+		auto* drag = new QDrag(this);
+		drag->setMimeData(mime);
+		drag->setPixmap(assetDragCard(preview, index.data(Qt::DisplayRole).toString(), index.data(Qt::ToolTipRole).toString(), devicePixelRatioF()));
+		drag->setHotSpot(QPoint(-14, -14));   // the card sits beside the cursor, the drop preview stays visible
+		drag->exec(actions, Qt::CopyAction);
+	}
+};
+
 QListView* makeIconView(QWidget* parent) {
-	auto* view = new QListView(parent);
+	auto* view = new AssetIconView(parent);
 	view->setViewMode(QListView::IconMode);
 	view->setIconSize(QSize(THUMB, THUMB));
 	view->setGridSize(QSize(THUMB + 18, THUMB + 34));
@@ -84,6 +110,41 @@ QListView* makeIconView(QWidget* parent) {
 }
 
 } // namespace
+
+QPixmap assetDragCard(const QPixmap& preview, const QString& title, const QString& subtitle, qreal devicePixelRatio) {
+	const QSize size(260, 72);
+	QPixmap card(size * devicePixelRatio);
+	card.setDevicePixelRatio(devicePixelRatio);
+	card.fill(Qt::transparent);
+	QPainter painter(&card);
+	painter.setRenderHint(QPainter::Antialiasing);
+	painter.setRenderHint(QPainter::SmoothPixmapTransform);
+	painter.setPen(QPen(QColor(255, 160, 40, 210), 1.5));
+	painter.setBrush(QColor(28, 30, 34, 225));
+	painter.drawRoundedRect(QRectF(0.75, 0.75, size.width() - 1.5, size.height() - 1.5), 9, 9);
+	const QRect thumb(8, 8, 56, 56);
+	if (!preview.isNull()) {
+		QPainterPath clip;
+		clip.addRoundedRect(thumb, 6, 6);
+		painter.save();
+		painter.setClipPath(clip);
+		painter.drawPixmap(thumb, preview.scaled(thumb.size() * devicePixelRatio, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+		painter.restore();
+	}
+	const int textLeft = thumb.right() + 10;
+	const int textWidth = size.width() - textLeft - 10;
+	QFont font = painter.font();
+	font.setBold(true);
+	painter.setFont(font);
+	painter.setPen(QColor(240, 240, 245));
+	painter.drawText(QRect(textLeft, 12, textWidth, 22), Qt::AlignLeft | Qt::AlignVCenter, QFontMetrics(font).elidedText(title, Qt::ElideRight, textWidth));
+	font.setBold(false);
+	font.setPointSizeF(font.pointSizeF() * 0.85);
+	painter.setFont(font);
+	painter.setPen(QColor(165, 170, 180));
+	painter.drawText(QRect(textLeft, 36, textWidth, 20), Qt::AlignLeft | Qt::AlignVCenter, QFontMetrics(font).elidedText(subtitle, Qt::ElideMiddle, textWidth));
+	return card;
+}
 
 // --- Material list ------------------------------------------------------------------
 

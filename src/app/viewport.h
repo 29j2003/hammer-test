@@ -61,8 +61,11 @@ public:
 	void frameSelection();
 	/// "Show" section: switches for each kind of object (view filters).
 	static void fillShowMenu(QMenu* menu, Editor* editor);
-	/// Entity tool preview box under the mouse (none while nothing is armed or the mouse is away).
+	/// Preview box under the mouse: the entity tool's armed class, or a model being dragged in from
+	/// the browser (none while nothing is armed or the mouse is away).
 	[[nodiscard]] std::optional<Bounds> ghostBox() const { return m_ghost ? std::optional<Bounds>(m_ghost->box) : std::nullopt; }
+	/// Model of that preview ("" for a plain box).
+	[[nodiscard]] QString ghostModel() const { return m_ghost ? m_ghost->model : QString(); }
 	/// Box around the drawn content of a func_instance (empty before it was drawn or without content).
 	[[nodiscard]] Bounds instanceBounds(int entityId) const { return m_renderer.instanceBounds(entityId); }
 	/// Where pasted objects with this box go: their center under the mouse (resting on the
@@ -120,11 +123,16 @@ private:
 	void placeEntity(const QPointF& pos);
 	/// Moves the entity tool's preview to the mouse (or hides it).
 	void updateGhost(const QPointF* pos);
-	/// Places `classname` on the surface under the cursor (with extra keys, e.g. a dropped model).
+	/// A model dragged in from the browser: where it would land under `pos` (nullptr: hide it).
+	void updateDropGhost(const QPointF* pos);
 	/// Where an object with box `local` (relative to its origin) comes to rest under `pos`: on the
-	/// surface under the cursor in 3D, on the grid in 2D views.
+	/// surface under the cursor in 3D, on the grid in 2D views. The box is centred on the cursor,
+	/// so models whose origin lies far from their geometry still land where the mouse is.
 	[[nodiscard]] std::optional<Vec3> restingPlace(const QPointF& pos, const Bounds& local) const;
-	void placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys = {});
+	/// Places `classname` on the surface under the cursor (with extra keys, e.g. a dropped model).
+	/// `at` places it there instead (the origin a drop preview showed).
+	void placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys = {},
+	                   std::optional<Vec3> at = std::nullopt);
 	void beginGizmoDrag(Handle handle, const QPointF& pos);
 	void updateGizmoDrag(const QPointF& pos);
 	void finishGizmoDrag(bool clone);
@@ -231,6 +239,8 @@ private:
 		Bounds box;
 		QString model;
 		QMatrix4x4 transform;
+		Vec3 origin;
+		bool dropped = false;   ///< A model dragged in from the browser (not the entity tool)
 	};
 	std::optional<Ghost> m_ghost;
 	std::vector<SculptFace> m_sculptFaces;          ///< The displacements of the running stroke
@@ -238,6 +248,11 @@ private:
 	Vec3 m_lastDab;
 	Vec3 m_flattenPoint;                           ///< Flatten: where the stroke began
 	unsigned m_sculptSeed = 1;
+	/// Model dragged over this view from the browser, and the turn it gets (random yaw: chosen
+	/// once per drag, so the preview shows the turn the drop uses).
+	QString m_dropModel;
+	QPointF m_dropPos;
+	int m_dropYaw = 0;
 	bool m_lookDirty = true;
 	Qt::KeyboardModifiers m_pressModifiers;
 	QSet<int> m_keys;

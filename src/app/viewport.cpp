@@ -175,9 +175,12 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		m_needsRebuild = true;
 		requestFrame();
 	});
-	connect(editor->models(), &ModelCache::modelReady, this, [this] {
+	connect(editor->models(), &ModelCache::modelReady, this, [this](const QString& path) {
 		// Several models finish between two frames: the next paint rebuilds once.
 		m_needsRebuild = true;
+		if (path == m_dropModel) {
+			updateDropGhost(&m_dropPos);   // now with the model's real size
+		}
 		requestFrame();
 	});
 	connect(materials, &MaterialCache::materialReady, this, [this](const QString& name) {
@@ -516,9 +519,9 @@ void Viewport::paintGL() {
 	}
 
 	// Tool overlays.
-	if (m_ghost && m_editor->tool() == Editor::Tool::Entity) {
+	if (m_ghost && (m_ghost->dropped || m_editor->tool() == Editor::Tool::Entity)) {
 		if (!m_ghost->model.isEmpty()) {
-			m_renderer.drawGhostModel(params, m_ghost->model, m_ghost->transform);
+			m_renderer.drawGhostModel(params, m_ghost->model, m_ghost->transform, m_ghost->dropped ? 0.75f : 1.f);
 		}
 		boxLines(lines, m_ghost->box, {0.3f, 1.0f, 0.5f, 0.9f});
 	}
@@ -907,6 +910,13 @@ void Viewport::drawOverlay() {
 		                                                  .arg(m_dragDelta.y)
 		                                                  .arg(m_dragDelta.z)
 		                                                  .arg((m_pressModifiers & Qt::ShiftModifier) ? tr("  (copy)") : QString()));
+	}
+	if (m_ghost && m_ghost->dropped) {
+		// Name and size of the dragged model next to the cursor.
+		const Vec3 size = m_ghost->box.size();
+		const QString loading = m_editor->models()->get(m_ghost->model) ? QString() : tr("  (loading ...)");
+		p.drawText(QRectF(m_dropPos + QPointF(18, 14), QSizeF(420, 20)), QColor(140, 255, 170),
+		           tr("%1   %2 x %3 x %4%5").arg(m_ghost->model.section('/', -1)).arg(std::lround(size.x)).arg(std::lround(size.y)).arg(std::lround(size.z)).arg(loading));
 	}
 	if (m_editor->doc().solidCount() == 0 && m_editor->doc().entities.empty() && !m_camera.is2D()) {
 		p.drawText(QRectF(rect().adjusted(0, 0, 0, -40)), QColor(170, 175, 185), Qt::AlignCenter,
@@ -1663,6 +1673,39 @@ void Viewport::updateGhost(const QPointF* pos) {
 	}
 }
 
+void Viewport::updateDropGhost(const QPointF* pos) {
+	std::optional<Ghost> ghost;
+	if (pos && !m_dropModel.isEmpty()) {
+		m_dropPos = *pos;
+		m_editor->models()->get(m_dropModel);   // starts loading; modelReady shows the real size
+		Entity probe;
+		probe.set("classname", "prop_static");
+		probe.set("model", m_dropModel.toStdString());
+		if (m_dropYaw != 0) {
+			probe.set("angles", "0 " + std::to_string(m_dropYaw) + " 0");
+		}
+		probe.setOrigin({0, 0, 0});
+		const Bounds local = edit::entityBounds(probe, m_editor->entities());
+		if (const auto origin = restingPlace(*pos, local)) {
+			Ghost g;
+			g.box.add(local.min + *origin);
+			g.box.add(local.max + *origin);
+			g.model = m_dropModel;
+			g.origin = *origin;
+			g.dropped = true;
+			g.transform.translate(float(origin->x), float(origin->y), float(origin->z));
+			g.transform.rotate(float(m_dropYaw), 0, 0, 1);
+			ghost = std::move(g);
+		}
+	}
+	// Painted again on every move while it is shown: the name next to the cursor follows the mouse.
+	const bool repaint = ghost.has_value() || m_ghost.has_value();
+	m_ghost = std::move(ghost);
+	if (repaint) {
+		requestFrame();
+	}
+}
+
 void Viewport::leaveEvent(QEvent* event) {
 	updateGhost(nullptr);
 	QOpenGLWidget::leaveEvent(event);
@@ -1678,10 +1721,14 @@ void Viewport::placeEntity(const QPointF& pos) {
 
 std::optional<Vec3> Viewport::restingPlace(const QPointF& pos, const Bounds& local) const {
 	const double grid = m_editor->snapGrid();
+	// The box's middle goes under the cursor, not the origin: some models (map parts, skybox
+	// pieces) have their origin thousands of units away from what they show.
+	const Vec3 middle = local.empty() ? Vec3{} : local.center();
 	Vec3 origin;
 	if (m_camera.is2D()) {
-		origin = snap(viewPlanePoint(pos), grid);
-		origin[viewAxis()] = viewAxis() == 2 ? -local.min.z : 0;
+		const int axis = viewAxis();
+		origin = snap(viewPlanePoint(pos) - middle, grid);
+		origin[axis] = axis == 2 ? -local.min.z : snap(-middle[axis], grid);
 		return origin;
 	}
 	const Ray ray = rayAt(pos);
@@ -1701,7 +1748,7 @@ std::optional<Vec3> Viewport::restingPlace(const QPointF& pos, const Bounds& loc
 			axis = i;
 		}
 	}
-	origin = snap(point, grid);
+	origin = snap(point - middle, grid);
 	// Push the box out of the surface so it rests on it.
 	origin[axis] = point[axis] - (normal[axis] > 0 ? local.min[axis] : local.max[axis]);
 	return origin;
@@ -1718,7 +1765,8 @@ std::optional<Vec3> Viewport::pasteCenter(const Bounds& box) const {
 	return restingPlace(pos, local);
 }
 
-void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys) {
+void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, const std::vector<std::pair<std::string, std::string>>& keys,
+                             std::optional<Vec3> at) {
 	const auto* catalog = m_editor->entities();
 	const EntityClass* definition = catalog ? catalog->find(classname) : nullptr;
 	if (definition && definition->isSolid()) {
@@ -1733,7 +1781,7 @@ void Viewport::placeEntityAt(const QPointF& pos, const std::string& classname, c
 	}
 	probe.setOrigin({0, 0, 0});
 	const Bounds local = edit::entityBounds(probe, catalog);
-	const auto rest = restingPlace(pos, local);
+	const auto rest = at ? at : restingPlace(pos, local);
 	if (!rest) {
 		return;
 	}
@@ -2322,6 +2370,13 @@ void Viewport::dragEnterEvent(QDragEnterEvent* event) {
 	for (const char* format : {"application/x-sme-material", "application/x-sme-entity", "application/x-sme-model", "application/x-sme-sound", "application/x-sme-particle"}) {
 		if (event->mimeData()->hasFormat(format)) {
 			event->acceptProposedAction();
+			if (event->mimeData()->hasFormat("application/x-sme-model")) {
+				// The model itself follows the mouse, standing where the drop puts it.
+				m_dropModel = QString::fromUtf8(event->mimeData()->data("application/x-sme-model"));
+				m_dropYaw = (!m_camera.is2D() && m_editor->randomYaw()) ? int(QRandomGenerator::global()->bounded(360)) : 0;
+				const QPointF pos = event->position();
+				updateDropGhost(&pos);
+			}
 			return;
 		}
 	}
@@ -2332,17 +2387,32 @@ void Viewport::dragMoveEvent(QDragMoveEvent* event) {
 		// Show which face the material would land on.
 		const auto hit = m_renderer.pick(rayAt(event->position()), true);
 		setHoverSide(hit ? hit->sideId : 0);
+	} else if (!m_dropModel.isEmpty()) {
+		const QPointF pos = event->position();
+		updateDropGhost(&pos);
 	}
 	event->acceptProposedAction();
 }
 
 void Viewport::dragLeaveEvent(QDragLeaveEvent* event) {
 	setHoverSide(0);
+	m_dropModel.clear();
+	updateDropGhost(nullptr);
 	QOpenGLWidget::dragLeaveEvent(event);
 }
 
 void Viewport::dropEvent(QDropEvent* event) {
 	setHoverSide(0);
+	// Where the preview stood (also when the drop comes without a move before it).
+	std::optional<Vec3> dropOrigin;
+	if (!m_dropModel.isEmpty()) {
+		const QPointF pos = event->position();
+		updateDropGhost(&pos);
+		if (m_ghost && m_ghost->dropped) dropOrigin = m_ghost->origin;
+	}
+	const int dropYaw = m_dropYaw;
+	m_dropModel.clear();
+	updateDropGhost(nullptr);
 	const auto* mime = event->mimeData();
 	if (mime->hasFormat("application/x-sme-entity")) {
 		m_editor->setCurrentEntityClass(QString::fromUtf8(mime->data("application/x-sme-entity")));
@@ -2352,7 +2422,11 @@ void Viewport::dropEvent(QDropEvent* event) {
 	}
 	if (mime->hasFormat("application/x-sme-model")) {
 		// A model becomes a prop_static standing on the surface (change the class in Object Properties).
-		placeEntityAt(event->position(), "prop_static", {{"model", QString::fromUtf8(mime->data("application/x-sme-model")).toStdString()}});
+		std::vector<std::pair<std::string, std::string>> keys{{"model", QString::fromUtf8(mime->data("application/x-sme-model")).toStdString()}};
+		if (dropYaw != 0 || (!m_camera.is2D() && m_editor->randomYaw())) {
+			keys.emplace_back("angles", "0 " + std::to_string(dropYaw) + " 0");   // the turn the preview showed
+		}
+		placeEntityAt(event->position(), "prop_static", keys, dropOrigin);
 		event->acceptProposedAction();
 		return;
 	}

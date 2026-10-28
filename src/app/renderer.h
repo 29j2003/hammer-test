@@ -111,8 +111,9 @@ public:
 	/// Selected objects drawn with an extra transform (move/rotate preview); `brushes` false
 	/// leaves out selected brushes (they come from setPreviewSolids instead).
 	void drawPreview(const Params& params, const QMatrix4x4& model, bool brushes = true);
-	/// A model drawn tinted where it would be placed (entity tool preview).
-	void drawGhostModel(const Params& params, const QString& path, const QMatrix4x4& transform);
+	/// A model drawn tinted where it would be placed (entity tool preview, a model dragged in);
+	/// `opacity` below 1 lets the map show through.
+	void drawGhostModel(const Params& params, const QString& path, const QMatrix4x4& transform, float opacity = 1.f);
 	/// Brushes drawn exactly as they would become (scaling, new shapes, clipping); empty clears.
 	void setPreviewSolids(const std::vector<Solid>& solids);
 	void drawPreviewSolids(const Params& params);

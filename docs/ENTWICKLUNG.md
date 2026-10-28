@@ -250,7 +250,11 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   `transformSelection` (Teile mit `commitMerged` zu einem Undo-Schritt „Transform“). Werkzeug-Panel: `ToolPanel::showKeys`
   (Zeilen mit `action:<Name>` zeigen das aktuelle Kürzel der Aktion).
   Entity-Werkzeug: `Viewport::updateGhost` zeigt die scharfe Klasse unter der Maus (Box + Modell über
-  `SceneRenderer::drawGhostModel`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
+  `SceneRenderer::drawGhostModel`). Ein aus dem Browser gezogenes Modell: `updateDropGhost` (Drag-Events, Modell
+  halbdurchsichtig, Name + Größe im Overlay, Drehung bei Random yaw einmal je Ziehen); `dropEvent` setzt das
+  `prop_static` genau auf `Ghost::origin`. `restingPlace` legt die Mitte der Box unter den Cursor (Modelle, deren
+  Ursprung weit von der Geometrie liegt, z. B. Teile der Citadel). Das Bild am Mauszeiger beim Ziehen:
+  `assetDragCard` (Karte mit Vorschau, Name, Pfad; `AssetIconView::startDrag`). Auswahl-Werkzeug: `resizeHandles()` – Größen-Quadrate wie beim Skalieren, sobald
   Brushes ausgewählt sind; getroffen wird das nächste, Quadrate auf abgewandten Seiten verlieren Gleichstand.
   Namen kopieren/einfügen: `copy_paste` (`addCopyShortcut`, `onStandardKey` – Item-Views
   verschlucken Strg+C/V sonst; `parseKeyValueLines` für Wiki-Text).
