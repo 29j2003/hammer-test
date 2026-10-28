@@ -797,7 +797,8 @@ TEST_CASE("material editing keeps the rest of the VMT") {
 
 	// Proxies: the liquid shader's proxy is added next to the others and taken away again.
 	const auto liquid = setMaterialProxy(edited, "FidelityLiquid", true);
-	const auto proxies = parseKeyValues(liquid).children.back().find("Proxies");
+	const KvNode liquidRoot = parseKeyValues(liquid);   // keeps the tree alive for the pointer below
+	const auto* proxies = liquidRoot.children.back().find("Proxies");
 	REQUIRE(proxies);
 	CHECK(proxies->children.size() == 2);
 	CHECK(proxies->find("FidelityLiquid"));
