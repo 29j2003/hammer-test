@@ -475,12 +475,18 @@ void main() {
 }
 )";
 
+// Pixel for pixel (texelFetch): with a fractional display scale (125 %, 150 %) a sampled texture
+// one pixel off the view's size dropped single rows, cutting the bottoms off letters.
 const char* OVERLAY_FS = R"(#version 330 core
 in vec2 v_uv;
 uniform sampler2D u_image;
 out vec4 fragColor;
 void main() {
-	fragColor = texture(u_image, v_uv);
+	ivec2 size = textureSize(u_image, 0);
+	ivec2 pixel = ivec2(gl_FragCoord.xy);
+	pixel.y = size.y - 1 - pixel.y;
+	if (pixel.x >= size.x || pixel.y < 0) discard;
+	fragColor = texelFetch(u_image, pixel, 0);
 }
 )";
 
