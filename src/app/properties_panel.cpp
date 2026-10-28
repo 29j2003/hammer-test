@@ -13,6 +13,8 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCompleter>
+#include <QListView>
+#include <QStringListModel>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -289,6 +291,17 @@ QStringList PropertiesPanel::sequencesFor(const Entity& entity) const {
 	return out;
 }
 
+QAbstractItemModel* PropertiesPanel::sharedNames(const QString& kind, const QStringList& names) {
+	auto& [model, count] = m_sharedNames[kind];
+	if (!model) model = new QStringListModel(this);
+	// The lists only change when a game is (re)indexed; the count tells that cheaply.
+	if (count != names.size() || (model->rowCount() > 0 && model->index(0).data().toString() != names.value(0))) {
+		model->setStringList(names);
+		count = names.size();
+	}
+	return model;
+}
+
 void PropertiesPanel::rebuild() {
 	m_defaultHelp.clear();
 	auto* content = new QWidget;
@@ -396,6 +409,7 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 		combo->setEditable(true);
 		combo->setInsertPolicy(QComboBox::NoInsert);
 		QStringList items;
+		QAbstractItemModel* shared = nullptr;   // big game-wide lists: one model for every field
 		if (isTarget) {
 			items = targetNames();
 			if (type == "target_destination") {
@@ -406,14 +420,23 @@ QWidget* PropertiesPanel::makeEditor(const EntityProperty& property, const std::
 				items = sequencesFor(*entity);
 			}
 		} else if (isSound) {
-			items = m_assets->soundNames();
+			shared = sharedNames(QStringLiteral("sound"), m_assets->soundNames());
 		} else if (isModel) {
-			items = m_assets->modelNames();
+			shared = sharedNames(QStringLiteral("model"), m_assets->modelNames());
 		} else if (isParticle) {
-			items = m_assets->particleNames();
+			shared = sharedNames(QStringLiteral("particle"), m_assets->particleNames());
 		}
-		combo->addItems(items);
-		auto* completer = new QCompleter(items, combo);
+		// Never measure every name for the box's width (that alone took seconds with all of
+		// HL2's models); the popup lists them with one row height.
+		combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		combo->setMinimumContentsLength(12);
+		if (auto* list = qobject_cast<QListView*>(combo->view())) list->setUniformItemSizes(true);
+		if (shared) {
+			combo->setModel(shared);
+		} else {
+			combo->addItems(items);
+		}
+		auto* completer = shared ? new QCompleter(shared, combo) : new QCompleter(items, combo);
 		completer->setCaseSensitivity(Qt::CaseInsensitive);
 		completer->setFilterMode(Qt::MatchContains);
 		combo->setCompleter(completer);

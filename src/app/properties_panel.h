@@ -15,6 +15,11 @@
 #include <QPointer>
 #include <QWidget>
 
+class QAbstractItemModel;
+class QStringListModel;
+
+#include <map>
+
 #include <functional>
 #include <set>
 #include <utility>
@@ -90,11 +95,15 @@ private:
 	void pasteKeys(const std::vector<int>& ids, const std::vector<std::pair<QString, QString>>& keys);
 
 	[[nodiscard]] QStringList targetNames() const;
+	/// One list model per kind of name (models, sounds, particles) shared by every field that
+	/// offers them: tens of thousands of names are copied once per game, not on every click.
+	QAbstractItemModel* sharedNames(const QString& kind, const QStringList& names);
 	[[nodiscard]] QString modelFor(const Entity& entity) const;
 	[[nodiscard]] QStringList sequencesFor(const Entity& entity) const;
 
 	Editor* m_editor;
 	AssetBrowser* m_assets;
+	std::map<QString, std::pair<QStringListModel*, qsizetype>> m_sharedNames;   ///< kind -> model, name count
 	MaterialCache* m_materials;
 	QScrollArea* m_scroll;
 	QLineEdit* m_filter;

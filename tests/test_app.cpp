@@ -2205,6 +2205,37 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		CHECK(frames >= 3);
 	}
 
+	{
+		// Selecting a prop is quick: its model field shares one list of all models (copying and
+		// measuring tens of thousands of names on every click took seconds).
+		auto [place, propId] = edit::placeEntity(editor.doc(), "prop_static", {0, 0, 0}, editor.entities()->find("prop_static"),
+		                                         {{"model", "models/props_demo/crate01.mdl"}});
+		editor.commit(std::move(place));
+		const auto modelBox = [&]() -> QComboBox* {
+			for (auto* combo : window.properties()->findChildren<QComboBox*>()) {
+				if (combo->isEditable() && combo->currentText() == "models/props_demo/crate01.mdl") return combo;
+			}
+			return nullptr;
+		};
+		Selection one;
+		one.entities.push_back(propId);
+		editor.setSelection(one);
+		settle();
+		auto* first = modelBox();
+		REQUIRE(first);
+		CHECK(first->model()->rowCount() == window.assets()->modelNames().size());
+		CHECK(first->sizeAdjustPolicy() == QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		const QAbstractItemModel* shared = first->model();
+		editor.clearSelection();
+		settle();
+		editor.setSelection(one);
+		settle();
+		REQUIRE(modelBox());
+		CHECK(modelBox()->model() == shared);
+		editor.undo();
+		settle();
+	}
+
 	// Hide tools: one action hides triggers and tool brushes and brings them back.
 	auto* hideTools = window.findChild<QAction*>("hideTools");
 	REQUIRE(hideTools);
