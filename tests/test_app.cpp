@@ -2879,12 +2879,15 @@ TEST_CASE("update check: release information and the version button") {
 	const QByteArray json = R"({"tag_name": "v9.1.0", "html_url": "https://github.com/29j2003/hammer-test/releases/tag/v9.1.0",
 		"body": "New: things", "draft": false, "prerelease": false, "assets": [
 		{"name": "Mapsmith-9.1.0-windows.zip", "browser_download_url": "https://example.invalid/a.zip"},
-		{"name": "Mapsmith-9.1.0-windows.zip.sha256", "browser_download_url": "https://example.invalid/a.zip.sha256"}]})";
+		{"name": "Mapsmith-9.1.0-windows.zip.sha256", "browser_download_url": "https://example.invalid/a.zip.sha256"},
+		{"name": "Mapsmith-Setup-9.1.0.exe", "browser_download_url": "https://example.invalid/setup.exe"},
+		{"name": "Mapsmith-Setup-9.1.0.exe.sha256", "browser_download_url": "https://example.invalid/setup.exe.sha256"}]})";
 	const auto release = parseRelease(json);
 	REQUIRE(release);
 	CHECK(release->version == "9.1.0");
 	CHECK(release->zipName == "Mapsmith-9.1.0-windows.zip");
-	CHECK(release->checksumUrl.toString().endsWith(".sha256"));
+	// The ZIP's checksum, not the installer's that the release lists after it (assets come in upload order).
+	CHECK(release->checksumUrl.toString() == "https://example.invalid/a.zip.sha256");
 	CHECK(release->notes == "New: things");
 	CHECK_FALSE(parseRelease(R"({"tag_name": "v9.2.0", "prerelease": true})"));
 	CHECK_FALSE(parseRelease("not json"));

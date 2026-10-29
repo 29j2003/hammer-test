@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -54,6 +55,10 @@ std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
 	release.version = tag.startsWith('v', Qt::CaseInsensitive) ? tag.mid(1) : tag;
 	release.notes = object.value("body").toString();
 	release.page = QUrl(object.value("html_url").toString());
+	// A release has a checksum file per package (the installer's and the ZIP's, in any order):
+	// the ZIP's own one, else a list of all (SHA256SUMS).
+	QHash<QString, QUrl> checksums;
+	QUrl sumsList;
 	for (const auto& value : object.value("assets").toArray()) {
 		const auto asset = value.toObject();
 		const QString name = asset.value("name").toString();
@@ -61,10 +66,13 @@ std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
 		if (name.endsWith("-windows.zip", Qt::CaseInsensitive)) {
 			release.zipName = name;
 			release.zipUrl = url;
-		} else if (name.endsWith(".sha256", Qt::CaseInsensitive) || name.compare("SHA256SUMS", Qt::CaseInsensitive) == 0) {
-			release.checksumUrl = url;
+		} else if (name.endsWith(".sha256", Qt::CaseInsensitive)) {
+			checksums.insert(name.toLower(), url);
+		} else if (name.compare("SHA256SUMS", Qt::CaseInsensitive) == 0) {
+			sumsList = url;
 		}
 	}
+	release.checksumUrl = checksums.value((release.zipName + ".sha256").toLower(), sumsList);
 	return release;
 }
 
