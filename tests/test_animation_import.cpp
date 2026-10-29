@@ -238,12 +238,23 @@ TEST_CASE("animation use: which entities play which animation, and putting one o
 	CHECK(helper.get("targetname") == "bob_pose");
 	CHECK(helper.get("m_iszEntity") == "bob");
 	CHECK(helper.get("m_iszIdle") == "cower");
-	CHECK(helper.get("spawnflags") == "352");
+	CHECK(helper.get("spawnflags") == "112");   // Start on Spawn, No Interruptions, Override AI: it idles from map start
 	CHECK(helper.origin().x == doctest::Approx(16));
 	// Again: the same helper is updated, no second one.
 	change = edit::useSequence(doc, npc, "sit");
 	CHECK(doc.entities.size() == before + 1);
 	CHECK(doc.entities.back().get("m_iszIdle") == "sit");
+	// A helper from before (no Start on Spawn, it never ran) is mended.
+	doc.entities.back().set("spawnflags", "352");
+	change = edit::useSequence(doc, npc, "cower");
+	CHECK(doc.entities.back().get("spawnflags") == "112");
+	// An NPC with a new model: model and helper in one step.
+	change = edit::useSequence(doc, npc, "cower_new", {}, "models/mapsmith/humans/bob.mdl");
+	CHECK(doc.findEntity(npc)->get("model") == "models/mapsmith/humans/bob.mdl");
+	CHECK(doc.entities.back().get("m_iszIdle") == "cower_new");
+	CHECK(change.entities.size() == 2);
+	REQUIRE(change.entities.front().before);
+	CHECK(change.entities.front().before->get("model") == "models/Humans/male.mdl");
 	// An NPC without a name gets one.
 	change = edit::useSequence(doc, unnamed, "idle");
 	CHECK(doc.findEntity(unnamed)->get("targetname") == "npc_zombie_" + std::to_string(unnamed));
@@ -252,6 +263,7 @@ TEST_CASE("animation use: which entities play which animation, and putting one o
 	CHECK(doc.findEntity(script)->get("m_iszPlay") == "wave_new");
 	CHECK(doc.findEntity(npc)->get("model") == "models/mapsmith/humans/male.mdl");
 	CHECK(change.entities.size() == 2);
+	CHECK(change.entities.back().before->get("model") == "models/mapsmith/humans/bob.mdl");
 	change = edit::useSequence(doc, prop, "wave_new", {}, "models/mapsmith/humans/male.mdl");
 	CHECK(doc.findEntity(prop)->get("model") == "models/mapsmith/humans/male.mdl");
 	// Nothing for classes without animations, the world, empty names.

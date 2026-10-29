@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include <sme/assets.h>
 #include <sme/entity_catalog.h>
 #include <sme/history.h>
 #include <sme/map.h>
@@ -37,6 +38,52 @@ struct SequenceKey {
 /// are not. Animation-only files (..._shared, _gestures, _postures, _ss, _anims) are not either:
 /// they have nothing to show.
 [[nodiscard]] bool isCharacterModel(std::string_view path, const std::vector<std::string>& npcModels = {});
+
+/// Whether a model file holds only animations other models include, nothing to show
+/// (..._shared, _gestures, _postures, _ss, _anims, _animations).
+[[nodiscard]] bool isAnimationOnlyModel(std::string_view path);
+
+/// Whether a model really animates: a skeleton of more than one bone and at least one sequence
+/// beyond a still pose (idle, ref, ragdoll, bindpose ...), or $includemodel files with more.
+/// A bottle or a crate with only "idle" does not.
+[[nodiscard]] bool isAnimatedModel(const ModelInfo& info);
+
+/// Reads the header of model `path` and asks isAnimatedModel (false if it cannot be read, and for
+/// animation-only files).
+[[nodiscard]] bool hasAnimations(const GameFileSystem& fs, std::string_view path);
+
+/// The weapon a sequence is made for (bits; a sequence can fit several).
+namespace sequence_weapon {
+constexpr unsigned UNARMED = 1;    ///< No weapon word (ACT_IDLE, walk_all) or "unarmed"
+constexpr unsigned PISTOL = 2;
+constexpr unsigned SMG1 = 4;       ///< Also "rifle" (HL2's people hold SMG1 and AR2 alike)
+constexpr unsigned AR2 = 8;        ///< Also "rifle"
+constexpr unsigned SHOTGUN = 16;
+constexpr unsigned RPG = 32;
+constexpr unsigned CROSSBOW = 64;
+constexpr unsigned MELEE = 128;    ///< melee, stunstick, crowbar
+constexpr unsigned GRENADE = 256;  ///< grenade, throw
+} // namespace sequence_weapon
+
+/// What kind of motion a sequence is.
+enum class SequenceKind {
+	Idle,      ///< Standing or crouching still (ACT_IDLE*, idle names)
+	Move,      ///< Walking, running (ACT_WALK*, ACT_RUN*, walk/run names)
+	Action,    ///< Everything else with an activity: attacks, reloads, flinches, deaths ...
+	Gesture,   ///< Layers played over others (ACT_GESTURE_*, delta/layer sequences, g_ names)
+	Scene,     ///< Made for scripted scenes: map-named (d1_t01_..., ep1_c17_...) or without activity
+};
+
+/// The situation a sequence is made for (filters on the Animations page).
+struct SequenceSituation {
+	unsigned weapons = sequence_weapon::UNARMED;   ///< sequence_weapon bits
+	bool crouch = false;                           ///< Crouching (crouch, ..._LOW activities)
+	SequenceKind kind = SequenceKind::Action;
+};
+
+/// Sorts a sequence by its name and activity ("Idle_Relaxed_SMG1_1" / "ACT_IDLE_RELAXED": SMG1,
+/// standing, idle). `layer`: a delta or layer sequence (a gesture).
+[[nodiscard]] SequenceSituation classifySequence(std::string_view name, std::string_view activity, bool layer = false);
 
 /// The model an entity animates: its "model" key; for scripted_sequence & co. the model of the
 /// NPC they name (m_iszEntity / target); else the class's FGD studio() model. Empty if none.

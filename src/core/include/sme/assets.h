@@ -50,6 +50,7 @@ struct ModelInfo {
 	std::string surfaceProp;
 	Vec3 hullMin, hullMax;
 	int skinCount = 1;                      ///< Skin families ($texturegroup), at least 1
+	int boneCount = 0;                      ///< Bones of the skeleton (1: a rigid prop)
 	/// A body group ($bodygroup): one of its options is shown at a time ("blank" = nothing).
 	struct BodyGroup {
 		std::string name;
