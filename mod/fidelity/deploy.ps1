@@ -90,8 +90,9 @@
     Do not give walls and floors the parallax shader (removes materials and height maps made earlier).
 
 .PARAMETER ParallaxDepth
-    Depth of the relief, as a share of the texture's size: 0.02 (default; 0.03 was a little strong),
-    up to 0.1. "0,02" works as well as "0.02".
+    Depth of the relief, as a share of the texture's size: 0.01 (default; 0.02 was too strong -
+    Julius: a tiled floor looked right at about 0.006), up to 0.1. Bump-mapped walls and bricks and
+    tiles laid in courses get 0.6 of it, wood 0.7. "0,01" works as well as "0.01".
 
 .PARAMETER ParallaxWood
     Wood, planks and boards get a little relief too (off by default: the grooves looked odd in the
@@ -131,7 +132,7 @@ param(
     [switch]$NoSheen,
     [string]$BumpStrength = '1.5',
     [switch]$NoParallax,
-    [string]$ParallaxDepth = '0.02',
+    [string]$ParallaxDepth = '0.01',
     [switch]$ParallaxWood,
     [string]$ParallaxPreview = '',
     [switch]$NoLights,
@@ -886,7 +887,11 @@ function Get-ParallaxDepth([string]$Name, $Source) {
     switch ($Source.Kind) {
         'courses' { return $ReliefDepth * $CourseDepth * $(if ($Source.Texture -match $FacadeNames) { $FacadeDepth } else { 1.0 }) }
         'decal' { return $DecalDepth * $(if ($script:DecalScale.ContainsKey($Source.Texture)) { $script:DecalScale[$Source.Texture] } else { 1.0 }) }
-        default { return $ReliefDepth * $(if ($Name -match $MinimalNames) { $MinimalDepth } else { 1.0 }) }
+        default {
+            if ($Name -match $MinimalNames) { return $ReliefDepth * $MinimalDepth }
+            if ($Source.Kind -eq 'normal' -or $Source.Kind -eq 'ssbump') { return $ReliefDepth * $BumpDepth }
+            return $ReliefDepth
+        }
     }
 }
 
@@ -899,7 +904,11 @@ $ReliefNames = '(brick|stone|cobble|rock|tile|block|cinder|paver|slate|plank|roo
 # boards' texture stretched and the grooves seemed to stand out (Julius,
 # 25.10.2026: "sieht weird aus") - by default wood keeps its own look (bump map)
 $MinimalNames = '(wood|plank|board)'
-$MinimalDepth = 0.35		# share of -ParallaxDepth (with or without a bump map)
+$MinimalDepth = 0.7		# share of -ParallaxDepth (with or without a bump map): 0.007, as before -ParallaxDepth went from 0.02 to 0.01
+# Heights from a normal map: the deepest groove of the normal map becomes the
+# full depth - at 0.02 the joints of a tiled floor stood like walls and threw a
+# black strip along every tile (Julius, 29.10.2026: about 0.006 looked right)
+$BumpDepth = 0.6		# share of -ParallaxDepth
 # Wood without a bump map: boards with their gaps low (the brightness made
 # the dark gaps stand out - Julius: "das Schwarze wird raus statt das Holz")
 $PlankHeightVersion = 'planks1'
@@ -911,7 +920,7 @@ $ColorHeightVersion = 'color2'
 # got bumps - Julius: "an meisten Stellen passt es absolut nicht")
 $CourseNames = '(brick|tile|block|cinder|paver)'
 $CourseHeightVersion = 'courses7'	# courses7: façades measured out (brickwall014b: cornice, dentils, sill, panel, window, pilasters - height_map.cs Facades); courses6: joints found where they are (lighter and greyer lines), no grid over the whole texture - a façade got upright grooves; courses5: joints only where bricks show (façades), thin joints only, bevel from the bricks (courses4: streaks taken off, bond offsets; courses3: upright grooves; courses2: half bricks; courses1: cushions)
-$CourseDepth = 0.5		# share of -ParallaxDepth: mortar sits only a little deeper than the bricks
+$CourseDepth = 0.6		# share of -ParallaxDepth (0.006): mortar sits only a little deeper than the bricks
 # The façades height_map.cs measured out (its Facades - keep both lists the
 # same): their bricks take only 0.15 .. 0.7 of the height (cornice, sill and
 # pilasters stand out above them), so the relief is deeper, the bricks about
