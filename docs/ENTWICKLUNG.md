@@ -52,6 +52,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ctest --test-dir build -LE ui                  # Kern-Tests (sme_tests)
 xvfb-run -a ctest --test-dir build -L ui       # UI-Tests (sme_app_tests)
 python3 -I tools/check_privacy.py              # Privatsphäre-Prüfung (CI-Job checks)
+python3 -I -m unittest discover -s tools/tests # Werkzeug-Tests (Inhalt des Feature-Bundles, CI-Job checks)
 ```
 Windows und CI: siehe „Bauen, CI, Abgabe“.
 
@@ -118,7 +119,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>.<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
 | `git_status` | Git-Ausgaben lesen (`status`, `log` ohne E-Mail), Remote → Web-Adresse |
 | `mod_code` | Quellcode der Mod (Mapbase-Checkout mit mapbase-fidelity): `modCodeScripts` (erkannt an `fidelity/update.ps1` + `sp/src` oder `update.bat`), `findModCode` (Suchwurzeln selbst, dann Unterordner – der Name der Mod zuerst, max. 300 je Wurzel), `modCodeSearchRoots` (GitHub Desktop, Visual Studio, Laufwerks-Ordner), `modCodeCommand` (PowerShell mit `-NoProfile -NonInteractive -File … -GamePath <mod>`, Windows mit `-ExecutionPolicy Bypass`, sonst `pwsh`; nie `pause`, nie `Read-Host`), `classifyScriptLine` (Statuswörter von `update.ps1`/`deploy.ps1`/`report.ps1` → Schritt + Art), `ScriptRun` (Schritt nur vorwärts, Fehlerzeilen ohne Dopplung, Zips des Berichts, `advice()` über `updateFailureAdvice`) |
-| `mod_install` | Funktionen der Mod aus Mapsmith installieren (ohne Compiler): Feature-Bundle (`readFeatureBundle`, `manifest.txt` = `mapsmith-features 1`, `version`, `<sha256>  <pfad>`; Pfade aus dem Ordner heraus machen das Manifest ungültig; `verifyFeatureBundle`), `modBranch` (Episodic, wenn `gameinfo.txt` außerhalb von Kommentaren `ep2`/`episodic` nennt), `featureInstallPlan` (`bin/<zweig>/client|server.dll` → `bin/`, `bin/game_shader_dx6.dll`, `fidelity/game/**` → Mod), `installFeatures` (nur geänderte Dateien, über Temp-Datei + `rename`; fremde Dateien einmal als `<datei>.mapsmith-backup`; `exec fidelity\t// mapbase-fidelity` wie deploy.ps1; VRAD ins SDK-`bin` mit `fidelity_backup/` + `fidelity_backup.txt` wie update.ps1; `cfg/mapsmith_installed.txt` mit Version, Zweig, Dateien + SHA-256, Backups), `removeFeatures` (Backups zurück, eigene unveränderte Dateien weg, eigene Exec-Zeile weg, VRAD zurück), eigenes SHA-256 (`sha256Hex`, `fileSha256`), `bundledScripts` (deploy.ps1/report.ps1 aus dem Bundle) |
+| `mod_install` | Funktionen der Mod aus Mapsmith installieren (ohne Compiler): Feature-Bundle (`readFeatureBundle`, `manifest.txt` = `mapsmith-features 1`, `version`, `<sha256>  <pfad>`; Pfade aus dem Ordner heraus machen das Manifest ungültig; `verifyFeatureBundle`), `modBranch` (Episodic, wenn `gameinfo.txt` außerhalb von Kommentaren `ep2`/`episodic` nennt), `featureInstallPlan` (`bin/<zweig>/client|server|game_shader_dx9.dll` → `bin/`, `bin/game_shader_dx6.dll`, `fidelity/game/**` → Mod), `installFeatures` (nur geänderte Dateien, über Temp-Datei + `rename`; fremde Dateien einmal als `<datei>.mapsmith-backup`; `exec fidelity\t// mapbase-fidelity` wie deploy.ps1; VRAD ins SDK-`bin` mit `fidelity_backup/` + `fidelity_backup.txt` wie update.ps1; `cfg/mapsmith_installed.txt` mit Version, Zweig, Dateien + SHA-256, Backups), `removeFeatures` (Backups zurück, eigene unveränderte Dateien weg, eigene Exec-Zeile weg, VRAD zurück), eigenes SHA-256 (`sha256Hex`, `fileSha256`), `bundledScripts` (deploy.ps1/report.ps1 aus dem Bundle); `missingFeatureFiles` (Dateien des Plans, die in der Mod fehlen → Features-Karte „Incomplete“, Auto-Update repariert), bin-Ordner einer Mapbase-Mod: `mapbaseModDlls` (client, server, game_shader_dx9), `checkModBin` (fehlende DLLs, dazu `game_shader_dx6.dll` bei installierten Funktionen; `game_shader_dx9.dll` älter als die des Bundles nach PE-Linkzeit `peLinkTime`), `copyMapbaseBin` (fehlende DLLs aus `sourcemods/mapbase_<zweig>/bin`, nie überschreiben) |
 | `mod_features` | Funktionen von mapbase-fidelity als eine Liste (`modFeatures`: Id, Gruppe Graphics/Effects/Sound/Materials, Titel, eine Zeile, die Ein/Aus-ConVars (`FCVAR_ARCHIVE`) und/oder der Material-Effekt der Game enhancements); `writeFeaturesCfg`/`parseFeaturesCfg` (`cfg/mapsmith_features.cfg`: jeder Schalter 1/0), `saveFeatureChoice`/`hookFeatureChoice` (Zeile `exec mapsmith_features // mapsmith` in `autoexec.cfg`, nur mit Add-on), `withFeatureEffects`/`featuresOffBySettings` (Material-Funktionen ↔ `EnhancementSettings`), `generatedModFiles` (was deploy.ps1 und Mapsmith in der Mod gemacht haben: Marker in der ersten Zeile, Manifeste, Shader/DLL/cfg des Add-ons), `removeEditorFiles` |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec`, `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
@@ -433,8 +434,10 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   anpassen. CI (`mod.yml`, Windows-Runner `windows-2022` wegen Toolset v143; von `ci.yml` und `release.yml` gerufen):
   Mapbase am Basis-Commit (sparse `sp`, `core.autocrlf false`, damit der Patch passt), Patch + Dateien, VPC
   (`creategameprojects.bat`, `createmaptoolsprojects.bat`), `tools/repair_vpc_solution.py` (fehlende
-  Release|Win32-Bauzeilen wie `Repair-Solution` in update.ps1), MSBuild `games.sln` und aus `maptools.sln` nur
-  `Vrad_dll;Vrad_launcher`, dann `tools/collect_mod_build.py` → Feature-Bundle (Artefakt `mapsmith-features`,
+  Release|Win32-Bauzeilen wie `Repair-Solution` in update.ps1), MSBuild `games.sln`, `shaders.sln` (Mapbases eigene
+  Shader `game_shader_dx9.dll`, VPC `createshadersprojects.bat`, Gruppe `shaders`) und aus `maptools.sln` nur
+  `Vrad_dll;Vrad_launcher`, dann `tools/collect_mod_build.py` (sammelt je Zweig client, server und game_shader_dx9;
+  Test `tools/tests/test_collect_mod_build.py`) → Feature-Bundle (Artefakt `mapsmith-features`,
   Cache-Schlüssel = Hash von `mod/**` + Skripten, also nur neu gebaut, wenn sich das Add-on ändert). Das Windows-Paket
   legt es als `features/` neben `Mapsmith.exe` (ZIP und Installer; der Updater bringt es mit). Version des Bundles =
   `mod/fidelity/VERSION` + `+` + exportierter Commit (7 Zeichen); weicht sie von `cfg/mapsmith_installed.txt` ab,
@@ -444,6 +447,15 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Öffnen (QSettings `features/deployPending/<ordner>`). Tests: `test_mod_install.cpp` (Kern, mit
   `test::makeFeatureBundle`), UI-Test „features from Mapsmith“. Nicht prüfbar hier: der Windows-Bau in der CI bis er
   einmal läuft, und das Spiel mit den gebauten DLLs.
+  **Mapbases Shader-DLL** (`bin/game_shader_dx9.dll`) gehört zu jeder Mapbase-Mod: fehlt sie, kennt die Engine
+  `SDK_screenspace_general`, `SDK_VertexLitGeneric`, `SDK_UnlitGeneric`, `SDK_Engine_Post`, `DepthOfField`, `SDK_Cable`
+  nicht und zeichnet sie als Wireframe – die Vollbild-Passes werden zu schwarzen Linien quer durchs Bild (Bericht
+  von Julius, Mod „test2“, 29.10.2026). Deshalb baut `mod.yml` sie mit, das Bundle installiert sie, das
+  Problems-Panel warnt (`ModBinIncomplete`, Aktion `installFeatures` → Features-Tab, `installNow`, neu prüfen; Kontext
+  `mapbaseModDir` + `bundle`), und eine neue Mapbase-Mod endet mit vollständigem `bin` (Bundle, sonst
+  `copyMapbaseBin`; der Hinweis am Ende nennt, was noch fehlt). `fidelity/rain_map` ist keine Datei, sondern eine
+  prozedurale Textur des Clients (`fidelity_wetness.cpp`, `CreateProceduralTexture`) – die Meldung „not found“ beim
+  Laden ist harmlos. UI-Test „problems: a Mapbase mod without Mapbase's shaders …“.
 - Material-Editor (`MaterialEditor` + `MaterialPreview`): Felder für die häufigen Parameter, Tabelle für den Rest,
   Vorschau (Wand/Würfel/Kugel, Sonne/Lampe/Nacht/unbeleuchtet; ssbump über die drei Basisvektoren). Speichern schreibt
   nach `<mod>/materials/<name>.vmt` (VPK-Material → Kopie in der Mod) und meldet `materialSaved` → `MaterialCache::reload`.

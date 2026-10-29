@@ -183,8 +183,8 @@ the sound mixer, liquid in bottles and more. **Install features** (on the **Feat
 puts it into the open mod with one click:
 
 - the game code: `bin/client.dll` and `bin/server.dll` (Mapbase with the add-on, for Half-Life 2 or Episode Two mods –
-  Mapsmith reads which one from the mod's `gameinfo.txt`) and the add-on's shaders (`bin/game_shader_dx6.dll`,
-  `shaders/fxc`);
+  Mapsmith reads which one from the mod's `gameinfo.txt`), Mapbase's own shaders built with it
+  (`bin/game_shader_dx9.dll`) and the add-on's shaders (`bin/game_shader_dx6.dll`, `shaders/fxc`);
 - its settings (`cfg/fidelity.cfg`, run from `autoexec.cfg`);
 - VRAD with baked ambient occlusion, into the compile tools' folder (Source SDK Base 2013 Singleplayer's `bin`), so
   your map compiles bake it;
@@ -197,7 +197,19 @@ features** on the Overview with the same button, and a **New mod** with Mapbase 
 
 What the mod had before (Mapbase's own DLLs, for example) is kept as `<file>.mapsmith-backup` and comes back with
 **Remove features**. `cfg/mapsmith_installed.txt` in the mod lists what Mapsmith put there, so an update replaces only
-its own files and never yours.
+its own files and never yours. If one of those files has gone missing (or the install came from an older Mapsmith that
+did not bring it yet), the card says **Incomplete** and names it; **Install again** – or the automatic update – puts it
+back.
+
+{: .important }
+Every Mapbase mod needs **three** files in its `bin` folder: `client.dll`, `server.dll` and `game_shader_dx9.dll`
+(Mapbase's shaders). Without the last one the game does not know shaders like `SDK_screenspace_general` or
+`SDK_VertexLitGeneric` (the console says so when the map loads) and draws them as wireframe: **straight black lines
+across the whole view** and see-through models. The **Problems** list warns when one of these files is missing (or
+when `game_shader_dx9.dll` is older than the one Mapsmith brings), with an **Install features** button that opens this
+tab and installs them. A **New mod** with Mapbase gets all three from the features; a copy of Mapsmith without them
+takes what it finds in Mapbase's own `mapbase_episodic/bin` (or `mapbase_hl2/bin`) next to the mod and says which files
+are still missing.
 
 **Updates come by themselves:** when a newer Mapsmith brings newer features, the mod gets them the next time you open
 it (switch *Update the mod's features by themselves ...* off to do it by hand with **Update features**).
