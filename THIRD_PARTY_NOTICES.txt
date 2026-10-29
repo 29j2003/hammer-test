@@ -1,5 +1,8 @@
 Mapsmith uses the following third-party software. Their licenses apply to
-those parts; the editor's own code is released under the Unlicense (see LICENSE).
+those parts; the editor's own code (src/, tests/, tools/, installer/, docs/) is
+released under the Unlicense (see LICENSE). The mod features in mod/ are not:
+see "Mapbase and the Source SDK 2013" below and mod/NOTICE.txt.
+License texts that ship with the program are in the licenses folder.
 
 sourcepp (https://github.com/craftablescience/sourcepp) - MIT License
     Valve file formats: VPK, VTF, KeyValues, FGD. Copyright (c) 2023 Laura Lewis.
@@ -9,26 +12,50 @@ sourcepp (https://github.com/craftablescience/sourcepp) - MIT License
     next to the program.
 
 Qt 6 (https://www.qt.io) - GNU Lesser General Public License v3
-    Used as dynamically linked libraries (Qt6*.dll). You may replace them with your
-    own build of Qt. Source code: https://download.qt.io/official_releases/qt/
-    License text: https://www.gnu.org/licenses/lgpl-3.0.html
+    Used as dynamically linked libraries (Qt6*.dll), unchanged. You may replace them
+    with your own build of Qt. Source code: https://download.qt.io/official_releases/qt/
+    License text: licenses/LGPL-3.0.txt and licenses/GPL-3.0.txt (the LGPL refers to it).
+    The Qt libraries contain further third-party code (for example FreeType - portions
+    of this software are copyright (c) The FreeType Project, www.freetype.org - and
+    libpng, zlib, HarfBuzz, PCRE2); their licenses are listed at
+    https://doc.qt.io/qt-6/licenses-used-in-qt.html
+
+Mesa 3D (https://www.mesa3d.org) - MIT License
+    opengl32sw.dll, the software OpenGL renderer Qt deploys for computers without an
+    OpenGL 3.3 driver (llvmpipe). License text: licenses/Mesa-MIT.txt. It is built with
+    LLVM (https://llvm.org), Apache License 2.0 with LLVM Exceptions.
 
 stb_vorbis (https://github.com/nothings/stb) - Public Domain (Unlicense) or MIT License
     Ogg Vorbis decoding for the sound preview. Copyright (c) 2017 Sean Barrett.
+    Used under its public domain alternative.
 
 minimp3 (https://github.com/lieff/minimp3) - CC0 1.0 (public domain dedication)
     MP3 decoding for the sound preview.
 
 Mapbase (https://github.com/mapbase-source/source-sdk-2013) and the Source SDK 2013 - Source 1 SDK License
-    The mod features in the features folder (client.dll, server.dll, game_shader_dx6.dll,
-    vrad.exe, vrad_dll.dll) are built from Mapbase, which is based on Valve's Source SDK 2013,
-    with the mapbase-fidelity add-on (mod/ in the source repository, public domain where it is
-    not derived from the SDK). They may only be used with Source engine games. License text:
-    features/LICENSE_SourceSDK2013.txt, notices: features/thirdpartylegalnotices.txt.
-    Source SDK Copyright (c) Valve Corp.
+    The mod features (mod/ in the source repository; in the program the features folder:
+    client.dll, server.dll, game_shader_dx9.dll, game_shader_dx6.dll, vrad.exe, vrad_dll.dll,
+    the compiled shaders and template/) are built from Mapbase, which is based on Valve's
+    Source SDK 2013, with the mapbase-fidelity add-on. The add-on's code is made for the SDK
+    and partly follows its code (mod/NOTICE.txt says which parts), so all of it and everything
+    built from it is under the Source 1 SDK License and may only be used with Source engine
+    games. Only the add-on's scripts and tools that do not come from the SDK are public domain
+    (mod/fidelity/LICENSE). License text: features/LICENSE_SourceSDK2013.txt
+    (https://github.com/ValveSoftware/source-sdk-2013/blob/master/LICENSE), notices:
+    features/thirdpartylegalnotices.txt. Source SDK Copyright (c) Valve Corporation.
+    template/ holds files of Valve's mod template from the SDK (skill.cfg, HUD texts).
 
 doctest (https://github.com/doctest/doctest) - MIT License
     Only used by the tests; not part of the released program.
+
+Ideas and file formats (no code taken)
+    Mapsmith reads and writes Valve's file formats (VMF, VMT, VTF, VPK, MDL/VVD/VTX/PHY,
+    PCF, BSP, SMD, QC) after the public descriptions: the Source SDK 2013 headers (studio.h,
+    optimize.h, bspfile.h, phyfile.h), the Valve Developer Community wiki and the format
+    documentation of xiph.org (FLAC) and Microsoft (ADPCM WAV). The lighting preview uses
+    VRAD's published formulas. Behaviour and look follow Valve's Source 2 Hammer and
+    Hammer++ (see README); "Export for editing" does what Crowbar's decompile does,
+    written anew.
 
 Half-Life 2, Source, Hammer and Steam are trademarks of Valve Corporation. This is an
 independent project and is not affiliated with or endorsed by Valve. It ships no

@@ -11,6 +11,7 @@ repository, into mod/ of this repository:
   mod/mapbase.patch    every change to Mapbase's own files under sp/ (the "// mapbase-fidelity"
                        hooks, project lists, VS 2022 switch)
   mod/fidelity/...     the add-on's game files and scripts (shaders, cfg, deploy.ps1 ...)
+  mod/NOTICE.txt       which license each part is under (written by this script, see NOTICE)
 
 The Source 1 SDK license and notices the code is under are Mapbase's own files (LICENSE,
 thirdpartylegalnotices.txt); they hold e-mail addresses, so they stay out of this repository and the
@@ -40,6 +41,37 @@ DEFAULT_BASE = "d9fd33535849b70f647895077b6b011b229c373c"
 FIDELITY_SKIP = ("fidelity/tests/", "fidelity/requirements/", "fidelity/pyproject.toml")
 
 
+# Which license each part of mod/ is under. The add-on is code for Valve's Source SDK 2013 (through
+# Mapbase): it builds only with the SDK, and some of it follows the SDK's own code closely (the water
+# shader is Mapbase's SDK_Water; vertex shaders and shader classes follow the SDK's examples), so
+# everything that goes into the DLLs is under the SDK's license, not public domain.
+NOTICE = """mapbase-fidelity in Mapsmith (mod/) - licenses
+
+mod/ is exported from the mod's own repository (a fork of Mapbase, which is based on Valve's
+Source SDK 2013); see MAPBASE for the exact commits.
+
+Under the Source 1 SDK License (Valve Corporation; text:
+https://github.com/ValveSoftware/source-sdk-2013/blob/master/LICENSE, shipped with Mapsmith's
+mod features as LICENSE_SourceSDK2013.txt together with thirdpartylegalnotices.txt):
+  - mapbase.patch: changes to Mapbase's own files, with lines of those files as context
+  - sp/...: the add-on's C++ for client.dll, server.dll, game_shader_dx6.dll and VRAD. It is
+    written for the SDK and builds only with it; parts follow the SDK's code closely (the water
+    shader is Mapbase's SDK_Water, the shader classes and vertex shaders follow the SDK's
+    examples). sp/src/materialsystem/fidelity/fxctmp9 is generated from fidelity/shaders/src.
+  - fidelity/shaders/src: the HLSL shaders (fidelity_water_* and fidelity_water_helper.h come
+    from Mapbase's SDK_Water shaders), and fidelity/game/shaders/fxc compiled from them
+  - everything built from these files (the DLLs and VRAD in Mapsmith's features/ folder).
+  The Source 1 SDK License allows these files only for products that run on the Source engine.
+
+Public domain (fidelity/LICENSE, the Unlicense) - the add-on author's own files that are not
+derived from the SDK: the PowerShell and batch scripts, the C# helpers, fidelity/game/cfg,
+fidelity/tools (build_shaders.py, ssao_sim.py, check_privacy.py, hlslcheck).
+
+Credits for ideas (no code taken): FXAA after Timothy Lottes' FXAA 3.11 (NVIDIA), the
+"console" variant, re-implemented in fidelity/shaders/src/fidelity_fxaa_ps2x.fxc.
+"""
+
+
 def git(repo: Path, *args: str) -> bytes:
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True).stdout
 
@@ -64,6 +96,7 @@ def export(repo: Path, ref: str, base: str, out: Path) -> None:
     out.mkdir(parents=True)
     commit = git(repo, "rev-parse", ref).decode().strip()
     (out / "MAPBASE").write_text(f"repository {MAPBASE_URL}\nbase {base}\nexported {commit}\n", encoding="utf-8", newline="\n")
+    (out / "NOTICE.txt").write_text(NOTICE, encoding="utf-8", newline="\n")
     added, modified = changed_files(repo, base, ref)
     for path in added:
         target = out / path

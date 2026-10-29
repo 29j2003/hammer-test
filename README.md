@@ -392,6 +392,8 @@ in the 3D view, and a full physics simulation (Drop to floor only lets objects f
 
 ## License
 
-The editor's code is released into the public domain ([Unlicense](LICENSE)). Third-party parts (sourcepp, Qt) keep
-their licenses, see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) (also stb_vorbis and minimp3 for sounds). Half-Life 2, Source, Hammer and Steam are
+The editor's code is released into the public domain ([Unlicense](LICENSE)). Third-party parts (sourcepp, Qt, Mesa,
+stb_vorbis, minimp3) keep their licenses, see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). The mod features in
+`mod/` (mapbase-fidelity, built on Mapbase and Valve's Source SDK 2013) are not public domain: they are under the
+Source 1 SDK License and only for Source engine games, see [mod/NOTICE.txt](mod/NOTICE.txt). Half-Life 2, Source, Hammer and Steam are
 trademarks of Valve; this project is not affiliated with Valve and ships no game files.

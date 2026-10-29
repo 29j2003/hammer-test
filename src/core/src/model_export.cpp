@@ -3,7 +3,8 @@
 // Layouts from the Source SDK 2013: studio.h (studiohdr_t, mstudiohitboxset_t, mstudiobbox_t,
 // mstudiobone_t), phyfile.h (phyheader_t), vcollide_parse / physics (compactsurfaceheader_t,
 // legacysurfaceheader_t) and the IVP compact surface (IVP_Compact_Surface, IVP_Compact_Ledge,
-// IVP_Compact_Triangle, IVP_Compact_Poly_Point) as Crowbar reads them.
+// IVP_Compact_Triangle, IVP_Compact_Poly_Point) as the public format notes describe them (the
+// Valve Developer Community; Crowbar reads the same layout). Written for Mapsmith, no code taken.
 
 #include <sme/model_export.h>
 

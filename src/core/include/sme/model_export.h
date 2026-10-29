@@ -1,5 +1,5 @@
-// model_export.h - Taking a compiled model of the game apart for editing (like Crowbar's
-// decompile): its triangles back into reference .smd files (every model of every body group,
+// model_export.h - Taking a compiled model of the game apart for editing (what Crowbar's
+// decompile does, written anew for Mapsmith): its triangles back into reference .smd files (every model of every body group,
 // with the bone weights and the skeleton), its sequences into animation .smd files, its physics
 // model (.phy) into a collision .smd, and a .qc that studiomdl compiles into the same model again
 // ($modelname, $cdmaterials, $bodygroup, $texturegroup, $surfaceprop, $keyvalues, $includemodel,

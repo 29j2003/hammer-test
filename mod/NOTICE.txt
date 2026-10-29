@@ -1,0 +1,24 @@
+mapbase-fidelity in Mapsmith (mod/) - licenses
+
+mod/ is exported from the mod's own repository (a fork of Mapbase, which is based on Valve's
+Source SDK 2013); see MAPBASE for the exact commits.
+
+Under the Source 1 SDK License (Valve Corporation; text:
+https://github.com/ValveSoftware/source-sdk-2013/blob/master/LICENSE, shipped with Mapsmith's
+mod features as LICENSE_SourceSDK2013.txt together with thirdpartylegalnotices.txt):
+  - mapbase.patch: changes to Mapbase's own files, with lines of those files as context
+  - sp/...: the add-on's C++ for client.dll, server.dll, game_shader_dx6.dll and VRAD. It is
+    written for the SDK and builds only with it; parts follow the SDK's code closely (the water
+    shader is Mapbase's SDK_Water, the shader classes and vertex shaders follow the SDK's
+    examples). sp/src/materialsystem/fidelity/fxctmp9 is generated from fidelity/shaders/src.
+  - fidelity/shaders/src: the HLSL shaders (fidelity_water_* and fidelity_water_helper.h come
+    from Mapbase's SDK_Water shaders), and fidelity/game/shaders/fxc compiled from them
+  - everything built from these files (the DLLs and VRAD in Mapsmith's features/ folder).
+  The Source 1 SDK License allows these files only for products that run on the Source engine.
+
+Public domain (fidelity/LICENSE, the Unlicense) - the add-on author's own files that are not
+derived from the SDK: the PowerShell and batch scripts, the C# helpers, fidelity/game/cfg,
+fidelity/tools (build_shaders.py, ssao_sim.py, check_privacy.py, hlslcheck).
+
+Credits for ideas (no code taken): FXAA after Timothy Lottes' FXAA 3.11 (NVIDIA), the
+"console" variant, re-implemented in fidelity/shaders/src/fidelity_fxaa_ps2x.fxc.

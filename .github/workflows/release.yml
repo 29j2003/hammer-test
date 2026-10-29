@@ -65,6 +65,8 @@ jobs:
           Copy-Item -Recurse build/samples "$out/samples"
           Copy-Item build/_deps/sourcepp-src/LICENSE "$out/LICENSE_sourcepp.txt"
           Copy-Item build/_deps/sourcepp-src/THIRDPARTY_LEGAL_NOTICES.txt "$out/THIRD_PARTY_NOTICES_sourcepp.txt"
+          # License texts the notices refer to (Qt: LGPL 3, which includes the GPL 3 by reference).
+          Copy-Item -Recurse licenses "$out/licenses"
           windeployqt --release --no-translations --no-system-d3d-compiler "$out/Mapsmith.exe"
           Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
           (Get-FileHash "$out.zip" -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path "$out.zip" -Leaf) | Out-File -Encoding ascii "$out.zip.sha256"

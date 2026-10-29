@@ -445,7 +445,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   (mapbase-fidelity) liegt deshalb (öffentlich) hier in `mod/`, aus dem privaten Mod-Repo exportiert:
   `mod/MAPBASE` (Mapbase-Repo, Basis-Commit = `develop` d9fd335, exportierter Commit), `mod/sp/…` (alle Dateien, die
   das Add-on unter `sp/` hinzufügt), `mod/mapbase.patch` (alle Änderungen an Mapbase-Dateien: Haken mit
-  `// mapbase-fidelity`, VPC/VGC, VS2022-Schalter, VRAD) und `mod/fidelity/…` (Spieldateien, Skripte, ohne Tests).
+  `// mapbase-fidelity`, VPC/VGC, VS2022-Schalter, VRAD), `mod/fidelity/…` (Spieldateien, Skripte, ohne Tests) und
+  `mod/NOTICE.txt` (welche Teile unter der Source 1 SDK License stehen, siehe „Herkunft und Lizenzen“).
   `mod/` nie von Hand ändern. **Nach Änderungen am Add-on** (im Mod-Repo, gemergt):
   `python3 tools/export_mod_addon.py --repo <mymod>` (liest nur den Commit `--ref`, Standard `master`), committen;
   `--check` prüft, dass `mod/` (im Index, Zeilenenden normalisiert) genau der Export ist. Geprüft am 28.10.2026:
@@ -713,6 +714,40 @@ Regeln fürs Handbuch: Englisch, nur der aktuelle Stand, Knopf- und Menünamen g
 anderen Editoren nennen (nur die README als „inspired by“), keine E-Mail-Adressen. Bilder höchstens 1600 px breit und
 mit 256 Farben gespeichert (zusammen unter ~8 MB); sie entstehen mit der Demo und `--screenshot` (siehe Befehle in
 `.claude/CLAUDE.md`). Neue Funktion → passende Handbuch-Seite mitpflegen; neue Seite → Link in `docs/index.md`.
+
+## Herkunft und Lizenzen
+
+Geprüft am 29.10.2026 vor dem Release 0.2.0: Woher jeder Teil kommt und unter welcher Lizenz er steht. Mapsmiths
+eigener Code enthält keinen kopierten fremden Code. Belegt ist das durch einen Zeilenvergleich gegen Mapbase/Source
+SDK 2013 in `../mymod` (nur triviale GL-Aufrufe gleich), durch eine Suche nach fremden Lizenzköpfen, Copyright-Zeilen
+und bekannten Bibliotheken und durch eine Durchsicht der Leser und Decoder. Dateiformate nach öffentlicher
+Beschreibung nachzubauen ist erlaubt und so gemacht.
+
+| Teil | Herkunft | Lizenz | Stand |
+|---|---|---|---|
+| `src/`, `tests/`, `tools/`, `installer/`, `docs/` | eigener Code | Unlicense (`LICENSE`) | ok |
+| MDL/VVD/VTX/PHY-Leser, `studio_anim`, `model_export` | eigener Code nach den SDK-Headern (`studio.h`, `optimize.h`, `phyfile.h`) und dem VDC-Wiki; macht, was Crowbars Decompile macht, ohne dessen Code | Unlicense | ok (Kommentar klargestellt) |
+| FLAC-, ADPCM-, WAV-Decoder (`audio.cpp`), SHA-256 (`mod_install.cpp`), VTF-Schreiber, BSP/PCF-Leser, CSG, Displacements | eigener Code nach Spezifikation (xiph.org, Microsoft-ADPCM-Tabellen, FIPS 180-4, VDC) | Unlicense | ok |
+| Licht-Vorschau | Formeln von VRAD (Abschnitt „Wichtige Formeln“), neu geschrieben | Unlicense | ok |
+| `tests/samples_media` (`click.mp3`, `wind_loop.ogg`) | aus Mapsmiths eigenen WAVs mit `tools/make_sample_media.sh` (ffmpeg) kodiert | Unlicense | ok |
+| Bilder in `docs/` | Screenshots von Mapsmith mit den erzeugten Demo-Texturen | Unlicense | ok |
+| sourcepp | github.com/craftablescience/sourcepp, auf Commit gepinnt | MIT (+ mitgelieferte Bibliotheken) | `LICENSE_sourcepp.txt`, `THIRD_PARTY_NOTICES_sourcepp.txt` im Paket |
+| stb_vorbis | nothings/stb, Commit + SHA-256 | Public Domain / MIT | in `THIRD_PARTY_NOTICES.txt` |
+| minimp3 | lieff/minimp3, Commit + SHA-256 | CC0 | in `THIRD_PARTY_NOTICES.txt` |
+| Qt 6 | dynamisch gelinkt (windeployqt) | LGPL 3 | Text in `licenses/LGPL-3.0.txt` + `GPL-3.0.txt` im Paket |
+| `opengl32sw.dll` (Mesa llvmpipe, von windeployqt) | Mesa 3D | MIT (LLVM: Apache 2.0 mit LLVM-Ausnahme) | `licenses/Mesa-MIT.txt` |
+| doctest | nur Tests | MIT | nicht im Paket |
+| `mod/` (mapbase-fidelity) | Export aus mymod (Mapbase-Fork); Wasser-Shader aus Mapbases SDK_Water, Shader-Klassen und Vertex-Shader nach den SDK-Beispielen, `mapbase.patch` mit Zeilen aus Mapbase | Source 1 SDK License (nur für Source-Spiele); nur Skripte/Werkzeuge ohne SDK-Herkunft Unlicense | `mod/NOTICE.txt` (von `export_mod_addon.py` geschrieben); Bündel liefert `LICENSE_SourceSDK2013.txt` + `thirdpartylegalnotices.txt` |
+| `template/` im Feature-Bündel | Valves Mod-Vorlage aus dem SDK (skill.cfg, HUD-Texte) | Source 1 SDK License | wie oben |
+| FXAA im Add-on | nach Timothy Lottes' FXAA 3.11 („console“), neu geschrieben | – (Idee) | in `mod/NOTICE.txt` genannt |
+
+Regeln dazu:
+- Fremden Code nur mit passender Lizenz und Eintrag in `THIRD_PARTY_NOTICES.txt` (plus Lizenztext unter `licenses/`,
+  wenn die Lizenz ihn verlangt).
+- Lizenztexte mit E-Mail-Adressen nicht ins Repo legen (`check_privacy`), sondern vom Build aus der Quelle kopieren
+  (wie das SDK-LICENSE) oder verlinken.
+- Neue Teile des Add-ons, die SDK-Code folgen, in `NOTICE` in `export_mod_addon.py` nennen.
+- XBLAH nur in der README.
 
 ## Offene Punkte / Annahmen (noch nicht am echten Spiel geprüft)
 
