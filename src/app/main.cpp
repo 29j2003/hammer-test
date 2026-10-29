@@ -32,6 +32,7 @@
 #include <QCommandLineParser>
 #include <QSettings>
 #include <QSurfaceFormat>
+#include <QThreadPool>
 #include <QTimer>
 
 #include "asset_browser.h"
@@ -327,5 +328,9 @@ int main(int argc, char** argv) {
 			app.quit();
 		});
 	}
-	return app.exec();
+	const int code = app.exec();
+	// Background reads (sounds, skies, textures, models) use the editor's game files: they finish
+	// before the window and the editor go away.
+	QThreadPool::globalInstance()->waitForDone();
+	return code;
 }

@@ -4,6 +4,7 @@
 
 #include "copy_paste.h"
 #include "editor.h"
+#include "process_guard.h"
 #include "sound_player.h"
 #include "soundscape_editor.h"
 #include "ui_helpers.h"
@@ -729,6 +730,7 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 		++m_generation;
 		m_player->stop();
 		m_watcher.waitForFinished();
+		waitForOwnTasks(this);   // a sound still being decoded reads the old game's files
 	});
 	connect(editor, &Editor::gameChanged, this, [this] {
 		m_firstFill = true;

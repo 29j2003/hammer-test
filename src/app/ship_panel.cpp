@@ -3,6 +3,7 @@
 #include "ship_panel.h"
 
 #include "editor.h"
+#include "process_guard.h"
 #include "ui_helpers.h"
 
 #include <QApplication>
@@ -136,10 +137,7 @@ ShipPanel::~ShipPanel() {
 	++m_generation;
 	m_scanWatcher.waitForFinished();
 	m_taskWatcher.waitForFinished();
-	if (m_bspzip && m_bspzip->state() != QProcess::NotRunning) {
-		m_bspzip->kill();
-		m_bspzip->waitForFinished(2000);
-	}
+	stopOwnProcesses(this);   // bspzip: its finish must not reach the panel that is going away
 }
 
 void ShipPanel::buildMapCard(QVBoxLayout* layout) {

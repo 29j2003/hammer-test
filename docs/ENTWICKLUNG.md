@@ -648,7 +648,9 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 - **Panel startet ein Programm (`QProcess`)**: den Prozess als Kind des Panels anlegen und im Destruktor zuerst
   `stopOwnProcesses(this)` (`process_guard.h`) aufrufen – sonst meldet `~QProcess` beim Schließen `finished` an ein
   halb abgebautes Panel (Absturz). Hintergrund-Jobs, die das `GameFileSystem` lesen, bei `Editor::gameAboutToChange`
-  abwarten.
+  abwarten (`waitForOwnTasks(this)` wartet auf alle `QFutureWatcher`-Kinder; ein Sound, der beim Spielwechsel noch
+  dekodiert wurde, las sonst im alten Dateisystem weiter). Beim Beenden wartet `main` auf den Thread-Pool, bevor
+  Fenster und Editor abgebaut werden.
 - **Neues Panel / neue Seite**: Widgets dort bauen, wo sie bleiben – Elternteil im Konstruktor angeben
   (`new QWidget(splitter)`, Inhalt einer Scroll-Fläche mit `scroll->viewport()` als Eltern, Docks: `host(title)` in
   `MainWindow::createDocks`, Project-Tabs: `projectTabs`). Ein fertiges Widget umzuhängen poliert und vermisst es mit dem

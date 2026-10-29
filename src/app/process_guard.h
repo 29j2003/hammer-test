@@ -4,9 +4,12 @@
 // then emits finished() - into the owner's slots, on an object that is half gone (a crash on
 // closing Mapsmith while git, studiomdl or a compile tool runs). Owners call this first in their
 // destructor: the signals to them are cut, then the tools are stopped.
+// Background reads of a panel (QFutureWatcher children) that use the game's file system are waited
+// for before that file system goes away (Editor::gameAboutToChange): waitForOwnTasks().
 
 #pragma once
 
+#include <QFutureWatcher>
 #include <QObject>
 #include <QProcess>
 
@@ -21,6 +24,11 @@ inline void stopOwnProcesses(QObject* owner) {
 			process->waitForFinished(2000);
 		}
 	}
+}
+
+/// Waits for the background jobs of `owner` (its QFutureWatcher children) to finish.
+inline void waitForOwnTasks(QObject* owner) {
+	for (auto* watcher : owner->findChildren<QFutureWatcherBase*>(Qt::FindDirectChildrenOnly)) watcher->waitForFinished();
 }
 
 } // namespace sme::app

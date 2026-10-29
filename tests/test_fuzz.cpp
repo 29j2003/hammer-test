@@ -11,13 +11,17 @@
 #include <sme/assets.h>
 #include <sme/audio.h>
 #include <sme/compile_log.h>
+#include <sme/git_status.h>
 #include <sme/heightmap.h>
 #include <sme/keyvalues.h>
+#include <sme/localization.h>
 #include <sme/map.h>
 #include <sme/material.h>
+#include <sme/mod_menu.h>
 #include <sme/model_import.h>
 #include <sme/particles.h>
 #include <sme/relief_pattern.h>
+#include <sme/soundscape.h>
 #include <sme/studio_anim.h>
 #include <sme/studio_model.h>
 #include <sme/texture.h>
@@ -292,4 +296,50 @@ TEST_CASE("fuzz: text formats - .smd, .obj, .vmt, .vmf, KeyValues") {
 		}
 	}, 14);
 	fuzzText("models/a.mdl#s=1;b=2;g1=3", [](const std::string& text) { (void)parseModelVariant(text); }, 15, 100);
+}
+
+TEST_CASE("fuzz: the mod's text files and tool output - texts, captions, soundscapes, menu, gameinfo, git, compile log") {
+	const std::string texts = "\"lang\"\n{\n\t\"Language\" \"English\"\n\t\"Tokens\"\n\t{\n\t\t\"MYMOD_Chapter1_Title\" \"Arrival\"\n"
+	                          "\t\t\"npc.hello\" \"<clr:255,200,100><I>Hello there.\"\n\t\t\"[english]npc.hello\" \"Hello there.\"\n\t}\n}\n";
+	fuzzText(texts, [](const std::string& text) {
+		const auto file = parseLocalizationFile(text);
+		(void)writeLocalizationFile(file);
+		(void)compileCaptions(file);
+		(void)parseLocalization(text);
+	}, 20);
+	fuzzText("<sfx><clr:255,255,255><len:2.5><delay:1>Who's there?", [](const std::string& text) { (void)parseCaption(text); }, 21);
+	// Text files as the game keeps them: UTF-16 with a byte order mark, or UTF-8.
+	auto utf16 = encodeUtf16Le(texts);
+	fuzzBytes(utf16, [](const Bytes& data) { (void)decodeTextFile(data); }, 22, 200);
+	const std::string scapes = "\"town.street\"\n{\n\t\"dsp\" \"1\"\n\t\"playlooping\"\n\t{\n\t\t\"volume\" \"0.4\"\n"
+	                           "\t\t\"wave\" \"ambient/town.wav\"\n\t\t\"pitch\" \"100\"\n\t}\n\t\"playrandom\"\n\t{\n\t\t\"time\" \"5,10\"\n"
+	                           "\t\t\"rndwave\"\n\t\t{\n\t\t\t\"wave\" \"ambient/dog.wav\"\n\t\t}\n\t}\n}\n";
+	fuzzText(scapes, [](const std::string& text) {
+		try {   // broken syntax is reported as an exception (the Sounds page shows it)
+			for (const auto& scape : parseSoundscapes(text)) (void)upsertSoundscape(text, scape);
+			(void)removeSoundscape(text, "town.street");
+			(void)addToSoundscapeManifest(text, "scripts/soundscapes_mymod.txt");
+		} catch (const std::exception&) {
+		}
+	}, 23);
+	const std::string menu = "\"GameMenu\"\n{\n\t\"1\"\n\t{\n\t\t\"label\" \"#GameUI_GameMenu_NewGame\"\n\t\t\"command\" \"OpenNewGameDialog\"\n"
+	                         "\t\t\"notmulti\" \"1\"\n\t}\n}\n";
+	fuzzText(menu, [](const std::string& text) { (void)writeGameMenu(parseGameMenu(text)); }, 24);
+	const std::string gameinfo = "\"GameInfo\"\n{\n\tgame \"My Mod\"\n\ttitle \"MY MOD\"\n\tFileSystem\n\t{\n\t\tSteamAppId 243730\n"
+	                             "\t\tSearchPaths\n\t\t{\n\t\t\tgame+mod |gameinfo_path|.\n\t\t}\n\t}\n}\n";
+	fuzzText(gameinfo, [](const std::string& text) {
+		(void)gameInfoValue(text, "title");
+		(void)setGameInfoValue(text, "title", "NEW TITLE");
+	}, 25);
+	fuzzText("\"chapters\"\n{\n\t1 \"background01\"\n\t2 \"background02\"\n}\n", [](const std::string& text) {
+		(void)writeChapterBackgrounds(parseChapterBackgrounds(text));
+		(void)setChapterMap(text, "d1_town");
+	}, 26);
+	std::string porcelain = "# branch.oid 0123456789abcdef\n# branch.head main\n# branch.ab +1 -2\n";
+	porcelain += std::string("1 .M N... 100644 100644 100644 0123 4567 maps/a.vmf") + '\0' + "? new.txt" + '\0';
+	fuzzText(porcelain, [](const std::string& text) { (void)parseGitStatus(text); }, 27);
+	const std::string log = "0123456789abcdef\x1f" "Julius\x1f" "2026-10-29T10:00:00+01:00\x1f" "First map\x1e\n";
+	fuzzText(log, [](const std::string& text) { (void)parseGitLog(text); }, 28);
+	fuzzText("ERROR: Leaked at (0 0 64), see maps/demo.lin", [](const std::string& text) { (void)classifyCompileLine(text); }, 29, 100);
+	fuzzText("https://github.com/someone/mymod.git", [](const std::string& text) { (void)remoteWebUrl(text); }, 30, 100);
 }

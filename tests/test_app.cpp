@@ -47,11 +47,14 @@
 #include <QTreeWidgetItemIterator>
 #include <QPushButton>
 #include <QSlider>
+#include <QSemaphore>
 #include <QSettings>
 #include <QStatusBar>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QSurfaceFormat>
+#include <QThreadPool>
+#include <QtConcurrent>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTabWidget>
@@ -6726,6 +6729,46 @@ TEST_CASE("small screens: every dialog and the window fit, the content scrolls, 
 		CHECK(dialog.rect().contains(QRect(buttons->mapTo(&dialog, QPoint(0, 0)), buttons->size())));
 		setAvailableWindowAreaForTests(area);
 	}
+}
+
+TEST_CASE("sounds: a sound still being read when the game changes is finished first") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	auto* sounds = window.sounds();
+	if (sounds->tree()->topLevelItemCount() == 0) {
+		QSignalSpy indexed(sounds, &SoundBrowser::indexed);
+		REQUIRE(indexed.wait(10000));
+	}
+	const auto wind = sounds->tree()->findItems("wind1.wav", Qt::MatchExactly | Qt::MatchRecursive);
+	REQUIRE_FALSE(wind.isEmpty());
+	// The decoding reads the game's files in the background: when the game is about to change
+	// (its file system goes away), nothing of the browser may still be reading.
+	// The pool's threads are kept busy so that the decoding is still waiting when the game changes.
+	QSemaphore release;
+	QList<QFuture<void>> busy;
+	bool stillReading = false;
+	QObject::connect(&editor, &Editor::gameAboutToChange, sounds, [&] {
+		for (auto* watcher : sounds->findChildren<QFutureWatcherBase*>()) stillReading = stillReading || !watcher->isFinished();
+		release.release(int(busy.size()));
+	});
+	for (int i = 0; i < QThreadPool::globalInstance()->maxThreadCount(); ++i) busy << QtConcurrent::run([&release] { release.acquire(); });
+	sounds->tree()->setCurrentItem(wind.front());
+	window.selectGame("sourcemods/mymod");   // the same mod again: the game is read anew
+	for (auto& f : busy) f.waitForFinished();
+	CHECK_FALSE(stillReading);
+	REQUIRE(editor.game());
 }
 
 namespace {
