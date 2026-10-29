@@ -251,7 +251,7 @@ void ShipPanel::buildModCard(QVBoxLayout* layout) {
 		m_modSummary->setText(tr("%n file(s), %1 - %2 left out", nullptr, int(plan.files.size())).arg(sizeText(plan.bytes)).arg(plan.excluded.size()));
 		m_excluded->clear();
 		for (const auto& [path, why] : plan.excluded) {
-			m_excluded->addTopLevelItem(new QTreeWidgetItem({QString::fromStdString(path.generic_string()), qs(why)}));
+			m_excluded->addTopLevelItem(new QTreeWidgetItem({fromPath(path), qs(why)}));
 		}
 		m_excluded->setVisible(!plan.excluded.empty());
 	});

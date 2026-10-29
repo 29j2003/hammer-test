@@ -183,6 +183,7 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	}
 	m_tab = QSettings().value("properties/tab", 0).toInt();
 	connect(&m_skyWatcher, &QFutureWatcherBase::finished, this, [this] {
+		if (m_skiesGame.isEmpty()) return;   // read for a game that was replaced meanwhile
 		m_skies = m_skyWatcher.result();
 		scheduleRebuild();
 	});
@@ -212,6 +213,9 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	});
 	connect(editor, &Editor::selectionChanged, this, &PropertiesPanel::scheduleRebuild);
 	connect(editor, &Editor::documentChanged, this, &PropertiesPanel::scheduleRebuild);
+	// The sky reader uses the old game's files: it must be done before they go away (switching the
+	// mod while the skies load), and its list belongs to the old game.
+	connect(editor, &Editor::gameAboutToChange, this, [this] { m_skyWatcher.waitForFinished(); });
 	connect(editor, &Editor::gameChanged, this, [this] {
 		m_skies.clear();
 		m_skiesGame.clear();

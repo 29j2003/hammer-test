@@ -43,7 +43,21 @@ std::string formatName(vtfpp::ImageFormat format) {
 
 } // namespace
 
+static std::optional<TextureInfo> readTextureInfoUnchecked(std::span<const std::byte> vtfData, std::string* error);
+static std::optional<ImageRgba> decodeTextureUnchecked(std::span<const std::byte> vtfData, unsigned maxSize, std::string* error);
+
 std::optional<TextureInfo> readTextureInfo(std::span<const std::byte> vtfData, std::string* error) {
+	// vtfpp throws on some damaged files (offsets past the end): a bad texture in a mod must not
+	// take the editor down.
+	try {
+		return readTextureInfoUnchecked(vtfData, error);
+	} catch (const std::exception& e) {
+		if (error) *error = std::string("damaged VTF: ") + e.what();
+		return std::nullopt;
+	}
+}
+
+static std::optional<TextureInfo> readTextureInfoUnchecked(std::span<const std::byte> vtfData, std::string* error) {
 	const vtfpp::VTF vtf(vtfData, true);
 	if (!vtf) {
 		if (error) {
@@ -63,6 +77,15 @@ std::optional<TextureInfo> readTextureInfo(std::span<const std::byte> vtfData, s
 }
 
 std::optional<ImageRgba> decodeTexture(std::span<const std::byte> vtfData, unsigned maxSize, std::string* error) {
+	try {
+		return decodeTextureUnchecked(vtfData, maxSize, error);
+	} catch (const std::exception& e) {
+		if (error) *error = std::string("damaged VTF: ") + e.what();
+		return std::nullopt;
+	}
+}
+
+static std::optional<ImageRgba> decodeTextureUnchecked(std::span<const std::byte> vtfData, unsigned maxSize, std::string* error) {
 	const vtfpp::VTF vtf(vtfData);
 	if (!vtf || vtf.getMipCount() == 0) {
 		if (error) {
@@ -80,6 +103,21 @@ std::optional<ImageRgba> decodeTexture(std::span<const std::byte> vtfData, unsig
 	ImageRgba image;
 	image.width = vtf.getWidth(mip);
 	image.height = vtf.getHeight(mip);
+	// A damaged file can hold less data than its size and format need; the decompressors of
+	// vtfpp read past the end then (a crash on the first damaged texture of a mod).
+	// (vtfpp's getImageDataRaw cuts its span out of the image resource without checking that the
+	// mip lies inside it, so the position is checked here first.)
+	const auto* resource = vtf.getResource(vtfpp::Resource::TYPE_IMAGE_DATA);
+	std::uint32_t offset = 0, length = 0;
+	const bool inside = resource &&
+	                    vtfpp::ImageFormatDetails::getDataPosition(offset, length, vtf.getFormat(), mip, vtf.getMipCount(), 0, vtf.getFrameCount(), 0,
+	                                                               vtf.getFaceCount(), vtf.getWidth(), vtf.getHeight(), 0, vtf.getDepth()) &&
+	                    std::uint64_t(offset) + length <= resource->data.size();
+	if (!inside || image.width == 0 || image.height == 0 ||
+	    length < vtfpp::ImageFormatDetails::getDataLength(vtf.getFormat(), image.width, image.height)) {
+		if (error) *error = "VTF image data is incomplete";
+		return std::nullopt;
+	}
 	image.pixels = vtf.getImageDataAsRGBA8888(mip);
 	if (image.pixels.size() != static_cast<std::size_t>(image.width) * image.height * 4) {
 		if (error) {

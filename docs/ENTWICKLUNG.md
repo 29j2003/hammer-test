@@ -588,6 +588,15 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   (Decoder, Soundscript speichern), Material-Editor (Vorschau, Speichern, Kopie, Relief mit Höhenkarte/Umkehren/Zonen,
   Wasser, Flüssigkeit, deploy.bat-Marker, Zonen-Maler). Die Demo-Mod hat dafür eine Platzhalter-Datei
   `shaders/fxc/fidelity_parallax_ps30.vcs`, eine Normal-Map für die Ziegel, Wasser und eine Flasche.
+- `test_fuzz.cpp` – alle Leser fremder Dateien (MDL/VVD/VTX/ANI, VTF, Bilder, Höhenkarten, WAV/MP3/OGG/FLAC, PCF, BSP,
+  SMD/OBJ/MTL, VMT/KeyValues, VMF) mit abgeschnittenen, verfälschten und zufälligen Bytes (feste Startwerte): kein
+  Absturz, kein Hängen, keine Riesen-Speicheranforderung. Mit AddressSanitizer bauen (`-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"`,
+  dazu `-DXZ_SANDBOX=no`) und `sme_tests -tc='fuzz*'` laufen lassen, wenn ein Leser dazukommt oder sich ändert; neue
+  Leser dort eintragen. Fremde Bibliotheken (vtfpp, vpkpp, kvpp) werfen bei kaputten Dateien Ausnahmen – jeder Aufruf
+  steht in `try`/`catch`, Datenbereiche vor dem Lesen prüfen (vtfpp prüft `getImageDataRaw` nicht).
+- `test_performance.cpp` (Kern) und „performance: a big map …“ in `test_app.cpp` – grobe Zeitgrenzen (Game enhancements
+  bei 5500 Materialien, Karte mit 20 000 Brushes lesen/schreiben, 6000 Brushes + 1500 Entities öffnen/bearbeiten/
+  auswählen/zeichnen); die Grenzen sind großzügig und fangen nur Verschlechterungen um ein Vielfaches.
 - Testdaten erzeugt `tests/fixture.cpp` (HL2 in zwei Bibliotheken, SDK Base 2013, Mapbase-artige Mod, VPKs, Hammer++)
   und `tests/demo.cpp` (prozedurale Texturen, Modell mit Animationen, Sounds, Demo-Karte mit absichtlichen Fehlern).
 
@@ -604,6 +613,10 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   (`makeShapePage`), Test in `tests/test_csg.cpp`.
 - **Neue Brush-Operation**: Geometrie in `csg` (bleibt konvex, `usable()` prüft), Undo-Schritt in `edit::`, Aufruf in
   `Editor`, Aktion im Menü „Brushes“ und in `m_contextActions` (Rechtsklick).
+- **Panel startet ein Programm (`QProcess`)**: den Prozess als Kind des Panels anlegen und im Destruktor zuerst
+  `stopOwnProcesses(this)` (`process_guard.h`) aufrufen – sonst meldet `~QProcess` beim Schließen `finished` an ein
+  halb abgebautes Panel (Absturz). Hintergrund-Jobs, die das `GameFileSystem` lesen, bei `Editor::gameAboutToChange`
+  abwarten.
 - **Neues Spiel**: meist nichts zu tun. Bekannte App-IDs (Name, Engine-Zweig, Haupt-FGD) in `game_discovery.cpp`.
 
 ## Bauen, CI, Abgabe

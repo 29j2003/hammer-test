@@ -34,6 +34,7 @@
 #include <QRegularExpression>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -43,6 +44,8 @@
 #include <sme/text.h>
 
 #include <algorithm>
+#include <string_view>
+#include <unordered_set>
 
 namespace sme::app {
 
@@ -660,7 +663,13 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_thumbnails->setFileSystem(nullptr);
 	});
 	connect(editor, &Editor::gameChanged, this, &AssetBrowser::reload);
-	connect(editor, &Editor::documentChanged, this, &AssetBrowser::updateUsedMaterials);
+	// Counting the used materials and models walks every face of the map: once after a burst of edits,
+	// not once per commit (a big map spent most of an edit here).
+	m_usageUpdate = new QTimer(this);
+	m_usageUpdate->setSingleShot(true);
+	m_usageUpdate->setInterval(50);
+	connect(m_usageUpdate, &QTimer::timeout, this, &AssetBrowser::updateUsedMaterials);
+	connect(editor, &Editor::documentChanged, m_usageUpdate, qOverload<>(&QTimer::start));
 	connect(&m_indexWatcher, &QFutureWatcherBase::finished, this, [this] {
 		if (m_indexWatcher.future().resultCount() == 0 || m_indexWatcher.isCanceled()) {
 			return;
@@ -882,17 +891,23 @@ void AssetBrowser::updateRecent() {
 }
 
 void AssetBrowser::updateUsedMaterials() {
-	QSet<QString> used;
+	// A map has tens of thousands of faces but few materials: the names are made comparable once each.
+	std::unordered_set<std::string_view> raw;
 	const auto add = [&](const Entity& entity) {
 		for (const auto& solid : entity.solids) {
 			for (const auto& side : solid.sides) {
-				used.insert(normalizedMaterialName(QString::fromStdString(side.material)));
+				raw.insert(side.material);
 			}
 		}
 	};
 	add(m_editor->doc().world);
 	for (const auto& entity : m_editor->doc().entities) {
 		add(entity);
+	}
+	QSet<QString> used;
+	used.reserve(static_cast<qsizetype>(raw.size()));
+	for (const auto name : raw) {
+		used.insert(normalizedMaterialName(QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size()))));
 	}
 	m_materialFilter->setUsed(used);
 	m_modelModel->setUsage(modelUsageOf(m_editor->doc()));

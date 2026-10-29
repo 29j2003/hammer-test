@@ -1,6 +1,7 @@
 // animations_page.cpp - The Animations page (see animations_page.h).
 
 #include "animations_page.h"
+#include "process_guard.h"
 
 #include "asset_browser.h"
 #include "editor.h"
@@ -235,6 +236,7 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	m_mapRefresh->setSingleShot(true);
 	m_mapRefresh->setInterval(400);
 	connect(m_mapRefresh, &QTimer::timeout, this, [this] {
+		if (!isVisible()) return;   // showEvent catches up: no scan of the map while mapping elsewhere
 		refreshModels();
 		updateUses();
 		updateUseButton();
@@ -333,6 +335,7 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 }
 
 AnimationsPage::~AnimationsPage() {
+	stopOwnProcesses(this);   // studiomdl may still run: its finish must not reach a page that is gone
 	++m_generation;
 	m_loader.waitForFinished();
 }
@@ -858,7 +861,7 @@ bool AnimationsPage::compileImports() {
 		                .arg(program.isEmpty() ? tr("no SDK tools set") : program));
 	}
 	const QString original = m_importModel;
-	const QString gameDir = QString::fromStdString(entry->gameDir.generic_string());
+	const QString gameDir = fromPath(entry->gameDir);   // (generic_string() is the ANSI code page on Windows: a folder with umlauts broke)
 	const QString folder = QDir(gameDir).filePath(qs(animationSourceFolder(original.toStdString())));
 	if (!QDir().mkpath(folder)) return fail(tr("Cannot create %1").arg(folder));
 	const auto write = [](const QString& path, const QString& text) {

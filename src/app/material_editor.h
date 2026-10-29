@@ -258,6 +258,15 @@ private:
 	QPushButton* m_saveAs;
 	QLabel* m_status;
 	QFutureWatcher<std::map<QString, QImage>> m_textureWatcher;
+	/// Background jobs reading the game's files (texture names, height maps): they are waited for
+	/// before the game is replaced (its file system goes away with it).
+	QList<QFuture<void>> m_jobs;
+	template <typename T>
+	QFuture<T> track(QFuture<T> job) {
+		m_jobs.removeIf([](const QFuture<void>& done) { return done.isFinished(); });
+		m_jobs << QFuture<void>(job);
+		return job;
+	}
 	QImage m_baseImage;                   ///< For painting zones
 };
 

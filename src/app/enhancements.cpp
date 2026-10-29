@@ -12,7 +12,6 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
-#include <QDirIterator>
 #include <QSaveFile>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -135,15 +134,8 @@ void GameEnhancements::sync() {
 		result.candidates = scan ? findEffectCandidates(*fs, modDir) : candidates;
 		result.excluded = excludedMaterials(*fs, settings);
 		// The walls of the mod's maps (its map folder and the open map) get the pattern relief.
-		std::vector<std::filesystem::path> vmfs;
-		if (!mapDir.isEmpty() && QFileInfo(mapDir).isDir()) {
-			QDirIterator it(mapDir, {QStringLiteral("*.vmf")}, QDir::Files, QDirIterator::Subdirectories);
-			while (it.hasNext()) {
-				const QString path = it.next();
-				if (!path.endsWith(QLatin1String("_cordon.vmf"))) vmfs.push_back(toPath(path));
-			}
-		}
-		std::set<std::string> mapMaterials = vmfMaterialNames(vmfs);
+		// (Not the autosaves: old copies, often dozens, read again after every edit of the open map.)
+		std::set<std::string> mapMaterials = vmfMaterialNames(mapSourceFiles(mapDir.isEmpty() ? std::filesystem::path() : toPath(mapDir)));
 		mapMaterials.insert(openMap.begin(), openMap.end());
 		EnhancementOptions options;
 		options.shaderDll = modHasShaderDll(modDir);

@@ -1,6 +1,7 @@
 // mod_code_panel.cpp - Mod code tab of the Project page (see mod_code_panel.h).
 
 #include "mod_code_panel.h"
+#include "process_guard.h"
 
 #include "editor.h"
 #include "source_control_panel.h"
@@ -291,13 +292,7 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 
 ModCodePanel::~ModCodePanel() {
 	// A running build goes on by itself otherwise; the banner may not be in a page yet.
-	for (auto* process : findChildren<QProcess*>(Qt::FindDirectChildrenOnly)) {
-		process->disconnect(this);
-		if (process->state() != QProcess::NotRunning) {
-			process->kill();
-			process->waitForFinished(2000);
-		}
-	}
+	stopOwnProcesses(this);
 	if (m_banner && !m_banner->parent()) delete m_banner;
 }
 
