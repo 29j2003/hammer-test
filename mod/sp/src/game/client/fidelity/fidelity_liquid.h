@@ -11,6 +11,7 @@
 #endif
 
 struct model_t;
+class CUtlBuffer;
 
 //-----------------------------------------------------------------------------
 // Called by C_PhysicsProp::OnInternalDrawModel (c_physicsprop.cpp, line
@@ -21,5 +22,13 @@ struct model_t;
 // to rest; its liquid needs the light around it, not the baked one.
 //-----------------------------------------------------------------------------
 bool Fidelity_KeepsDynamicLight( const model_t *pModel );
+
+//-----------------------------------------------------------------------------
+// For fidelity_report (fidelity_report.cpp): whether the game knows the
+// Fidelity_Liquid shader, which liquid materials are drawn as plain glass
+// instead (they look like the game's own bottles), and for pModel (may be
+// NULL) what each material it is drawn with is, and why it has no liquid.
+//-----------------------------------------------------------------------------
+void Fidelity_LiquidReport( const model_t *pModel, CUtlBuffer &buf );
 
 #endif // FIDELITY_LIQUID_H

@@ -1504,6 +1504,19 @@ static void Fidelity_FormatText( VertexFormat_t fmt, char *pOut, int nOutSize )
 		NumBoneWeights( fmt ), UserDataSize( fmt ), TexCoordSize( 0, fmt ), TexCoordSize( 1, fmt ) );
 }
 
+// A container by its name: the words of deploy.ps1's $BottleNames (and Mapsmith's
+// BOTTLE_NAMES) - bottle, jug, jar, flask ... (the jug was missing here before)
+static bool Fidelity_ContainerName( const char *pszName )
+{
+	static const char *s_pszWords[] = { "bottle", "jug", "jar", "flask", "vial", "decanter", "carafe", "beaker", "healthkit", "medkit" };
+	for ( int i = 0; i < ARRAYSIZE( s_pszWords ); i++ )
+	{
+		if ( Q_stristr( pszName, s_pszWords[ i ] ) )
+			return true;
+	}
+	return false;
+}
+
 static bool Fidelity_IsLiquidMaterial( IMaterial *pMaterial )
 {
 	if ( !pMaterial || pMaterial->IsErrorMaterial() )
@@ -1606,6 +1619,7 @@ static void Fidelity_ShaderDllReport( CUtlBuffer &buf )
 //-----------------------------------------------------------------------------
 static int s_nRepairedLiquidMaterials = 0;
 static int s_nPlainGlass = 0;			// liquid materials drawn as plain glass (no Fidelity_Liquid)
+static CUtlVector< CUtlString > s_PlainGlassNames;	// their names, for fidelity_report
 static CUtlVector< CUtlString > s_RepairLog;	// what the repair saw, for the report
 static CUtlVector< IMaterial * > s_RepairTried;	// each material is looked at once
 
@@ -1657,6 +1671,7 @@ static int Fidelity_RepairLiquidMaterials()
 			{
 				pMaterial->SetShaderAndParams( Fidelity_PlainGlassKeys( pKeys ) );
 				s_nPlainGlass++;
+				s_PlainGlassNames.AddToTail( CUtlString( pMaterial->GetName() ) );
 				s_RepairLog.AddToTail( CUtlString( CFmtStr( "    drawn as plain glass: shader now %s", pMaterial->GetShaderName() ).Access() ) );
 			}
 			else
@@ -1673,6 +1688,80 @@ static int Fidelity_RepairLiquidMaterials()
 	}
 	s_nRepairedLiquidMaterials += nRepaired;
 	return nRepaired;
+}
+
+//-----------------------------------------------------------------------------
+// For fidelity_report (fidelity_liquid.h): whether the game can draw liquid at
+// all, which liquid materials the client had to draw as plain glass instead -
+// they look exactly like the game's own bottle, so in a screenshot "no shader"
+// and "plain glass" cannot be told apart (Julius, 29.10.2026: glassjug01 had
+// no liquid) - and, for the model looked at, what each of its materials is.
+//-----------------------------------------------------------------------------
+void Fidelity_LiquidReport( const model_t *pModel, CUtlBuffer &buf )
+{
+	Fidelity_RepairLiquidMaterials();
+	const bool bShader = Fidelity_EngineHasShader( "Fidelity_Liquid" );
+	buf.Printf( "\nliquid (Fidelity_Liquid):\n" );
+	buf.Printf( "  shader known to the material system: %s\n", bShader ? "yes"
+		: "NO - bin\\game_shader_dx6.dll missing or not loadable, or the game was started for another mod folder" );
+	buf.Printf( "  materials with the FidelityLiquid proxy: %d\n", s_LiquidMaterials.Count() );
+	buf.Printf( "  drawn as PLAIN GLASS instead (their shader did not work): %d\n", s_PlainGlassNames.Count() );
+	for ( int i = 0; i < s_PlainGlassNames.Count(); i++ )
+		buf.Printf( "    %s\n", s_PlainGlassNames[ i ].Get() );
+	if ( !bShader || s_PlainGlassNames.Count() > 0 )
+	{
+		// Said in the console too: the bottles look like the game's own, nothing else shows it
+		Warning( "[fidelity] Bottles have no liquid: %s. Fix: Mapsmith > Project > Features > Install features, then start the game again.\n",
+			bShader ? CFmtStr( "%d bottle materials are drawn as plain glass", s_PlainGlassNames.Count() ).Access()
+				: "the game has no Fidelity_Liquid shader (bin\\game_shader_dx6.dll)" );
+	}
+	for ( int i = 0; i < s_RepairLog.Count(); i++ )
+		buf.Printf( "  %s\n", s_RepairLog[ i ].Get() );
+
+	if ( !pModel || modelinfo->GetModelType( pModel ) != mod_studio )
+		return;
+	// The materials the model is really drawn with (as r_fidelity_liquid_info)
+	studiohwdata_t *pHardware = mdlcache->GetHardwareData( modelinfo->GetCacheHandle( pModel ) );
+	if ( !pHardware || pHardware->m_NumLODs <= 0 )
+	{
+		buf.Printf( "  %s: not loaded for drawing yet\n", modelinfo->GetModelName( pModel ) );
+		return;
+	}
+	const studioloddata_t &lod = pHardware->m_pLODs[ pHardware->m_RootLOD ];
+	buf.Printf( "  %s is drawn with %d materials:\n", modelinfo->GetModelName( pModel ), lod.numMaterials );
+	for ( int i = 0; i < lod.numMaterials; i++ )
+	{
+		IMaterial *pMaterial = lod.ppMaterials[ i ];
+		if ( !pMaterial )
+			continue;
+		const char *pszName = pMaterial->GetName();
+		const char *pszVerdict;
+		bool bPlain = false;
+		for ( int j = 0; j < s_PlainGlassNames.Count() && !bPlain; j++ )
+			bPlain = !Q_stricmp( s_PlainGlassNames[ j ].Get(), pszName );
+		// What the .vmt the game reads asks for, and where it comes from
+		char szPath[ MAX_PATH ];
+		Q_snprintf( szPath, sizeof( szPath ), "materials/%s.vmt", pszName );
+		KeyValues *pKeys = new KeyValues( "vmt" );
+		const bool bRead = pKeys->LoadFromFile( filesystem, szPath, "GAME" );
+		const bool bWantsLiquid = bRead && !Q_stricmp( pKeys->GetName(), "Fidelity_Liquid" );
+		const bool bModCopy = filesystem->FileExists( szPath, "MOD" );
+		if ( bPlain )
+			pszVerdict = "PLAIN GLASS: its .vmt asks for Fidelity_Liquid, the game could not use it";
+		else if ( !Q_stricmp( pMaterial->GetShaderName(), "Fidelity_Liquid" ) )
+			pszVerdict = "liquid";
+		else if ( bWantsLiquid )
+			pszVerdict = "its .vmt asks for Fidelity_Liquid, but it is drawn with another shader";
+		else if ( Fidelity_ContainerName( pszName ) && !bModCopy )
+			pszVerdict = "no liquid: the mod has no own copy of this material (Mapsmith > Project > Game enhancements writes it)";
+		else if ( Fidelity_ContainerName( pszName ) )
+			pszVerdict = "no liquid: the mod's own copy does not ask for Fidelity_Liquid";
+		else
+			pszVerdict = "no container by its name";
+		buf.Printf( "    %s: shader %s, .vmt %s%s - %s\n", pszName, pMaterial->GetShaderName(),
+			bRead ? pKeys->GetName() : "NOT readable", bModCopy ? " (the mod's own copy)" : " (the game's original)", pszVerdict );
+		pKeys->deleteThis();
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -1762,7 +1851,7 @@ static void Fidelity_LiquidInfo( bool bPrint )
 		}
 		// Containers by name too: shows what they really use when it is not the liquid shader.
 		const char *pModelName = modelinfo->GetModelName( pModel );
-		if ( !bLiquid && !Q_stristr( pModelName, "bottle" ) && !Q_stristr( pModelName, "vial" ) && !Q_stristr( pModelName, "jar" ) )
+		if ( !bLiquid && !Fidelity_ContainerName( pModelName ) )
 			continue;
 		nLiquidModels++;
 

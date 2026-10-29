@@ -12,7 +12,12 @@
 //                       crosshair hits (entity, surface, its surfaceprop and
 //                       game material - bullet holes and impact effects come
 //                       from it); every material there (the wall's, or all of
-//                       a model's) with all its parameters; the weapon in
+//                       a model's: each texture of the model, the folder it
+//                       was found in and the skins using it) with all its
+//                       parameters and whether the file is the mod's own
+//                       copy; for a model also its liquid state (is the
+//                       Fidelity_Liquid shader there, which bottles are drawn
+//                       as plain glass instead and why); the weapon in
 //                       hand: its view model, attachments and the events of
 //                       its sequences (muzzle flashes come from those);
 //                       the sun (env_sun and env_global_light: where they
@@ -38,6 +43,10 @@
 
 #include "cbase.h"
 #include "fidelity_volumetric.h"
+#include "fidelity_liquid.h"
+#include "datacache/imdlcache.h"
+#include "studio.h"
+#include "fmtstr.h"
 #include "filesystem.h"
 #include "materialsystem/imaterial.h"
 #include "materialsystem/imaterialvar.h"
@@ -108,7 +117,7 @@ static void FidelityReportMaterial( IMaterial *pMaterial, int nReport, CUtlBuffe
 	FidelityReportSafeName( pMaterial->GetName(), szSafe, sizeof( szSafe ) );
 	Q_snprintf( szFrom, sizeof( szFrom ), "materials/%s.vmt", pMaterial->GetName() );
 	Q_snprintf( szTo, sizeof( szTo ), "%s/%02d_%s.vmt", REPORT_FOLDER, nReport, szSafe );
-	info.Printf( "    file %s\n", szFrom );
+	info.Printf( "    file %s%s\n", szFrom, g_pFullFileSystem->FileExists( szFrom, "MOD" ) ? " (the mod's own copy)" : " (the game's original: the mod has no copy)" );
 	FidelityReportCopy( szFrom, szTo, info );
 
 	const int nParams = pMaterial->ShaderParamCount();
@@ -135,6 +144,60 @@ static void FidelityReportMaterial( IMaterial *pMaterial, int nReport, CUtlBuffe
 		Q_snprintf( szTo, sizeof( szTo ), "%s/%02d_%s_%s.vtf", REPORT_FOLDER, nReport, szParam, szTexture );
 		FidelityReportCopy( szFrom, szTo, info );
 	}
+}
+
+// A model's materials, as the engine finds them (studiorender: each texture
+// name of the model in its $cdmaterials folders, the first that exists), with
+// the skins that use each; then each material in full. (modelinfo's
+// GetModelMaterialCount gave 0 for models - the report of 29.10.2026 listed no
+// material for glassjug01; Valve's code calls it for brush models only.)
+static void FidelityReportModelMaterials( const model_t *pModel, int nSkin, int nReport, CUtlBuffer &info )
+{
+	const studiohdr_t *pStudio = modelinfo->GetStudiomodel( pModel );
+	if ( !pStudio )
+	{
+		info.Printf( "  model materials: model data not loaded\n" );
+		return;
+	}
+	info.Printf( "  model: %d textures, %d skins (this one has skin %d), material folders:", pStudio->numtextures, pStudio->numskinfamilies, nSkin );
+	for ( int i = 0; i < pStudio->numcdtextures; i++ )
+		info.Printf( " \"%s\"", pStudio->pCdtexture( i ) );
+	info.Printf( "\n" );
+
+	IMaterial *pFound[ REPORT_MAX_MATERIALS ] = {};
+	int nFound = 0;
+	for ( int i = 0; i < pStudio->numtextures; i++ )
+	{
+		const char *pszTexture = pStudio->pTexture( i )->pszName();
+		IMaterial *pMaterial = NULL;
+		char szName[ MAX_PATH ] = "";
+		for ( int j = 0; j < pStudio->numcdtextures && !pMaterial; j++ )
+		{
+			Q_snprintf( szName, sizeof( szName ), "%s%s", pStudio->pCdtexture( j ), pszTexture );
+			Q_FixSlashes( szName, '/' );
+			IMaterial *pTry = materials->FindMaterial( szName, TEXTURE_GROUP_MODEL, false );
+			if ( pTry && !pTry->IsErrorMaterial() )
+				pMaterial = pTry;
+		}
+		// the skins that draw this texture (skin family table: one row per skin)
+		char szSkins[ 128 ] = "";
+		for ( int nFamily = 0; nFamily < pStudio->numskinfamilies; nFamily++ )
+		{
+			for ( int nRef = 0; nRef < pStudio->numskinref; nRef++ )
+			{
+				if ( *pStudio->pSkinref( nFamily * pStudio->numskinref + nRef ) != i )
+					continue;
+				Q_strncat( szSkins, CFmtStr( "%s%d", szSkins[ 0 ] ? " " : "", nFamily ), sizeof( szSkins ), COPY_ALL_CHARACTERS );
+				break;
+			}
+		}
+		info.Printf( "  texture %d \"%s\": %s%s, skins %s\n", i, pszTexture, pMaterial ? pMaterial->GetName() : "NOT FOUND in any folder",
+			pMaterial ? CFmtStr( " (shader %s)", pMaterial->GetShaderName() ).Access() : "", szSkins[ 0 ] ? szSkins : "none" );
+		if ( pMaterial && nFound < REPORT_MAX_MATERIALS )
+			pFound[ nFound++ ] = pMaterial;
+	}
+	for ( int i = 0; i < nFound; i++ )
+		FidelityReportMaterial( pFound[ i ], nReport, info );
 }
 
 // The weapon in hand: its view model's attachments and the events of its
@@ -322,8 +385,7 @@ CON_COMMAND( fidelity_report, "Writes everything about what you look at (materia
 				const char *pszName = modelinfo->GetModelName( pPropModel );
 				const model_t *pLoaded = modelinfo->FindOrLoadModel( pszName );
 				pModel = pLoaded ? pLoaded : pPropModel;
-				info.Printf( "  static prop %d, model %s (%d materials)\n", tr.hitbox - 1, pszName,
-					modelinfo->GetModelType( pModel ) == mod_studio ? modelinfo->GetModelMaterialCount( pModel ) : -1 );
+				info.Printf( "  static prop %d, model %s\n", tr.hitbox - 1, pszName );
 			}
 		}
 		// the light there as the map baked it (lightmaps and ambient): ~0 means the
@@ -336,12 +398,9 @@ CON_COMMAND( fidelity_report, "Writes everything about what you look at (materia
 
 		if ( pModel && modelinfo->GetModelType( pModel ) == mod_studio )
 		{
-			// a model: all its materials
-			IMaterial *pMaterials[ REPORT_MAX_MATERIALS ] = {};
-			const int nCount = MIN( modelinfo->GetModelMaterialCount( pModel ), REPORT_MAX_MATERIALS );
-			modelinfo->GetModelMaterials( pModel, nCount, pMaterials );
-			for ( int i = 0; i < nCount; i++ )
-				FidelityReportMaterial( pMaterials[ i ], nReport, info );
+			C_BaseAnimating *pAnimating = pEntity ? pEntity->GetBaseAnimating() : NULL;
+			FidelityReportModelMaterials( pModel, pAnimating ? pAnimating->GetSkin() : -1, nReport, info );
+			Fidelity_LiquidReport( pModel, info );
 		}
 		else if ( tr.surface.name && tr.surface.name[ 0 ] && tr.surface.name[ 0 ] != '*' )
 			FidelityReportMaterial( materials->FindMaterial( tr.surface.name, TEXTURE_GROUP_WORLD, false ), nReport, info );
