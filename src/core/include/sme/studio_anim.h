@@ -102,8 +102,9 @@ public:
 	int addKeyframedSequence(StudioSequence sequence, std::vector<std::vector<std::pair<AnimVec, AnimQuat>>> frames);
 
 	/// The pose of every bone of the model (relative to its parent) at `cycle` (0 = first frame,
-	/// 1 = last frame) of the sequence; the rest pose for an unknown sequence.
-	void localPose(int sequence, float cycle, std::vector<AnimVec>& pos, std::vector<AnimQuat>& quat) const;
+	/// 1 = last frame) of the sequence; the rest pose for an unknown sequence. A delta sequence
+	/// moves the idle (as previews show it), or with `deltaOnIdle` false the rest pose.
+	void localPose(int sequence, float cycle, std::vector<AnimVec>& pos, std::vector<AnimQuat>& quat, bool deltaOnIdle = true) const;
 	/// Bone to model space for every bone at that point.
 	[[nodiscard]] std::vector<BoneMatrix> boneToModel(int sequence, float cycle) const;
 	/// The matrices that move a vertex from the rest pose to that pose (bone to model times pose to bone).

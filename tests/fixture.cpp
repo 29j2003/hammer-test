@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -349,6 +350,78 @@ std::vector<std::byte> makeCubemapBsp(int samples, const std::vector<std::string
 	put32(out, 8 + 40 * 16, std::uint32_t(pakAt));
 	put32(out, 8 + 40 * 16 + 4, std::uint32_t(zip.size()));
 	return out;
+}
+
+
+std::vector<std::byte> makePhy(const std::vector<std::pair<std::array<float, 3>, float>>& solids, const std::string& text) {
+	std::vector<std::byte> out;
+	const auto put32 = [&](std::uint32_t v) {
+		for (int i = 0; i < 4; ++i) out.push_back(std::byte((v >> (8 * i)) & 0xFF));
+	};
+	const auto putF = [&](float f) {
+		std::uint32_t v = 0;
+		std::memcpy(&v, &f, 4);
+		put32(v);
+	};
+	put32(16);
+	put32(0);
+	put32(std::uint32_t(solids.size()));
+	put32(0);
+	for (const auto& [origin, size] : solids) {
+		// size, VPHY header (28), compact surface (48), one ledge (16 + 4 triangles * 16), 4 points (16 each), a tree node (32)
+		const std::uint32_t surfaceSize = 48 + 80 + 64 + 32;
+		put32(28 + surfaceSize);
+		out.insert(out.end(), {std::byte('V'), std::byte('P'), std::byte('H'), std::byte('Y')});
+		put32(0x100);   // version 0x100, modelType 0
+		put32(surfaceSize);
+		putF(0);
+		putF(0);
+		putF(0);
+		put32(0);
+		for (int i = 0; i < 8; ++i) putF(0);   // mass centre, inertia, radius, deviation/size
+		put32(48 + 80 + 64);                      // ledge tree root
+		put32(0);
+		put32(0);
+		out.insert(out.end(), {std::byte('I'), std::byte('V'), std::byte('P'), std::byte('S')});
+		put32(80);                 // points after the ledge's triangles
+		put32(0);
+		put32((80 / 16) << 8);     // size_div_16 in the upper 24 bits
+		put32(4);                  // 4 triangles, future 0
+		const std::uint32_t faces[4][3] = {{0, 2, 1}, {0, 1, 3}, {0, 3, 2}, {1, 2, 3}};
+		for (int t = 0; t < 4; ++t) {
+			put32(std::uint32_t(t));
+			for (const auto corner : faces[t]) put32(corner);
+		}
+		const float corners[4][3] = {{0, 0, 0}, {size, 0, 0}, {0, size, 0}, {0, 0, size}};
+		for (const auto& c : corners) {
+			const float x = origin[0] + c[0], y = origin[1] + c[1], z = origin[2] + c[2];
+			putF(x * 0.0254f);    // IVP: x, -z, y in metres
+			putF(-z * 0.0254f);
+			putF(y * 0.0254f);
+			putF(0);
+		}
+		for (int i = 0; i < 8; ++i) put32(0);   // the ledge tree node
+	}
+	for (const char c : text) out.push_back(std::byte(c));
+	out.push_back(std::byte(0));
+	return out;
+}
+
+void addHitbox(std::vector<std::byte>& mdl, int bone, std::array<float, 6> box) {
+	const auto at = [&](std::size_t offset, std::int32_t v) { std::memcpy(mdl.data() + offset, &v, 4); };
+	while (mdl.size() % 4) mdl.push_back(std::byte(0));
+	const std::size_t set = mdl.size();
+	mdl.resize(set + 12 + 68 + 16, std::byte(0));
+	at(172, 1);
+	at(176, std::int32_t(set));
+	at(set, 12 + 68);   // name after the box
+	at(set + 4, 1);
+	at(set + 8, 12);
+	const std::size_t b = set + 12;
+	at(b, bone);
+	at(b + 4, 3);
+	for (int i = 0; i < 6; ++i) std::memcpy(mdl.data() + b + 8 + std::size_t(i) * 4, &box[std::size_t(i)], 4);
+	std::memcpy(mdl.data() + set + 12 + 68, "default", 7);
 }
 
 } // namespace sme::test

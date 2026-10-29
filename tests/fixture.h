@@ -106,6 +106,13 @@ struct StudioModelSpec {
 /// Writes the three files next to each other ("models/x.mdl" -> x.mdl, x.vvd, x.dx90.vtx).
 void writeStudioModel(const std::filesystem::path& mdlPath, const StudioModelFiles& files);
 
+/// A physics model (.phy) like studiomdl writes: one solid per entry, each a convex piece made of
+/// a tetrahedron with corners at `origin`, origin + size on x, on y and on z (Source units), in
+/// IVP's compact surface layout; `text` is the text part (solid { ... } editparams { ... }).
+[[nodiscard]] std::vector<std::byte> makePhy(const std::vector<std::pair<std::array<float, 3>, float>>& solids, const std::string& text);
+/// Adds a hit box set "default" with one box on `bone` (index) to a .mdl made by makeStudioModel.
+void addHitbox(std::vector<std::byte>& mdl, int bone, std::array<float, 6> box);
+
 /// A particle file (.pcf, binary DMX) holding particle systems with these names.
 [[nodiscard]] std::vector<std::byte> makePcf(const std::vector<std::string>& systems);
 /// The demo's particle files: a fire with a smoke child, and a burst of sparks (with emitters,

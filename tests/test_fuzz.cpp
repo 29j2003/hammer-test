@@ -18,6 +18,7 @@
 #include <sme/map.h>
 #include <sme/material.h>
 #include <sme/mod_menu.h>
+#include <sme/model_export.h>
 #include <sme/model_import.h>
 #include <sme/particles.h>
 #include <sme/relief_pattern.h>
@@ -186,6 +187,9 @@ TEST_CASE("fuzz: model files (.mdl, .vvd, .vtx, .ani) - geometry, info, skeleton
 		(void)readModelInfo(mdl);
 		(void)buildModelGeometry({mdl, files.vvd, files.vtx}, 0, nullptr, {}, 3);
 		(void)readAttachments(mdl);
+		(void)readHitboxes(mdl);
+		(void)readSkinFamilies(mdl);
+		(void)buildBodyPartGeometry({mdl, files.vvd, files.vtx}, 0, 0);
 		if (auto model = AnimatedModel::fromFiles({{"models/test_anim.mdl", mdl, files.ani}})) {
 			for (int s = 0; s < int(model->sequences().size()); ++s) {
 				(void)model->boneToModel(s, 0.37f);
@@ -200,6 +204,11 @@ TEST_CASE("fuzz: model files (.mdl, .vvd, .vtx, .ani) - geometry, info, skeleton
 			for (int s = 0; s < int(model->sequences().size()); ++s) (void)model->boneToModel(s, 0.5f);
 		}
 	}, 4);
+	// The physics model (.phy) and its .smd.
+	const auto phy = test::makePhy({{{0, 0, 0}, 8.f}, {{1, 2, 3}, 4.f}}, "solid {\n\"index\" \"1\"\n\"name\" \"root\"\n}\n");
+	fuzzBytes(phy, [&](const Bytes& data) {
+		if (const auto physics = readPhysicsModel(data)) (void)physicsSmd(*physics, {});
+	}, 5);
 	// Generous: a few thousand reads take well under a second; minutes would mean a hang-like loop.
 	CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(60));
 }

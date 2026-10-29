@@ -132,6 +132,7 @@
 #include "mod_page.h"
 #include "model_viewer.h"
 #include "animations_page.h"
+#include "model_export_dialog.h"
 #include "models_page.h"
 #include "map_look_panel.h"
 #include "material_preview.h"
@@ -6770,6 +6771,79 @@ TEST_CASE("sounds: a sound still being read when the game changes is finished fi
 	for (auto& f : busy) f.waitForFinished();
 	CHECK_FALSE(stillReading);
 	REQUIRE(editor.game());
+}
+
+TEST_CASE("models page: export for editing writes the model as .smd files and a .qc, an animation alone from the Animations page") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	const QString citizen = "models/humans/group01/male_07.mdl";
+
+	window.showPage(MainWindow::Page::Models);
+	auto* page = window.modelsPage();
+	for (int i = 0; i < 200 && page->currentModel() != citizen; ++i) {
+		page->selectModel(citizen);
+		QTest::qWait(25);
+	}
+	REQUIRE(page->currentModel() == citizen);
+	auto* exportButton = page->findChild<QPushButton*>("modelExport");
+	REQUIRE(exportButton);
+	exportButton->click();
+	auto* dialog = page->findChild<ModelExportDialog*>("modelExportDialog");
+	REQUIRE(dialog);
+	CHECK(QDir::fromNativeSeparators(dialog->folder()).endsWith("modelsrc/humans/group01/male_07"));
+	QTemporaryDir out;
+	dialog->setFolder(out.path());
+	QSignalSpy exported(dialog, &ModelExportDialog::exported);
+	REQUIRE(dialog->exportNow());
+	CHECK(dialog->busy());
+	REQUIRE(exported.wait(30000));
+	CHECK(exported.first().first().toBool());
+	CHECK(dialog->resultText().startsWith(QString::fromUtf8("✓")));
+	CHECK(dialog->findChild<QPushButton*>("modelExportOpen")->isVisible());
+	CHECK(QFile::exists(out.filePath("male_07.qc")));
+	CHECK_FALSE(QDir(out.filePath("anims")).entryList({"*.smd"}).isEmpty());
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		dialog->grab().save(QDir(shots).filePath("model_export.png"));
+	}
+	dialog->close();
+	settle();
+
+	// One animation from the Animations page: only it, with the model's reference.
+	window.showPage(MainWindow::Page::Animations);
+	auto* animations = window.animationsPage();
+	animations->selectModel(citizen);
+	for (int i = 0; i < 400 && !animations->animated(); ++i) QTest::qWait(25);
+	REQUIRE(animations->animated());
+	REQUIRE_FALSE(animations->animated()->sequences().empty());
+	const QString sequence = QString::fromStdString(animations->animated()->sequences().front().name);
+	auto* single = animations->exportSequence(sequence);
+	REQUIRE(single);
+	QTemporaryDir out2;
+	single->setFolder(out2.path());
+	QSignalSpy exported2(single, &ModelExportDialog::exported);
+	REQUIRE(single->exportNow());
+	REQUIRE(exported2.wait(30000));
+	CHECK(exported2.first().first().toBool());
+	CHECK(QDir(out2.filePath("anims")).entryList({"*.smd"}).size() == 1);
+	CHECK_FALSE(QDir(out2.filePath("materials")).exists());
+	single->close();
+	settle();
 }
 
 namespace {

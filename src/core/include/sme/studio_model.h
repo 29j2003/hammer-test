@@ -69,6 +69,12 @@ struct ModelFiles {
 [[nodiscard]] std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int skin, std::string* error = nullptr,
                                                               const std::function<bool(const std::string&)>& materialExists = {}, int body = 0);
 
+/// The triangles of one model (`model`, an option of a body group) of one body part alone, with
+/// the first skin's materials - for writing a model out again (model_export). nullopt with an
+/// error when the part or model does not exist or the files are broken.
+[[nodiscard]] std::optional<ModelGeometry> buildBodyPartGeometry(const ModelFiles& files, int part, int model, std::string* error = nullptr,
+                                                                 const std::function<bool(const std::string&)>& materialExists = {});
+
 /// Loads "models/x.mdl" (+ .vvd, .dx90.vtx / .vtx) from the game's file system.
 [[nodiscard]] std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::string_view modelPath, int skin = 0, std::string* error = nullptr,
                                                              int body = 0);

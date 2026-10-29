@@ -36,6 +36,8 @@ class QTreeWidgetItem;
 
 namespace sme::app {
 
+class ModelExportDialog;
+
 class AssetBrowser;
 class Editor;
 class MaterialCache;
@@ -89,6 +91,8 @@ public:
 	/// One combo box per body group with more than one option (in body group order).
 	[[nodiscard]] const QList<QComboBox*>& bodyGroupBoxes() const { return m_bodyBoxes; }
 	[[nodiscard]] QListWidget* materialList() const { return m_materialList; }
+	/// "Export for editing ...": opens the export dialog for a model (deletes itself when closed).
+	ModelExportDialog* exportModel(const QString& model);
 	/// Where the right-click menus get their "Show in ..." entries from (the main window).
 	void setAssetMenuFiller(AssetMenuFiller filler) { m_menuFiller = std::move(filler); }
 
@@ -145,6 +149,7 @@ private:
 	QComboBox* m_placeAs;
 	QPushButton* m_place;
 	QPushButton* m_copy;
+	QPushButton* m_export;
 	QString m_folder;            ///< Folder picked in the tree ("models/props_c17/", empty = all)
 	QString m_current;
 	QTimer* m_usageUpdate = nullptr;   ///< Counts the model uses once after a burst of edits

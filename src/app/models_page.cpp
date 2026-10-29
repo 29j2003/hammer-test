@@ -2,6 +2,8 @@
 
 #include "models_page.h"
 
+#include "model_export_dialog.h"
+
 #include "asset_browser.h"
 #include "editor.h"
 #include "enhancements.h"
@@ -237,6 +239,11 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_placeAs->setItemData(3, tr("A door that opens: turns around its hinge, with handle and sounds from the model"), Qt::ToolTipRole);
 	placeRow->addWidget(m_placeAs);
 	placeRow->addStretch(1);
+	m_export = new QPushButton(tr("Export for editing ..."));
+	m_export->setObjectName("modelExport");
+	m_export->setToolTip(tr("Take the model apart into .smd files and a .qc (with its animations, collision model and materials) "
+	                        "to edit in Blender and compile again with studiomdl"));
+	placeRow->addWidget(m_export);
 	m_copy = new QPushButton(tr("Copy path"));
 	m_copy->setObjectName("modelCopy");
 	placeRow->addWidget(m_copy);
@@ -295,6 +302,7 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 		const QString path = index.data(Qt::UserRole).toString();
 		QMenu menu;
 		menu.addAction(tr("Copy path"), this, [path] { QApplication::clipboard()->setText(path); });
+		menu.addAction(tr("Export for editing ..."), this, [this, path] { exportModel(path); });
 		if (m_menuFiller) {
 			menu.addSeparator();
 			m_menuFiller(&menu, {AssetKind::Model, path.toStdString()}, AssetPlace::ModelsPage);
@@ -317,6 +325,9 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 		QApplication::clipboard()->setText(m_current);
 		emit m_editor->message(tr("Copied %1").arg(m_current));
 	});
+	connect(m_export, &QPushButton::clicked, this, [this] {
+		if (!m_current.isEmpty()) exportModel(m_current);
+	});
 	connect(m_place, &QPushButton::clicked, this, [this] {
 		if (!m_current.isEmpty()) emit placeRequested(placeClass(), placeKeys());
 	});
@@ -329,6 +340,13 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	connect(assets, &AssetBrowser::materialsIndexed, this, [this] { setModels(m_assets->modelNames()); });
 	setModels(assets->modelNames());
 	updateDetails();
+}
+
+ModelExportDialog* ModelsPage::exportModel(const QString& model) {
+	auto* dialog = new ModelExportDialog(m_editor, model, {}, this);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	dialog->show();
+	return dialog;
 }
 
 ModelsPage::~ModelsPage() {

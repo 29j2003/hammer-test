@@ -228,6 +228,24 @@ apply), so animations can be added to it on the Animations page. **Use a sample 
 *File › Import into the mod › Imported files ...* lists everything imported into the mod; **Remove import** takes
 one out again, also after a restart.
 
+### Exporting a model for editing
+
+**Export for editing ...** on the Models page (also in the right-click menu of the list) takes any model of the game
+apart - a weapon (`v_` and `w_` models), a prop, a character - into files you can open in Blender (Source Tools) and
+compile again with studiomdl:
+
+- one reference `.smd` per body group option (`blank` options stay `blank`), with the skeleton and bone weights,
+- one `.smd` per animation of the model in `anims/` (animations of `$includemodel` models stay included),
+- the collision model from the `.phy` as `<name>_physics.smd` (ragdolls with their joint limits),
+- a `.qc` with the model's name, material folders, body groups, skins, surface, `$keyvalues`, attachments, hit
+  boxes, animations (speed, loop, activity) and the collision model,
+- its materials (`.vmt`, `.vtf`) copied out of the game, the textures also as `.png` to paint on.
+
+The files go to `modelsrc/<model path>/` of your mod unless you pick another folder; **Open folder** shows them when
+it is done. On the Animations page, **Export ...** (or right-click on an animation) writes just that one animation,
+with the model's reference so the skeleton comes along. Not exported: LODs, facial flexes, animation events and IK
+rules; of a pose-parameter blend (9-way aims) only the middle pose is written.
+
 ## The Animations page
 
 The **Animations** button in the side bar (under *Models*) plays the animations of any model.
