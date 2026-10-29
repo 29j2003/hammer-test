@@ -77,8 +77,9 @@ static ConVar r_fidelity_parallax_plane_floor( "r_fidelity_parallax_plane_floor"
 // light from three directions, so where they differ the main light comes
 // from one side - the relief throws short shadows away from it (as the
 // flashlight pass does for its light). World space and baked: they lie the
-// same from wherever they are seen.
-static ConVar r_fidelity_parallax_bakedshadow( "r_fidelity_parallax_bakedshadow", "0.6", FCVAR_SERVER_CAN_EXECUTE, "Relief shadows from the baked light on bump-mapped parallax walls, 0..1 (0 = none)." );
+// same from wherever they are seen. 0.35: at 0.6 every tile of a bump-mapped
+// floor had a hard black strip along one side (Julius, 29.10.2026).
+static ConVar r_fidelity_parallax_bakedshadow( "r_fidelity_parallax_bakedshadow", "0.35", FCVAR_SERVER_CAN_EXECUTE, "Relief shadows from the baked light on bump-mapped parallax walls, 0..1 (0 = none)." );
 static ConVar r_fidelity_parallax_maxshift( "r_fidelity_parallax_maxshift", "4", FCVAR_SERVER_CAN_EXECUTE, "Most the parallax moves the texture at flat angles, in world units." );
 
 // The shader itself, twice: once for walls and floors, once for blended

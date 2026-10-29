@@ -130,6 +130,18 @@ double lowestFace(const Wall& wall, const HeightMap& map) {
 	return lowest;
 }
 
+/// The largest height difference between neighbouring texels (wrapping).
+double steepestStep(const HeightMap& map) {
+	double steepest = 0;
+	for (unsigned y = 0; y < map.height; ++y) {
+		for (unsigned x = 0; x < map.width; ++x) {
+			const double here = map.at(x, y);
+			steepest = std::max({steepest, std::abs(here - map.at((x + 1) % map.width, y)), std::abs(here - map.at(x, (y + 1) % map.height))});
+		}
+	}
+	return steepest;
+}
+
 ImageRgba noiseTexture(unsigned size, std::uint32_t seed, double amount) {
 	ImageRgba image;
 	image.width = image.height = static_cast<std::uint16_t>(size);
@@ -200,7 +212,14 @@ TEST_CASE("relief pattern: bricks in a running bond, every brick up and every jo
 		REQUIRE(map);
 		const auto [face, joint] = faceAndJoint(c.wall, *map);
 		CHECK(face > 0.8);
-		CHECK(joint < 0.15);
+		// Shallow joints (a black strip along every tile in the game, bricks smeared): bricks' mortar
+		// at 0.3, tiles' grout at 0.55 of the height.
+		if (c.kind == ReliefLayout::Kind::Stacked) {
+			CHECK(joint == doctest::Approx(0.55).epsilon(0.15));
+		} else {
+			CHECK(joint == doctest::Approx(0.3).epsilon(0.25));
+		}
+		CHECK(steepestStep(*map) < 0.25);   // rounded edges: no cliff from one texel to the next
 		// The darkest brick stands as high as the others (brightness alone sank it).
 		CHECK(lowestFace(c.wall, *map) > 0.75);
 		// The automatic way takes the layout too.
@@ -236,7 +255,7 @@ TEST_CASE("relief pattern: boards, upright courses and textures without a layout
 	REQUIRE(map);
 	const auto [face, joint] = faceAndJoint(upright, *map);
 	CHECK(face > 0.8);
-	CHECK(joint < 0.15);
+	CHECK(joint < 0.4);
 	// Rough plaster or stone: no layout, the brightness as before.
 	for (std::uint32_t seed : {1u, 2u, 3u}) {
 		const ImageRgba rough = noiseTexture(256, seed, 0.6);

@@ -1117,14 +1117,15 @@ TEST_CASE("relief like mapbase-fidelity's deploy.bat: which walls, from what, ho
 	REQUIRE(source);
 	CHECK(source->kind == ReliefSource::Kind::NormalMap);
 	CHECK(source->texture == "concrete/wall01_normal");
-	CHECK(source->depth == doctest::Approx(0.02));
+	CHECK(source->depth == doctest::Approx(0.006));   // shallow (Julius: a tiled floor looked right at 0.006)
 	CHECK(fidelityReliefSource("concrete/wall01", material("LightmappedGeneric { $basetexture a $bumpmap b $ssbump 1 }"))->kind ==
 	      ReliefSource::Kind::SSBump);
-	// Bricks without a bump map: from the texture, half as deep (courses).
+	// Bricks without a bump map: from the texture, as shallow (courses); stones deeper.
 	source = fidelityReliefSource("brick/brickwall001a", material("LightmappedGeneric { $basetexture brick/brickwall001a }"));
 	REQUIRE(source);
 	CHECK(source->kind == ReliefSource::Kind::Color);
-	CHECK(source->depth == doctest::Approx(0.01));
+	CHECK(source->depth == doctest::Approx(0.006));
+	CHECK(fidelityReliefSource("stone/stonewall01", material("LightmappedGeneric { $basetexture stone/stonewall01 }"))->depth == doctest::Approx(0.01));
 	// Already on the shader: its own height map and depth.
 	source = fidelityReliefSource("x/y", material("Fidelity_Parallax { $basetexture a $parallaxmap a_fidh $parallaxdepth 0.035 }"));
 	REQUIRE(source);

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <map>
 #include <mutex>
+#include <numbers>
 #include <numeric>
 #include <sstream>
 
@@ -483,10 +484,14 @@ std::optional<HeightMap> heightFromLayout(const ReliefLayout& layout, const Imag
 	// In the layout's own axes (courses across): x along the course, y across.
 	const unsigned lw = layout.transposed ? h : w, lh = layout.transposed ? w : h;
 	const int courseCount = std::max(1, layout.courses());
-	// Crisp faces: a short bevel (a third of the way to the brick's middle, at most 1.2 % of the
-	// texture), a little of the texture's grain on top (Julius: no "Noppen", no cushions).
+	// Faces with a rounded edge (a quarter sine: steepest at the joint, easing onto the face) over
+	// half the way to the unit's middle, at most 2 % of the texture; a little of the texture's grain
+	// on top (Julius: no "Noppen", no cushions). Joints stay shallow: mortar and grout sit only a
+	// little below the units - deep joints with steep sides threw a black strip along every tile in
+	// the game and smeared bricks seen at a flat angle (Julius, 29.10.2026). Tiles shallower still.
 	const double faceHalf = 0.5 * std::min(layout.courseHeight - layout.bedJoint, layout.unitWidth > 0 ? layout.unitWidth - layout.headJoint : 1e9);
-	const double bevel = std::clamp(0.35 * faceHalf, 1.0, std::max(1.0, std::max(w, h) * 0.012));
+	const double bevel = std::clamp(0.5 * faceHalf, 1.0, std::max(1.0, std::max(w, h) * 0.02));
+	const double jointHeight = layout.kind == ReliefLayout::Kind::Stacked ? 0.55 : 0.3;
 	constexpr double GRAIN = 0.1;
 	const auto around = boxMean(g.lum, w, h, std::max(2, int(std::lround(0.25 * layout.courseHeight))));
 	std::vector<double> detail(n);
@@ -509,13 +514,13 @@ std::optional<HeightMap> heightFromLayout(const ReliefLayout& layout, const Imag
 				edge = std::min(edge, wrapDistance(u, layout.unitWidth) - layout.headJoint * 0.5);
 			}
 			if (edge <= 0) {
-				heights[i] = 0.0;
+				heights[i] = jointHeight;
 				continue;
 			}
 			const double t = std::min(edge / bevel, 1.0);
-			const double shape = t * t * (3 - 2 * t);
+			const double shape = std::sin(t * (std::numbers::pi / 2));
 			const double grain = std::clamp((detail[i] - low) / (high - low), 0.0, 1.0);
-			heights[i] = shape * (1.0 - GRAIN + GRAIN * grain);
+			heights[i] = jointHeight + (1.0 - jointHeight) * shape * (1.0 - GRAIN + GRAIN * grain);
 		}
 	}
 	// Softened over a texel: no stair steps at the joints' edges.

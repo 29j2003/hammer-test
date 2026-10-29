@@ -62,7 +62,7 @@ struct ReliefSource {
 	enum class Kind { HeightMap, NormalMap, SSBump, Color };
 	Kind kind = Kind::NormalMap;
 	std::string texture;          ///< Texture name the heights come from ("brick/brickwall001a_normal")
-	double depth = 0.02;          ///< $parallaxdepth (texture units)
+	double depth = 0.01;          ///< $parallaxdepth (texture units; the shader's default)
 };
 struct Material;
 /// Where the relief (Fidelity_Parallax) of this material gets its heights, following the rules of mapbase-fidelity's deploy script; nullopt if the material gets no relief.

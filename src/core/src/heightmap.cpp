@@ -354,8 +354,9 @@ bool containsAnyI(std::string_view text, std::initializer_list<std::string_view>
 } // namespace
 
 std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, const Material& material) {
-	// deploy.ps1's numbers: -ParallaxDepth 0.02, bricks and tiles in courses at half of it.
-	constexpr double DEPTH = 0.02, COURSE_SHARE = 0.5;
+	// deploy.ps1's numbers: -ParallaxDepth 0.01 (stones, rock); bump maps and bricks and tiles in
+	// courses at 0.6 of it (Julius: a tiled floor looked right at about 0.006).
+	constexpr double DEPTH = 0.01, SHALLOW_SHARE = 0.6;
 	const std::string shader = toLower(material.shader);
 	if ((shader == "fidelity_parallax" || shader == "fidelity_worldvertextransition") && !material.param("$parallaxmap").empty()) {
 		ReliefSource source;
@@ -393,7 +394,7 @@ std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, 
 		ReliefSource source;
 		source.kind = material.flag("$ssbump") ? ReliefSource::Kind::SSBump : ReliefSource::Kind::NormalMap;
 		source.texture = bump;
-		source.depth = DEPTH;
+		source.depth = DEPTH * SHALLOW_SHARE;
 		return source;
 	}
 	if (base.empty() || !containsAnyI(path, {"brick", "stone", "cobble", "rock", "tile", "block", "cinder", "paver", "slate", "roof", "shingle"})) {
@@ -402,7 +403,7 @@ std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, 
 	ReliefSource source;
 	source.kind = ReliefSource::Kind::Color;
 	source.texture = base;
-	source.depth = containsAnyI(path, {"brick", "tile", "block", "cinder", "paver"}) ? DEPTH * COURSE_SHARE : DEPTH;
+	source.depth = containsAnyI(path, {"brick", "tile", "block", "cinder", "paver"}) ? DEPTH * SHALLOW_SHARE : DEPTH;
 	return source;
 }
 

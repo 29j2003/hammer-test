@@ -60,6 +60,7 @@
 #include <QElapsedTimer>
 #include <QFrame>
 #include <QOpenGLWidget>
+#include <QSplitter>
 #include <QStandardPaths>
 #include <QToolButton>
 #include <QWheelEvent>
@@ -956,7 +957,33 @@ TEST_CASE("editing with the mouse in the real window") {
 		CHECK_FALSE(relief->isChecked());
 		relief->setChecked(true);
 		CHECK(materials->shader() == "Fidelity_Parallax");
-		CHECK(materials->value("$parallaxdepth") == "0.02");
+		CHECK(materials->value("$parallaxdepth") == "0.006");   // a normal map: shallow (Julius: 0.006 looked right)
+		CHECK(materials->value("$parallaxao") == "0.25");
+		{
+			// The slider's number is always in sight, also with the column as narrow as it goes
+			// (Julius: the digits showed only after widening it).
+			auto* number = materials->findChild<QLabel*>("$parallaxdepth-value");
+			REQUIRE(number);
+			QApplication::processEvents();
+			CHECK(number->text() == "0.006");
+			CHECK(number->isVisibleTo(materials));
+			QScrollArea* area = nullptr;
+			for (QWidget* w = number->parentWidget(); w && !area; w = w->parentWidget()) area = qobject_cast<QScrollArea*>(w);
+			REQUIRE(area);
+			auto* split = qobject_cast<QSplitter*>(area->parentWidget());
+			REQUIRE(split);
+			const int at = split->indexOf(area);
+			QList<int> sizes = split->sizes();
+			const int squeezed = sizes[at] - 1;
+			sizes[at] = 1;   // as narrow as the splitter lets it
+			sizes[(at + 1) % sizes.size()] += squeezed;
+			split->setSizes(sizes);
+			QApplication::processEvents();
+			const QRect shownAt(number->mapTo(area->viewport(), QPoint(0, 0)), number->size());
+			CHECK(shownAt.left() >= 0);
+			CHECK(shownAt.right() < area->viewport()->width());
+			CHECK(number->width() >= number->fontMetrics().horizontalAdvance(number->text()));
+		}
 		REQUIRE(heightsReady.wait(10000));
 		const auto made = materials->currentHeights();
 		REQUIRE(made);
@@ -5231,7 +5258,7 @@ TEST_CASE("relief: the bricks found in the texture, whole bricks as zones, chang
 
 	// The views show it at once, before Save: the editor's shader, its height map, its depth.
 	REQUIRE(waitFor([](const MaterialInfo& info) { return info.shader == "Fidelity_Parallax" && !info.height.isNull(); }));
-	CHECK(shown()->parallaxDepth == doctest::Approx(0.02f));
+	CHECK(shown()->parallaxDepth == doctest::Approx(0.006f));
 	CHECK(shown()->height.width() == int(heights->width));
 	auto* depth = materials->findChild<QSlider*>("$parallaxdepth");
 	REQUIRE(depth);

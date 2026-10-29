@@ -458,7 +458,7 @@ void main() {
 			light += u_lightColor[i].rgb * ndl * atten;
 		}
 		// Soft filmic curve: keeps hot spots near lights from clipping to white.
-		light *= 1.0 - (1.0 - relief) * 0.35;   // deep parts darker ($parallaxao)
+		light *= 1.0 - (1.0 - relief) * 0.25;   // deep parts darker (the shader's default $parallaxao)
 		vec3 hdr = toLinear(base.rgb) * light * u_exposure;
 		if (u_envmap == 1 && u_reflections == 1 && u_probePass == 0) {
 			// $envmap: the cubemap in the reflected direction, added on top as the engine does.

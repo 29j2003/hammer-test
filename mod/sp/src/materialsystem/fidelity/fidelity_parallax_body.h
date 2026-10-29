@@ -14,8 +14,8 @@ BEGIN_VS_SHADER( FIDELITY_PARALLAX_SHADER, "World surface with parallax occlusio
 		SHADER_PARAM( BUMPFRAME, SHADER_PARAM_TYPE_INTEGER, "0", "Frame of the normal map." )
 		SHADER_PARAM( BUMPTRANSFORM, SHADER_PARAM_TYPE_MATRIX, "center .5 .5 scale 1 1 rotate 0 translate 0 0", "Normal map texture coordinate transform." )
 		SHADER_PARAM( PARALLAXMAP, SHADER_PARAM_TYPE_TEXTURE, "", "Height map (white = top), in the normal map's coordinates." )
-		SHADER_PARAM( PARALLAXDEPTH, SHADER_PARAM_TYPE_FLOAT, "0.02", "Depth of the relief, in normal map texture units (0.02 of its size)." )
-		SHADER_PARAM( PARALLAXAO, SHADER_PARAM_TYPE_FLOAT, "0.35", "How much darker the deepest parts are, 0..1." )
+		SHADER_PARAM( PARALLAXDEPTH, SHADER_PARAM_TYPE_FLOAT, "0.01", "Depth of the relief, in normal map texture units (0.01 of its size)." )
+		SHADER_PARAM( PARALLAXAO, SHADER_PARAM_TYPE_FLOAT, "0.25", "How much darker the deepest parts are, 0..1." )
 		SHADER_PARAM( PARALLAXFADE, SHADER_PARAM_TYPE_FLOAT, "1000", "Distance (units) from which the relief fades out over the same again." )
 		SHADER_PARAM( SSBUMP, SHADER_PARAM_TYPE_INTEGER, "0", "The bump map is self-shadowed (the three lightmap weights)." )
 		SHADER_PARAM( PARALLAXMODULATE, SHADER_PARAM_TYPE_INTEGER, "0", "A decal multiplied onto the wall, as DecalModulate (bullet holes from the decal atlas)." )
@@ -65,8 +65,8 @@ BEGIN_VS_SHADER( FIDELITY_PARALLAX_SHADER, "World surface with parallax occlusio
 			SET_FLAGS2( MATERIAL_VAR2_LIGHTING_BUMPED_LIGHTMAP );
 		SET_FLAGS2( MATERIAL_VAR2_NEEDS_TANGENT_SPACES );
 		SET_PARAM_INT_IF_NOT_DEFINED( BUMPFRAME, 0 );
-		SET_PARAM_FLOAT_IF_NOT_DEFINED( PARALLAXDEPTH, 0.02f );
-		SET_PARAM_FLOAT_IF_NOT_DEFINED( PARALLAXAO, 0.35f );
+		SET_PARAM_FLOAT_IF_NOT_DEFINED( PARALLAXDEPTH, 0.01f );
+		SET_PARAM_FLOAT_IF_NOT_DEFINED( PARALLAXAO, 0.25f );
 		SET_PARAM_FLOAT_IF_NOT_DEFINED( PARALLAXFADE, 1000.0f );
 		SET_PARAM_INT_IF_NOT_DEFINED( SSBUMP, 0 );
 		SET_PARAM_INT_IF_NOT_DEFINED( PARALLAXMODULATE, 0 );

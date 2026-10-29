@@ -67,8 +67,9 @@ struct ReliefLayout {
 /// Finds the layout of a base texture; `found()` is false when there is no clear one.
 [[nodiscard]] ReliefLayout detectReliefLayout(const ImageRgba& baseTexture);
 
-/// The height map of a found layout: units up with a crisp bevel and a little of their grain,
-/// joints down, parts outside the pattern flat on top. nullopt without a layout.
+/// The height map of a found layout: units up with a rounded edge and a little of their grain,
+/// joints a little lower (bricks 0.3, tiles 0.55), parts outside the pattern flat on top.
+/// nullopt without a layout.
 [[nodiscard]] std::optional<HeightMap> heightFromLayout(const ReliefLayout& layout, const ImageRgba& baseTexture);
 
 /// The automatic height map of a wall without a normal map: from its layout when it has one,

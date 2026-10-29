@@ -168,7 +168,7 @@ std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& 
 		if (!liveHeights.isNull() && (shader == "fidelity_parallax" || shader == "fidelity_worldvertextransition")) {
 			info->height = liveHeights;
 			const auto depth = QString::fromStdString(material->param("$parallaxdepth"));
-			info->parallaxDepth = depth.isEmpty() ? 0.02f : depth.toFloat();
+			info->parallaxDepth = depth.isEmpty() ? 0.01f : depth.toFloat();
 		}
 	} else if (relief) {
 		// Where Mapsmith keeps relief off (windows, signs, smooth surfaces - Game enhancements writes the

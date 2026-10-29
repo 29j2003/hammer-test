@@ -111,7 +111,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `compile_options` | Was ein Kompilieren ausführt (`CompileSettings`: Schritte, Qualität/Presets, LDR/HDR, Cubemaps, Spielfenster, Zusatz-Parameter je Werkzeug, `serialize`/`parse`), bekannte Parameter je Werkzeug (`knownParameters`), daraus die Befehlszeilen (`compileCommands`); Startoptionen des Spiels, die die Einstellungen regeln (Konsole, Fenster, Auflösung, Intro), werden aus den Spiel-Startoptionen herausgenommen |
 | `compile_log` | Zeilen von VBSP/VVIS/VRAD einordnen (Fehler/Warnung + Erklärung), Fortschritt aus `0...1...2`; Cubemaps: `readBspCubemaps` (Lump 42 Samples, Lump 40 Pakfile-Zentralverzeichnis: `materials/maps/<map>/c<x>_<y>_<z>[.hdr].vtf`, nicht `cubemapdefault`) und `judgeCubemapBuild` – das Spiel endet nach `-buildcubemaps` immer mit Exit-Code 1, deshalb zählt die Karte in `maps/` (vorher/nachher, Zeitstempel), nicht der Exit-Code |
 | `heightmap` | Höhenkarten fürs Relief: aus der Normal-Map (Frankot-Chellappa) oder der Helligkeit, Zonen, VTF schreiben, `fidelityReliefSource` (Regeln von `deploy.ps1` plus `reliefFitByName`) |
-| `relief_pattern` | Mustererkennung fürs Relief: `detectReliefLayout` (Läuferverband, Raster, Reihen ohne Stoßfugen; auch hochkant), `heightFromLayout` (Steine oben mit scharfer Fase, Fugen unten, Fenster/Flächen ohne Muster flach), `heightFromTexture` (Muster, sonst Helligkeit), `setUnitZone` (ganzer Stein als Zone); `reliefFitByName`/`reliefFitByLook`/`reliefFitInGame`: wo Relief keinen Sinn hat (Fenster, Glas, Schilder, Gitter, Türen, Blech, Putz, Stoff, Lampen; große glatte Scheibe, strukturlose Fläche, durchsichtig) |
+| `relief_pattern` | Mustererkennung fürs Relief: `detectReliefLayout` (Läuferverband, Raster, Reihen ohne Stoßfugen; auch hochkant), `heightFromLayout` (Steine oben mit runder Kante (Viertel-Sinus), Fugen nur wenig tiefer: Ziegel 0,3, Fliesen 0,55 – tiefe Fugen mit steilen Wänden warfen im Spiel einen schwarzen Streifen an jeder Fliese und verschmierten Ziegel bei flachem Blick; Fenster/Flächen ohne Muster flach), `heightFromTexture` (Muster, sonst Helligkeit), `setUnitZone` (ganzer Stein als Zone); `reliefFitByName`/`reliefFitByLook`/`reliefFitInGame`: wo Relief keinen Sinn hat (Fenster, Glas, Schilder, Gitter, Türen, Blech, Putz, Stoff, Lampen; große glatte Scheibe, strukturlose Fläche, durchsichtig) |
 | `fidelity_look` | Look-Werte von mapbase-fidelity pro Karte (Liste, `cfg/fidelity.cfg` lesen, in der Karte lesen/schreiben) |
 | `fidelity_effects` | Game enhancements: Effekte von mapbase-fidelity (Liquid, Wind, Water; Relief „aus“-Kopien, wo Mapsmith keins will oder es ausgeschaltet ist, sonst macht es `deploy.bat` – außer auf Wänden der eigenen Karten: Muster-Relief `makePatternRelief`; nichts mit Mod-Shadern ohne `bin/game_shader_dx6.dll`, `EnhancementOptions`) nach den Regeln und mit dem Text von `deploy.ps1` (`deployWouldApply`, `makeEffectMaterial`, Marker `DEPLOY_MARKER`), Einstellungen der Mod in `cfg/mapsmith_enhancements.txt` (`EnhancementSettings`: Effekt aus, Modelle/Materialien ausgenommen), Kandidaten aus den Original-Materialien des Spiels (`GameFileSystem::readOriginal` überspringt den Mod-Ordner), `planEnhancements` (an = Text wie deploy, aus = Kopie des Originals mit `MAPSMITH_MARKER`, damit `deploy.bat` sie als eigene Datei stehen lässt; Dateien der Mod ohne Marker nie anfassen → `keptOwn`); Ausschluss wirkt pro Material, also für alle Modelle mit diesem Material |
 | `sky_presets` | Licht passend zum Himmel (`applySky`, Tabelle der Himmel) |
@@ -272,7 +272,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   `point_clientcommand` „fidelity_look_command“, OnMapSpawn mit 0,1 s Verzögerung), `Editor::lookValue` (Karte → cfg →
   Standard), `Editor::fidelityLook` (automatisch an, wenn die Mod mapbase-fidelity hat), Panel `MapLookPanel`.
   Relief ohne deploy: `fidelityReliefSource` (Kern, `heightmap`) = `Get-ParallaxSource` aus `deploy.ps1` (Ordner,
-  Shader, Ausschlüsse, Holz, Tiefe 0,02 / Ziegel 0,01); `MaterialCache::setRelief` macht die Höhenkarten im Hintergrund
+  Shader, Ausschlüsse, Holz, Tiefe 0,01 / Normal-Map und Ziegel/Fliesen 0,006); `MaterialCache::setRelief` macht die Höhenkarten im Hintergrund
   (`reliefHeights`, geteilt pro Quelltextur); der Welt-Shader läuft per Parallax Occlusion Mapping hinein (24 Schritte,
   Tangentenraum aus `dFdx`/`dFdy`, Normale aus der Höhe, Abdunkeln 0,35, Ausblenden 600–1000 Einheiten) – nur im
   Lighting-Preview und mit dem Look-Schalter. Ziegel ohne Normal-Map nehmen im Viewport `heightFromTexture` (Muster aus
@@ -288,7 +288,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Höhenkarte `<name>_relief.vtf` (Muster/Normal-Map/Helligkeit + Zonen) nutzt das Spiel so. (4) Wände der eigenen Karten
   (offene Karte + alle `.vmf` im Map-Ordner, `vmfMaterialNames` liest nur die `"material"`-Zeilen) bekommen von Game
   enhancements das **Muster-Relief** (`makePatternRelief`: `heightFromTexture` mit Layout ab Sicherheit 0,5, sonst bleibt
-  deploys): VMT in der Form von `New-ParallaxMaterial` (Shader getauscht, `$parallaxmap`/`$parallaxdepth` 0,01 = Ziegeltiefe,
+  deploys): VMT in der Form von `New-ParallaxMaterial` (Shader getauscht, `$parallaxmap`/`$parallaxdepth` 0,006 = Ziegeltiefe, `$parallaxao` 0,25,
   ohne eigene Spiegelung `$envmap env_cubemap` + `$envmapwetonly 1`, Rest des bereinigten Texts), erste Zeile
   `PATTERN_RELIEF_MARKER … hash <fnv64>` (Regeln + Original-VMT + Textur-Bytes: neu nur bei Änderung), Höhenkarte
   `<material>_mapsmith_relief.vtf` (deploy kennt nur seine `_fidh`-Dateien aus dem Manifest). Nur schlichte
@@ -470,7 +470,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 - mapbase-fidelity im Material-Editor (Shader der Mod, `mod/sp/src/materialsystem/fidelity/`): Schalter immer nutzbar
   (die Vorschau zeigt es); findet `fidelityShaders()` die Shader-DLL der Mod nicht (`bin/game_shader_dx6.dll`), steht in
   der Gruppe ein Hinweis, unter „Kind“ die Warnung mit **Install features**, und *Save* schreibt solche Shader nicht (das
-  Spiel zeigte sonst ein durchsichtiges Drahtgitter). Neue Relief-Tiefe wie deploy (`fidelityReliefSource`: 0,02, Ziegel 0,01). Relief = `Fidelity_Parallax` bzw. `Fidelity_WorldVertexTransition`
+  Spiel zeigte sonst ein durchsichtiges Drahtgitter). Neue Relief-Tiefe wie deploy (`fidelityReliefSource`: 0,01, Normal-Map und Ziegel/Fliesen 0,006; „Darker in the depths“ 0,25). Relief = `Fidelity_Parallax` bzw. `Fidelity_WorldVertexTransition`
   (`$parallaxmap` weiß = oben, `$parallaxdepth`, `$parallaxao`, `$parallaxfade`); Wasser = `Water_Fidelity`
   (`$fidelityglint`, `$fidelityfoam`); Flüssigkeit = `Fidelity_Liquid` (`$liquidcolor`, `$fill` −1 = zufällig, …).
   Beim Umschalten fallen die Parameter der anderen Variante weg (`RELIEF_KEYS`, `WATER_KEYS`, `LIQUID_KEYS`).
