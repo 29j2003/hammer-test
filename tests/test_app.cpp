@@ -2506,6 +2506,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		REQUIRE(bottom);
 		REQUIRE(right);
 		window.resizeDocks({bottom}, {260}, Qt::Vertical);   // room above its minimum (a row of tiles)
+		window.resizeDocks({right}, {320}, Qt::Horizontal);  // and above the right panel's (the window fits the screen)
 		settle();
 		const int bottomBefore = bottom->height(), rightBefore = right->width();
 		const QPoint start = grip->mapToGlobal(grip->rect().center());
