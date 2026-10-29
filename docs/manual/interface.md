@@ -20,6 +20,13 @@ The window has six parts, from left to right and top to bottom:
 5. **The views**: one 3D view, or 3D plus top, front and side.
 6. **Right panel** with *Object Properties*, the **bottom panel** with browsers and logs, and the **status bar**.
 
+## Small screens
+
+Every window of Mapsmith fits the screen it opens on, also on a 1366 × 768 laptop or with 125-150 % scaling: a dialog
+never opens larger than the free part of the screen and sits in its middle. When its content is taller, the content
+scrolls and the buttons at the bottom (*OK*, *Create mod*, *Cancel* ...) stay where you can click them. The start page
+scrolls the same way.
+
 ## The start page
 
 When Mapsmith opens it shows the start page (also **File > Start page**):

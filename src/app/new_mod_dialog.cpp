@@ -11,7 +11,7 @@
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QDir>
-#include <QDirIterator>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QLabel>
@@ -26,6 +26,8 @@
 #include <sme/game.h>
 #include <sme/mod_features.h>
 #include <sme/text.h>
+
+#include <algorithm>
 
 namespace sme::app {
 
@@ -165,11 +167,16 @@ NewModDialog::NewModDialog(Editor* editor, QWidget* parent) : QDialog(parent), m
 	QStringList paths;
 	if (!editor->filePath().isEmpty()) paths << editor->filePath();
 	if (editor->game()) {
-		const QString folder = editor->gameSettings().mapDir;
-		QDirIterator it(folder, {QStringLiteral("*.vmf")}, QDir::Files, QDirIterator::Subdirectories);
-		while (it.hasNext() && paths.size() < 500) {
-			const QString path = it.next();
-			if (!paths.contains(path) && !path.endsWith(QLatin1String("_cordon.vmf"))) paths << path;
+		// Real maps only (no autosave copies or cordon exports), the newest first.
+		QFileInfoList found;
+		for (const auto& file : mapSourceFiles(editor->gameSettings().mapDir.toStdWString())) {
+			found << QFileInfo(QString::fromStdWString(file.wstring()));
+		}
+		std::sort(found.begin(), found.end(), [](const QFileInfo& a, const QFileInfo& b) { return a.lastModified() > b.lastModified(); });
+		for (const QFileInfo& info : std::as_const(found)) {
+			const QString path = info.filePath();
+			if (paths.size() >= 500) break;
+			if (!paths.contains(path)) paths << path;
 		}
 	}
 	for (const QString& path : paths) {

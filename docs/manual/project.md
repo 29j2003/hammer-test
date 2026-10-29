@@ -68,7 +68,7 @@ what it is based on - as big cards:
 - **Multiplayer**: Half-Life 2: Deathmatch content (Source SDK Base 2013 Multiplayer).
 
 Then the **Title** (shown in Steam and the main menu, e.g. *My Mod*) and the **Folder name** (letters, digits, `_` and
-`-`, filled in from the title), and optionally the maps of the current game to take along.
+`-`, filled in from the title), and optionally the maps of the current game to take along (your maps, newest first - autosave copies are left out).
 
 **Create mod** writes the `gameinfo.txt`, the usual folders, a `cfg/autoexec.cfg` and the resource file with the title,
 and opens the new mod in the editor. Restart Steam to see the mod in your library.

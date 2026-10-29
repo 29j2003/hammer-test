@@ -104,6 +104,8 @@
 #include "find_dialog.h"
 #include "history_panel.h"
 #include "replace_materials_dialog.h"
+#include "dialog_fit.h"
+#include "shortcut_dialog.h"
 #include "compile.h"
 #include "compile_window.h"
 #include "properties_panel.h"
@@ -2504,6 +2506,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		REQUIRE(bottom);
 		REQUIRE(right);
 		window.resizeDocks({bottom}, {260}, Qt::Vertical);   // room above its minimum (a row of tiles)
+		window.resizeDocks({right}, {320}, Qt::Horizontal);  // and above the right panel's (the window fits the screen)
 		settle();
 		const int bottomBefore = bottom->height(), rightBefore = right->width();
 		const QPoint start = grip->mapToGlobal(grip->rect().center());
@@ -6243,6 +6246,133 @@ TEST_CASE("layout checks, ropes and ladders: player start in the floor, NPCs wit
 	const auto count = editor.doc().entities.size();
 	ladder->trigger();
 	CHECK(editor.doc().entities.size() == count);
+}
+
+TEST_CASE("small screens: every dialog and the window fit, the content scrolls, the buttons stay reachable") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	QSettings().setValue("start/show", false);
+
+	// A 1366 x 768 laptop: what is left for a window without the task bar and title bar.
+	const QRect area(8, 36, 1366 - 16, 768 - 36 - 48);
+	setAvailableWindowAreaForTests(area);
+	struct Restore {
+		~Restore() { setAvailableWindowAreaForTests({}); }
+	} restore;
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1600, 960);   // what it asks for on a big screen
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	CHECK(window.width() <= area.width());
+	CHECK(window.height() <= area.height());
+	CHECK(window.minimumSizeHint().height() <= area.height());
+	window.showStartPage();
+	settle();
+	CHECK(window.minimumSizeHint().height() <= area.height());   // the start page scrolls inside itself
+
+	// Inside the area, no larger than it, and its button boxes visible inside the window - not
+	// in the part that scrolls.
+	const auto checkFits = [&](QDialog& dialog, const char* name) {
+		INFO(name);
+		dialog.show();
+		REQUIRE(QTest::qWaitForWindowExposed(&dialog));
+		settle();
+		CHECK(dialog.width() <= area.width());
+		CHECK(dialog.height() <= area.height());
+		CHECK(area.contains(QRect(dialog.pos(), dialog.size())));
+		auto* scroll = dialog.findChild<QScrollArea*>("dialogFitScroll", Qt::FindDirectChildrenOnly);
+		for (auto* buttons : dialog.findChildren<QDialogButtonBox*>()) {
+			if (!buttons->isVisibleTo(&dialog)) continue;
+			const QRect inDialog(buttons->mapTo(&dialog, QPoint(0, 0)), buttons->size());
+			CHECK(dialog.rect().contains(inDialog));
+			if (scroll) CHECK_FALSE(scroll->isAncestorOf(buttons));
+		}
+		dialog.hide();
+	};
+
+	{
+		// New project with every feature shown: much taller than the screen, so it scrolls.
+		NewModDialog dialog(&editor, &window);
+		if (auto* toggle = dialog.findChild<QPushButton*>("newModChooseFeatures"); toggle && !toggle->isChecked()) toggle->click();
+		checkFits(dialog, "new project");
+		auto* scroll = dialog.findChild<QScrollArea*>("dialogFitScroll", Qt::FindDirectChildrenOnly);
+		REQUIRE(scroll);
+		CHECK(dialog.height() <= area.height());
+		CHECK(scroll->widget()->height() >= scroll->viewport()->height());
+	}
+	{
+		GameSettings tools;
+		CompileDialog dialog(home.filePath("arena.vmf"), home.filePath("game"), tools, &window, "test_game");
+		checkFits(dialog, "compile");
+	}
+	{
+		GameSettingsDialog dialog(&editor, editor.gameKey(), &window);
+		checkFits(dialog, "game settings");
+	}
+	{
+		FindDialog dialog(&editor, [] {}, &window);
+		checkFits(dialog, "find");
+	}
+	{
+		ReplaceMaterialsDialog dialog(&editor, {}, &window);
+		checkFits(dialog, "replace materials");
+	}
+	{
+		ShortcutDialog dialog(&window, &window);
+		checkFits(dialog, "shortcuts");
+	}
+	for (const auto kind : {ImportDialog::Kind::Sound, ImportDialog::Kind::Material, ImportDialog::Kind::Model, ImportDialog::Kind::Particles}) {
+		ImportDialog dialog(&editor, kind, &window);
+		checkFits(dialog, "import");
+	}
+	{
+		// Any dialog built on the fly: 80 rows of settings and OK/Cancel at the bottom.
+		QDialog dialog(&window);
+		auto* v = new QVBoxLayout(&dialog);
+		for (int i = 0; i < 80; ++i) v->addWidget(new QLabel(QStringLiteral("Setting %1").arg(i)));
+		auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+		v->addWidget(buttons);
+		checkFits(dialog, "on the fly");
+		CHECK(dialog.height() == area.height());
+		auto* scroll = dialog.findChild<QScrollArea*>("dialogFitScroll", Qt::FindDirectChildrenOnly);
+		REQUIRE(scroll);
+		CHECK(scroll->verticalScrollBar()->maximum() > 0);
+		CHECK(buttons->button(QDialogButtonBox::Ok)->isVisibleTo(&dialog));
+		// A short one stays small (no empty space, no scroll bar).
+		QDialog small(&window);
+		auto* sv = new QVBoxLayout(&small);
+		sv->addWidget(new QLabel("Just one line"));
+		sv->addWidget(new QDialogButtonBox(QDialogButtonBox::Ok));
+		checkFits(small, "small");
+		CHECK(small.height() < 200);
+	}
+	{
+		// Even a much smaller screen: the buttons stay reachable.
+		setAvailableWindowAreaForTests(QRect(0, 0, 800, 480));
+		NewModDialog dialog(&editor, &window);
+		dialog.show();
+		REQUIRE(QTest::qWaitForWindowExposed(&dialog));
+		settle();
+		CHECK(dialog.width() <= 800);
+		CHECK(dialog.height() <= 480);
+		auto* buttons = dialog.findChild<QDialogButtonBox*>();
+		REQUIRE(buttons);
+		CHECK(dialog.rect().contains(QRect(buttons->mapTo(&dialog, QPoint(0, 0)), buttons->size())));
+		setAvailableWindowAreaForTests(area);
+	}
 }
 
 namespace {

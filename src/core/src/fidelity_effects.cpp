@@ -5,6 +5,7 @@
 #include <sme/fidelity_effects.h>
 
 #include <sme/assets.h>
+#include <sme/autosave.h>
 #include <sme/heightmap.h>
 #include <sme/texture.h>
 #include <sme/filesystem.h>
@@ -513,7 +514,8 @@ std::vector<std::filesystem::path> mapSourceFiles(const std::filesystem::path& m
 			continue;
 		}
 		const std::string name = toLower(path.filename().string());
-		if (name.ends_with(".vmf") && !name.ends_with("_cordon.vmf")) out.push_back(path);
+		// Timestamped autosave copies ("map.20261028-084357.vmf") are not maps of their own, wherever they lie.
+		if (name.ends_with(".vmf") && !name.ends_with("_cordon.vmf") && !parseAutosaveName(path)) out.push_back(path);
 	}
 	std::sort(out.begin(), out.end());
 	return out;

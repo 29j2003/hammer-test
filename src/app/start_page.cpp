@@ -15,6 +15,7 @@
 #include <QLocale>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -88,7 +89,17 @@ bool StartPage::showAtStartup() {
 
 StartPage::StartPage(QWidget* parent) : QWidget(parent) {
 	setObjectName("startPage");
-	auto* outer = new QHBoxLayout(this);
+	// The page scrolls inside itself, so it never makes the window taller than a small screen.
+	auto* pageLayout = new QVBoxLayout(this);
+	pageLayout->setContentsMargins(0, 0, 0, 0);
+	auto* scroll = new QScrollArea;
+	scroll->setObjectName("startScroll");
+	scroll->setWidgetResizable(true);
+	scroll->setFrameShape(QFrame::NoFrame);
+	pageLayout->addWidget(scroll);
+	auto* body = new QWidget;
+	scroll->setWidget(body);
+	auto* outer = new QHBoxLayout(body);
 	outer->addStretch(1);
 	auto* column = new QVBoxLayout;
 	column->setSpacing(14);
