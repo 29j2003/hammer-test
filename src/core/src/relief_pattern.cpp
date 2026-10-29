@@ -10,7 +10,6 @@
 #include <cmath>
 #include <map>
 #include <mutex>
-#include <numbers>
 #include <numeric>
 #include <sstream>
 
@@ -434,6 +433,46 @@ bool startsAnyPart(const std::string& text, std::initializer_list<std::string_vi
 	return false;
 }
 
+struct CellBox {
+	unsigned x0, y0, x1, y1;
+};
+
+/// A group of set cells (4-connected, not wrapping) of at least `share` of all cells that fills at
+/// least `fill` of its bounding rectangle, three cells or more each way (a window pane): that
+/// rectangle, else nullopt.
+std::optional<CellBox> largeRectangle(const std::vector<bool>& cells, unsigned w, unsigned h, double share, double fill) {
+	std::vector<bool> seen(cells.size());
+	std::vector<std::size_t> stack;
+	for (std::size_t start = 0; start < cells.size(); ++start) {
+		if (!cells[start] || seen[start]) continue;
+		std::size_t count = 0;
+		unsigned x0 = w, y0 = h, x1 = 0, y1 = 0;
+		stack.push_back(start);
+		seen[start] = true;
+		while (!stack.empty()) {
+			const std::size_t i = stack.back();
+			stack.pop_back();
+			++count;
+			const unsigned x = unsigned(i % w), y = unsigned(i / w);
+			x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+			const auto visit = [&](unsigned nx, unsigned ny) {
+				const std::size_t j = std::size_t(ny) * w + nx;
+				if (cells[j] && !seen[j]) {
+					seen[j] = true;
+					stack.push_back(j);
+				}
+			};
+			if (x + 1 < w) visit(x + 1, y);
+			if (x > 0) visit(x - 1, y);
+			if (y + 1 < h) visit(x, y + 1);
+			if (y > 0) visit(x, y - 1);
+		}
+		const double box = double(x1 - x0 + 1) * (y1 - y0 + 1);
+		if (double(count) >= share * double(cells.size()) && double(count) >= fill * box && x1 - x0 >= 2 && y1 - y0 >= 2) return CellBox{x0, y0, x1, y1};
+	}
+	return std::nullopt;
+}
+
 } // namespace
 
 std::int32_t ReliefLayout::unitAt(int x, int y) const {
@@ -484,13 +523,15 @@ std::optional<HeightMap> heightFromLayout(const ReliefLayout& layout, const Imag
 	// In the layout's own axes (courses across): x along the course, y across.
 	const unsigned lw = layout.transposed ? h : w, lh = layout.transposed ? w : h;
 	const int courseCount = std::max(1, layout.courses());
-	// Faces with a rounded edge (a quarter sine: steepest at the joint, easing onto the face) over
-	// half the way to the unit's middle, at most 2 % of the texture; a little of the texture's grain
-	// on top (Julius: no "Noppen", no cushions). Joints stay shallow: mortar and grout sit only a
-	// little below the units - deep joints with steep sides threw a black strip along every tile in
-	// the game and smeared bricks seen at a flat angle (Julius, 29.10.2026). Tiles shallower still.
+	// Flat faces with a short, crisp bevel (a third of the way to the unit's middle, at most 1.2 % of
+	// the texture, eased in and out) and a little of the texture's grain on top - Julius: no
+	// "Noppen", no cushions; the rounded edges over half the brick (29.10.2026) made every brick a
+	// pillow that caught the light all over and looked deeper than it was. Joints stay shallow:
+	// mortar and grout sit only a little below the units - deep joints with steep sides threw a
+	// black strip along every tile in the game and smeared bricks seen at a flat angle. Tiles
+	// shallower still.
 	const double faceHalf = 0.5 * std::min(layout.courseHeight - layout.bedJoint, layout.unitWidth > 0 ? layout.unitWidth - layout.headJoint : 1e9);
-	const double bevel = std::clamp(0.5 * faceHalf, 1.0, std::max(1.0, std::max(w, h) * 0.02));
+	const double bevel = std::clamp(0.35 * faceHalf, 1.0, std::max(1.0, std::max(w, h) * 0.012));
 	const double jointHeight = layout.kind == ReliefLayout::Kind::Stacked ? 0.55 : 0.3;
 	constexpr double GRAIN = 0.1;
 	const auto around = boxMean(g.lum, w, h, std::max(2, int(std::lround(0.25 * layout.courseHeight))));
@@ -518,7 +559,7 @@ std::optional<HeightMap> heightFromLayout(const ReliefLayout& layout, const Imag
 				continue;
 			}
 			const double t = std::min(edge / bevel, 1.0);
-			const double shape = std::sin(t * (std::numbers::pi / 2));
+			const double shape = t * t * (3 - 2 * t);
 			const double grain = std::clamp((detail[i] - low) / (high - low), 0.0, 1.0);
 			heights[i] = jointHeight + (1.0 - jointHeight) * shape * (1.0 - GRAIN + GRAIN * grain);
 		}
@@ -565,7 +606,7 @@ ReliefFit reliefFitByName(std::string_view materialName, std::string_view baseTe
 		const char* reason;
 	};
 	static const Rule objects[] = {
-		{{"window", "glass", "windshield", "mirror"}, "window or glass"},
+		{{"window", "glass", "windshield", "mirror", "stainedglass", "skylight", "storefront", "shopfront"}, "window or glass"},
 		{{"poster", "billboard", "advert", "banner", "graffiti"}, "poster or sign"},
 		{{"grating", "chainlink", "railing", "fence"}, "grate or fence"},
 		{{"shutter", "garagedoor"}, "door or shutter"},
@@ -648,6 +689,72 @@ ReliefFit reliefFitByLook(const ImageRgba& baseTexture) {
 		const double box = double(x1 - x0 + 1) * (y1 - y0 + 1);
 		if (count * 10 > n * 3 && double(count) > 0.6 * box) return {false, "window or panel (large flat pane)"};
 	}
+	// A dark pane divided by bars (a window's grid between brick pillars - Julius, 29.10.2026): the
+	// bars cut the glass into cells too small for the flat test above, so look at blocks of 8 x 8
+	// texels. A block is glass when about half of it or more is dark and even - close to the
+	// block's darker tone (a bar through the block is the rest). Bricks are not that dark, a joint
+	// is too little of a block, and a texture dark all over is a dark wall (see below).
+	// (At up to 256 texels: at 128 the thin bars of small panes blur into the glass.)
+	constexpr unsigned BLOCK = 8;
+	const Gray fine = baseTexture.width > w || baseTexture.height > h ? gray(baseTexture, 256) : g;
+	if (fine.w >= BLOCK * 4 && fine.h >= BLOCK * 4) {
+		const unsigned bw = fine.w / BLOCK, bh = fine.h / BLOCK;
+		std::vector<bool> glass(std::size_t(bw) * bh);
+		std::vector<double> tones;
+		for (unsigned by = 0; by < bh; ++by) {
+			for (unsigned bx = 0; bx < bw; ++bx) {
+				tones.clear();
+				for (unsigned y = by * BLOCK; y < (by + 1) * BLOCK; ++y) {
+					for (unsigned x = bx * BLOCK; x < (bx + 1) * BLOCK; ++x) tones.push_back(fine.lum[std::size_t(y) * fine.w + x]);
+				}
+				std::nth_element(tones.begin(), tones.begin() + tones.size() / 4, tones.end());
+				const double low = tones[tones.size() / 4];
+				const auto pane = std::count_if(tones.begin(), tones.end(), [low](double t) { return t < 0.15 && std::abs(t - low) < 0.05; });
+				glass[std::size_t(by) * bw + bx] = low < 0.15 && pane * 100 >= std::ptrdiff_t(tones.size()) * 45;
+			}
+		}
+		// A large group of glass blocks that fills its rectangle (no wrapping: a pane has edges) and
+		// leaves a wall around it (a texture dark all over is a dark wall, not a window).
+		if (const auto box = largeRectangle(glass, bw, bh, 0.15, 0.6); box && double(box->x1 - box->x0 + 1) * (box->y1 - box->y0 + 1) < 0.9 * bw * bh) {
+			return {false, "window (panes between bars)"};
+		}
+	}
+	return {};
+}
+
+ReliefFit reliefFitByMask(const ImageRgba& envmapMask) {
+	// A reflection mask bright over a large rectangle and dark around it: glass (a wall texture's
+	// window reflects, its bricks do not). Bars in the glass leave dark lines in the mask: the
+	// rectangle need only be half filled. A mask bright all over (shiny tiles, metal) is no window.
+	const Gray g = gray(envmapMask, 64);
+	if (g.w < 8 || g.h < 8) return {};
+	// Bright texels, grown by a texel so that thin bars do not cut the pane into cells.
+	std::vector<bool> shiny(g.lum.size());
+	for (unsigned y = 0; y < g.h; ++y) {
+		for (unsigned x = 0; x < g.w; ++x) {
+			bool bright = false;
+			for (int dy = -1; dy <= 1 && !bright; ++dy) {
+				for (int dx = -1; dx <= 1 && !bright; ++dx) {
+					const int nx = int(x) + dx, ny = int(y) + dy;
+					bright = nx >= 0 && ny >= 0 && nx < int(g.w) && ny < int(g.h) && g.lum[std::size_t(ny) * g.w + std::size_t(nx)] > 0.45;
+				}
+			}
+			shiny[std::size_t(y) * g.w + x] = bright;
+		}
+	}
+	const auto box = largeRectangle(shiny, g.w, g.h, 0.15, 0.5);
+	if (!box) return {};
+	double inside = 0, outside = 0;
+	std::size_t insideCount = 0, outsideCount = 0;
+	for (unsigned y = 0; y < g.h; ++y) {
+		for (unsigned x = 0; x < g.w; ++x) {
+			const bool in = x >= box->x0 && x <= box->x1 && y >= box->y0 && y <= box->y1;
+			(in ? inside : outside) += g.lum[std::size_t(y) * g.w + x];
+			++(in ? insideCount : outsideCount);
+		}
+	}
+	if (outsideCount * 10 < g.lum.size()) return {};   // the whole texture: not a window in a wall
+	if (inside / double(insideCount) > 0.5 && outside / double(outsideCount) < 0.25) return {false, "window (reflecting pane)"};
 	return {};
 }
 
@@ -664,7 +771,7 @@ ReliefFit reliefFitInGame(const GameFileSystem& fs, std::string_view materialNam
 	const std::string texture = toLower(material.param("$basetexture"));
 	if (texture.empty()) return early;
 	// Per texture file (the folder it comes from tells one game's from another's).
-	std::string key = texture;
+	std::string key = texture + "|" + toLower(material.param("$envmap").empty() ? std::string() : material.param("$envmapmask"));
 	if (const auto mount = fs.locate("materials/" + texture + ".vtf")) key = displayPath(fs.mounts()[*mount].path) + "|" + texture;
 	static std::mutex mutex;
 	static std::map<std::string, ReliefFit> looks;
@@ -672,8 +779,12 @@ ReliefFit reliefFitInGame(const GameFileSystem& fs, std::string_view materialNam
 		std::lock_guard lock(mutex);
 		if (const auto it = looks.find(key); it != looks.end()) return it->second;
 	}
-	const auto image = loadTexture(fs, texture, 128);
-	const ReliefFit fit = image ? reliefFitByLook(*image) : ReliefFit{};
+	const auto image = loadTexture(fs, texture, 256);
+	ReliefFit fit = image ? reliefFitByLook(*image) : ReliefFit{};
+	// The reflection mask: a window's glass reflects, the wall around it does not.
+	if (const std::string mask = toLower(material.param("$envmapmask")); fit.suits && !mask.empty() && !material.param("$envmap").empty()) {
+		if (const auto maskImage = loadTexture(fs, mask, 64)) fit = reliefFitByMask(*maskImage);
+	}
 	std::lock_guard lock(mutex);
 	looks[key] = fit;
 	return fit;

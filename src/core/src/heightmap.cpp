@@ -353,6 +353,24 @@ bool containsAnyI(std::string_view text, std::initializer_list<std::string_view>
 
 } // namespace
 
+ParallaxReach parallaxReach(double depth, double viewX, double viewY, double viewZ, double textureUnitsPerWorldUnit, double maxShift) {
+	ParallaxReach reach;
+	const auto smooth = [](double a, double b, double x) {
+		const double t = std::clamp((x - a) / (b - a), 0.0, 1.0);
+		return t * t * (3 - 2 * t);
+	};
+	reach.strength = smooth(0.08, 0.3, std::abs(viewZ));
+	const double d = depth * reach.strength;
+	reach.u = viewX / std::max(viewZ, 0.4) * d;
+	reach.v = viewY / std::max(viewZ, 0.4) * d;
+	const double length = std::hypot(reach.u, reach.v), most = maxShift * textureUnitsPerWorldUnit;
+	if (length > most && length > 0) {
+		reach.u *= most / length;
+		reach.v *= most / length;
+	}
+	return reach;
+}
+
 std::optional<ReliefSource> fidelityReliefSource(std::string_view materialName, const Material& material) {
 	// deploy.ps1's numbers: -ParallaxDepth 0.01 (stones, rock); bump maps and bricks and tiles in
 	// courses at 0.6 of it (Julius: a tiled floor looked right at about 0.006).

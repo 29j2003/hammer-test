@@ -93,9 +93,14 @@ struct ReliefFit {
 /// tells of bricks, stone or tiles wins over a general word (a "brickwall_window" is a window).
 [[nodiscard]] ReliefFit reliefFitByName(std::string_view materialName, std::string_view baseTexture = {});
 
-/// By what the texture looks like: large flat panes (dark or bright glass, a big window), smooth
-/// surfaces without any structure (plaster, paint, sheet metal), or see-through texels.
+/// By what the texture looks like: large flat panes (dark or bright glass, a big window), panes
+/// divided by bars (a window's grid), smooth surfaces without any structure (plaster, paint, sheet
+/// metal), or see-through texels.
 [[nodiscard]] ReliefFit reliefFitByLook(const ImageRgba& baseTexture);
+
+/// By the material's reflection mask ($envmapmask): bright over a large rectangle is a window's
+/// glass (a mixed texture of bricks and a window).
+[[nodiscard]] ReliefFit reliefFitByMask(const ImageRgba& envmapMask);
 
 /// Both, for a loaded material (name rules first; `baseTexture` may be null).
 [[nodiscard]] ReliefFit reliefFit(std::string_view materialName, const Material& material, const ImageRgba* baseTexture = nullptr);
@@ -103,7 +108,8 @@ struct ReliefFit {
 class GameFileSystem;
 /// reliefFit with the base texture read from the game (small: 128 texels). The verdict on a texture's
 /// look is remembered per texture file, so the viewport and Game enhancements decide alike and
-/// fast. Used everywhere Mapsmith decides about relief.
+/// fast. With $envmap, the reflection mask counts too (reliefFitByMask). Used everywhere Mapsmith
+/// decides about relief.
 [[nodiscard]] ReliefFit reliefFitInGame(const GameFileSystem& fs, std::string_view materialName, const Material& material);
 
 } // namespace sme
