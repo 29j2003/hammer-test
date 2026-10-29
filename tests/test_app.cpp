@@ -2570,6 +2570,45 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 	}
 }
 
+TEST_CASE("pages: leaving the map takes its docks away completely, also right after the start") {
+	// The map's docks stayed as empty tab bars around the Materials page (their room kept, the page
+	// squeezed, the window wider than the screen) when the page was shown before the docks went.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	REQUIRE(window.openMap(fromPath(f.mod / "mapsrc/demo.vmf")));
+	window.resize(1400, 760);
+	window.show();
+	QTest::qWait(200);   // as --page does: a page shown right after the start
+	// The docks' tab bars in the window (Qt parks unused ones, empty, outside it).
+	const auto dockTabsShown = [&window] {
+		const auto bars = window.findChildren<QTabBar*>(QString(), Qt::FindDirectChildrenOnly);
+		return std::count_if(bars.begin(), bars.end(), [&window](QTabBar* bar) {
+			return bar->isVisible() && bar->count() > 0 && window.rect().intersects(bar->geometry());
+		});
+	};
+	for (const auto page : {MainWindow::Page::Materials, MainWindow::Page::Project, MainWindow::Page::Models}) {
+		window.showPage(page);
+		settle();
+		CAPTURE(int(page));
+		CHECK(dockTabsShown() == 0);
+		window.showPage(MainWindow::Page::Map);
+		settle();
+		CHECK(dockTabsShown() > 0);
+	}
+}
+
 TEST_CASE("panels: the wheel scrolls instead of switching, low docks show whole tiles, the panel keeps its place") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());
