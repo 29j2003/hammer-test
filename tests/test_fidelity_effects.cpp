@@ -9,6 +9,8 @@
 #include <sme/fidelity_effects.h>
 #include <sme/filesystem.h>
 #include <sme/heightmap.h>
+#include <sme/material.h>
+#include <sme/relief_pattern.h>
 #include <sme/texture.h>
 
 #include <algorithm>
@@ -659,4 +661,46 @@ TEST_CASE("game enhancements: the glass jug (glassjug01.mdl) gets liquid, a jug 
 	const auto off = planEnhancements(fs, mod, settings, excludedMaterials(fs, settings));
 	REQUIRE(off.changes.size() == 1);
 	CHECK_FALSE(effectIsOn(GameEffect::Liquid, off.changes[0].text));
+}
+
+TEST_CASE("game enhancements: a wall texture with a window reflecting in its mask stays without relief") {
+	// Julius (29.10.2026): a texture of brick pillars around a window got relief. Its name tells of
+	// bricks only; the reflection mask shows the glass: bright over a large rectangle, dark around.
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "relief/hl2";
+	const auto mod = f.root / "relief/mymod";
+	test::writeText(game / "materials/brick/brickwall031d.vmt",
+	                "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"brick/brickwall031d\"\n\t\"$bumpmap\" \"brick/brickwall031d_normal\"\n"
+	                "\t\"$envmap\" \"env_cubemap\"\n\t\"$envmapmask\" \"brick/brickwall031d_mask\"\n}\n");
+	HeightMap mask;
+	mask.width = mask.height = 64;
+	mask.values.assign(64 * 64, 0.05f);
+	for (unsigned y = 0; y < 64; ++y) {
+		for (unsigned x = 13; x < 51; ++x) mask.values[std::size_t(y) * 64 + x] = (x % 8 < 1 || y % 8 < 1) ? 0.05f : 0.9f;   // panes and bars
+	}
+	const auto vtf = encodeHeightVtf(mask);
+	std::filesystem::create_directories(game / "materials/brick");
+	{
+		std::ofstream out(game / "materials/brick/brickwall031d_mask.vtf", std::ios::binary);
+		out.write(reinterpret_cast<const char*>(vtf.data()), std::streamsize(vtf.size()));
+	}
+	std::filesystem::create_directories(mod / "materials");
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+	const auto material = parseMaterial(*fs.readText("materials/brick/brickwall031d.vmt"), "brick/brickwall031d");
+	REQUIRE(material);
+	CHECK(reliefFitByName("brick/brickwall031d", "brick/brickwall031d").suits);
+	const auto maskTexture = loadTexture(fs, "brick/brickwall031d_mask", 64);
+	REQUIRE(maskTexture);
+	CHECK_FALSE(reliefFitByMask(*maskTexture).suits);
+	const ReliefFit fit = reliefFitInGame(fs, "brick/brickwall031d", *material);
+	CHECK_FALSE(fit.suits);
+	CHECK(fit.reason == "window (reflecting pane)");
+	// Game enhancements write the copy that keeps deploy.bat's relief off.
+	EffectCandidates only{{GameEffect::Relief, {"brick/brickwall031d"}}};
+	const auto plan = planEnhancements(fs, mod, EnhancementSettings{}, {}, &only);
+	REQUIRE(plan.changes.size() == 1);
+	CHECK(plan.changes[0].text.find("no depth for a window (reflecting pane)") != std::string::npos);
 }

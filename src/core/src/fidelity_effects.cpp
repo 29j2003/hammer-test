@@ -394,8 +394,9 @@ std::vector<std::string> ownMaterialsNeedingShaderDll(const std::filesystem::pat
 namespace {
 
 /// Bumped when the pattern relief changes (the hash makes the walls new).
-/// (pattern2: shallow joints, rounded edges, depth 0.006 - Julius, 29.10.2026)
-constexpr std::string_view PATTERN_RULES = "pattern2";
+/// (pattern2: shallow joints, rounded edges, depth 0.006 - Julius, 29.10.2026; pattern3: flat faces
+/// again with a short bevel, windows divided by bars stay flat)
+constexpr std::string_view PATTERN_RULES = "pattern3";
 /// deploy.ps1: -ParallaxDepth 0.01 x $CourseDepth 0.6 for walls laid in courses.
 constexpr const char* PATTERN_DEPTH = "0.006";
 /// The shader's default for the darkening of deep parts, written out: a bundle older than this

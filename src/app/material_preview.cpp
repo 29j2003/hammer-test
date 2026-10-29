@@ -56,6 +56,7 @@ uniform int u_ssbump, u_envmap, u_maskMode, u_alphaMode, u_selfillum, u_phong, u
 uniform vec3 u_envTint, u_selfTint, u_lightDir, u_lightColor, u_ambient, u_camPos;
 uniform vec3 u_reflectTint, u_fogColor, u_liquidColor, u_glassColor;
 uniform float u_detailScale, u_phongBoost, u_phongExp, u_alphaRef, u_depth, u_ao, u_glint, u_reflectAmount;
+uniform float u_maxShift, u_plane;   // relief: most shift (texture units), reference plane (walls 0.5)
 uniform float u_liquidAlpha, u_fill, u_glassAlpha, u_time, u_shapeTop;
 out vec4 fragColor;
 
@@ -70,29 +71,36 @@ vec3 sky(vec3 d) {
 	return skyOnly(d) + u_lightColor * pow(max(dot(d, u_lightDir), 0.0), 300.0) * 4.0;
 }
 
-// Relief: walks into the height map (white = top) along the view, as Fidelity_Parallax does.
+// Relief: walks into the height map (white = top) along the view - the same walk as the game's
+// Fidelity_Parallax (fidelity_parallax_common.h, FidelityParallaxShift): 8 to 32 steps, the shift
+// at flat angles held to 2.5 x the depth and to the most the game lets it move (4 world units at
+// the texture's size), the reference plane of walls (half the relief stands out), and the relief
+// fading out at very flat angles. (The preview had 5 x and no limit: at flat angles and with
+// depths over 0.01 bricks smeared into long slabs - Julius, 29.10.2026.)
 vec2 parallax(vec2 uv, vec3 viewTS, out float height) {
 	height = 1.0;
 	if (u_hasHeight == 0 || u_depth <= 0.0) return uv;
-	const int STEPS = 32;
-	vec2 shift = viewTS.xy / max(viewTS.z, 0.2) * u_depth;
-	float layer = 1.0 / float(STEPS);
-	float depth = 0.0;
-	vec2 current = uv;
+	float depth = u_depth * smoothstep(0.08, 0.3, abs(viewTS.z));
+	if (depth <= 0.0001) return uv;
+	float steps = mix(32.0, 8.0, clamp(viewTS.z, 0.0, 1.0));
+	vec2 full = viewTS.xy / max(viewTS.z, 0.4) * depth;
+	full *= min(1.0, u_maxShift / max(length(full), 1e-6));
+	vec2 stepUV = full / steps;
+	vec2 current = uv + full * (1.0 - u_plane);
+	float layer = 1.0 / steps;
+	float layerDepth = 0.0;
 	float mapDepth = 1.0 - texture(u_height, current).r;
-	vec2 previous = current;
-	float previousDepth = 0.0, previousMap = mapDepth;
-	for (int i = 0; i < STEPS && depth < mapDepth; ++i) {
-		previous = current;
-		previousDepth = depth;
+	float previousMap = mapDepth;
+	for (int i = 0; i < 32; ++i) {
+		if (layerDepth >= mapDepth || float(i) >= steps) break;
+		current -= stepUV;
 		previousMap = mapDepth;
-		current -= shift * layer;
-		depth += layer;
 		mapDepth = 1.0 - texture(u_height, current).r;
+		layerDepth += layer;
 	}
-	float after = mapDepth - depth, before = previousMap - previousDepth;
-	float t = clamp(after / (after - before), 0.0, 1.0);
-	vec2 hit = mix(current, previous, t);
+	float after = mapDepth - layerDepth, before = previousMap - (layerDepth - layer);
+	float weight = after / min(after - before, -0.0001);
+	vec2 hit = mix(current, current + stepUV, clamp(weight, 0.0, 1.0));
 	height = texture(u_height, hit).r;
 	return hit;
 }
@@ -138,10 +146,13 @@ void main() {
 	vec4 nm = u_hasBump == 1 ? texture(u_bump, uv) : vec4(0.5, 0.5, 1.0, 1.0);
 	if (u_hasBump == 0 && u_hasHeight == 1 && u_depth > 0.0) {
 		// No normal map: the relief's normal from the height map's slopes.
+		// As the game (FidelityParallaxHeightNormal): 1.5 texels apart, slopes at most 1.
 		vec2 texel = 1.0 / vec2(textureSize(u_height, 0));
-		float hx = texture(u_height, uv + vec2(texel.x, 0.0)).r - texture(u_height, uv - vec2(texel.x, 0.0)).r;
-		float hy = texture(u_height, uv + vec2(0.0, texel.y)).r - texture(u_height, uv - vec2(0.0, texel.y)).r;
-		vec3 n = normalize(vec3(-hx, -hy, 2.0 * texel.x / max(u_depth, 0.001)));
+		vec2 slope = vec2(texture(u_height, uv + vec2(texel.x * 1.5, 0.0)).r - texture(u_height, uv - vec2(texel.x * 1.5, 0.0)).r,
+		                  texture(u_height, uv + vec2(0.0, texel.y * 1.5)).r - texture(u_height, uv - vec2(0.0, texel.y * 1.5)).r);
+		slope *= u_depth / max(3.0 * texel, vec2(1e-6));
+		slope *= min(1.0, 1.0 / max(length(slope), 1e-6));
+		vec3 n = normalize(vec3(-slope, 1.0));
 		nm = vec4(n * 0.5 + 0.5, 1.0);
 	}
 	float diffuse;
@@ -441,6 +452,12 @@ void MaterialPreview::paintGL() {
 	m_program->setUniformValue("u_alphaRef", s.alphaRef);
 	m_program->setUniformValue("u_mode", static_cast<int>(s.mode));
 	m_program->setUniformValue("u_depth", s.parallaxDepth);
+	// The game holds the shift to r_fidelity_parallax_maxshift (4 world units); a texture covers its
+	// size x 0.25 units (Hammer's default scale) - the base texture's size as loaded, else 512.
+	const QImage& sized = !m_images[Base].isNull() ? m_images[Base] : m_images[Height];
+	const float textureUnits = float(sized.isNull() ? 512 : std::max(sized.width(), sized.height())) * 0.25f;
+	m_program->setUniformValue("u_maxShift", 4.0f / std::max(textureUnits, 1.0f));
+	m_program->setUniformValue("u_plane", 0.5f);   // r_fidelity_parallax_plane (walls)
 	m_program->setUniformValue("u_ao", s.parallaxAO);
 	m_program->setUniformValue("u_glint", s.waterGlint);
 	m_program->setUniformValue("u_reflectTint", s.reflectTint);

@@ -219,7 +219,7 @@ TEST_CASE("relief pattern: bricks in a running bond, every brick up and every jo
 		} else {
 			CHECK(joint == doctest::Approx(0.3).epsilon(0.25));
 		}
-		CHECK(steepestStep(*map) < 0.25);   // rounded edges: no cliff from one texel to the next
+		CHECK(steepestStep(*map) < 0.35);   // eased edges: no cliff from one texel to the next
 		// The darkest brick stands as high as the others (brightness alone sank it).
 		CHECK(lowestFace(c.wall, *map) > 0.75);
 		// The automatic way takes the layout too.
@@ -370,4 +370,151 @@ TEST_CASE("relief: which materials get it - by name and by look") {
 	                                 material("LightmappedGeneric { $basetexture building_template/buildingset040a_window $bumpmap b }")));
 	CHECK_FALSE(fidelityReliefSource("metal/metalwall021a", material("LightmappedGeneric { $basetexture metal/metalwall021a $bumpmap b }")));
 	CHECK(fidelityReliefSource("concrete/wall01", material("LightmappedGeneric { $basetexture concrete/wall01 $bumpmap b }")));
+}
+
+namespace {
+
+/// A wall texture with a window: brick pillars left and right, in between dark glass divided into
+/// panes by light bars (Julius' screenshot, 29.10.2026).
+ImageRgba windowWall(unsigned size, unsigned barEvery, double glass) {
+	ImageRgba image = makeWall(Wall{.size = size, .courses = 16, .perCourse = 4});
+	Random random{3};
+	for (unsigned y = 0; y < size; ++y) {
+		for (unsigned x = size / 5; x < size - size / 5; ++x) {
+			const bool bar = x % barEvery < 3 || y % barEvery < 3;
+			const double tone = bar ? 0.65 : glass + (random.next() - 0.5) * 0.02;
+			auto* p = &image.pixels[(std::size_t(y) * size + x) * 4];
+			p[0] = p[1] = p[2] = std::byte(static_cast<unsigned char>(std::clamp(tone, 0.0, 1.0) * 255));
+		}
+	}
+	return image;
+}
+
+/// A grey image (the reflection mask): `inside` within the rectangle, `outside` elsewhere, with bars.
+ImageRgba maskImage(unsigned size, double inside, double outside, unsigned barEvery) {
+	ImageRgba image;
+	image.width = image.height = static_cast<std::uint16_t>(size);
+	image.pixels.resize(std::size_t(size) * size * 4);
+	for (unsigned y = 0; y < size; ++y) {
+		for (unsigned x = 0; x < size; ++x) {
+			const bool pane = x >= size / 5 && x < size - size / 5;
+			const bool bar = barEvery && (x % barEvery < 2 || y % barEvery < 2);
+			const double v = pane && !bar ? inside : outside;
+			auto* p = &image.pixels[(std::size_t(y) * size + x) * 4];
+			p[0] = p[1] = p[2] = std::byte(static_cast<unsigned char>(v * 255));
+			p[3] = std::byte(255);
+		}
+	}
+	return image;
+}
+
+} // namespace
+
+TEST_CASE("relief: windows stay flat - panes between bars, reflecting glass, every kind of material by name") {
+	// The window of Julius' screenshot: brick pillars, a dark pane cut into cells by light bars.
+	for (const unsigned bars : {24u, 32u, 64u, 128u}) {
+		CAPTURE(bars);
+		const ImageRgba window = windowWall(512, bars, 0.06);
+		const ReliefFit fit = reliefFitByLook(window);
+		CHECK_FALSE(fit.suits);
+		CHECK(fit.reason.find("window") != std::string::npos);
+	}
+	// Walls stay walls: small bricks with dark joints, dark rough stone, light bricks, stains.
+	CHECK(reliefFitByLook(makeWall(Wall{.size = 512, .courses = 30, .perCourse = 12, .lightMortar = false})).suits);
+	CHECK(reliefFitByLook(makeWall(Wall{.size = 512, .courses = 16, .perCourse = 4, .lightMortar = false, .joint = 6})).suits);
+	CHECK(reliefFitByLook(makeWall(Wall{.size = 256, .courses = 8, .perCourse = 4, .stains = 0.8})).suits);
+	ImageRgba darkStone = noiseTexture(256, 9, 0.6);
+	for (std::size_t i = 0; i < darkStone.pixels.size(); i += 4) {
+		for (int c = 0; c < 3; ++c) darkStone.pixels[i + c] = std::byte(static_cast<unsigned char>(std::to_integer<int>(darkStone.pixels[i + c]) / 4));
+	}
+	CHECK(reliefFitByLook(darkStone).suits);
+
+	// The reflection mask: bright over the pane (with or without bars) is glass; spots, a dark mask,
+	// or an even sheen over the whole wall are not a window.
+	CHECK_FALSE(reliefFitByMask(maskImage(256, 0.9, 0.05, 0)).suits);
+	CHECK_FALSE(reliefFitByMask(maskImage(256, 0.9, 0.05, 32)).suits);
+	CHECK(reliefFitByMask(maskImage(256, 0.2, 0.05, 0)).suits);
+	CHECK(reliefFitByMask(noiseTexture(256, 5, 0.3)).suits);
+
+	// By name, the kinds of material a Half-Life 2 map has: depth only for stone, bricks, tiles,
+	// blocks, concrete, cobbles, rock - never for windows (also when bricks are in the name), glass,
+	// doors, signs, grates, fences, metal, plaster, wood (deploy's -ParallaxWood), cloth, lights.
+	struct Case {
+		const char* material;
+		bool relief;
+	};
+	const Case cases[] = {
+		{"brick/brickwall003a", true}, {"brick/brickfloor001a", true}, {"stone/stonewall007a", true}, {"stone/stonefloor009a", true},
+		{"tile/tilewall006a", true}, {"tile/tilefloor007b", true}, {"concrete/concretewall064a", true}, {"concrete/concretefloor028a", true},
+		{"concrete/concreteblock001a", true}, {"nature/rockwall011a", true}, {"nature/cobblestone001a", true}, {"stone/cobble01", true},
+		{"building_template/buildingset031a", true},
+		{"brick/brickwindow01", false}, {"brick/brickwall_window", false}, {"building_template/buildingset040a_window", false},
+		{"props/windows_glass01", false}, {"glass/glasswindow001a", false}, {"glass/combineglass001a", false}, {"plaster/plasterwindow01", false},
+		{"stone/stainedglass01", false}, {"building_template/storefront01", false}, {"metal/skylight01", false},
+		{"metal/metaldoor001a", false}, {"wood/wooddoor002a", false}, {"props/gate01", false}, {"metal/citysign01", false},
+		{"decals/poster_01", false}, {"metal/metalgrate014a", false}, {"metal/metalfence001a", false}, {"props/chainlinkfence01", false},
+		{"metal/metalwall021a", false}, {"metal/metalsheet01", false}, {"plaster/plasterwall030a", false}, {"wood/woodwall003a", false},
+		{"wood/woodfloor007a", false}, {"nature/cloth_curtain", false}, {"lights/white001", false}, {"metal/metalvent001a", false},
+		{"props/wallpaper01", false}, {"carpet/carpet01", false}, {"concrete/concretewall_painted", false},
+	};
+	for (const auto& c : cases) {
+		CAPTURE(c.material);
+		const Material bumped = material((std::string("LightmappedGeneric { $basetexture ") + c.material + " $bumpmap b }").c_str());
+		CHECK(fidelityReliefSource(c.material, bumped).has_value() == c.relief);
+	}
+	// Folders that never get relief, whatever the name.
+	for (const char* name : {"water/water01", "nature/water/canal01", "tools/toolsnodraw", "decals/brickwall_crack", "overlays/stonewall01",
+	                         "models/props/brickwall", "skybox/sky_brick", "effects/brickflash", "glass/brickglass"}) {
+		CAPTURE(name);
+		CHECK_FALSE(fidelityReliefSource(name, material((std::string("LightmappedGeneric { $basetexture ") + name + " $bumpmap b }").c_str())));
+	}
+	// See-through, decals, three-way mapping: drawn otherwise than the parallax shader can.
+	for (const char* flags : {"$translucent 1", "$alphatest 1", "$additive 1", "$decal 1", "$seamless_scale 0.5"}) {
+		CAPTURE(flags);
+		CHECK_FALSE(fidelityReliefSource("brick/brickwall003a",
+		                                 material((std::string("LightmappedGeneric { $basetexture brick/brickwall003a $bumpmap b ") + flags + " }").c_str())));
+	}
+}
+
+TEST_CASE("relief: pattern height maps - flat faces, a short bevel, shallow joints") {
+	// Julius (29.10.2026): no cushions - most of a brick's face is flat on top; the joint lies only a
+	// little lower (bricks 0.3, tiles 0.55); the bevel takes at most a third of the way in.
+	const Wall wall{.size = 512, .courses = 16, .perCourse = 4};
+	const ImageRgba texture = makeWall(wall);
+	const ReliefLayout layout = detectReliefLayout(texture);
+	REQUIRE(layout.found());
+	const auto map = heightFromLayout(layout, texture);
+	REQUIRE(map);
+	const auto [face, joint] = faceAndJoint(wall, *map);
+	CHECK(face > 0.9);
+	CHECK(joint == doctest::Approx(0.3).epsilon(0.15));
+	// Flat: along the middle of a course, away from head joints, the height hardly changes.
+	std::size_t flatTexels = 0, faceTexels = 0;
+	for (unsigned y = 0; y < map->height; ++y) {
+		for (unsigned x = 0; x + 1 < map->width; ++x) {
+			if (wallJoint(wall, x, y)) continue;
+			++faceTexels;
+			flatTexels += map->at(x, y) > 0.85 ? 1 : 0;
+		}
+	}
+	CHECK(double(flatTexels) / double(faceTexels) > 0.6);
+}
+
+TEST_CASE("relief: the walk's reach as in the game - the preview and the 3D view use the same units") {
+	// A 512 texture at Hammer's 0.25 scale covers 128 units: 1/128 texture units per unit.
+	constexpr double perUnit = 1.0 / 128;
+	// Head-on: no shift.
+	CHECK(parallaxReach(0.01, 0, 0, 1, perUnit).u == doctest::Approx(0));
+	// 45 degrees: the depth itself.
+	const double s = std::sqrt(0.5);
+	CHECK(parallaxReach(0.01, s, 0, s, perUnit).u == doctest::Approx(0.01));
+	// Flat (about 20 degrees): at most 2.5 x the depth (the old preview went to 5 x, unlimited).
+	const double z = std::sin(20 * 3.14159265 / 180), x = std::cos(20 * 3.14159265 / 180);
+	const auto flat = parallaxReach(0.006, x, 0, z, perUnit);
+	CHECK(flat.u <= 2.5 * 0.006 + 1e-9);
+	// Deep relief: never more than 4 world units (0.031 of this texture).
+	CHECK(parallaxReach(0.03, x, 0, z, perUnit).u <= 4 * perUnit + 1e-9);
+	// Very flat: the relief fades out.
+	CHECK(parallaxReach(0.01, 0.997, 0, 0.07, perUnit).strength == doctest::Approx(0));
+	CHECK(parallaxReach(0.01, 0.99, 0, 0.14, perUnit).strength < 0.5);
 }

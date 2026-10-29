@@ -54,6 +54,17 @@ void applyHeightZones(HeightMap& map, const std::vector<std::uint8_t>& zones, un
 /// Gray RGBA image of the heights (previews).
 [[nodiscard]] ImageRgba heightImage(const HeightMap& map);
 
+/// How far mapbase-fidelity's Fidelity_Parallax moves the texture for the full relief, seen along
+/// `view` (texture space: x along u, y along v, z out of the surface, unit length) - the walk of the
+/// game's shader (fidelity_parallax_common.h) that the material preview and the 3D view repeat:
+/// at flat angles at most 2.5 x the depth and at most `maxShift` world units (the game's
+/// r_fidelity_parallax_maxshift 4), and the relief fades out below about 17 degrees.
+struct ParallaxReach {
+	double u = 0, v = 0;     ///< Texture units for the full depth
+	double strength = 1;    ///< Share of the depth used (0 at very flat angles)
+};
+[[nodiscard]] ParallaxReach parallaxReach(double depth, double viewX, double viewY, double viewZ, double textureUnitsPerWorldUnit, double maxShift = 4);
+
 /// Where mapbase-fidelity's deploy.bat takes a wall material's relief from (deploy.ps1,
 /// Get-ParallaxSource): a material already on Fidelity_Parallax with its own height map, a
 /// bump-mapped wall (its normal map), or a wall without one whose name tells of relief (brick,

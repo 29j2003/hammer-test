@@ -142,26 +142,30 @@ uniform float u_probeTile;             // pixels per cube face
 uniform int u_probeSphere;             // > 0: the preview sphere of cubemap u_probeSphere - 1
 out vec4 fragColor;
 
-// Relief like mapbase-fidelity's Fidelity_Parallax: walks into the height map along the view
-// (parallax occlusion mapping). The tangent frame comes from the screen derivatives.
-vec2 reliefOffset(vec2 uv, vec3 viewTS, float depth, float lod, out float hitHeight) {
-	const int STEPS = 24;
-	vec2 shift = viewTS.xy / max(viewTS.z, 0.25) * depth;
-	float layer = 1.0 / float(STEPS);
+// Relief like mapbase-fidelity's Fidelity_Parallax (fidelity_parallax_common.h): walks into the
+// height map along the view (parallax occlusion mapping), 8 to 32 steps, the shift at flat angles
+// held to 2.5 x the depth and to `maxShift` (texture units: the game's 4 world units), starting
+// from the reference plane (`plane`: walls 0.5, floors 0.2 - part of the relief stands out). The
+// tangent frame comes from the screen derivatives.
+vec2 reliefOffset(vec2 uv, vec3 viewTS, float depth, float maxShift, float plane, float lod, out float hitHeight) {
+	float steps = mix(32.0, 8.0, clamp(viewTS.z, 0.0, 1.0));
+	vec2 full = viewTS.xy / max(viewTS.z, 0.4) * depth;
+	full *= min(1.0, maxShift / max(length(full), 1e-6));
+	vec2 stepUV = full / steps;
+	vec2 current = uv + full * (1.0 - plane);
+	float layer = 1.0 / steps;
 	float d = 0.0;
-	vec2 current = uv, previous = uv;
 	float mapDepth = 1.0 - textureLod(u_height, current, lod).r;
-	float previousDepth = 0.0, previousMap = mapDepth;
-	for (int i = 0; i < STEPS && d < mapDepth; ++i) {
-		previous = current;
-		previousDepth = d;
+	float previousMap = mapDepth;
+	for (int i = 0; i < 32; ++i) {
+		if (d >= mapDepth || float(i) >= steps) break;
+		current -= stepUV;
 		previousMap = mapDepth;
-		current -= shift * layer;
-		d += layer;
 		mapDepth = 1.0 - textureLod(u_height, current, lod).r;
+		d += layer;
 	}
-	float after = mapDepth - d, before = previousMap - previousDepth;
-	vec2 hit = mix(current, previous, clamp(after / (after - before), 0.0, 1.0));
+	float after = mapDepth - d, before = previousMap - (d - layer);
+	vec2 hit = mix(current, current + stepUV, clamp(after / min(after - before, -0.0001), 0.0, 1.0));
 	hitHeight = textureLod(u_height, hit, lod).r;
 	return hit;
 }
@@ -356,6 +360,8 @@ void main() {
 		vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
 		vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
 		vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+		// Texture units per world unit (as FidelityParallaxAxes): the game's 4-unit limit in texture units.
+		float uvPerUnit = 0.5 * (length(T) + length(B)) / max(abs(dot(dp1, dp2perp)), 1e-20);
 		float scale = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-12));
 		T *= scale;
 		B *= scale;
@@ -363,16 +369,21 @@ void main() {
 		float distance = length(toEye);
 		vec3 V = toEye / max(distance, 0.001);
 		vec3 viewTS = vec3(dot(V, normalize(T)), dot(V, normalize(B)), dot(V, N));
-		// Fades out in the distance, as $parallaxfade does (1000 units).
-		float depth = u_parallaxDepth * (1.0 - smoothstep(600.0, 1000.0, distance));
+		// Fades out in the distance, as $parallaxfade does (1000 units), and at very flat angles.
+		float depth = u_parallaxDepth * (1.0 - smoothstep(600.0, 1000.0, distance)) * smoothstep(0.08, 0.3, abs(viewTS.z));
 		if (depth > 0.0001 && viewTS.z > 0.0) {
 			vec2 size = vec2(textureSize(u_height, 0));
 			float lod = max(0.0, 0.5 * log2(max(dot(duv1 * size, duv1 * size), dot(duv2 * size, duv2 * size))));
-			uv = reliefOffset(v_uv, viewTS, depth, lod, relief);
+			// r_fidelity_parallax_plane 0.5 on walls, _floor 0.2 on floors and ceilings; most shift 4 units.
+			float plane = mix(0.5, 0.2, smoothstep(0.5, 0.8, abs(N.z)));
+			uv = reliefOffset(v_uv, viewTS, depth, 4.0 * uvPerUnit, plane, lod, relief);
+			// The relief's normal as the game's (1.5 texels apart, slopes at most 1).
 			vec2 texel = 1.0 / size * exp2(lod);
-			float hx = textureLod(u_height, uv + vec2(texel.x, 0.0), lod).r - textureLod(u_height, uv - vec2(texel.x, 0.0), lod).r;
-			float hy = textureLod(u_height, uv + vec2(0.0, texel.y), lod).r - textureLod(u_height, uv - vec2(0.0, texel.y), lod).r;
-			vec3 nTS = normalize(vec3(-depth * hx / (2.0 * texel.x), -depth * hy / (2.0 * texel.y), 1.0));
+			vec2 slope = vec2(textureLod(u_height, uv + vec2(texel.x * 1.5, 0.0), lod).r - textureLod(u_height, uv - vec2(texel.x * 1.5, 0.0), lod).r,
+			                  textureLod(u_height, uv + vec2(0.0, texel.y * 1.5), lod).r - textureLod(u_height, uv - vec2(0.0, texel.y * 1.5), lod).r);
+			slope *= depth / max(3.0 * texel, vec2(1e-6));
+			slope *= min(1.0, 1.0 / max(length(slope), 1e-6));
+			vec3 nTS = normalize(vec3(-slope, 1.0));
 			reliefNormal = normalize(normalize(T) * nTS.x + normalize(B) * nTS.y + N * nTS.z);
 		}
 	}
