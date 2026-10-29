@@ -179,8 +179,8 @@ a round brush.
 Every change shows in the map views at once - relief on or off, depth, zones, any other setting - before you save.
 Leaving the material without saving shows it as saved again. Saving writes `<material>_relief.vtf` next to the
 material (byte for byte in the form `deploy.bat` writes its height maps); the game uses it from then on (`deploy.bat`
-leaves your own materials alone). The depth starts where `deploy.bat` would put it: 0.02, bricks and tiles laid in
-courses 0.01.
+leaves your own materials alone). The depth starts where `deploy.bat` would put it: 0.006 for walls with a normal map and for bricks
+and tiles laid in courses, 0.01 for stone and rock; **Darker in the depths** starts at 0.25.
 
 {: .warning }
 Relief needs the mod's shaders (**Project › Features**). Without them the game draws the surface as a see-through

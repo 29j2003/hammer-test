@@ -47,7 +47,7 @@ public:
 		float alphaRef = 0.5f;
 		Mode mode = Mode::Surface;
 		float parallaxDepth = 0;       ///< In texture units (Fidelity_Parallax's $parallaxdepth); 0 = no relief
-		float parallaxAO = 0.35f;
+		float parallaxAO = 0.25f;
 		float waterGlint = 1;          ///< Water_Fidelity's sun glint (0 = plain water)
 		QVector3D reflectTint{1, 1, 1};
 		QVector3D fogColor{0.1f, 0.18f, 0.2f};

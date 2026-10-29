@@ -14,6 +14,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -27,6 +28,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScrollBar>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
@@ -50,6 +52,27 @@
 namespace sme::app {
 
 namespace {
+
+/// Keeps a scroll area without a horizontal scroll bar at least as wide as its page needs: else a
+/// field wider than the column was cut off on the right (Julius: the sliders' numbers showed only
+/// after widening the column).
+class FitPageWidth : public QObject {
+public:
+	FitPageWidth(QScrollArea* area, int least) : QObject(area), m_area(area), m_least(least) {}
+
+protected:
+	bool eventFilter(QObject* watched, QEvent* event) override {
+		if (event->type() == QEvent::LayoutRequest && m_area->widget() == watched) {
+			const int bar = m_area->verticalScrollBar()->sizeHint().width();
+			m_area->setMinimumWidth(std::max(m_least, m_area->widget()->minimumSizeHint().width() + bar + 2 * m_area->frameWidth()));
+		}
+		return false;
+	}
+
+private:
+	QScrollArea* m_area;
+	int m_least;
+};
 
 // Keys the fields edit; the table lists every other parameter.
 const std::set<QString> COVERED = {
@@ -353,6 +376,7 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	buildFields();
 	m_column->addStretch(1);
 	scroll->setWidget(fields);
+	fields->installEventFilter(new FitPageWidth(scroll, 420));
 	split->addWidget(scroll);
 
 	// Right: the preview, with its tool bar above.
@@ -566,8 +590,14 @@ QWidget* MaterialEditor::sliderField(const QString& key, double minimum, double 
 	auto* slider = new QSlider(Qt::Horizontal);
 	slider->setObjectName(key);
 	slider->setRange(0, 1000);
+	slider->setMinimumWidth(60);   // the slider gives way, never the number (Julius: digits cut off)
 	auto* label = new QLabel;
-	label->setMinimumWidth(44);
+	label->setObjectName(key + "-value");
+	// As wide as its widest number, fixed: the layout cannot squeeze it.
+	const QFontMetrics metrics(label->font());
+	int widest = 0;
+	for (const double v : {minimum, maximum, fallback}) widest = std::max(widest, metrics.horizontalAdvance(QString::number(v, 'f', decimals)));
+	label->setFixedWidth(widest + metrics.horizontalAdvance(QLatin1Char('0')));
 	label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 	const auto toValue = [=](int position) { return minimum + (maximum - minimum) * position / 1000.0; };
 	connect(slider, &QSlider::valueChanged, this, [=, this](int position) {
@@ -746,7 +776,7 @@ void MaterialEditor::buildFields() {
 	m_bumpOn = feature("bump", "normalMapOn", {"$bumpmap", "$ssbump", "$bumptransform", "$bumpframe", "$normalmapalphaenvmapmask"});
 	auto* bump = section(m_bumpBox, tr("Normal map"), m_bumpOn);
 	bump->addRow(tr("Normal map"), textureField("$bumpmap", tr("folder/texture_normal")));
-	m_ssbump = check("$ssbump", tr("Self-shadowed ($ssbump, made with height2ssbump)"));
+	m_ssbump = check("$ssbump", tr("Self-shadowed ($ssbump)"), tr("A self-shadowed bump map, made with height2ssbump"));
 	bump->addRow(QString(), m_ssbump);
 
 	// Relief: mapbase-fidelity's Fidelity_Parallax.
@@ -759,8 +789,8 @@ void MaterialEditor::buildFields() {
 	relief->addRow(fidelityNote());
 	relief->addRow(hint(tr("Stones, joints and grooves really go into the wall and hide each other at a slant "
 	                       "(Fidelity_Parallax). Needs a height map: white is the top.")));
-	relief->addRow(tr("Depth"), sliderField("$parallaxdepth", 0, 0.1, 0.02, 3));
-	relief->addRow(tr("Darker in the depths"), sliderField("$parallaxao", 0, 1, 0.35, 2));
+	relief->addRow(tr("Depth"), sliderField("$parallaxdepth", 0, 0.1, 0.01, 3));
+	relief->addRow(tr("Darker in the depths"), sliderField("$parallaxao", 0, 1, 0.25, 2));
 	relief->addRow(tr("Fades out from"), sliderField("$parallaxfade", 200, 4000, 1000, 0));
 	auto* heightRow = new QWidget;
 	auto* hl = new QVBoxLayout(heightRow);
@@ -1022,13 +1052,15 @@ void MaterialEditor::setRelief(bool on) {
 	}
 	setShader(k == Kind::Blend ? "Fidelity_WorldVertexTransition" : "Fidelity_Parallax");
 	if (value("$parallaxdepth").isEmpty()) {
-		// deploy.bat's depth for this wall: 0.02, bricks and tiles in courses at half of it.
-		double depth = 0.02;
+		// deploy.bat's depth for this wall: 0.01, bump maps and bricks and tiles in courses 0.006.
+		double depth = 0.01;
 		if (const auto original = parseMaterial(m_originalText, m_name.toStdString())) {
 			if (const auto source = fidelityReliefSource(m_name.toStdString(), *original)) depth = source->depth;
 		}
 		setValue("$parallaxdepth", QString::number(depth, 'g', 3));
 	}
+	// The shader's darkening of deep parts written out (a bundle older than its default 0.25 still darkens as much).
+	if (value("$parallaxao").isEmpty()) setValue("$parallaxao", "0.25");
 	if (!m_heightSource) {
 		// A height map is needed: from the texture's pattern, else the normal map, else the brightness.
 		makeHeightMap(HeightFrom::Auto);
@@ -1486,7 +1518,7 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 	if (!value("$phongexponent").isEmpty()) s.phongExponent = value("$phongexponent").toFloat();
 	if (!value("$alphatestreference").isEmpty()) s.alphaRef = value("$alphatestreference").toFloat();
 	const bool relief = m_shader.compare("Fidelity_Parallax", Qt::CaseInsensitive) == 0 || m_shader.compare("Fidelity_WorldVertexTransition", Qt::CaseInsensitive) == 0;
-	s.parallaxDepth = relief ? (value("$parallaxdepth").isEmpty() ? 0.02f : value("$parallaxdepth").toFloat()) : 0.f;
+	s.parallaxDepth = relief ? (value("$parallaxdepth").isEmpty() ? 0.01f : value("$parallaxdepth").toFloat()) : 0.f;
 	if (!value("$parallaxao").isEmpty()) s.parallaxAO = value("$parallaxao").toFloat();
 	s.waterGlint = m_shader.compare("Water_Fidelity", Qt::CaseInsensitive) == 0 ? (value("$fidelityglint").isEmpty() ? 1.f : value("$fidelityglint").toFloat()) : 0.f;
 	if (!value("$reflecttint").isEmpty()) s.reflectTint = parseColor(value("$reflecttint"));

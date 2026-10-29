@@ -568,13 +568,13 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 	CHECK(text.starts_with(std::string(PATTERN_RELIEF_MARKER) + " (relief) from materials/brick/brickwall001a.vmt hash "));
 	CHECK(isGeneratedMaterial(text));   // and so not deploy.bat's to overwrite: it leaves the mod's own alone
 	CHECK(effectIsOn(GameEffect::Relief, text));
-	// deploy's form (New-ParallaxMaterial): the shader, the relief keys first, the course depth,
+	// deploy's form (New-ParallaxMaterial): the shader, the relief keys first, the course depth and darkening,
 	// the wet-only cubemap of a wall without its own reflection, the rest as it was.
-	CHECK(text.find("\r\n\"Fidelity_Parallax\"\n{\r\n\t\"$parallaxmap\" \"brick/brickwall001a_mapsmith_relief\"\r\n\t\"$parallaxdepth\" \"0.01\"\r\n"
+	CHECK(text.find("\r\n\"Fidelity_Parallax\"\n{\r\n\t\"$parallaxmap\" \"brick/brickwall001a_mapsmith_relief\"\r\n\t\"$parallaxdepth\" \"0.006\"\r\n\t\"$parallaxao\" \"0.25\"\r\n"
 	                "\t\"$envmap\" \"env_cubemap\"\r\n\t\"$envmapwetonly\" \"1\"\n\t\"$basetexture\" \"brick/brickwall001a\"") != std::string::npos);
 	const auto shiny = readAll(mod / "materials/brick/shiny.vmt");
 	CHECK(shiny.find("$envmapwetonly") == std::string::npos);   // its own reflection stays as it is
-	CHECK(std::count(shiny.begin(), shiny.end(), '$') == 4);   // parallaxmap, parallaxdepth, basetexture, envmap
+	CHECK(std::count(shiny.begin(), shiny.end(), '$') == 5);   // parallaxmap, parallaxdepth, parallaxao, basetexture, envmap
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/plain.vmt"));
 	// The height map: bricks up, joints down, readable by the game (I8) and by Mapsmith.
 	const auto height = loadTexture(fs, "brick/brickwall001a_mapsmith_relief");
@@ -616,4 +616,47 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a.vmt"));
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a_mapsmith_relief.vtf"));
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a_mapsmith_relief.vtf"));
+}
+
+TEST_CASE("game enhancements: the glass jug (glassjug01.mdl) gets liquid, a jug on a shared atlas stays deploy.bat's") {
+	// Julius (29.10.2026): glassjug01.mdl looked like the original in the game. Mapsmith's rules
+	// for it, the whole way: model -> its material -> candidate -> Fidelity_Liquid written.
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "jug/hl2";
+	const auto mod = f.root / "jug/mymod";
+	test::writeText(game / "materials/models/props_junk/glassjug01.vmt",
+	                "// glass\n\"VertexLitGeneric\"\n{\n\t\"$basetexture\" \"models/props_junk/glassjug01\"\n\t\"$translucent\" 1\n"
+	                "\t\"$envmap\" \"env_cubemap\"\n\t\"$surfaceprop\" \"glass\"\n}\n");
+	test::writeStudioModel(game / "models/props_junk/glassjug01.mdl",
+	                       test::makeStudioModel({{-6, -6, 0, 6, 6, 18}}, {"idle"}, "", "GlassJug01", "models\\props_junk\\"));
+	// A jug drawn from an atlas shared with cans: changing that material would turn the cans into
+	// glass - deploy.bat gives such a model a copy with its own material (_flq), Mapsmith leaves it.
+	test::writeText(game / "materials/models/props_junk/garbage128_composite001a.vmt",
+	                "\"VertexLitGeneric\"\n{\n\t\"$basetexture\" \"models/props_junk/garbage128_composite001a\"\n}\n");
+	test::writeStudioModel(game / "models/props_junk/garbage_glassjug.mdl",
+	                       test::makeStudioModel({{-6, -6, 0, 6, 6, 18}}, {"idle"}, "", "garbage128_composite001a", "models/props_junk/"));
+	std::filesystem::create_directories(mod / "materials");
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+
+	CHECK(modelMaterialNames(fs, "models/props_junk/glassjug01.mdl") == std::vector<std::string>{"models/props_junk/glassjug01"});
+	CHECK(effectCandidates(fs, mod, GameEffect::Liquid) == std::vector<std::string>{"models/props_junk/glassjug01"});
+	const auto plan = planEnhancements(fs, mod, EnhancementSettings{});
+	CHECK(plan.heldBack == 0);
+	REQUIRE(plan.changes.size() == 1);
+	CHECK(plan.changes[0].material == "models/props_junk/glassjug01");
+	const std::string& text = plan.changes[0].text;
+	CHECK(text.find("\"Fidelity_Liquid\"") != std::string::npos);
+	CHECK(text.find("\"$basetexture\" \"models/props_junk/glassjug01\"") != std::string::npos);
+	CHECK(text.find("\"FidelityLiquid\"") != std::string::npos);
+	CHECK(text.find("$labelthreshold") == std::string::npos);   // see-through glass: no label
+	CHECK(effectIsOn(GameEffect::Liquid, text));
+	// Left out by its model: back to the original.
+	EnhancementSettings settings;
+	settings.setExcluded(GameEffect::Liquid, "models/props_junk/glassjug01.mdl", true);
+	const auto off = planEnhancements(fs, mod, settings, excludedMaterials(fs, settings));
+	REQUIRE(off.changes.size() == 1);
+	CHECK_FALSE(effectIsOn(GameEffect::Liquid, off.changes[0].text));
 }

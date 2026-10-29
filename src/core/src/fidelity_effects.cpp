@@ -394,9 +394,13 @@ std::vector<std::string> ownMaterialsNeedingShaderDll(const std::filesystem::pat
 namespace {
 
 /// Bumped when the pattern relief changes (the hash makes the walls new).
-constexpr std::string_view PATTERN_RULES = "pattern1";
-/// deploy.ps1: -ParallaxDepth 0.02 x $CourseDepth 0.5 for walls laid in courses.
-constexpr const char* PATTERN_DEPTH = "0.01";
+/// (pattern2: shallow joints, rounded edges, depth 0.006 - Julius, 29.10.2026)
+constexpr std::string_view PATTERN_RULES = "pattern2";
+/// deploy.ps1: -ParallaxDepth 0.01 x $CourseDepth 0.6 for walls laid in courses.
+constexpr const char* PATTERN_DEPTH = "0.006";
+/// The shader's default for the darkening of deep parts, written out: a bundle older than this
+/// default still darkens as much.
+constexpr const char* PATTERN_AO = "0.25";
 
 std::string hexHash(std::uint64_t h) {
 	char text[17];
@@ -484,7 +488,7 @@ std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::st
 	static const std::regex head(R"re(^\s*"?[A-Za-z0-9_]+"?(\s*\{))re");
 	std::smatch m;
 	if (!std::regex_search(c, m, head)) return std::nullopt;
-	std::vector<std::string> lines{param("$parallaxmap", out.heightName), param("$parallaxdepth", PATTERN_DEPTH)};
+	std::vector<std::string> lines{param("$parallaxmap", out.heightName), param("$parallaxdepth", PATTERN_DEPTH), param("$parallaxao", PATTERN_AO)};
 	static const std::regex envmap(R"re("?\$envmap"?\s)re", ICASE);
 	if (!std::regex_search(c, envmap)) {
 		// As deploy.bat: the map's cubemap, shown only where the wall is wet from rain.
