@@ -3,12 +3,15 @@
 
 #pragma once
 
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <sme/editing.h>
 #include <sme/map.h>
 #include <sme/math.h>
+#include <sme/soundscape.h>
 
 namespace sme {
 
@@ -124,28 +127,55 @@ struct TutorialMapOptions {
 	std::string indoorSoundscape = "d1_trainstation.util_city";
 	std::string tunnelSoundscape = "d1_canals.util_drips";
 	std::string outdoorSoundscape = "d1_trainstation.util_city";
+	/// The box of a model around its origin (the .mdl's hull), when the game has the model: things
+	/// whose origin is not at their bottom (ammo crates, the jeep) are set onto the floor with it.
+	/// Without it (or for an unknown model) the known Half-Life 2 sizes are used.
+	std::function<std::optional<Bounds>(const std::string& model)> modelBounds;
 };
 
-/// Brushes of the tutorial map, for tests: the rooms' interiors (x/y/z bounds, walkable air).
+/// Where the areas of the tutorial map are: the rooms' interiors (walkable air), for tests and
+/// for placing things. The tunnel bends twice (north, east, north): straight pieces and corners.
 struct TutorialMapLayout {
-	Bounds indoor{{-512, -512, 0}, {512, 512, 256}};
-	Bounds tunnel{{-96, 528, 0}, {96, 1024, 160}};
-	Bounds outdoor{{-1024, 1040, 0}, {1024, 3072, 1024}};
+	Bounds indoor{{-256, -256, 0}, {256, 256, 192}};
+	std::vector<Bounds> tunnel{
+		{{-80, 272, 0}, {80, 784, 144}},     // north from the room
+		{{-80, 784, 0}, {80, 944, 144}},     // first corner
+		{{80, 784, 0}, {592, 944, 144}},     // east
+		{{592, 784, 0}, {752, 944, 144}},    // second corner
+		{{592, 944, 0}, {752, 1360, 144}},   // north to the outside
+	};
+	Bounds outdoor{{-1024, 1376, 0}, {2048, 4448, 1024}};
+	/// The raised ground in the north-west where the Combine soldiers come from.
+	Bounds plateau{{-896, 3712, 0}, {-128, 4352, 96}};
+	/// The platform with steps in the north-east.
+	Bounds platform{{1280, 3328, 0}, {1792, 3840, 64}};
+	/// True when `p` is in the air of one of the areas (on top of the plateau and platform too).
+	[[nodiscard]] bool contains(const Vec3& p) const;
 };
 
-/// A first map that teaches by example (replaces the starter room): an indoor room, a tunnel and
-/// an outside area under the sky, sealed by walls, ceiling and sky brushes (no leak).
+/// The tutorial map's own soundscapes, quiet and made for its three areas (a room tone, a tunnel
+/// with drips and a draught, wind and birds outside), named `<prefix>.tutorial_indoor`,
+/// `.tutorial_tunnel` and `.tutorial_outdoor`. Only sounds for which `exists` ("ambient/...wav",
+/// below sound/) says yes are used; a soundscape without any is left out.
+[[nodiscard]] std::vector<SoundscapeScript> tutorialSoundscapes(const std::string& prefix, const std::function<bool(const std::string&)>& exists);
+
+/// A first map that teaches by example (replaces the starter room): a small room, a tunnel that
+/// bends twice and a large outside area under the sky, sealed by walls, ceiling and sky brushes.
 /// - Sky: worldspawn's skyname, tools/toolsskybox above the outside walls, optional 3D skybox;
 ///   light_environment, env_sun, shadow_control (values that fit the sky), env_global_light
-///   optional; lights inside and in the tunnel.
+///   optional (shadow area 2048 units around the player); lights inside and in the tunnel;
+///   lightmap scale 8 inside and in the tunnel, 16 outside.
 /// - env_soundscape in each area, env_cubemap in each area.
 /// - info_player_start inside with item_suit (short logon: the HEV suit from the first moment),
 ///   crowbar, pistol, SMG and shotgun on the same spot (taken at once, so no NPC takes them);
-///   item_ammo_crate for pistol, SMG and shotgun ammo.
-/// - A friendly npc_citizen (fixed model, unarmed) inside, and a target: an unarmed Combine
-///   soldier outside without grenades that ai_relationship keeps neutral to the player and the
-///   citizen - it never shoots back.
-/// - Outside: a path, a platform with steps, a ramp and props (barrels, crates, barriers).
+///   item_ammo_crate for pistol, SMG and shotgun ammo, standing on the floor.
+/// - A friendly npc_citizen (fixed model, unarmed) inside, in the player's squad: it follows,
+///   and USE makes it wait or follow again (npc_citizen_auto_player_squad_allow_use, set on map
+///   start by point_servercommand); a hint tells the player. A target outside: an unarmed
+///   Combine soldier that ai_relationship keeps neutral - it never shoots back.
+/// - Outside: a path, a platform with steps, a ramp, a plateau with a ramp, low walls for cover,
+///   props, a jeep (prop_vehicle_jeep) and an npc_maker on the plateau that sends one Combine
+///   soldier with an SMG at a time, again and again.
 /// One undo step "Tutorial map".
 [[nodiscard]] Change tutorialMap(MapDocument& doc, const TutorialMapOptions& options = {});
 

@@ -1867,6 +1867,27 @@ bool MainWindow::makeStarterMap(const QString& name, bool tutorial, bool skybox3
 		// Mapbase's sun shadow where the game code has it.
 		const auto* entry = m_editor->gameEntry();
 		options.globalLight = entry && entry->usesMapbase;
+		if (game && entry) {
+			// The map's own quiet soundscapes in the mod's soundscape file (the one the Sounds page
+			// edits), from the game's sounds; an area without fitting sounds keeps the one picked above.
+			const std::string prefix = toLower(entry->folder());
+			const auto scapes = edit::tutorialSoundscapes(prefix, [game](const std::string& wave) { return game->files.exists("sound/" + wave); });
+			if (!scapes.empty() && writeTutorialSoundscapes(scapes)) {
+				for (const auto& scape : scapes) {
+					if (scape.name.ends_with(".tutorial_indoor")) options.indoorSoundscape = scape.name;
+					if (scape.name.ends_with(".tutorial_tunnel")) options.tunnelSoundscape = scape.name;
+					if (scape.name.ends_with(".tutorial_outdoor")) options.outdoorSoundscape = scape.name;
+				}
+			}
+			// Models' boxes from the game: ammo crates and the jeep stand on the floor.
+			options.modelBounds = [game](const std::string& model) -> std::optional<Bounds> {
+				const auto data = game->files.read(model);
+				if (!data) return std::nullopt;
+				const auto info = readModelInfo(*data);
+				if (!info) return std::nullopt;
+				return Bounds{info->hullMin, info->hullMax};
+			};
+		}
 		m_editor->commit(edit::tutorialMap(m_editor->doc(), options));
 	} else {
 		edit::StarterRoomMaterials materials;
@@ -1892,6 +1913,37 @@ bool MainWindow::makeStarterMap(const QString& name, bool tutorial, bool skybox3
 	                                : tr("Your project is ready: %1 with a first room. Build on it, then Run map (F9) to walk around in it.")
 	                                      .arg(QFileInfo(path).fileName()));
 	return true;
+}
+
+bool MainWindow::writeTutorialSoundscapes(const std::vector<SoundscapeScript>& scapes) {
+	auto* game = m_editor->game();
+	const auto* entry = m_editor->gameEntry();
+	if (!game || !entry) return false;
+	const QString dir = fromPath(entry->gameDir);
+	const QString file = QStringLiteral("scripts/soundscapes_%1.txt").arg(QString::fromStdString(toLower(entry->folder())));
+	const auto readMod = [&dir](const QString& relative) {
+		QFile in(dir + "/" + relative);
+		return in.open(QIODevice::ReadOnly) ? in.readAll().toStdString() : std::string();
+	};
+	const auto writeMod = [&](const QString& relative, const std::string& text) {
+		const QString path = dir + "/" + relative;
+		QDir().mkpath(QFileInfo(path).absolutePath());
+		QFile out(path);
+		if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) || out.write(text.data(), qint64(text.size())) != qint64(text.size())) return false;
+		out.close();
+		game->files.noteWrittenFile(toPath(path));
+		return true;
+	};
+	try {
+		std::string text = readMod(file);
+		for (const auto& scape : scapes) text = upsertSoundscape(text, scape);
+		// The manifest: the mod's own, else a copy of the game's (it lists the game's soundscapes).
+		std::string manifest = readMod(QStringLiteral("scripts/soundscapes_manifest.txt"));
+		if (manifest.empty()) manifest = game->files.readText("scripts/soundscapes_manifest.txt").value_or(std::string());
+		return writeMod(file, text) && writeMod(QStringLiteral("scripts/soundscapes_manifest.txt"), addToSoundscapeManifest(manifest, file.toStdString()));
+	} catch (const std::exception&) {
+		return false;   // a broken soundscape file of the mod: the map uses the game's soundscapes
+	}
 }
 
 bool MainWindow::maybeSave() {

@@ -44,21 +44,29 @@ When Mapsmith opens it shows the start page (also **File > Start page**):
 A small map to look at, change and play, made only of things every Half-Life 2 / Source SDK 2013 install has. It
 compiles with the default settings and has no leak.
 
-- **Inside**: a hall with two lights. You start here with the **HEV suit** (an `item_suit` on the start spot, *short
-  logon*), a crowbar, pistol, SMG and shotgun (also on the start spot, so you have them at once) and three
-  `item_ammo_crate`s (pistol, SMG, shotgun). A friendly **citizen** (`npc_citizen`, one fixed model, unarmed) waits
-  here.
-- **Tunnel** to the outside, with its own light.
-- **Outside**: walls with **sky** above them (`tools/toolsskybox` and the 2D sky *sky_day01_01*), lit by a
-  `light_environment` with `env_sun` and `shadow_control` whose values fit that sky. Ground with a path, a platform
-  with steps and a ramp, barrels and crates to push and shoot. The **target** is a Combine soldier without weapon and
-  grenades that two `ai_relationship`s keep neutral to you and the citizen: it never fights back.
-- Each area has an `env_soundscape` (the game's own soundscapes, picked by name) and an `env_cubemap`; `info_node`s
-  let the NPCs find their way.
+- **Inside**: a small room with two lights. You start here with the **HEV suit** (an `item_suit` on the start spot,
+  *short logon*), a crowbar, pistol, SMG and shotgun (also on the start spot, so you have them at once) and three
+  `item_ammo_crate`s (pistol, SMG, shotgun) standing against the wall. A friendly **citizen** (`npc_citizen`, one fixed
+  model, unarmed) is in your squad: it follows you, and **USE** makes it wait - press USE again and it follows. A hint
+  tells you when you walk towards it. (Mapbase's citizens do that with `npc_citizen_auto_player_squad_allow_use 1`,
+  which the map sets when it starts with a `logic_auto` and a `point_servercommand`.)
+- **Tunnel** to the outside: it bends twice, with a light in each piece.
+- **Outside**: a large area with walls and **sky** above them (`tools/toolsskybox` and the 2D sky *sky_day01_01*), lit
+  by a `light_environment` with `env_sun` and `shadow_control` whose values fit that sky. Ground with a path, a platform
+  with steps and a ramp, a raised plateau with a ramp, low walls to take cover behind, barrels and crates to push and
+  shoot, and a **jeep** (`prop_vehicle_jeep` with its gun) to drive. The **target** is a Combine soldier without weapon
+  and grenades that two `ai_relationship`s keep neutral to you and the citizen: it never fights back. From the plateau
+  an `npc_maker` sends **Combine soldiers with an SMG** - one at a time, a new one a few seconds after the last one fell,
+  without end.
+- Inside and in the tunnel the lightmap scale is 8 (sharper light and shadows), outside 16.
+- Each area has quiet `env_soundscape`s - the map's own soundscapes in the mod's soundscape file (a room tone inside,
+  a draught and dripping water in the tunnel, wind and birds outside, made from the game's sounds) - and
+  `env_cubemap`s; `info_node`s let the NPCs find their way.
 - **3D skybox** (tick it under *Tutorial map*): a small room below the map with a `sky_camera` (scale 16) and hills,
   seen behind the sky around the outside area.
 - In a **Mapbase** mod an `env_global_light` is added: Mapbase's sun shadow - props and NPCs outside cast sharp shadows
-  that move with them. Other games do not know this entity, so it is left out there.
+  that move with them, 2048 units around you (*Ortho size* 2048). Other games do not know this entity, so it is left
+  out there.
 - **Open a map ...** and **Go to the editor**.
 
 Untick **Show at startup** to start straight in the editor.

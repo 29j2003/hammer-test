@@ -18,6 +18,8 @@
 #include "compile.h"
 #include "editor.h"
 
+#include <sme/soundscape.h>
+
 class QActionGroup;
 class QComboBox;
 class QMenu;
@@ -97,6 +99,9 @@ public:
 	/// the tutorial map (inside, tunnel, outside with sky, NPCs, weapons; edit::tutorialMap), or
 	/// with `tutorial` false a closed room with light, player start and cubemap.
 	bool makeStarterMap(const QString& name, bool tutorial = true, bool skybox3d = false);
+	/// Writes the tutorial map's soundscapes into the mod's soundscape file and manifest (as the
+	/// Sounds page saves); false when that could not be written.
+	bool writeTutorialSoundscapes(const std::vector<SoundscapeScript>& scapes);
 	[[nodiscard]] Page currentPage() const;
 	[[nodiscard]] QStackedWidget* pages() const { return m_pages; }
 	[[nodiscard]] ModPage* modPage() const { return m_modPage; }
