@@ -88,6 +88,18 @@ See [Leaks](compiling.html#leaks): follow the red line to the hole.
 VRAD did not run: either the map leaks, VRAD is switched off in the compile dialog, or the map has no lights (Problems
 shows a hint for that). A map open to the sky needs a `light_environment` and `tools/toolsskybox` on the sky faces.
 
+**impulse 101 gives the weapons but no ammo, ammo crates give nothing, or the HUD shows `#HL2_Pulse_Rifle`.**
+The mod lacks files of Half-Life 2 that the game only reads from the mod itself: `cfg/skill.cfg` (with
+`skill_episodic.cfg` and `skill_manifest.cfg`) holds the ammo limits, weapon damage and NPC health - without it every
+limit is 0, so ammo cannot be picked up (the console says *'skill.cfg' not present; not executing*). The HUD's texts
+(weapon names, hints) come from the mod's `resource/<mod>_english.txt`. **Project > Overview** shows a line when they
+are missing; **Add missing files** copies them from Valve's mod template (part of Mapsmith's features) or from the
+game. Nothing that is there is replaced; other languages fall back to English. New mods get them right away.
+
+**impulse 101, noclip or god do nothing.**
+They are cheats: the game needs `sv_cheats 1`. **Run the game** starts with cheats on (**Cheats** in the compile
+dialog); otherwise type `sv_cheats 1` in the console first.
+
 **Shiny surfaces look wrong.**
 Build the cubemaps; see [Cubemaps](compiling.html#cubemaps).
 

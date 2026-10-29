@@ -73,6 +73,12 @@ Then the **Title** (shown in Steam and the main menu, e.g. *My Mod*) and the **F
 **Create mod** writes the `gameinfo.txt`, the usual folders, a `cfg/autoexec.cfg` and the resource file with the title,
 and opens the new mod in the editor. Restart Steam to see the mod in your library.
 
+A Half-Life 2 mod also needs files of the game that the engine only reads from the mod itself: the skill values
+(`cfg/skill.cfg`, `skill_episodic.cfg`, `skill_manifest.cfg` - ammo limits, damage, health; without them weapons get no
+ammo) and the HUD's texts (`resource/<mod>_english.txt` with the weapon names; without them the HUD shows
+`#HL2_Pulse_Rifle`). Mapsmith adds them to every new mod from Valve's mod template (part of its features) or from the
+game. For an older mod the **Overview** shows a line with **Add missing files**; nothing that is there is replaced.
+
 {: .note }
 A mod built on Mapbase gets Mapbase's game code with Mapsmith's features at once (see [Features](#features-install-mapbase-fidelity-and-choose-what-it-does)).
 **File > New project** goes one step further: the new mod plus a first map to build on (see the start page).

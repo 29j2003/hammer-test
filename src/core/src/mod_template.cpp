@@ -165,7 +165,8 @@ std::string modAutoexec(const ModTemplate& mod) {
 	return "// autoexec.cfg of " + mod.title + " - runs every time the game starts.\n"
 	       "// Handy while building maps; remove what you do not want players to have.\n"
 	       "developer 0\n"
-	       "sv_cheats 0\n";
+	       "// Cheats (impulse 101, noclip, god): Mapsmith's \"Run the game\" starts with +sv_cheats 1;\n"
+	       "// in the console type sv_cheats 1.\n";
 }
 
 std::vector<std::pair<std::string, std::string>> mapbaseMounts(const std::filesystem::path& sourceModsDir) {

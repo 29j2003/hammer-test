@@ -187,11 +187,16 @@ const SkyPreset* findSkyPreset(std::string_view skyName) {
 
 Change applySky(MapDocument& doc, const std::string& skyName, const Vec3& place) {
 	Transaction t(doc, "Sky " + skyName);
+	applySky(doc, t, skyName, place);
+	return t.finish();
+}
+
+void applySky(MapDocument& doc, Transaction& t, const std::string& skyName, const Vec3& place) {
 	t.touchWorld();
 	doc.world.set("skyname", skyName);
 	const SkyPreset* preset = findSkyPreset(skyName);
 	if (!preset) {
-		return t.finish();
+		return;
 	}
 	Vec3 angles;
 	const bool hasAngles = preset->angles && parseVec3(preset->angles, angles);
@@ -226,7 +231,7 @@ Change applySky(MapDocument& doc, const std::string& skyName, const Vec3& place)
 		if (given(preset->sunSpread)) light->set("SunSpreadAngle", number(preset->sunSpread));
 	}
 	if (!hasAngles) {
-		return t.finish();   // only colours known: the direction stays as the mapper set it
+		return;   // only colours known: the direction stays as the mapper set it
 	}
 	for (Entity* sun : ofClass(doc, "env_sun")) {
 		t.touchEntity(sun->id);
@@ -239,7 +244,6 @@ Change applySky(MapDocument& doc, const std::string& skyName, const Vec3& place)
 			entity->set("angles", downAngles(*preset, angles));
 		}
 	}
-	return t.finish();
 }
 
 } // namespace sme

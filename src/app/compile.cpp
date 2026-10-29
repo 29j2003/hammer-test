@@ -546,6 +546,10 @@ QWidget* CompileDialog::buildSimple() {
 	m_run->setObjectName("run");
 	after->layout()->addWidget(switchRow(tr("Copy to the game's maps folder"), QFileInfo(m_gameDir).fileName() + "/maps", m_copy));
 	after->layout()->addWidget(switchRow(tr("Run the game"), tr("loads the map when it starts"), m_run));
+	m_cheats = new QCheckBox;
+	m_cheats->setObjectName("cheats");
+	m_cheats->setToolTip(tr("+sv_cheats 1: impulse 101 (all weapons and ammo), noclip and god work while you test the map"));
+	after->layout()->addWidget(switchRow(tr("Cheats"), tr("+sv_cheats 1 (impulse 101, noclip)"), m_cheats));
 
 	auto* window = card(tr("Game window"), {}, tr("How the game starts (also for building cubemaps)."), nullptr);
 	m_console = new QCheckBox;
@@ -599,7 +603,7 @@ QWidget* CompileDialog::buildSimple() {
 	grid->addWidget(window, 1, 2);
 	for (int c = 0; c < 3; ++c) grid->setColumnStretch(c, 1);
 
-	for (auto* box : {m_detail, m_water, m_vvis, m_vrad, m_cubemaps, m_copy, m_run, m_console, m_windowed, m_novid}) {
+	for (auto* box : {m_detail, m_water, m_vvis, m_vrad, m_cubemaps, m_copy, m_run, m_cheats, m_console, m_windowed, m_novid}) {
 		connect(box, &QCheckBox::toggled, this, [this] {
 			if (!m_loading) changed();
 		});
@@ -811,6 +815,7 @@ void CompileDialog::loadIntoWidgets() {
 	m_cubemaps->setChecked(o.cubemaps);
 	m_copy->setChecked(o.copy);
 	m_run->setChecked(o.run);
+	m_cheats->setChecked(o.cheats);
 	m_console->setChecked(o.console);
 	m_windowed->setChecked(o.windowed);
 	m_novid->setChecked(o.novid);
@@ -847,6 +852,7 @@ void CompileDialog::changed() {
 		o.cubemaps = m_cubemaps->isChecked();
 		o.copy = m_copy->isChecked();
 		o.run = m_run->isChecked();
+		o.cheats = m_cheats->isChecked();
 		o.console = m_console->isChecked();
 		o.windowed = m_windowed->isChecked();
 		o.novid = m_novid->isChecked();

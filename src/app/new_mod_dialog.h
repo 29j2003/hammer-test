@@ -13,13 +13,16 @@
 #include <set>
 #include <string>
 
+#include <sme/mod_base_files.h>
 #include <sme/mod_template.h>
 
 class QButtonGroup;
+class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QRadioButton;
 
 namespace sme::app {
 
@@ -31,6 +34,13 @@ class FeatureChecklist;
 /// mapbase-fidelity features the mod should not have (written into it before it opens).
 QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QStringList& maps, QString* error = nullptr,
                            const std::optional<std::set<std::string>>& featuresOff = std::nullopt);
+
+/// The open game when it is a Half-Life 2 based source mod (singleplayer, mounts hl2), which
+/// needs the base game's skill files and texts (sme/mod_base_files.h): what it lacks of them.
+[[nodiscard]] std::optional<ModBaseCheck> checkOpenModBaseFiles(const Editor* editor);
+/// Adds them to the open mod: from the feature bundle's copy of Valve's mod template, else from
+/// the game's files (the mod's search paths, then a Half-Life 2 install).
+ModBaseResult addOpenModBaseFiles(const Editor* editor);
 
 /// Shows the dialog; true if a mod was created (the editor then has it open).
 bool runNewModDialog(Editor* editor, QWidget* parent = nullptr);
@@ -46,6 +56,12 @@ public:
 	[[nodiscard]] ModTemplate modTemplate() const;
 	/// The checked maps to copy into the new mod.
 	[[nodiscard]] QStringList mapsToCopy() const;
+	/// Shows the choice of the first map (New project: tutorial map or empty room).
+	void showFirstMapChoice();
+	/// The tutorial map is chosen (the default), not the empty room.
+	[[nodiscard]] bool tutorialMap() const;
+	/// The tutorial map gets a 3D skybox.
+	[[nodiscard]] bool skybox3d() const;
 	/// The features left unticked.
 	[[nodiscard]] std::set<std::string> featuresOff() const;
 	[[nodiscard]] FeatureChecklist* features() const { return m_features; }
@@ -58,6 +74,9 @@ private:
 	QLineEdit* m_folder;
 	QButtonGroup* m_base;          ///< What the mod is based on (id = ModBase)
 	QListWidget* m_maps;
+	QWidget* m_firstMap;           ///< Tutorial map / empty room (New project only)
+	QRadioButton* m_tutorial;
+	QCheckBox* m_skybox3d;
 	FeatureChecklist* m_features;
 	QLabel* m_where;
 	QLabel* m_problem;

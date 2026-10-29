@@ -252,6 +252,7 @@ std::string CompileSettings::serialize() const {
 	flag("console", console);
 	flag("windowed", windowed);
 	flag("novid", novid);
+	flag("cheats", cheats);
 	line("width", std::to_string(width));
 	line("height", std::to_string(height));
 	for (int t = 0; t < COMPILE_TOOL_COUNT; ++t) {
@@ -293,6 +294,7 @@ CompileSettings CompileSettings::parse(std::string_view text) {
 		else if (key == "console") s.console = on;
 		else if (key == "windowed") s.windowed = on;
 		else if (key == "novid") s.novid = on;
+		else if (key == "cheats") s.cheats = on;
 		else if (key == "width") number(s.width);
 		else if (key == "height") number(s.height);
 		else if (key.ends_with('+')) {
@@ -374,7 +376,10 @@ std::vector<CompileCommand> compileCommands(const CompileSettings& s, std::strin
 		command.tool = CompileTool::Game;
 		command.name = "Game";
 		command.arguments = toolArguments(s, CompileTool::Game, launchOptions);
-		command.arguments.insert(command.arguments.end(), {"-game", game, "+map", mapName});
+		command.arguments.insert(command.arguments.end(), {"-game", game});
+		// Before +map: the map loads with cheats already allowed.
+		if (s.cheats) command.arguments.insert(command.arguments.end(), {"+sv_cheats", "1"});
+		command.arguments.insert(command.arguments.end(), {"+map", mapName});
 		command.detached = true;
 		steps.push_back(std::move(command));
 	}

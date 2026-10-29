@@ -55,6 +55,9 @@ struct CompileSettings {
 	bool console = true;               ///< -console
 	bool windowed = true;              ///< -windowed
 	bool novid = true;                 ///< -novid: no intro video
+	/// +sv_cheats 1 when the game starts with the map (impulse 101, noclip, god while testing;
+	/// not for building cubemaps)
+	bool cheats = true;
 	int width = 1920, height = 1080;   ///< -w -h; 0 = the game's own setting
 	/// Parameters added per tool, as typed ("-leaktest", "-lights fidelity_lights.rad").
 	std::array<std::vector<std::string>, COMPILE_TOOL_COUNT> extra;

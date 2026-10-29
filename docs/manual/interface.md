@@ -34,8 +34,31 @@ When Mapsmith opens it shows the start page (also **File > Start page**):
 - **Continue** opens the map you worked on last, in its mod, with a picture of it (taken when you saved).
 - **Recent** lists the other maps you worked on lately; double-click one to open it in its mod.
 - **Start new project** makes a new mod built on Half-Life 2 with Mapbase, installs Mapsmith's features into it and
-  opens a first map: a closed room with a light, a player start and a cubemap, saved in the mod's map folder - ready
-  to build on and to run. (**File > New project** does the same.)
+  opens a first map, saved in the mod's map folder - ready to build on and to run. (**File > New project** does the
+  same.) Under **First map** you choose:
+  - **Tutorial map** (the default): a map that shows how things are done - see below.
+  - **Empty room**: a closed room with a light, a player start and a cubemap.
+
+### The tutorial map
+
+A small map to look at, change and play, made only of things every Half-Life 2 / Source SDK 2013 install has. It
+compiles with the default settings and has no leak.
+
+- **Inside**: a hall with two lights. You start here with the **HEV suit** (an `item_suit` on the start spot, *short
+  logon*), a crowbar, pistol, SMG and shotgun (also on the start spot, so you have them at once) and three
+  `item_ammo_crate`s (pistol, SMG, shotgun). A friendly **citizen** (`npc_citizen`, one fixed model, unarmed) waits
+  here.
+- **Tunnel** to the outside, with its own light.
+- **Outside**: walls with **sky** above them (`tools/toolsskybox` and the 2D sky *sky_day01_01*), lit by a
+  `light_environment` with `env_sun` and `shadow_control` whose values fit that sky. Ground with a path, a platform
+  with steps and a ramp, barrels and crates to push and shoot. The **target** is a Combine soldier without weapon and
+  grenades that two `ai_relationship`s keep neutral to you and the citizen: it never fights back.
+- Each area has an `env_soundscape` (the game's own soundscapes, picked by name) and an `env_cubemap`; `info_node`s
+  let the NPCs find their way.
+- **3D skybox** (tick it under *Tutorial map*): a small room below the map with a `sky_camera` (scale 16) and hills,
+  seen behind the sky around the outside area.
+- In a **Mapbase** mod an `env_global_light` is added: Mapbase's sun shadow - props and NPCs outside cast sharp shadows
+  that move with them. Other games do not know this entity, so it is left out there.
 - **Open a map ...** and **Go to the editor**.
 
 Untick **Show at startup** to start straight in the editor.

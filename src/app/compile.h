@@ -142,7 +142,7 @@ private:
 	QPushButton* m_advancedButton;
 	QStackedWidget* m_pages;
 	// Simple view
-	QCheckBox *m_detail, *m_water, *m_vvis, *m_vrad, *m_cubemaps, *m_copy, *m_run;
+	QCheckBox *m_detail, *m_water, *m_vvis, *m_vrad, *m_cubemaps, *m_copy, *m_run, *m_cheats;
 	QCheckBox *m_console, *m_windowed, *m_novid;
 	QButtonGroup *m_visQuality, *m_lightLevel, *m_lightQuality, *m_cubemapLevel;
 	QLabel* m_bothWarning;

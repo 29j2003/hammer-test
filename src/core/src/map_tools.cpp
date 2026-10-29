@@ -5,6 +5,7 @@
 #include <sme/brush.h>
 #include <sme/entity_catalog.h>
 #include <sme/shapes.h>
+#include <sme/sky_presets.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -494,6 +495,192 @@ Change starterRoom(MapDocument& doc, const StarterRoomMaterials& materials, cons
 	place("info_player_start", {0, -size.y / 4, 1}, {{"angles", "0 90 0"}});
 	place("light", {0, 0, size.z - 32}, {{"_light", "255 240 220 400"}});
 	place("env_cubemap", {0, 0, 64}, {});
+	return t.finish();
+}
+
+std::string pickSoundscape(const std::vector<std::string>& names, SoundscapeArea area) {
+	// Words in a soundscape's name that tell where it fits, with their weight.
+	static const std::vector<std::pair<const char*, int>> INDOOR = {
+		{"indoor", 5}, {"inside", 5}, {"interior", 5}, {"room", 3}, {"house", 3}, {"building", 3}, {"hall", 2}, {"office", 2}, {"apartment", 2}};
+	static const std::vector<std::pair<const char*, int>> TUNNEL = {
+		{"tunnel", 5}, {"sewer", 3}, {"underground", 3}, {"pipe", 2}, {"drip", 2}, {"cave", 2}};
+	static const std::vector<std::pair<const char*, int>> OUTDOOR = {
+		{"outdoor", 5}, {"outside", 5}, {"city", 3}, {"street", 3}, {"town", 2}, {"plaza", 2}, {"courtyard", 2}, {"wind", 2}, {"yard", 1}};
+	const auto& words = area == SoundscapeArea::Indoor ? INDOOR : (area == SoundscapeArea::Tunnel ? TUNNEL : OUTDOOR);
+	std::vector<std::string> sorted = names;
+	std::sort(sorted.begin(), sorted.end());
+	std::string best;
+	int bestScore = 0;
+	for (const auto& name : sorted) {
+		const std::string lower = toLower(name);
+		int score = 0;
+		for (const auto& [word, weight] : words) {
+			if (lower.find(word) != std::string::npos) score += weight;
+		}
+		if (score > bestScore) {
+			best = name;
+			bestScore = score;
+		}
+	}
+	return best;
+}
+
+Change tutorialMap(MapDocument& doc, const TutorialMapOptions& options) {
+	Transaction t(doc, "Tutorial map");
+	const auto& m = options.materials;
+	const TutorialMapLayout layout;
+	const double w = 16;   // wall thickness
+	const auto add = [&](const Bounds& box, const std::string& material, int lightmapScale = 16) {
+		Solid solid = makeBlock(doc, box, material);
+		for (auto& side : solid.sides) side.lightmapScale = lightmapScale;
+		t.touchSolid({0, solid.id});
+		doc.world.solids.push_back(std::move(solid));
+	};
+	const auto place = [&](const std::string& classname, const Vec3& origin, std::vector<std::pair<std::string, std::string>> keys = {}) {
+		Entity entity;
+		entity.id = doc.newEntityId();
+		t.touchEntity(entity.id);
+		entity.set("classname", classname);
+		entity.set("origin", formatVec3(origin));
+		for (auto& [key, value] : keys) entity.set(key, value);
+		doc.entities.push_back(std::move(entity));
+	};
+	const std::string sky = "TOOLS/TOOLSSKYBOX";
+
+	// Inside: a hall with a doorway in the north wall to the tunnel.
+	const Vec3 in0 = layout.indoor.min, in1 = layout.indoor.max;
+	const Bounds& tunnel = layout.tunnel;
+	const double doorTop = tunnel.max.z, doorX = tunnel.max.x;
+	add({{in0.x - w, in0.y - w, in0.z - w}, {in1.x + w, in1.y + w, in0.z}}, m.floor);
+	add({{in0.x - w, in0.y - w, in1.z}, {in1.x + w, in1.y + w, in1.z + w}}, m.ceiling);
+	add({{in0.x - w, in0.y - w, in0.z}, {in0.x, in1.y + w, in1.z}}, m.walls);
+	add({{in1.x, in0.y - w, in0.z}, {in1.x + w, in1.y + w, in1.z}}, m.walls);
+	add({{in0.x, in0.y - w, in0.z}, {in1.x, in0.y, in1.z}}, m.walls);
+	add({{in0.x, in1.y, in0.z}, {-doorX, in1.y + w, in1.z}}, m.walls);
+	add({{doorX, in1.y, in0.z}, {in1.x, in1.y + w, in1.z}}, m.walls);
+	add({{-doorX, in1.y, doorTop}, {doorX, in1.y + w, in1.z}}, m.walls);
+
+	// The tunnel between the doorways.
+	add({{-doorX - w, tunnel.min.y, tunnel.min.z - w}, {doorX + w, tunnel.max.y, tunnel.min.z}}, m.tunnel);
+	add({{-doorX - w, tunnel.min.y, tunnel.max.z}, {doorX + w, tunnel.max.y, tunnel.max.z + w}}, m.ceiling);
+	add({{-doorX - w, tunnel.min.y, tunnel.min.z}, {-doorX, tunnel.max.y, tunnel.max.z}}, m.tunnel);
+	add({{doorX, tunnel.min.y, tunnel.min.z}, {doorX + w, tunnel.max.y, tunnel.max.z}}, m.tunnel);
+
+	// Outside: ground with a path, walls up to 384, sky above them and on top.
+	const Vec3 out0 = layout.outdoor.min, out1 = layout.outdoor.max;
+	const double wallTop = 384, pathEnd = 2400;
+	const double y0 = out0.y - w;   // the south wall (with the doorway) starts where the tunnel ends
+	add({{out0.x - w, y0, out0.z - w}, {-doorX, out1.y + w, out0.z}}, m.ground, 32);
+	add({{doorX, y0, out0.z - w}, {out1.x + w, out1.y + w, out0.z}}, m.ground, 32);
+	add({{-doorX, y0, out0.z - w}, {doorX, pathEnd, out0.z}}, m.path, 32);
+	add({{-doorX, pathEnd, out0.z - w}, {doorX, out1.y + w, out0.z}}, m.ground, 32);
+	add({{out0.x - w, y0, out1.z}, {out1.x + w, out1.y + w, out1.z + w}}, sky, 32);
+	const auto wall = [&](const Bounds& box) {   // brick below wallTop, sky above
+		add({box.min, {box.max.x, box.max.y, wallTop}}, m.outerWalls, 32);
+		add({{box.min.x, box.min.y, wallTop}, box.max}, sky, 32);
+	};
+	wall({{out0.x - w, y0, out0.z}, {out0.x, out1.y + w, out1.z}});
+	wall({{out1.x, y0, out0.z}, {out1.x + w, out1.y + w, out1.z}});
+	wall({{out0.x, out1.y, out0.z}, {out1.x, out1.y + w, out1.z}});
+	add({{out0.x, y0, out0.z}, {-doorX, out0.y, wallTop}}, m.outerWalls, 32);
+	add({{doorX, y0, out0.z}, {out1.x, out0.y, wallTop}}, m.outerWalls, 32);
+	add({{-doorX, y0, doorTop}, {doorX, out0.y, wallTop}}, m.outerWalls, 32);
+	add({{out0.x, y0, wallTop}, {out1.x, out0.y, out1.z}}, sky, 32);
+
+	// Ground variation: a platform with steps and a ramp up to it.
+	const Bounds platform{{256, 2304, 0}, {768, 2816, 64}};
+	add(platform, m.platform);
+	for (int step = 1; step <= 3; ++step) {
+		add({{384, platform.min.y - 32 * (4 - step), 0}, {640, platform.min.y - 32 * (3 - step), 16.0 * step}}, m.platform);
+	}
+	ShapeOptions ramp;
+	ramp.kind = ShapeOptions::Kind::Wedge;
+	for (auto& solid : makeShape(doc, {{272, 1984, 0}, {368, platform.min.y, platform.max.z}}, ramp, m.platform)) {
+		t.touchSolid({0, solid.id});
+		doc.world.solids.push_back(std::move(solid));
+	}
+
+	// The sky and its light.
+	t.touchWorld();
+	const Vec3 sunAt{0, (out0.y + out1.y) / 2, 512};
+	place("light_environment", sunAt);
+	place("env_sun", sunAt + Vec3{64, 0, 0}, {{"use_angles", "1"}, {"size", "16"}, {"overlaysize", "-1"}});
+	place("shadow_control", sunAt + Vec3{128, 0, 0}, {{"color", "64 64 64"}, {"distance", "75"}});
+	if (options.globalLight) {
+		place("env_global_light", sunAt + Vec3{192, 0, 0},
+		      {{"color", "255 250 230 255"}, {"distance", "10000"}, {"fov", "5"}, {"nearz", "512"}, {"northoffset", "200"},
+		       {"orthosize", "1000"}, {"texturename", "effects/flashlight001"}, {"enableshadows", "1"}, {"enabled", "1"}});
+	}
+	applySky(doc, t, options.skyName, sunAt);
+	if (options.skybox3d) {
+		// 1/16 of the world around the sky camera: ground at the world's height 0 and hills
+		// around the outside area, in a sealed room of sky brushes below the map.
+		const Vec3 c{0, 0, -2048};
+		const Bounds room{c + Vec3{-384, -256, -64}, c + Vec3{384, 512, 448}};
+		add({{room.min.x - w, room.min.y - w, room.min.z - w}, {room.max.x + w, room.max.y + w, c.z}}, m.ground, 64);
+		add({{room.min.x - w, room.min.y - w, room.max.z}, {room.max.x + w, room.max.y + w, room.max.z + w}}, sky, 64);
+		add({{room.min.x - w, room.min.y - w, c.z}, {room.min.x, room.max.y + w, room.max.z}}, sky, 64);
+		add({{room.max.x, room.min.y - w, c.z}, {room.max.x + w, room.max.y + w, room.max.z}}, sky, 64);
+		add({{room.min.x, room.min.y - w, c.z}, {room.max.x, room.min.y, room.max.z}}, sky, 64);
+		add({{room.min.x, room.max.y, c.z}, {room.max.x, room.max.y + w, room.max.z}}, sky, 64);
+		add({c + Vec3{-384, 256, 0}, c + Vec3{384, 512, 96}}, m.rock, 64);
+		add({c + Vec3{128, -64, 0}, c + Vec3{384, 256, 64}}, m.rock, 64);
+		add({c + Vec3{-384, -64, 0}, c + Vec3{-128, 256, 80}}, m.rock, 64);
+		place("sky_camera", c + Vec3{0, 0, 16}, {{"scale", "16"}, {"fogenable", "0"}});
+	}
+
+	// Lights inside and in the tunnel, a soundscape and a cubemap in each area.
+	place("light", {-256, 0, in1.z - 32}, {{"_light", "255 240 220 250"}});
+	place("light", {256, 0, in1.z - 32}, {{"_light", "255 240 220 250"}});
+	const Vec3 tunnelMiddle{0, (tunnel.min.y + tunnel.max.y) / 2, 0};
+	place("light", tunnelMiddle + Vec3{0, 0, tunnel.max.z - 24}, {{"_light", "255 220 170 80"}});
+	const auto soundscape = [&](const Vec3& at, const std::string& name, int radius) {
+		if (!name.empty()) place("env_soundscape", at, {{"soundscape", name}, {"radius", std::to_string(radius)}});
+	};
+	soundscape({0, 0, 128}, options.indoorSoundscape, 768);
+	soundscape(tunnelMiddle + Vec3{0, 0, 80}, options.tunnelSoundscape, 320);
+	soundscape({0, 2048, 160}, options.outdoorSoundscape, 1600);
+	place("env_cubemap", {0, -128, 64});
+	place("env_cubemap", tunnelMiddle + Vec3{0, 0, 64});
+	place("env_cubemap", {0, 2048, 96});
+
+	// The player: HEV suit and weapons on the start spot (taken on the first frame), ammo crates.
+	const Vec3 start{0, -384, 1};
+	place("info_player_start", start, {{"angles", "0 90 0"}});
+	place("item_suit", start + Vec3{0, 0, 16}, {{"spawnflags", "1"}});   // short logon
+	int height = 16;
+	for (const char* weapon : {"weapon_crowbar", "weapon_pistol", "weapon_smg1", "weapon_shotgun"}) {
+		height += 8;
+		place(weapon, start + Vec3{0, 0, static_cast<double>(height)});
+	}
+	place("item_ammo_crate", {in1.x - 48, -320, 0}, {{"angles", "0 180 0"}, {"AmmoType", "0"}});   // pistol
+	place("item_ammo_crate", {in1.x - 48, -192, 0}, {{"angles", "0 180 0"}, {"AmmoType", "1"}});   // SMG
+	place("item_ammo_crate", {in1.x - 48, -64, 0}, {{"angles", "0 180 0"}, {"AmmoType", "4"}});    // shotgun
+
+	// A friendly citizen inside (fixed model, no weapon) and a target outside that never fights.
+	place("npc_citizen", {-320, 192, 1},
+	      {{"targetname", "tutorial_citizen"}, {"angles", "0 315 0"}, {"citizentype", "4"}, {"model", "models/Humans/Group03/male_07.mdl"},
+	       {"additionalequipment", "0"}});
+	place("npc_combine_s", {-384, 2560, 1},
+	      {{"targetname", "tutorial_target"}, {"angles", "0 270 0"}, {"additionalequipment", "0"}, {"NumGrenades", "0"}, {"spawnflags", "8192"}});
+	place("ai_relationship", {-416, 2560, 96},
+	      {{"targetname", "tutorial_target_peace"}, {"subject", "tutorial_target"}, {"target", "!player"}, {"disposition", "4"}, {"rank", "99"},
+	       {"StartActive", "1"}, {"Reciprocal", "0"}});
+	place("ai_relationship", {-352, 2560, 96},
+	      {{"targetname", "tutorial_target_citizen"}, {"subject", "tutorial_target"}, {"target", "tutorial_citizen"}, {"disposition", "4"},
+	       {"rank", "99"}, {"StartActive", "1"}, {"Reciprocal", "1"}});
+
+	// Nodes, so the NPCs can find their way (inside, through the tunnel, outside).
+	const Vec3 nodes[] = {{-256, -256, 8}, {256, -256, 8}, {-256, 256, 8}, {256, 256, 8}, {0, 0, 8}, {0, 640, 8}, {0, 912, 8},
+	                      {0, 1408, 8}, {-640, 1408, 8}, {640, 1408, 8}, {0, 2048, 8}, {-640, 2048, 8}, {0, 2688, 8}, {-640, 2688, 8}};
+	for (const Vec3& at : nodes) place("info_node", at);
+
+	// Props to push, shoot and climb.
+	place("prop_physics", {-640, 1600, 28}, {{"model", "models/props_c17/oildrum001.mdl"}});
+	place("prop_physics", {-576, 1648, 28}, {{"model", "models/props_c17/oildrum001.mdl"}});
+	place("prop_physics", {640, 1536, 24}, {{"model", "models/props_junk/wood_crate001a.mdl"}});
+	place("prop_physics", {640, 1600, 64}, {{"model", "models/props_junk/wood_crate001a.mdl"}});
+	place("prop_physics", {-384, 2432, 24}, {{"model", "models/props_junk/wood_crate001a.mdl"}});
 	return t.finish();
 }
 

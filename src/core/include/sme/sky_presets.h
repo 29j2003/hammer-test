@@ -39,5 +39,7 @@ struct SkyPreset {
 /// info_player_start, else at `place`, when the map has none), env_sun, shadow_control and
 /// env_global_light (only where the map has them). One undo step.
 [[nodiscard]] Change applySky(MapDocument& doc, const std::string& skyName, const Vec3& place);
+/// The same as part of a larger edit.
+void applySky(MapDocument& doc, Transaction& t, const std::string& skyName, const Vec3& place);
 
 } // namespace sme

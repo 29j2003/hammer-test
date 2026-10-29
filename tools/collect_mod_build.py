@@ -15,6 +15,10 @@ what Mapsmith installs into a mod (sme/mod_install.h):
   vrad/vrad.exe, vrad_dll.dll           VRAD with baked ambient occlusion (-fidelityao)
   fidelity/game/...                     the add-on's game files (compiled shaders, cfg)
   fidelity/*.ps1, *.cs                  deploy.ps1 (generated materials), report.ps1 (Make report)
+  template/<game>/cfg/skill*.cfg, template/<game>/resource/mod_<game>_*.txt
+                                        from Valve's mod template (sp/game/mod_hl2, mod_episodic): the
+                                        skill values (ammo limits, damage, health) and the HUD's texts
+                                        a mod needs from its base game (sme/mod_base_files.h)
   LICENSE_SourceSDK2013.txt, thirdpartylegalnotices.txt
                                         the Source 1 SDK license the DLLs are built under, and its notices
   manifest.txt                          version and the SHA-256 of every file
@@ -89,6 +93,21 @@ def find_built(source: Path) -> dict[str, Path]:
     return files
 
 
+def find_template(source: Path) -> dict[str, Path]:
+    """Valve's mod template files a new mod needs: skill cfgs and the text files."""
+    files: dict[str, Path] = {}
+    for game in GAMES:
+        folder = source / "sp" / "game" / f"mod_{game}"
+        for path in sorted((folder / "cfg").glob("skill*.cfg")):
+            files[f"template/{game}/cfg/{path.name}"] = path
+        for path in sorted((folder / "resource").glob(f"mod_{game}_*.txt")):
+            files[f"template/{game}/resource/{path.name}"] = path
+    for needed in ("template/hl2/cfg/skill.cfg", "template/hl2/resource/mod_hl2_english.txt"):
+        if needed not in files:
+            raise SystemExit(f"{needed} is missing: Valve's mod template (sp/game/mod_hl2) is not in the Mapbase checkout")
+    return files
+
+
 def version_of(mod: Path) -> str:
     version = (mod / "fidelity" / "VERSION").read_text(encoding="utf-8").strip()
     exported = ""
@@ -103,6 +122,7 @@ def collect(source: Path, mod: Path, out: Path) -> list[tuple[str, str]]:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     files = dict(find_built(source))
+    files.update(find_template(source))
     fidelity = mod / "fidelity"
     for path in sorted((fidelity / "game").rglob("*")):
         if path.is_file():

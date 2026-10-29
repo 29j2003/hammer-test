@@ -36,6 +36,14 @@ class CollectTest(unittest.TestCase):
                 write(source / "sp" / "src" / "materialsystem" / "stdshaders" / f"Release_dx9_mod_{branch}" / "game_shader_dx9.dll",
                       f"mapbase shaders {branch}")
         write(game / "mod_episodic" / "bin" / "game_shader_dx6.dll", "fidelity shaders")
+        # Valve's mod template: skill values and texts (the Episode Two one has no skill.cfg).
+        write(game / "mod_hl2" / "cfg" / "skill.cfg", "sk_max_ar2 60")
+        write(game / "mod_hl2" / "cfg" / "skill_manifest.cfg", "exec skill.cfg")
+        write(game / "mod_hl2" / "cfg" / "chapter1.cfg", "map d1_trainstation_01")
+        write(game / "mod_hl2" / "resource" / "mod_hl2_english.txt", "lang")
+        write(game / "mod_episodic" / "cfg" / "skill_episodic.cfg", "sk_zombie_soldier_health 100")
+        write(game / "mod_episodic" / "resource" / "mod_episodic_english.txt", "lang")
+        write(game / "mod_episodic" / "resource" / "ClientScheme.res", "scheme")
         write(game / "bin" / "vrad.exe", "vrad launcher")
         write(game / "bin" / "vrad_dll.dll", "vrad")
         write(source / "LICENSE", "Source 1 SDK license")
@@ -61,10 +69,24 @@ class CollectTest(unittest.TestCase):
             self.assertIn("bin/game_shader_dx6.dll", listed)
             self.assertIn("fidelity/game/cfg/fidelity.cfg", listed)
             self.assertNotIn("fidelity/update.ps1", listed)
+            for path in ("template/hl2/cfg/skill.cfg", "template/hl2/cfg/skill_manifest.cfg", "template/hl2/resource/mod_hl2_english.txt",
+                         "template/episodic/cfg/skill_episodic.cfg", "template/episodic/resource/mod_episodic_english.txt"):
+                self.assertIn(path, listed)
+            self.assertNotIn("template/hl2/cfg/chapter1.cfg", listed)
+            self.assertNotIn("template/episodic/resource/ClientScheme.res", listed)
             manifest = (root / "features" / "manifest.txt").read_text()
             self.assertTrue(manifest.startswith("mapsmith-features 1\nversion 0.1.0+52465da\n"))
             data = (root / "features" / "bin" / "episodic" / "game_shader_dx9.dll").read_bytes()
             self.assertIn(f"{hashlib.sha256(data).hexdigest()}  bin/episodic/game_shader_dx9.dll", manifest)
+
+    def test_missing_mod_template_stops_the_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, mod = self.make_tree(root)
+            (source / "sp" / "game" / "mod_hl2" / "cfg" / "skill.cfg").unlink()
+            with self.assertRaises(SystemExit) as stop:
+                collect_mod_build.collect(source, mod, root / "features")
+            self.assertIn("skill.cfg", str(stop.exception))
 
     def test_missing_mapbase_shaders_stop_the_build(self):
         with tempfile.TemporaryDirectory() as tmp:

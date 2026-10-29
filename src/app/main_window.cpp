@@ -99,6 +99,7 @@
 
 #include <sme/checks.h>
 #include <sme/game.h>
+#include <sme/assets.h>
 #include <sme/map_tools.h>
 #include <sme/scene_export.h>
 #include <sme/text.h>
@@ -1758,6 +1759,7 @@ bool MainWindow::startNewProject() {
 	// 1. The mod (Mapbase by default, the features go in with it).
 	NewModDialog dialog(m_editor, this);
 	dialog.setWindowTitle(tr("New project"));
+	dialog.showFirstMapChoice();
 	if (dialog.exec() != QDialog::Accepted) return false;
 	QString error;
 	const QString key = createModAndSwitch(m_editor, dialog.modTemplate(), dialog.mapsToCopy(), &error, dialog.featuresOff());
@@ -1765,26 +1767,65 @@ bool MainWindow::startNewProject() {
 		QMessageBox::warning(this, tr("New project"), error);
 		return false;
 	}
-	return makeStarterMap(QString::fromStdString(dialog.modTemplate().folder));
+	return makeStarterMap(QString::fromStdString(dialog.modTemplate().folder), dialog.tutorialMap(), dialog.skybox3d());
 }
 
-bool MainWindow::makeStarterMap(const QString& name) {
-	// 2. A first map: a closed room with light, player start and cubemap, in the mod's map folder.
+bool MainWindow::makeStarterMap(const QString& name, bool tutorial, bool skybox3d) {
+	// 2. A first map: the tutorial map or a closed room, in the mod's map folder.
 	m_editor->newMap();
-	edit::StarterRoomMaterials materials;
-	if (const auto* game = m_editor->game()) {
-		// The game's own materials when it has them (Half-Life 2's), else the dev textures.
-		const auto pick = [game](std::initializer_list<const char*> names, const std::string& fallback) {
-			for (const char* name : names) {
-				if (game->files.exists(std::string("materials/") + name + ".vmt")) return QString::fromLatin1(name).toUpper().toStdString();
+	const auto* game = m_editor->game();
+	// The game's own materials when it has them (Half-Life 2's), else the dev textures.
+	const auto pick = [game](std::initializer_list<const char*> names, const std::string& fallback) {
+		if (!game) return fallback;
+		for (const char* name : names) {
+			if (game->files.exists(std::string("materials/") + name + ".vmt")) return QString::fromLatin1(name).toUpper().toStdString();
+		}
+		return fallback;
+	};
+	if (tutorial) {
+		edit::TutorialMapOptions options;
+		options.skybox3d = skybox3d;
+		auto& m = options.materials;
+		m.floor = pick({"concrete/concretefloor001a", "dev/dev_measuregeneric01b"}, m.floor);
+		m.walls = pick({"plaster/plasterwall003a", "brick/brickwall001a", "concrete/concretewall001a"}, m.walls);
+		m.ceiling = pick({"concrete/concreteceiling001a", "dev/dev_measuregeneric01"}, m.ceiling);
+		m.tunnel = pick({"concrete/concretewall008a", "concrete/concretewall001a", "brick/brickwall001a"}, m.tunnel);
+		m.ground = pick({"nature/grassfloor002a", "nature/blendgrassgrass001a", "nature/dirtfloor003a", "concrete/concretefloor001a"}, m.ground);
+		m.path = pick({"nature/gravelfloor002a", "nature/dirtfloor003a", "concrete/concretefloor001a"}, m.path);
+		m.outerWalls = pick({"brick/brickwall001a", "concrete/concretewall001a"}, m.outerWalls);
+		m.platform = pick({"concrete/concretefloor001a", "metal/metalfloor001a"}, m.platform);
+		m.rock = pick({"nature/rockwall021a", "nature/rockwall015a", "nature/dirtfloor003a"}, m.rock);
+		if (game) {
+			// Soundscapes the game really has, picked by their names.
+			std::vector<std::string> names;
+			for (const auto& soundscape : soundscapes(game->files)) names.push_back(soundscape.name);
+			if (!names.empty()) {
+				// By name; else the template's own when the game has it; else one of the others.
+				const auto has = [&names](const std::string& name) { return std::find(names.begin(), names.end(), name) != names.end(); };
+				std::string* areas[] = {&options.indoorSoundscape, &options.tunnelSoundscape, &options.outdoorSoundscape};
+				const edit::SoundscapeArea kinds[] = {edit::SoundscapeArea::Indoor, edit::SoundscapeArea::Tunnel, edit::SoundscapeArea::Outdoor};
+				std::string picked[3];
+				for (int i = 0; i < 3; ++i) {
+					picked[i] = edit::pickSoundscape(names, kinds[i]);
+					if (picked[i].empty() && has(*areas[i])) picked[i] = *areas[i];
+				}
+				for (int i = 0; i < 3; ++i) {
+					for (int other = 0; picked[i].empty() && other < 3; ++other) picked[i] = picked[other];
+					*areas[i] = picked[i];
+				}
 			}
-			return fallback;
-		};
+		}
+		// Mapbase's sun shadow where the game code has it.
+		const auto* entry = m_editor->gameEntry();
+		options.globalLight = entry && entry->usesMapbase;
+		m_editor->commit(edit::tutorialMap(m_editor->doc(), options));
+	} else {
+		edit::StarterRoomMaterials materials;
 		materials.floor = pick({"concrete/concretefloor001a", "dev/dev_measuregeneric01b"}, materials.floor);
 		materials.walls = pick({"brick/brickwall001a", "concrete/concretewall001a", "dev/dev_measurewall01a"}, materials.walls);
 		materials.ceiling = pick({"concrete/concreteceiling001a", "dev/dev_measuregeneric01"}, materials.ceiling);
+		m_editor->commit(edit::starterRoom(m_editor->doc(), materials));
 	}
-	m_editor->commit(edit::starterRoom(m_editor->doc(), materials));
 	QDir().mkpath(m_editor->gameSettings().mapDir);
 	QString path = QDir(m_editor->gameSettings().mapDir).filePath((name.isEmpty() ? QStringLiteral("first_map") : name) + QStringLiteral(".vmf"));
 	for (int i = 2; QFileInfo::exists(path); ++i) path = QDir(m_editor->gameSettings().mapDir).filePath(QStringLiteral("%1_%2.vmf").arg(name).arg(i));
@@ -1797,8 +1838,10 @@ bool MainWindow::makeStarterMap(const QString& name) {
 	showPage(Page::Map);
 	for (auto* view : m_views) view->frameSelection();
 	rememberRecentProject(m_editor->gameKey(), path);
-	emit m_editor->message(tr("Your project is ready: %1 with a first room. Build on it, then Run map (F9) to walk around in it.")
-	                           .arg(QFileInfo(path).fileName()));
+	emit m_editor->message(tutorial ? tr("Your project is ready: %1, a tutorial map with a room, a tunnel and an outside area. Look around, "
+	                                     "change it, then Run map (F9) to play it.").arg(QFileInfo(path).fileName())
+	                                : tr("Your project is ready: %1 with a first room. Build on it, then Run map (F9) to walk around in it.")
+	                                      .arg(QFileInfo(path).fileName()));
 	return true;
 }
 
