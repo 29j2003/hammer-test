@@ -1,3 +1,11 @@
+Scope: this license covers the add-on author's own files in fidelity/ that are not derived
+from the Source SDK: the PowerShell and batch scripts, the C# helpers, game/cfg and tools/.
+The HLSL shaders in shaders/src (fidelity_water_* and fidelity_water_helper.h come from
+Mapbase's SDK_Water shaders), the shaders compiled from them in game/shaders/fxc, and the C++
+in sp/ are written for Valve's Source SDK 2013 and fall under the Source 1 SDK License
+(https://github.com/ValveSoftware/source-sdk-2013/blob/master/LICENSE): Source engine only.
+FXAA (shaders/src/fidelity_fxaa_ps2x.fxc) is re-implemented after Timothy Lottes' FXAA 3.11.
+
 This is free and unencumbered software released into the public domain.
 
 Anyone is free to copy, modify, publish, use, compile, sell, or
