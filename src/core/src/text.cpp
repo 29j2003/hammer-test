@@ -64,6 +64,42 @@ std::vector<std::string> splitTrimmed(std::string_view text, char separator) {
 	return parts;
 }
 
+std::string shortSummary(std::string_view text, std::size_t fullLimit, std::size_t maxChars) {
+	text = trim(text);
+	if (text.size() <= fullLimit) {
+		return std::string(text);
+	}
+	const auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+	for (std::size_t i = 0; i + 1 < text.size() && i < maxChars; ++i) {
+		if (text[i] != '.' && text[i] != '!' && text[i] != '?') {
+			continue;
+		}
+		std::size_t next = i + 1;
+		if (!isSpace(text[next])) {
+			continue;
+		}
+		while (next < text.size() && isSpace(text[next])) {
+			++next;
+		}
+		const char c = next < text.size() ? text[next] : 'A';
+		if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '(' || c == '"' || c == '<') {
+			return std::string(text.substr(0, i + 1));
+		}
+	}
+	std::size_t cut = maxChars;
+	while (cut > 0 && !isSpace(text[cut])) {
+		--cut;
+	}
+	if (cut == 0) {
+		cut = maxChars;   // one long word: cut it anyway
+	}
+	std::string_view head = trim(text.substr(0, cut));
+	while (!head.empty() && (head.back() == ',' || head.back() == ';' || head.back() == ':')) {
+		head.remove_suffix(1);
+	}
+	return std::string(head) + "\u2026";
+}
+
 std::string normalizePath(std::string_view path) {
 	std::string out;
 	out.reserve(path.size());

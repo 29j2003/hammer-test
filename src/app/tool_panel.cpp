@@ -738,7 +738,10 @@ QWidget* makeSelectionBox(Editor* editor) {
 	add(v->layout(), QObject::tr("Hide"), "actionHide", QObject::tr("Hide the selection (Show all brings it back)"), [editor] { editor->hideSelection(); });
 	const auto update = [editor, box, merge, hollow, thickness, carve, tie, tieClass, toWorld, door, connectTo] {
 		const auto& selection = editor->selection();
-		box->setVisible(selection.hasObjects() && editor->tool() == Editor::Tool::Select && editor->selectMode() == Editor::SelectMode::Object);
+		const bool shown = selection.hasObjects() && editor->tool() == Editor::Tool::Select && editor->selectMode() == Editor::SelectMode::Object;
+		// Not shown before it is in the panel (a window of its own for a moment, when a window is
+		// made while something is selected).
+		if (box->parentWidget() || !shown) box->setVisible(shown);
 		// Brush work only where brushes are selected (world brushes or brush entities).
 		bool brushes = !selection.solids.empty();
 		for (const int id : selection.entities) {

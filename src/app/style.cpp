@@ -49,6 +49,9 @@ QMenu::section { color: #9a9a9a; }
 
 QDockWidget { color: #d8d8d8; }
 QLabel#dockTitle { background: #262626; padding: 7px 10px; font-weight: 600; color: #e0e0e0; border-bottom: 1px solid #323232; }
+QWidget#dockHeader { background: #262626; border-bottom: 1px solid #323232; }
+QWidget#dockHeader QLabel#dockTitle { border: none; }
+QToolButton#dockMenuButton { padding: 2px 8px; color: #a6a6a6; font-weight: 600; }
 QDockWidget::title { background: #262626; padding: 6px 10px; text-align: left; border-bottom: 1px solid #323232; }
 
 QToolBar { background: #262626; border: none; spacing: 3px; padding: 3px 6px; }

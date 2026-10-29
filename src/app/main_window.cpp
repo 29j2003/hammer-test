@@ -37,6 +37,7 @@
 #include "updater.h"
 #include "viewport.h"
 #include "dialog_fit.h"
+#include "dock_layout.h"
 #include "wheel_guard.h"
 
 #include <QAction>
@@ -403,23 +404,19 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	if (layout()) layout()->activate();
 	resize(1600, 960);
 	restoreGeometry(QSettings().value("window/geometry").toByteArray());
+	m_dockLayoutRestored = m_dockLayout->restore();
 	updateTitle();
 }
 
 void MainWindow::createDocks() {
+	// Every panel can float as its own window and go back (DockLayout: tabs and headers have the menu).
+	m_dockLayout = new DockLayout(this);
 	const auto addDock = [this](const QString& title, QWidget* widget, Qt::DockWidgetArea area) {
 		auto* dock = new QDockWidget(title, this);
 		dock->setObjectName(title);
 		dock->setWidget(widget);
-		// The tabs name the panels; only the lone panel on the right gets a slim header.
-		if (area == Qt::RightDockWidgetArea) {
-			auto* header = new QLabel(title);
-			header->setObjectName("dockTitle");
-			dock->setTitleBarWidget(header);
-		} else {
-			dock->setTitleBarWidget(new QWidget);
-		}
 		addDockWidget(area, dock);
+		m_dockLayout->addDock(dock);
 		m_docks << dock;
 		return dock;
 	};
@@ -713,13 +710,19 @@ void MainWindow::createDocks() {
 	m_pages->installEventFilter(this);
 	resizeDocks({properties, tool}, {380, 300}, Qt::Horizontal);
 	resizeDocks({assets}, {210}, Qt::Vertical);
-	// Again once the window has its size: the map views get the most room.
-	QTimer::singleShot(0, this, [this, assets, properties, tool] {
-		resizeDocks({assets}, {std::max(180, height() / 5)}, Qt::Vertical);
-		resizeDocks({properties, tool}, {380, 300}, Qt::Horizontal);
-	});
 	setTabPosition(Qt::LeftDockWidgetArea, QTabWidget::North);
 	setTabPosition(Qt::BottomDockWidgetArea, QTabWidget::North);
+	m_dockLayout->captureFactory();
+	const auto factorySizes = [this, assets, properties, tool] {
+		resizeDocks({assets}, {std::max(180, height() / 5)}, Qt::Vertical);
+		resizeDocks({properties, tool}, {380, 300}, Qt::Horizontal);
+	};
+	// Again once the window has its size: the map views get the most room (unless the mapper's
+	// own layout of the last session was restored).
+	QTimer::singleShot(0, this, [this, factorySizes] {
+		if (!m_dockLayoutRestored) factorySizes();
+	});
+	connect(m_dockLayout, &DockLayout::layoutReset, this, factorySizes);
 	connect(m_toolPanel, &ToolPanel::wantsAttention, this, [tool] {
 		tool->show();
 		tool->raise();
@@ -809,14 +812,19 @@ void MainWindow::setMapWorkspaceShown(bool shown) {
 	if (!shown) {
 		// A full tab: the map's docks and tool bars go away, and its keys (Delete, H, tools ...) must not
 		// change the map unseen. File and Help keep working.
+		m_mapDockState = m_dockLayout->state();
 		for (auto* dock : std::as_const(m_docks)) {
-			if (dock->isVisible()) {
+			// A panel floating as its own window stays (on another monitor), unless its browser
+			// moves into the page.
+			const bool browser = dock == m_assetsDock || dock == m_soundsDock || dock == m_particlesDock;
+			if (dock->isFloating() && !browser) continue;
+			if (!dock->isHidden()) {   // not isVisible(): before the window is shown nothing is visible
 				m_hiddenForTab << dock;
 				dock->hide();
 			}
 		}
 		for (auto* bar : findChildren<QToolBar*>(QString(), Qt::FindDirectChildrenOnly)) {
-			if (bar->isVisible() && bar != m_pageBar) {
+			if (!bar->isHidden() && bar != m_pageBar) {
 				m_hiddenForTab << bar;
 				bar->hide();
 			}
@@ -1405,7 +1413,7 @@ void MainWindow::createActions() {
 	const auto docksIn = [this](Qt::DockWidgetArea area) {
 		QList<QDockWidget*> out;
 		for (auto* d : m_docks) {
-			if (dockWidgetArea(d) == area) out << d;
+			if (dockWidgetArea(d) == area && !d->isFloating()) out << d;
 		}
 		return out;
 	};
@@ -1452,6 +1460,13 @@ void MainWindow::createActions() {
 	for (auto* dock : m_docks) {
 		view->addAction(dock->toggleViewAction());
 	}
+	auto* resetPanels = view->addAction(tr("Reset all panels"));
+	resetPanels->setObjectName("resetPanels");
+	resetPanels->setStatusTip(tr("Every panel back to where it was at the first start"));
+	connect(resetPanels, &QAction::triggered, this, [this] {
+		showPage(Page::Map);
+		m_dockLayout->resetToFactory();
+	});
 
 	// Map
 	auto* map = menuBar()->addMenu(tr("&Map"));
@@ -2380,7 +2395,16 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 		return;
 	}
 	QSettings().setValue("window/geometry", saveGeometry());
+	m_dockLayout->save(m_mapHidden ? m_mapDockState : QByteArray());
 	event->accept();
+}
+
+void MainWindow::contextMenuEvent(QContextMenuEvent* event) {
+	if (QDockWidget* dock = m_dockLayout->dockAtTab(event->globalPos())) {
+		m_dockLayout->showMenu(dock, event->globalPos());
+		return;
+	}
+	QMainWindow::contextMenuEvent(event);
 }
 
 ImportDialog* MainWindow::openImport(ImportDialog::Kind kind) {

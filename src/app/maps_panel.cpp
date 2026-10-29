@@ -2,6 +2,7 @@
 
 #include "maps_panel.h"
 
+#include "lazy_refresh.h"
 #include "compile.h"
 #include "editor.h"
 
@@ -204,8 +205,10 @@ MapsPanel::MapsPanel(Editor* editor, CompileRunner* compiler, QWidget* parent) :
 			if (!m_current.isEmpty()) finishCurrent(ok);
 		});
 	}
-	connect(editor, &Editor::gameChanged, this, &MapsPanel::refresh);
-	refresh();
+	// Listed when the tab is seen (not at the start, while nobody looks at it).
+	auto* lazy = new RefreshWhenShown(this, [this] { refresh(); });
+	connect(editor, &Editor::gameChanged, lazy, &RefreshWhenShown::request);
+	lazy->request();
 }
 
 void MapsPanel::refresh() {

@@ -23,6 +23,9 @@
 //   FILE.vmf             map to open
 
 #include <QApplication>
+
+#include <functional>
+#include <utility>
 #include <QDir>
 #include <QMap>
 #include <QMouseEvent>
@@ -42,6 +45,7 @@
 #include "panels.h"
 #include "particle_browser.h"
 #include "start_page.h"
+#include "startup_trace.h"
 #include "style.h"
 #include "viewport.h"
 
@@ -50,6 +54,40 @@
 using namespace sme::app;
 
 namespace {
+
+/// Marks the first time the main window is drawn and has handled everything queued by then
+/// (the window can be used), then runs `then` (the work that may wait); with
+/// SME_STARTUP_TRACE=quit the program quits shortly after.
+class FirstFrameWatch : public QObject {
+public:
+	FirstFrameWatch(QWidget* window, std::function<void()> then) : QObject(window), m_window(window), m_then(std::move(then)) {
+		qApp->installEventFilter(this);
+		QTimer::singleShot(1500, this, [this] { done(); });   // never drawn (minimised): do not wait for ever
+	}
+
+protected:
+	bool eventFilter(QObject* watched, QEvent* event) override {
+		if (event->type() == QEvent::Paint && watched->isWidgetType() && static_cast<QWidget*>(watched)->window() == m_window) {
+			qApp->removeEventFilter(this);
+			startupMark("first paint");
+			QTimer::singleShot(0, this, [this] { done(); });
+		}
+		return false;
+	}
+
+private:
+	void done() {
+		if (!m_then) return;
+		qApp->removeEventFilter(this);
+		startupMark("first frame (usable)");
+		std::exchange(m_then, nullptr)();
+		startupMark("after the first frame (game read)");
+		if (qEnvironmentVariable("SME_STARTUP_TRACE") == QLatin1String("quit")) QTimer::singleShot(300, qApp, &QApplication::quit);
+	}
+
+	QWidget* m_window;
+	std::function<void()> m_then;
+};
 
 /// Settings of the editor's earlier name ("Source Map Editor") are taken over once.
 void migrateOldSettings() {
@@ -67,6 +105,7 @@ void migrateOldSettings() {
 } // namespace
 
 int main(int argc, char** argv) {
+	startupBegin();
 	QSurfaceFormat format;
 	format.setVersion(3, 3);
 	format.setProfile(QSurfaceFormat::CoreProfile);
@@ -83,6 +122,7 @@ int main(int argc, char** argv) {
 	QApplication::setApplicationVersion(SME_VERSION);
 	applyDarkStyle(app);
 	QApplication::setWindowIcon(appIcon());
+	startupMark("Qt ready");
 
 	QCommandLineParser parser;
 	parser.setApplicationDescription("Modern 3D-first map editor for Source 1 games");
@@ -121,11 +161,13 @@ int main(int argc, char** argv) {
 
 	Editor editor;
 	editor.discover(parser.value("steam"));
+	startupMark("games found");
 	// Did the last session crash? Asked before the autosaver starts the new session.
 	const bool automated = parser.isSet("screenshot") || parser.isSet("no-update-check") || qEnvironmentVariableIsSet("SME_NO_UPDATE_CHECK");
 	const auto recovery = automated ? std::nullopt : recoveryAfterCrash();
 	Autosaver autosaver(&editor);
 	MainWindow window(&editor);
+	startupMark("window built");
 
 	QString game = parser.value("game");
 	if (game.isEmpty()) {
@@ -134,19 +176,33 @@ int main(int argc, char** argv) {
 	if (game.isEmpty() && !editor.discovery().games.empty()) {
 		game = QString::fromStdString(editor.discovery().games.front().key());
 	}
-	if (!game.isEmpty()) {
+	// The window shows first, the game (search paths, FGDs, browsers) is read right after its first
+	// frame - unless something given on the command line needs the game at once.
+	bool gameNow = !parser.positionalArguments().isEmpty() || recovery.has_value();
+	for (const char* option : {"screenshot", "page", "model", "particle", "material", "dock", "camera", "select-class", "select-face", "tool", "hover", "check", "pick-edge"}) {
+		gameNow = gameNow || parser.isSet(QLatin1String(option));
+	}
+	if (!game.isEmpty() && gameNow) {
 		window.selectGame(game);
+		startupMark("game selected");
 	}
 	if (parser.isSet("quad")) {
 		window.setQuadLayout(true);
 	}
-	window.show();
-
 	if (!parser.positionalArguments().isEmpty()) {
 		window.openMap(parser.positionalArguments().first());
 	} else if (!automated && StartPage::showAtStartup()) {
-		window.showStartPage();   // continue the last project, or start a new one
+		window.showStartPage();   // continue the last project, or start a new one (before show: no flash of the map)
 	}
+	new FirstFrameWatch(&window, [&window, &editor, game, gameNow] {
+		// Unless the mapper already opened a project (with its game) from the start page.
+		if (!gameNow && !game.isEmpty() && editor.gameKey().isEmpty()) {
+			window.selectGame(game);
+			startupMark("game selected");
+		}
+	});
+	window.show();
+	startupMark("shown");
 	if (parser.isSet("render")) {
 		const QString mode = parser.value("render");
 		editor.setRenderMode(mode == "unlit" ? Editor::RenderMode::Unlit

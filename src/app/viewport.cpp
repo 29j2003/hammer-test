@@ -2,6 +2,10 @@
 
 #include "viewport.h"
 
+#include "startup_trace.h"
+
+#include <utility>
+
 #include "model_cache.h"
 
 #include <QDragEnterEvent>
@@ -484,6 +488,7 @@ void Viewport::setLeakLine(const std::vector<Vec3>& points) {
 // --- Drawing -------------------------------------------------------------------
 
 void Viewport::paintGL() {
+	if (static bool marked = false; !std::exchange(marked, true)) startupMark("first 3D frame");   // once, not per frame
 	m_frameClock.start();
 	m_lastFrame.start();
 	++m_framesDrawn;

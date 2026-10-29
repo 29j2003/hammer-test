@@ -27,6 +27,13 @@ namespace sme {
 /// Splits on a single character, trimming each part and dropping empty parts.
 [[nodiscard]] std::vector<std::string> splitTrimmed(std::string_view text, char separator);
 
+/// Short form of a description for a small help area: the whole text when it has at most
+/// `fullLimit` bytes, else its first sentence (ending in . ! or ? before whitespace and an
+/// uppercase letter or digit, so "e.g. the" does not end it) when that has at most `maxChars`,
+/// else the text cut at the last space before `maxChars` with "…" appended. Never cuts inside
+/// a word, so HTML entities and UTF-8 sequences stay whole.
+[[nodiscard]] std::string shortSummary(std::string_view text, std::size_t fullLimit = 120, std::size_t maxChars = 170);
+
 /// Normalizes a game-relative path for lookups: forward slashes, lowercase,
 /// no leading "./" or "/", no duplicate or trailing slashes.
 [[nodiscard]] std::string normalizePath(std::string_view path);

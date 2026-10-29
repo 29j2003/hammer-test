@@ -16,7 +16,7 @@ The window has six parts, from left to right and top to bottom:
 1. **Side bar**: the pages *Map*, *Materials*, *Models*, *Animations*, *Sounds*, *Particles* and *Project*.
 2. **Tool strip**: the tools for building the map.
 3. **Top bar**: the game, undo and redo, selection modes, grid and snapping, view switches, *Check* and *Run map*.
-4. **Left panel**: the *Tool*, *Outliner*, *VisGroups*, *Map Look* and *History* tabs.
+4. **Left panel**: the *Tool*, *Outliner*, *VisGroups* and *Map Look* tabs.
 5. **The views**: one 3D view, or 3D plus top, front and side.
 6. **Right panel** with *Object Properties*, the **bottom panel** with browsers and logs, and the **status bar**.
 
@@ -163,7 +163,7 @@ A lower limit keeps the graphics card cooler and quieter.
 
 ## The left panel
 
-The left panel has five tabs:
+The left panel has four tabs:
 
 ![The Outliner tab](images/panel-outliner.png)
 
@@ -176,8 +176,6 @@ The left panel has five tabs:
 - **VisGroups**: groups of objects you can show and hide together. See [VisGroups](entities.html#visgroups).
 - **Map Look**: the look of the map with the mapbase-fidelity add-on (clouds, light shafts, colour grading, water).
   See [mapbase-fidelity](mapbase-fidelity.html).
-- **History**: every change you made. Click a line to go back or forward to it. See
-  [History](safety-search.html#history).
 
 ## Object Properties (the right panel)
 
@@ -192,7 +190,9 @@ The right panel shows what is selected:
   [Texturing](texturing.html).
 
 *Find a property or flag* at the top filters the keys. **Smart Edit** switches between friendly editors and the plain
-key/value list. At the bottom of the panel, a help area explains the key you are working in.
+key/value list. At the bottom of the panel, a help area explains the key you are working in, or the entity's class
+while no key has the focus. It shows the first sentence only, so the keys keep their room; **More…** at its end
+shows the whole description and **Less** the short one again. Mapsmith remembers which one you chose.
 
 ## The bottom panel
 
@@ -204,7 +204,25 @@ key/value list. At the bottom of the panel, a help area explains the key you are
 | **Compile** | The steps, warnings and errors of the last compile. |
 | **Problems** | The problem check with Select and fix buttons. |
 | **Map Budget** | Brushes, sides, planes, entities, edicts and more against the engine limits (see Compiling). |
+| **History** | Every change you made. Click a line to go back or forward to it. See [History](safety-search.html#history). |
 | **Log** | Messages of the editor. |
+
+## Moving panels and floating windows
+
+Every panel - Object Properties, the left tabs and all bottom tabs - can leave the main window. Right-click its tab
+(or its header, or the **⋯** button in the header) for:
+
+| Entry | What it does |
+|---|---|
+| **Float as window** | The panel becomes a window of its own, with the usual frame: move it to a second or third monitor, maximise it there, resize it freely. It scales to that monitor. You can also drag a tab out of the main window. |
+| **Reattach** | The panel goes back to where it was docked. Closing its window does the same, so a panel is never lost. |
+| **Back to original position** | The panel goes to its original place - next to the panels it shares tabs with, or its own floating window. |
+| **Set this as original position** | The panel's current place (docked or floating) becomes its original position. |
+| **Reset all panels** | Every panel back to where it was at the first start (also **View > Reset all panels**). |
+
+A floating panel stays open while you work on another page (Materials, Project, …); the Asset Browser, Sounds and
+Particles move into their pages as usual. Mapsmith keeps the whole layout - docked panels, their sizes, floating windows
+and their monitors - and restores it at the next start.
 
 Everything shown as text can be copied: select lines in the log or the compile output and press **Ctrl+C**, or
 right-click > **Copy all**. The compile's warnings and errors copy with **Ctrl+C** or right-click **Copy**; **Copy all**

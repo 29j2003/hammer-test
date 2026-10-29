@@ -29,10 +29,12 @@ class QSplitter;
 class QStackedWidget;
 class QTabWidget;
 class QDockWidget;
+class QContextMenuEvent;
 
 namespace sme::app {
 
 class AssetBrowser;
+class DockLayout;
 class CompileWindow;
 class MapLookPanel;
 class MaterialEditor;
@@ -138,9 +140,13 @@ public:
 	/// Update check against the GitHub releases. `manual` also reports "up to date" and errors.
 	void checkForUpdates(bool manual);
 	[[nodiscard]] Updater* updater() const { return m_updater; }
+	/// Floating panels, original positions and the saved layout.
+	[[nodiscard]] DockLayout* dockLayout() const { return m_dockLayout; }
 
 protected:
 	void closeEvent(QCloseEvent* event) override;
+	/// A right click on a panel's tab: its menu (Float as window, Reattach, original position).
+	void contextMenuEvent(QContextMenuEvent* event) override;
 	/// Keeps the corner handles on the views' corners when the views change size.
 	bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -196,6 +202,7 @@ private:
 	QList<QPointer<QWidget>> m_hiddenForTab;    ///< Docks and tool bars put away for another tab
 	QList<QPointer<QAction>> m_disabledForTab;  ///< Map keys switched off for another tab
 	bool m_mapHidden = false;
+	QByteArray m_mapDockState;                  ///< The docks' layout before another tab put them away
 	QPointer<ImportDialog> m_importDialog;     ///< The open import dialog
 	bool m_reloadPending = false;               ///< The game is read again soon (the mod's files changed)
 	bool m_quad = false;
@@ -217,6 +224,8 @@ private:
 	BudgetPanel* m_budget = nullptr;
 	LogPanel* m_log = nullptr;
 	QList<QDockWidget*> m_docks;
+	DockLayout* m_dockLayout = nullptr;         ///< Floating panels, original positions, saved layout
+	bool m_dockLayoutRestored = false;          ///< The layout of the last session was restored
 
 	QToolButton* m_gameButton = nullptr;
 	QMenu* m_gameMenu = nullptr;

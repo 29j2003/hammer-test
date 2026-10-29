@@ -62,7 +62,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 
 | Modul | Aufgabe |
 |---|---|
-| `text` | Pfad-Normalisierung (Kleinbuchstaben, `/`), case-insensitive Suche auf der Platte |
+| `text` | Pfad-Normalisierung (Kleinbuchstaben, `/`), case-insensitive Suche auf der Platte; `shortSummary` (Kurzform langer Beschreibungen: erster Satz, sonst an einer Wortgrenze gekürzt mit „…“) |
 | `version` | Versionsnummern vergleichen, Prüfsummen-Listen lesen (Update-Prüfung) |
 | `math` | nur Header: `Vec3`, `Mat3`, `Plane`, `Bounds`, `Ray` |
 | `steam` | Steam finden (Registry, Standardordner, `SME_STEAM_ROOT`), `libraryfolders.vdf`, `appmanifest_*.acf` |
@@ -133,7 +133,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 
 | Datei(en) | Aufgabe |
 |---|---|
-| `main` | Start, Kommandozeilen-Optionen (Automatik, Screenshots), alte Einstellungen übernehmen |
+| `main` | Start, Kommandozeilen-Optionen (Automatik, Screenshots), alte Einstellungen übernehmen; Startseite vor `show()` (kein Aufblitzen der Karte), das Spiel (`selectGame`: Mounts, FGDs, Browser) erst nach dem ersten Bild (`FirstFrameWatch`) – sofort nur, wenn eine Karte, Wiederherstellung oder Optionen wie `--screenshot`/`--page` es brauchen; hat man vorher über die Startseite schon ein Projekt geöffnet, bleibt dessen Spiel |
 | `editor`, `editor_helpers` | `Editor`: Spiel, Karte, Undo, Auswahl, Werkzeug, Einstellungen; alle Änderungen über `commit()`; Make rope / Make ladder aus der Auswahl in `editor_helpers` |
 | `main_window` | Hauptfenster: Seitenleiste, Ansichten, Docks, Menüs, Werkzeugleisten, Statusleiste |
 | `camera` | Kamera einer Ansicht (Matrizen, Strahlen) |
@@ -151,9 +151,12 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `tool_panel` | Dock Tool: Optionen des Werkzeugs, Formen, Entity-Liste (`EntityPicker`) |
 | `dialog_fit` | Fenster passen auf jeden Bildschirm (`DialogFitter` app-weit in `MainWindow` installiert, wirkt beim ersten Show): eigene Dialoge kommen in eine Scroll-Fläche (`dialogFitScroll`), Button-Zeilen am Ende (QDialogButtonBox bzw. Zeilen nur aus Knöpfen) bleiben darunter sichtbar; Größe höchstens `availableWindowArea()` (freie Bildschirmfläche minus Rahmen/Titelleiste), zentriert; Hauptfenster ebenso begrenzt; Qt-Standarddialoge und Popups bleiben unberührt; Tests: `setAvailableWindowAreaForTests` |
 | `wheel_guard` | Mausrad app-weit (in `MainWindow` installiert): Tab-Leisten schalten nie per Rad, Felder in Scroll-Bereichen nur mit Fokus (WheelFocus → StrongFocus beim Polish) oder – mit `setWheelWhenResting` (Himmel) – wenn die Maus 350 ms ruht und der Bereich 600 ms nicht gescrollt wurde |
+| `dock_layout` | Docks (`DockLayout`, von `MainWindow::createDocks` angelegt): Rechtsklick auf Tab (`MainWindow::contextMenuEvent` → `dockAtTab`, Titel → Dock) oder Kopfzeile (`dockHeader` mit ⋯-Knopf, nur wenn kein Tab das Dock benennt: schwebend oder allein) → Menü `dockMenu` (Float as window, Reattach, Back to original position, Set this as original position, Reset all panels). Schwebend = echtes Fenster (`Qt::Window` mit Min/Max/Close statt Qt-Tool-Fenster; nach dem Herausziehen erst, wenn keine Maustaste mehr gedrückt ist), Schließen des Fensters = Reattach. „Original“ je Dock: Bereich + Tab-Gruppe (Objektnamen) oder schwebend + Geometrie; Werk-Zustand aus `captureFactory()` nach dem Aufbau, eigener in `window/dockHome/<Name>`. Layout: `saveState(1)` in `window/state` (`closeEvent`; auf anderen Seiten der Stand vor dem Wegräumen, `m_mapDockState`), `restore()` am Ende des Konstruktors (dann keine Werk-Größen per `singleShot`). Schwebende Docks bleiben auf anderen Seiten sichtbar (außer den Browsern, die in ihre Seite wandern) |
+| `startup_trace` | Meilensteine des Starts (`startupMark`): mit `SME_STARTUP_TRACE=1` nach stderr (ms seit Start), mit `=quit` beendet sich das Programm kurz nach dem ersten Bild (zum Messen). Erstes Bild = erstes Paint des Hauptfensters + leere Ereignisschlange (`FirstFrameWatch` in `main.cpp`) |
+| `lazy_refresh` | `RefreshWhenShown`: Seiten, die beim Start niemand sieht (Project › Menu, Maps), lesen die Mod erst beim Anzeigen (`request()` sofort, wenn sichtbar, sonst beim nächsten Show); Texts liest per `showEvent` (`m_reloadOnShow`) |
 | `text_copy` | Kopieren: `makeTreeCopyable` (Strg+C, Kontextmenü Copy/Copy all) für Bäume wie die Kompilier-Meldungen, `addCopyAll` für Log und Kompilier-Ausgabe |
 | `start_page` | Startseite (in `m_pages`, nicht in `Page`): Continue mit Bild (beim Speichern aus dem 3D-View, `AppDataLocation/pictures`), Recent, Start new (`MainWindow::startNewProject` → `NewModDialog` + `createModAndSwitch` + `makeStarterMap`), „Show at startup“ (`start/show`); `--page start` für Screenshots |
-| `properties_panel`, `properties_instance`, `properties_door`, `properties_script` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose (`edit::poseNpc`), Justify; func_instance-Kasten; Door-Kasten (Öffnen, Richtung, Tempo, Schließen, Sounds mit ▶, Test open, Areaportal); Kasten „scriptBox“ für `scripted_sequence` (Startzustand in Worten aus `scriptState`, „Start on map start“, „Start with a trigger …“ wählt den neuen Trigger aus, Loop, Move to position, Not interrupted, Repeatable) und „citizenLook“ für `npc_citizen` (Kopf wählen, „Keep this head“) in `properties_script` |
+| `properties_panel`, `properties_instance`, `properties_door`, `properties_script` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose (`edit::poseNpc`), Justify; Hilfe-Fläche unten nur mit dem ersten Satz (`sme::shortSummary`, `setHelp`), Link More…/Less (`#more`/`#less`) schaltet, gemerkt in `properties/helpExpanded`; func_instance-Kasten; Door-Kasten (Öffnen, Richtung, Tempo, Schließen, Sounds mit ▶, Test open, Areaportal); Kasten „scriptBox“ für `scripted_sequence` (Startzustand in Worten aus `scriptState`, „Start on map start“, „Start with a trigger …“ wählt den neuen Trigger aus, Loop, Move to position, Not interrupted, Repeatable) und „citizenLook“ für `npc_citizen` (Kopf wählen, „Keep this head“) in `properties_script` |
 | `connect_popup` | Popup nach Quelle + Ziel: vorgeschlagene Output→Input-Paare, Listen, Delay; Enter verbindet (`Editor::beginConnect`/`finishConnect` → Signal `connectRequested`) |
 | `panels` | Docks Outliner, Problems, Log |
 | `visgroups_panel` | Dock VisGroups |
@@ -614,6 +617,12 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 - `test_performance.cpp` (Kern) und „performance: a big map …“ in `test_app.cpp` – grobe Zeitgrenzen (Game enhancements
   bei 5500 Materialien, Karte mit 20 000 Brushes lesen/schreiben, 6000 Brushes + 1500 Entities öffnen/bearbeiten/
   auswählen/zeichnen); die Grenzen sind großzügig und fangen nur Verschlechterungen um ein Vielfaches.
+- Startzeit: `SME_STARTUP_TRACE=quit build/src/app/Mapsmith --steam demo/Steam --game sourcemods/mymod` schreibt die
+  Meilensteine (Qt bereit, Spiele gefunden, Fenster gebaut, erstes Bild, Spiel gelesen) und beendet sich. Demo unter
+  xvfb (Software-OpenGL), Startseite an, Oktober 2026: erstes nutzbares Bild vorher etwa 860–995 ms (Spiel vor dem
+  Fenster gelesen), danach etwa 615–655 ms; das Spiel ist 15–50 ms später gelesen. Den größten Teil kostet der Bau der
+  Widgets (etwa 450–550 ms, davon die vier GL-Ansichten 100–280 ms). Der UI-Test „panels: …“ prüft eine großzügige
+  Grenze (8 s bis zum gezeigten Fenster mit Spiel) und dass Project › Menu beim Start nichts liest.
 - Testdaten erzeugt `tests/fixture.cpp` (HL2 in zwei Bibliotheken, SDK Base 2013, Mapbase-artige Mod, VPKs, Hammer++)
   und `tests/demo.cpp` (prozedurale Texturen, Modell mit Animationen, Sounds, Demo-Karte mit absichtlichen Fehlern).
 

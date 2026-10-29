@@ -110,6 +110,8 @@ private:
 	QWidget* makeSkyPicker(const QString& value);
 	void loadSkies();
 	void showHelp(QWidget* focused);
+	/// Shows `html` (from helpText()) in the help area, the description shortened unless "More…" is on.
+	void setHelp(const QString& html);
 	void buildNpcHelper(QVBoxLayout* layout, const Entity& entity, const EntityClass* definition);
 	void buildFaces(QVBoxLayout* layout);
 	/// env_cubemap: its room box for parallax-corrected reflections (Mapbase).
@@ -154,6 +156,8 @@ private:
 	QPointer<QWidget> m_content;
 	QLabel* m_help;                        ///< What the focused key does
 	QString m_defaultHelp;                 ///< Shown while no key has the focus (the class description)
+	QString m_helpFull;                    ///< Full text of what m_help shows (short form unless expanded)
+	bool m_helpExpanded = false;           ///< "More…" pressed: show descriptions in full (remembered)
 	bool m_pending = false;
 	QString m_filterText;
 	int m_tab = 0;                         ///< Keyvalues, Outputs, Inputs
