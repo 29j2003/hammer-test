@@ -4,10 +4,12 @@
 
 #include "fixture.h"
 
+#include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/fidelity_effects.h>
 #include <sme/filesystem.h>
 #include <sme/map.h>
+#include <sme/material.h>
 
 #include <doctest/doctest.h>
 
@@ -53,6 +55,23 @@ TEST_CASE("performance: the game enhancements scan of a game with thousands of m
 	fs.addDirectory(mod, {"game", "mod"});
 	fs.addDirectory(game, {"game"});
 
+	{
+		// What the Asset Browser does in the background when a game is chosen: every material read
+		// and sorted into its kinds.
+		const auto indexStart = std::chrono::steady_clock::now();
+		const auto paths = fs.list("materials", ".vmt");
+		std::size_t classified = 0;
+		for (const auto& path : paths) {
+			if (const auto material = loadMaterial(fs, path)) {
+				(void)classifyMaterial(*material);
+				++classified;
+			}
+		}
+		const double indexing = secondsSince(indexStart);
+		MESSAGE(paths.size() << " materials indexed in " << indexing << " s");
+		CHECK(classified == paths.size());
+		CHECK(indexing < 20.0);
+	}
 	const auto start = std::chrono::steady_clock::now();
 	const auto candidates = findEffectCandidates(fs, mod);
 	const double scan = secondsSince(start);
