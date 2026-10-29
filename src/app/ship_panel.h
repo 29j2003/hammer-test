@@ -42,7 +42,6 @@ public:
 
 	/// The BSP the jobs work on (by default the open map's BSP in the mod's maps folder).
 	[[nodiscard]] QString bspPath() const;
-	void setBspPath(const QString& path);
 
 	/// The jobs below run in the background and end with taskFinished().
 	void makeShareZip(const QString& zipPath);

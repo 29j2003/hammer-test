@@ -157,7 +157,5 @@ void skinVertices(const ModelGeometry& geometry, const std::vector<BoneMatrix>& 
 [[nodiscard]] BoneMatrix concat(const BoneMatrix& a, const BoneMatrix& b);
 /// The inverse of a rotation + translation matrix.
 [[nodiscard]] BoneMatrix invertRigid(const BoneMatrix& m);
-/// A point moved by the matrix.
-[[nodiscard]] AnimVec transformPoint(const BoneMatrix& m, const AnimVec& p);
 
 } // namespace sme

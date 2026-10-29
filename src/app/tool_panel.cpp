@@ -963,12 +963,6 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	QTimer::singleShot(0, this, &ToolPanel::refresh);
 }
 
-void ToolPanel::setBlockPage(QWidget* page) {
-	m_block = page;
-	m_pages->addWidget(page);
-	refresh();
-}
-
 void ToolPanel::showKeys(const std::vector<std::pair<QString, QString>>& rows) {
 	// "action:Name" takes the action's current key (the shortcut editor may have changed it).
 	const auto keyText = [this](const QString& key) {

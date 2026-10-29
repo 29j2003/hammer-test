@@ -38,16 +38,4 @@ void startupMark(const char* step) {
 	if (print) std::fprintf(stderr, "startup %6lld ms  %s\n", static_cast<long long>(ms), step);
 }
 
-qint64 startupTime(const char* step) {
-	const QString name = QString::fromLatin1(step);
-	for (const auto& mark : std::as_const(marks())) {
-		if (mark.first == name) return mark.second;
-	}
-	return -1;
-}
-
-QList<QPair<QString, qint64>> startupMarks() {
-	return marks();
-}
-
 } // namespace sme::app

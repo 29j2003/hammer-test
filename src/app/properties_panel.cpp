@@ -121,15 +121,6 @@ QString studioPath(const std::string& helper) {
 
 } // namespace
 
-QString shortDescription(const std::string& description, int maxLength) {
-	QString text = qs(description).simplified();
-	const auto end = text.indexOf(QRegularExpression("[.!?](\\s|$)"));
-	if (end > 0 && end < maxLength) {
-		return text.left(end + 1);
-	}
-	return text.length() > maxLength ? text.left(maxLength - 3) + "..." : text;
-}
-
 PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialCache* materials, QWidget* parent)
 	: QWidget(parent), m_editor(editor), m_assets(assets), m_materials(materials) {
 	auto* layout = new QVBoxLayout(this);

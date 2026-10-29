@@ -144,7 +144,6 @@ protected:
 private:
 	void reload();
 	void fill();
-	void fillCategories();
 	void applyFilter();
 	/// Category of the selected entry in the list (AllCategories, SoundscapesCategory or an index).
 	[[nodiscard]] int selectedCategory() const;

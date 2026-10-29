@@ -175,7 +175,4 @@ private:
 	const void* m_soundScriptsGame = nullptr;
 };
 
-/// First sentence of an FGD description, shortened for the line under each field.
-[[nodiscard]] QString shortDescription(const std::string& description, int maxLength = 110);
-
 } // namespace sme::app

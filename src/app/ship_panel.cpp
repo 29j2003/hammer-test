@@ -382,11 +382,6 @@ QString ShipPanel::bspPath() const {
 	return m_bsp->text().trimmed();
 }
 
-void ShipPanel::setBspPath(const QString& path) {
-	m_bspEdited = true;
-	m_bsp->setText(path);
-}
-
 void ShipPanel::gameChanged() {
 	m_deps = {};
 	if (!m_bspEdited) m_bsp->setText(defaultBsp());

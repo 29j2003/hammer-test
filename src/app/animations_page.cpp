@@ -431,10 +431,7 @@ void AnimationsPage::checkModels() {
 }
 
 void AnimationsPage::checkNext() {
-	if (m_scanQueue.isEmpty()) {
-		emit modelsChecked();
-		return;
-	}
+	if (m_scanQueue.isEmpty()) return;
 	if (!isVisible() || !m_editor->game()) return;   // showEvent goes on
 	constexpr int BATCH = 48;
 	const QStringList batch = m_scanQueue.mid(0, BATCH);

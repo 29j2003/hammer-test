@@ -993,7 +993,8 @@ TEST_CASE("editing with the mouse in the real window") {
 			CHECK(shownAt.right() < area->viewport()->width());
 			CHECK(number->width() >= number->fontMetrics().horizontalAdvance(number->text()));
 		}
-		REQUIRE(heightsReady.wait(10000));
+		// The height map may be ready already (made while the slider was checked above).
+		REQUIRE((heightsReady.count() > 0 || heightsReady.wait(10000)));
 		const auto made = materials->currentHeights();
 		REQUIRE(made);
 		const auto rowAverage = [&](const HeightMap& map, unsigned y) {

@@ -91,8 +91,6 @@ public:
 	explicit ToolPanel(Editor* editor, QWidget* parent = nullptr);
 	/// The entity list of the entity tool.
 	[[nodiscard]] EntityPicker* entityPicker() const { return m_entities; }
-	/// Adds the page shown for the block tool (built by the block tool options).
-	void setBlockPage(QWidget* page);
 
 signals:
 	/// The panel wants to be seen (entity tool chosen).

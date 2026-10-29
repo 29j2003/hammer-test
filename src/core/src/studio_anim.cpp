@@ -189,11 +189,6 @@ BoneMatrix invertRigid(const BoneMatrix& m) {
 	return out;
 }
 
-AnimVec transformPoint(const BoneMatrix& m, const AnimVec& p) {
-	return {m.m[0][0] * p.x + m.m[0][1] * p.y + m.m[0][2] * p.z + m.m[0][3], m.m[1][0] * p.x + m.m[1][1] * p.y + m.m[1][2] * p.z + m.m[1][3],
-	        m.m[2][0] * p.x + m.m[2][1] * p.y + m.m[2][2] * p.z + m.m[2][3]};
-}
-
 std::optional<AnimatedModel::File> AnimatedModel::parse(FileData data, std::string* error) {
 	const auto fail = [&](const std::string& message) -> std::optional<File> {
 		if (error) *error = data.path.empty() ? message : data.path + ": " + message;

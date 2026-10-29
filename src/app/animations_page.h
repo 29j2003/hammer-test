@@ -109,8 +109,6 @@ public:
 signals:
 	/// The model's animations were read (or could not be).
 	void modelLoaded();
-	/// Every model has been checked for animations (the list shows all animated models).
-	void modelsChecked();
 	/// An entity in "Used in this map" was double-clicked: select it in the map.
 	void entityRequested(int entityId);
 	/// studiomdl finished (ok: the new model is in the mod and shown).
