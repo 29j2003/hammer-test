@@ -63,6 +63,8 @@ public:
 	[[nodiscard]] const QStringList& keptOwn() const { return m_keptOwn; }
 	/// One line about the last run ("Up to date ...", "Writing materials ...").
 	[[nodiscard]] QString status() const;
+	/// Container models with their own copy and liquid ("models/props_junk/glassjug01.mdl").
+	[[nodiscard]] const QStringList& liquidModels() const { return m_liquidModels; }
 	/// Walls of the mod's maps that have Mapsmith's relief from their texture's pattern.
 	[[nodiscard]] int patternReliefCount() const { return m_patternRelief; }
 	/// The mod has its shader DLL (bin/game_shader_dx6.dll); without it the effects that need it
@@ -84,6 +86,8 @@ signals:
 	void changed();
 	/// These materials were written (the views read them again).
 	void materialsChanged(const QStringList& names);
+	/// These model copies were written or removed ("models/x/y.mdl"; the views load them again).
+	void modelsChanged(const QStringList& models);
 
 private:
 	struct Result {
@@ -93,6 +97,7 @@ private:
 		std::map<GameEffect, std::set<std::string>> excluded;
 		EnhancementPlan plan;
 		QStringList written;
+		QStringList writtenModels;   ///< Model copies written or removed
 		QStringList failed;
 		QStringList brokenOwn;
 		bool shaderDll = true;
@@ -111,6 +116,8 @@ private:
 	std::map<GameEffect, int> m_active;
 	mutable std::map<QString, std::vector<std::string>> m_modelMaterials;
 	QStringList m_keptOwn;
+	std::set<std::string> m_containerModels;   ///< Containers on shared materials (own model copies)
+	QStringList m_liquidModels;                ///< Those with their copy and liquid now
 	QStringList m_failed;
 	int m_lastWritten = 0;
 	int m_patternRelief = 0;

@@ -5,6 +5,7 @@
 #include <sme/fidelity_effects.h>
 
 #include <sme/assets.h>
+#include <sme/container_models.h>
 #include <sme/autosave.h>
 #include <sme/heightmap.h>
 #include <sme/texture.h>
@@ -931,6 +932,10 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 				plan.changes.push_back(std::move(change));
 			}
 		}
+	}
+	// Containers on shared materials: own model copies (deploy.ps1's Get-ContainerModels).
+	if (std::any_of(all.begin(), all.end(), [](const auto& entry) { return entry.first == GameEffect::Liquid; })) {
+		planContainerModels(fs, modDir, settings, options.shaderDll, plan);
 	}
 	return plan;
 }

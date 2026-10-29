@@ -17,6 +17,7 @@ add_library(smecore STATIC
 	src/csg.cpp
 	src/cubemaps.cpp
 	src/decals.cpp
+	src/container_models.cpp
 	src/fidelity_effects.cpp
 	src/displacement.cpp
 	src/clipboard.cpp

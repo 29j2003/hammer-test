@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <sme/container_models.h>
 #include <sme/game.h>
 #include <sme/map.h>
 #include <sme/text.h>
@@ -99,6 +100,8 @@ void GameEnhancements::gameChanged() {
 	m_active.clear();
 	m_modelMaterials.clear();
 	m_keptOwn.clear();
+	m_containerModels.clear();
+	m_liquidModels.clear();
 	m_failed.clear();
 	m_lastWritten = 0;
 	m_settings = {};
@@ -172,6 +175,33 @@ void GameEnhancements::sync() {
 			}
 			(ok ? result.written : result.failed) << name;
 		}
+		// Container model copies (their own materials are written above): the list first, so a run
+		// stopped halfway still knows the copies are ours (as deploy.ps1 does).
+		const auto manifest = modDir / std::filesystem::path(std::string(CONTAINER_MODELS_MANIFEST));
+		const auto writeBytes = [](const QString& path, const char* data, qint64 size) {
+			QDir().mkpath(QFileInfo(path).absolutePath());
+			QSaveFile file(path);
+			return file.open(QIODevice::WriteOnly) && file.write(data, size) == size && file.commit();
+		};
+		bool listOk = true;
+		if (result.plan.modelsManifest && !result.plan.modelsManifest->empty()) {
+			const auto& text = *result.plan.modelsManifest;
+			listOk = writeBytes(fromPath(manifest), text.data(), qint64(text.size()));
+			if (!listOk) result.failed << QString::fromStdString(std::string(CONTAINER_MODELS_MANIFEST));
+		}
+		for (const auto& change : result.plan.modelChanges) {
+			const QString path = fromPath(change.file);
+			bool ok = false;
+			if (change.remove) {
+				ok = QFile::remove(path) || !QFileInfo::exists(path);
+				if (ok) fs->noteRemovedFile(change.file);
+			} else if (listOk) {
+				ok = writeBytes(path, reinterpret_cast<const char*>(change.bytes.data()), qint64(change.bytes.size()));
+				if (ok) fs->noteWrittenFile(change.file);
+			}
+			(ok ? result.writtenModels : result.failed) << QString::fromStdString(change.model);
+		}
+		if (result.plan.modelsManifest && result.plan.modelsManifest->empty()) QFile::remove(fromPath(manifest));
 		// The mapper's own materials with the mod's shaders: broken in the game without the DLL.
 		if (!options.shaderDll) {
 			for (const auto& material : ownMaterialsNeedingShaderDll(modDir)) result.brokenOwn << QString::fromStdString(material);
@@ -199,12 +229,20 @@ void GameEnhancements::finished() {
 	m_brokenOwn = result.brokenOwn;
 	m_keptOwn.clear();
 	for (const auto& material : result.plan.keptOwn) m_keptOwn << QString::fromStdString(material);
+	m_containerModels = {result.plan.containerModels.begin(), result.plan.containerModels.end()};
+	m_liquidModels.clear();
+	for (const auto& model : result.plan.liquidModels) m_liquidModels << QString::fromStdString(model);
 	m_failed = result.failed;
 	m_lastWritten = int(result.written.size());
 	if (!result.written.isEmpty()) {
 		emit m_editor->message(tr("Game enhancements: %n material(s) of the mod brought in line with its settings", nullptr, m_lastWritten));
 		emit materialsChanged(result.written);
 	}
+	if (!result.writtenModels.isEmpty()) {
+		emit m_editor->message(tr("Game enhancements: model copies with liquid: %1").arg(result.writtenModels.join(QStringLiteral(", "))));
+		emit modelsChanged(result.writtenModels);
+	}
+	for (const auto& note : result.plan.modelNotes) emit m_editor->message(tr("Game enhancements: %1").arg(QString::fromStdString(note)));
 	if (!m_failed.isEmpty()) {
 		emit m_editor->message(tr("Game enhancements: could not write %1").arg(m_failed.join(QStringLiteral(", "))));
 	}
@@ -250,6 +288,11 @@ std::vector<GameEffect> GameEnhancements::effectsFor(const QString& model) const
 	if (!available() || !m_ready || model.isEmpty()) return out;
 	const auto materials = materialsOf(model);
 	for (const GameEffect effect : automaticEffects()) {
+		// A container on a shared material gets liquid through its own model copy.
+		if (effect == GameEffect::Liquid && m_containerModels.count(model.toLower().toStdString())) {
+			out.push_back(effect);
+			continue;
+		}
 		const auto it = m_candidateSets.find(effect);
 		if (it == m_candidateSets.end()) continue;
 		if (std::any_of(materials.begin(), materials.end(), [&](const std::string& m) { return it->second.count(m) > 0; })) out.push_back(effect);
@@ -282,6 +325,7 @@ QString GameEnhancements::status() const {
 	for (const auto& [effect, count] : m_active) total += count;
 	QStringList parts{tr("Up to date: %n material(s) with an effect", nullptr, total)};
 	if (m_patternRelief > 0) parts << tr("%n wall(s) of your maps with relief from their pattern", nullptr, m_patternRelief);
+	if (!m_liquidModels.isEmpty()) parts << tr("model copies with liquid: %1 (%2)").arg(m_liquidModels.size()).arg(m_liquidModels.join(QStringLiteral(", ")));
 	if (!m_keptOwn.isEmpty()) parts << tr("%n kept (your own material)", nullptr, int(m_keptOwn.size()));
 	if (!m_failed.isEmpty()) parts << tr("%n could not be written", nullptr, int(m_failed.size()));
 	return parts.join(QStringLiteral(" · "));

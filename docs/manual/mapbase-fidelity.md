@@ -108,6 +108,13 @@ default**: when you open a mod with mapbase-fidelity, Mapsmith finds every mater
 rules as the add-on's `deploy.bat`) and writes the matching material into the mod, in the background. You do not have
 to run `deploy.bat` for them, and the 3D view shows the materials as the game will.
 
+Some containers (a brown glass jug, bottles drawn from a texture they share with cans) use a material that is not
+named like a container, or one other things use too. Changing that material would turn the cans into glass, so such a
+container gets **its own copy of the model** in the mod (`models/...`, listed in `fidelity_models.txt`) whose material
+points to a liquid material of its own (dark glass). The copies are made and removed like the add-on's `deploy.bat`
+does it; a model you put into the mod yourself is never replaced, and a copy you changed by hand is kept. The status
+line of Game enhancements lists them as "model copies with liquid".
+
 ### For the whole mod
 
 **Project › Overview › Game enhancements** has one switch per effect. Off takes the effect away from every material
