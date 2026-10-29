@@ -928,6 +928,40 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_shadowsDirty = true;
 	int faceIndex = 0;
 
+	// Brush shapes from the last build, and the material names in the form the batches use: both
+	// would otherwise be worked out again for every face of the map on every edit.
+	std::unordered_multimap<std::size_t, CachedBrush> brushes;
+	brushes.reserve(m_brushCache.size());
+	const auto geometryOf = [&](const Solid& solid) -> std::shared_ptr<const BrushGeometry> {
+		std::vector<std::array<Vec3, 3>> planes;
+		planes.reserve(solid.sides.size());
+		std::size_t hash = solid.sides.size();
+		for (const auto& side : solid.sides) {
+			planes.push_back(side.planePoints);
+			for (const auto& p : side.planePoints) {
+				for (const double c : {p.x, p.y, p.z}) hash = hash * 1099511628211ull ^ std::hash<double>{}(c);
+			}
+		}
+		for (const auto* cache : {&brushes, &m_brushCache}) {
+			const auto [first, last] = cache->equal_range(hash);
+			for (auto it = first; it != last; ++it) {
+				if (it->second.planes == planes) {
+					if (cache != &brushes) brushes.emplace(hash, it->second);
+					return it->second.geometry;
+				}
+			}
+		}
+		auto geometry = std::make_shared<const BrushGeometry>(buildBrushGeometry(solid));
+		brushes.emplace(hash, CachedBrush{std::move(planes), geometry});
+		return geometry;
+	};
+	std::unordered_map<std::string, QString> materialNames;
+	const auto materialOf = [&materialNames](const std::string& name) -> const QString& {
+		auto it = materialNames.find(name);
+		if (it == materialNames.end()) it = materialNames.emplace(name, normalizedMaterialName(QString::fromStdString(name))).first;
+		return it->second;
+	};
+
 	std::vector<int> faceVertexOffset;   // per face: vertex offset within its material list
 	std::vector<QString> faceMaterial;
 	// Per face: its side id (0 for models and instance brushes) and center, for the cubemap it
@@ -942,7 +976,8 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	// the map and picking it selects its entity.
 	const auto addSolid = [&](const Solid& solid, int entityId, const QVector3D& edgeColor, const Solid* detached = nullptr) {
 		const SolidRef ref{entityId, solid.id};
-		const auto geometry = buildBrushGeometry(solid);
+		const auto shape = geometryOf(solid);
+		const BrushGeometry& geometry = *shape;
 		PickItem pick;
 		pick.solid = ref;
 		pick.entityId = entityId;
@@ -951,7 +986,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		m_sceneBounds.add(geometry.bounds);
 		for (const auto& face : geometry.faces) {
 			const Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
-			const QString material = normalizedMaterialName(QString::fromStdString(side.material));
+			const QString& material = materialOf(side.material);
 			auto& vertices = byMaterial[material];
 			const int id = faceIndex++;
 			{
@@ -1140,6 +1175,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			m_hasSun = true;
 		}
 	}
+	m_brushCache = std::move(brushes);   // only the brushes of this build stay
 	if (!m_hasSun) {
 		m_ambient = m_lights.empty() ? QVector3D(0.9f, 0.9f, 0.95f) : QVector3D(0.04f, 0.04f, 0.05f);
 		m_sunColor = m_lights.empty() ? QVector3D(0.25f, 0.24f, 0.22f) : QVector3D(0, 0, 0);

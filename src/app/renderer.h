@@ -334,6 +334,13 @@ private:
 	std::vector<PickItem> m_pickItems;
 	InstanceProvider m_instanceProvider;
 	std::deque<Solid> m_instanceSolids;              ///< Instance brushes drawn this build (stable addresses for picking)
+	/// Corners of the brushes of the last build, by their plane points: an edit moves a few brushes,
+	/// the others are not clipped again (only plane points decide the shape).
+	struct CachedBrush {
+		std::vector<std::array<Vec3, 3>> planes;
+		std::shared_ptr<const BrushGeometry> geometry;
+	};
+	std::unordered_multimap<std::size_t, CachedBrush> m_brushCache;
 	std::unordered_map<int, Bounds> m_instanceBounds;
 	Selection m_hidden;
 	std::vector<Light> m_lights;
