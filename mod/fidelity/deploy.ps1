@@ -979,6 +979,28 @@ function Get-BulletHoleSource([string]$Text, [object]$Rects = $null) {
     return @{ Texture = "materials/$name.vtf"; Kind = 'decal'; Modulate = ($shader -eq 'modulate'); Rects = $Rects }
 }
 
+# Things on or in a wall that get no relief, by the material's and its base texture's names -
+# the same rules as Mapsmith's (relief_pattern.cpp, reliefFitByName; keep both alike): windows
+# and glass (also with bricks in the name: a "brickwall_window" is a window), signs, posters,
+# grates, fences, doors, screens, lamps, pipes, cloth; metal sheets and plaster unless the name
+# tells of bricks or stones. Julius (29.10.2026): a window between brick pillars got relief.
+$NoReliefObjects = '(window|glass|windshield|mirror|stainedglass|skylight|storefront|shopfront|poster|billboard|advert|banner|graffiti|grating|chainlink|railing|fence|shutter|garagedoor|monitor|computer|keyboard|curtain|wallpaper|carpet|fabric)'
+$NoReliefParts = '(^|[^a-z])(label|logo|sticker|grate|grill|mesh|vent|door|gate|screen|lamp|lights/|pipe|wire|cable|cloth|paper|blind)'
+$StonyNames = '(brick|stone|cobble|rock|tile|block|cinder|paver|slate|shingle)'
+
+# Why a wall gets no relief by its names (see above), or $null
+function Get-NoReliefReason([string]$Path, [string]$Text) {
+    $base = Get-MaterialTexture (Remove-VmtComments $Text) 'basetexture'
+    $name = ($Path.Substring(10) + ' ' + $(if ($base) { $base.Substring(10) } else { '' })).ToLowerInvariant()
+    if ($name -match $NoReliefObjects) { return 'window, sign or grate' }
+    if ($name -match '(?<!de)sign') { return 'window, sign or grate' }
+    if ($name -match $NoReliefParts) { return 'window, sign or grate' }
+    if ($name -match $StonyNames) { return $null }
+    if ($name -match '(metal|steel|corrugated|aluminium|aluminum)' -or $name -match '(^|[^a-z])(sheet|plate|iron)') { return 'metal or plaster' }
+    if ($name -match '(plaster|stucco|drywall)' -or $name -match '(^|[^a-z])(paint|rubber|plastic)') { return 'metal or plaster' }
+    return $null
+}
+
 # Where a wall material's height map comes from: @{ Texture = 'materials/....vtf';
 # Kind = 'normal' / 'ssbump' (its bump map) or 'color' / 'courses' / 'planks' (its base texture) }, or $null
 function Get-ParallaxSource([string]$Path, [string]$Text) {
@@ -994,9 +1016,14 @@ function Get-ParallaxSource([string]$Path, [string]$Text) {
     if ($Path -match $BulletHoles) { return Get-BulletHoleSource $Text }
     $bump = Get-ParallaxBump $Path $Text
     if ($bump -and (Test-Wood $Path $Text)) { $script:ParallaxWhy = 'wood'; return $null }
+    if ($bump) {
+        $why = Get-NoReliefReason $Path $Text
+        if ($why) { $script:ParallaxWhy = $why; return $null }
+    }
     if ($bump) { return @{ Texture = $bump; Kind = $(if (Test-SSBump $Text) { 'ssbump' } else { 'normal' }) } }
     if ($script:ParallaxWhy -or $Path -match $NotParallax -or $Path -notmatch $ReliefNames) { return $null }
     if (Test-Wood $Path $Text) { return $null }
+    if (Get-NoReliefReason $Path $Text) { return $null }
     $clean = Remove-VmtComments $Text
     if (-not (Test-WallShader $clean) -or $clean -match '(?i)"?\$bumpmap"?\s') { return $null }
     if (Get-ParallaxBlocker $clean) { return $null }
