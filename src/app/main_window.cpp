@@ -1784,7 +1784,8 @@ void MainWindow::showStartPage() {
 	m_startPage->refresh();
 	m_pages->setCurrentWidget(m_startPage);
 	for (auto* widget : {static_cast<QWidget*>(m_rows), static_cast<QWidget*>(m_materialEditor), static_cast<QWidget*>(m_modelsPage),
-	                     static_cast<QWidget*>(m_soundsPage), static_cast<QWidget*>(m_particlesPage), static_cast<QWidget*>(m_projectPage)}) {
+	                     static_cast<QWidget*>(m_animationsPage), static_cast<QWidget*>(m_soundsPage), static_cast<QWidget*>(m_particlesPage),
+	                     static_cast<QWidget*>(m_projectPage)}) {
 		widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 	}
 	m_startPage->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);

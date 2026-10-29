@@ -2856,9 +2856,12 @@ TEST_CASE("ux: whole tiles in a low dock, recent popup, the Materials page follo
 	REQUIRE_FALSE(loadRecentProjects().empty());
 	CHECK(QDir::cleanPath(QString::fromStdString(loadRecentProjects().front().mapPath)) == QDir::cleanPath(room));
 	editor.newMap();
+	// Every other page gives way to the start page (a page shown before kept its minimum size).
+	window.showPage(MainWindow::Page::Animations);
 	window.showStartPage();
 	settle();
 	CHECK(window.startPageShown());
+	CHECK(window.animationsPage()->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored);
 	auto* start = window.startPage();
 	REQUIRE(start);
 	auto* continueButton = start->findChild<QPushButton*>("startContinue");
