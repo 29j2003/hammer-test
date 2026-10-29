@@ -6,6 +6,7 @@
 #include "features_panel.h"
 
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QFrame>
 #include <QRadioButton>
 #include <QDialogButtonBox>
@@ -25,11 +26,81 @@
 #include <sme/fidelity_effects.h>
 #include <sme/game.h>
 #include <sme/mod_features.h>
+#include <sme/mod_install.h>
+#include <sme/steam.h>
 #include <sme/text.h>
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 
 namespace sme::app {
+
+namespace {
+
+/// The open mod's folder and gameinfo.txt when it is a Half-Life 2 based singleplayer source mod.
+struct OpenHl2Mod {
+	std::filesystem::path dir;
+	bool episodic = false;
+};
+
+std::optional<OpenHl2Mod> openHl2Mod(const Editor* editor) {
+	const auto* entry = editor->gameEntry();
+	const auto* game = editor->game();
+	if (!entry || !game || !entry->isSourceMod || game->info.type == "multiplayer_only") return std::nullopt;
+	bool hl2 = false;
+	for (const auto& path : game->info.searchPaths) {
+		const std::string raw = toLower(path.raw);
+		if (raw.find("hl2mp") != std::string::npos) return std::nullopt;
+		if (raw.find("hl2") != std::string::npos) hl2 = true;
+	}
+	if (!hl2) return std::nullopt;
+	const auto text = readFileText(entry->gameDir / "gameinfo.txt");
+	return OpenHl2Mod{entry->gameDir, text && modBranch(*text) == ModBranch::Episodic};
+}
+
+std::optional<std::vector<std::byte>> readLooseFile(const std::filesystem::path& path) {
+	std::error_code ec;
+	if (!std::filesystem::is_regular_file(path, ec)) return std::nullopt;
+	std::ifstream in(path, std::ios::binary);
+	std::vector<char> chars{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+	std::vector<std::byte> bytes(chars.size());
+	std::transform(chars.begin(), chars.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+	return bytes;
+}
+
+} // namespace
+
+std::optional<ModBaseCheck> checkOpenModBaseFiles(const Editor* editor) {
+	const auto mod = openHl2Mod(editor);
+	if (!mod) return std::nullopt;
+	return checkModBaseFiles(mod->dir, mod->dir.filename().string(), mod->episodic);
+}
+
+ModBaseResult addOpenModBaseFiles(const Editor* editor) {
+	const auto mod = openHl2Mod(editor);
+	if (!mod) return {};
+	ModBaseSources sources;
+	const auto bundle = featureBundleDir();
+	if (!bundle.empty()) {
+		sources.templateFiles = [root = bundle / "template"](std::string_view path) { return readLooseFile(root / std::filesystem::path(std::string(path))); };
+	}
+	// The mod's search paths (Source SDK Base 2013's hl2, episodic, ep2 with their VPKs), then
+	// the folders of an installed Half-Life 2 (which keeps cfg and resource files loose).
+	std::vector<std::filesystem::path> hl2Folders;
+	if (const auto* hl2 = editor->discovery().steam.findApp(220)) {
+		for (const char* folder : {"ep2", "episodic", "hl2"}) hl2Folders.push_back(hl2->installDir / folder);
+	}
+	const auto* game = editor->game();
+	sources.gameFiles = [game, hl2Folders](std::string_view path) -> std::optional<std::vector<std::byte>> {
+		if (auto bytes = game->files.read(path)) return bytes;
+		for (const auto& folder : hl2Folders) {
+			if (auto bytes = readLooseFile(folder / std::filesystem::path(std::string(path)))) return bytes;
+		}
+		return std::nullopt;
+	};
+	return addModBaseFiles(mod->dir, mod->dir.filename().string(), mod->episodic, sources);
+}
 
 QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QStringList& maps, QString* error,
                            const std::optional<std::set<std::string>>& featuresOff) {
@@ -72,6 +143,9 @@ QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QString
 		if (error) *error = QObject::tr("The mod was created in %1, but could not be opened: %2").arg(fromPath(created.folder), openError);
 		return {};
 	}
+	// What Half-Life 2's game code reads from the mod: the skill files (ammo limits, damage) and
+	// the HUD's texts.
+	(void)addOpenModBaseFiles(editor);
 	return key;
 }
 
@@ -100,6 +174,14 @@ bool runNewModDialog(Editor* editor, QWidget* parent) {
 		} else {
 			note += QObject::tr("\n\nMapbase's game code and shaders are in the mod - it runs as it is.");
 		}
+	}
+	if (const auto base = checkOpenModBaseFiles(editor); base && !base->complete()) {
+		QStringList missing;
+		for (const auto& file : base->missingFiles) missing << QString::fromStdString(file);
+		if (base->missingTexts) missing << QObject::tr("the HUD texts");
+		note += QObject::tr("\n\nNot found in this copy of Mapsmith or in the game: %1. Without them weapons get no ammo (impulse 101, "
+		                    "ammo crates) and the HUD shows names like #HL2_Pulse_Rifle. Project > Overview adds them once they can be found.")
+		            .arg(missing.join(QStringLiteral(", ")));
 	}
 	QMessageBox::information(parent, QObject::tr("New mod"), note);
 	return true;
@@ -203,6 +285,31 @@ NewModDialog::NewModDialog(Editor* editor, QWidget* parent) : QDialog(parent), m
 	}
 	v->addWidget(m_maps, 1);
 
+	// The first map (New project only, see showFirstMapChoice).
+	m_firstMap = new QWidget;
+	m_firstMap->setObjectName("newModFirstMap");
+	auto* fm = new QVBoxLayout(m_firstMap);
+	fm->setContentsMargins(0, 0, 0, 0);
+	auto* firstMapTitle = new QLabel(tr("First map"));
+	firstMapTitle->setProperty("role", "heading");
+	fm->addWidget(firstMapTitle);
+	m_tutorial = new QRadioButton(tr("Tutorial map: a room, a tunnel and an outside area under the sky, with a friendly citizen, a "
+	                                 "target that never shoots back, weapons, ammo crates and the HEV suit"));
+	m_tutorial->setObjectName("newModTutorial");
+	m_tutorial->setChecked(true);
+	auto* empty = new QRadioButton(tr("Empty room: a closed room with a light and the player start"));
+	empty->setObjectName("newModEmptyRoom");
+	m_skybox3d = new QCheckBox(tr("3D skybox (hills around the outside area, seen behind the sky)"));
+	m_skybox3d->setObjectName("newModSkybox3d");
+	for (QWidget* w : {static_cast<QWidget*>(m_tutorial), static_cast<QWidget*>(empty)}) fm->addWidget(w);
+	auto* skyRow = new QHBoxLayout;
+	skyRow->setContentsMargins(24, 0, 0, 0);
+	skyRow->addWidget(m_skybox3d);
+	fm->addLayout(skyRow);
+	connect(m_tutorial, &QRadioButton::toggled, m_skybox3d, &QWidget::setEnabled);
+	m_firstMap->setVisible(false);
+	v->addWidget(m_firstMap);
+
 	// mapbase-fidelity's features, chosen right away (all on); folded away until wanted.
 	auto* featureRow = new QHBoxLayout;
 	auto* featureNote = new QLabel(tr("Features of mapbase-fidelity: all on. They are used once the add-on is installed in the mod "
@@ -263,6 +370,18 @@ ModTemplate NewModDialog::modTemplate() const {
 	mod.base = static_cast<ModBase>(m_base->checkedId());
 	if (mod.base == ModBase::Mapbase) mod.extraMounts = mapbaseMounts(m_editor->discovery().steam.sourceModsDir());
 	return mod;
+}
+
+void NewModDialog::showFirstMapChoice() {
+	m_firstMap->setVisible(true);
+}
+
+bool NewModDialog::tutorialMap() const {
+	return m_tutorial->isChecked();
+}
+
+bool NewModDialog::skybox3d() const {
+	return m_tutorial->isChecked() && m_skybox3d->isChecked();
 }
 
 std::set<std::string> NewModDialog::featuresOff() const {

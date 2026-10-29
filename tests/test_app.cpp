@@ -2775,8 +2775,18 @@ TEST_CASE("ux: whole tiles in a low dock, recent popup, the Materials page follo
 	CHECK(window.findChild<QPushButton*>("problemsCopyAll"));
 	CHECK(window.findChild<QPushButton*>("compileCopyAll"));
 
-	// 9. The start page: a first map from a template room, then Continue opens it again.
-	REQUIRE(window.makeStarterMap("ux_room"));
+	// 9. The start page: a first map - the tutorial map by default, or an empty room - then
+	// Continue opens it again.
+	REQUIRE(window.makeStarterMap("ux_tutorial"));
+	CHECK(QFileInfo(editor.filePath()).fileName() == "ux_tutorial.vmf");
+	CHECK(editor.doc().world.solids.size() > 30);
+	const auto classCount = [&editor](const char* classname) {
+		return std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [classname](const Entity& e) { return e.classname() == classname; });
+	};
+	CHECK(classCount("env_soundscape") == 3);
+	CHECK(classCount("item_suit") == 1);
+	CHECK(classCount("sky_camera") == 0);
+	REQUIRE(window.makeStarterMap("ux_room", false));
 	const QString room = editor.filePath();
 	CHECK(QFileInfo(room).fileName() == "ux_room.vmf");
 	CHECK(QFileInfo::exists(room));
@@ -5172,6 +5182,33 @@ TEST_CASE("features: the mod's features as one checklist, offered once, fresh in
 		CHECK_FALSE(features->isOn("water"));
 		CHECK(features->isOn("ssao"));
 		CHECK(offer->isHidden());
+
+		// Half-Life 2's skill values (ammo limits) and HUD texts: the fixture's game has none, so
+		// the Overview offers to add them; they come from the bundle's copy of Valve's mod template.
+		window.modPage()->refresh();
+		auto* baseFiles = window.modPage()->findChild<QWidget*>("modBaseFiles");
+		auto* addBase = window.modPage()->findChild<QPushButton*>("modBaseFilesAdd");
+		REQUIRE(baseFiles);
+		REQUIRE(addBase);
+		CHECK_FALSE(baseFiles->isHidden());
+		QTemporaryDir templateBundle;
+		const auto root = toPath(templateBundle.path()) / "template";
+		test::writeText(root / "hl2/cfg/skill.cfg", "sk_max_ar2 60\n");
+		test::writeText(root / "episodic/cfg/skill_episodic.cfg", "sk_zombie_soldier_health 100\n");
+		test::writeText(root / "episodic/resource/mod_episodic_english.txt",
+		                "\"lang\"\n{\n\"Language\" \"English\"\n\"Tokens\"\n{\n\"HL2_Pulse_Rifle\" \"PULSE RIFLE\"\n}\n}\n");
+		qputenv("SME_FEATURES_DIR", templateBundle.path().toUtf8());
+		addBase->click();
+		qunsetenv("SME_FEATURES_DIR");
+		settle();
+		CHECK(std::filesystem::exists(made / "cfg/skill.cfg"));
+		CHECK(std::filesystem::exists(made / "cfg/skill_episodic.cfg"));
+		CHECK(readFileText(made / "cfg/skill_manifest.cfg").value_or("").find("exec skill_episodic.cfg") != std::string::npos);
+		const auto texts = loadLocalizationFile(made / "resource/featuremod_english.txt");
+		REQUIRE(texts);
+		CHECK(texts->get("HL2_Pulse_Rifle") == "PULSE RIFLE");
+		CHECK(texts->get("GameTitle") == "Feature Mod");
+		CHECK(baseFiles->isHidden());
 	}
 }
 

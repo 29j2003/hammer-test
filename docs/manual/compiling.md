@@ -60,7 +60,8 @@ Cards for each step. A switch in a card's title turns the step on or off.
   *Both* takes about twice as long; pick one unless your mod lets players switch HDR.
 - **Cubemaps**: starts the game after compiling, builds the reflections of every `env_cubemap` into the map and closes
   the game again. **Build for** LDR, HDR or both. It needs **Copy to the game's maps folder**. See [Cubemaps](#cubemaps).
-- **After compiling**: **Copy to the game's maps folder** and **Run the game**.
+- **After compiling**: **Copy to the game's maps folder**, **Run the game** and **Cheats** (`+sv_cheats 1`, on by
+  default: `impulse 101` for all weapons and ammo, `noclip`, `god` while you test).
 - **Game window**: how the game starts (also when it builds cubemaps): **Console** (`-console`), **Windowed**
   (`-windowed`), **Resolution** (a list, *Custom ...* or *The game's own setting*) and **Skip the intro video**
   (`-novid`).

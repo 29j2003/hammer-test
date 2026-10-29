@@ -91,9 +91,10 @@ public:
 	bool openProject(const QString& gameKey, const QString& mapPath);
 	/// The guided new project: a new mod (Mapbase, features installed), then a first map.
 	bool startNewProject();
-	/// A first map in the current mod: a closed room with light, player start and cubemap, saved
-	/// as <name>.vmf in the mod's map folder and opened.
-	bool makeStarterMap(const QString& name);
+	/// A first map in the current mod, saved as <name>.vmf in the mod's map folder and opened:
+	/// the tutorial map (inside, tunnel, outside with sky, NPCs, weapons; edit::tutorialMap), or
+	/// with `tutorial` false a closed room with light, player start and cubemap.
+	bool makeStarterMap(const QString& name, bool tutorial = true, bool skybox3d = false);
 	[[nodiscard]] Page currentPage() const;
 	[[nodiscard]] QStackedWidget* pages() const { return m_pages; }
 	[[nodiscard]] ModPage* modPage() const { return m_modPage; }

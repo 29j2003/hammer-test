@@ -7,10 +7,15 @@
 #include <sme/csg.h>
 #include <sme/filesystem.h>
 #include <sme/history.h>
+#include <sme/layout_checks.h>
 #include <sme/map_budget.h>
 #include <sme/map_tools.h>
 #include <sme/recent_projects.h>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 
@@ -208,6 +213,192 @@ TEST_CASE("starter room: a closed room with light, player start and cubemap, one
 	history.undo(doc);
 	CHECK(doc.world.solids.empty());
 	CHECK(doc.entities.empty());
+}
+
+namespace {
+
+/// Flood fill from every point entity through 16-unit cells of air: true when it reaches the
+/// edge of the map's box (what VBSP reports as a leak). Brushes count as their bounding boxes.
+bool leaks(const MapDocument& doc) {
+	std::vector<Bounds> solids;
+	Bounds all;
+	for (const auto& solid : doc.world.solids) {
+		Bounds box;
+		for (const auto& corner : solidCorners(solid)) box.add(corner);
+		solids.push_back(box);
+		all.add(box.min);
+		all.add(box.max);
+	}
+	const double cell = 16;
+	const Vec3 lo = all.min - Vec3{32, 32, 32};
+	const int nx = int((all.max.x - lo.x + 32) / cell) + 1, ny = int((all.max.y - lo.y + 32) / cell) + 1, nz = int((all.max.z - lo.z + 32) / cell) + 1;
+	std::vector<std::uint8_t> state(std::size_t(nx) * ny * nz, 0);   // 0 unknown, 1 solid, 2 reached
+	const auto index = [&](int x, int y, int z) { return (std::size_t(z) * ny + y) * nx + x; };
+	for (const auto& box : solids) {
+		const int x0 = int(std::ceil((box.min.x - lo.x) / cell - 0.5)), x1 = int(std::floor((box.max.x - lo.x) / cell - 0.5));
+		const int y0 = int(std::ceil((box.min.y - lo.y) / cell - 0.5)), y1 = int(std::floor((box.max.y - lo.y) / cell - 0.5));
+		const int z0 = int(std::ceil((box.min.z - lo.z) / cell - 0.5)), z1 = int(std::floor((box.max.z - lo.z) / cell - 0.5));
+		for (int z = z0; z <= z1; ++z)
+			for (int y = y0; y <= y1; ++y)
+				for (int x = x0; x <= x1; ++x) state[index(x, y, z)] = 1;
+	}
+	std::vector<std::size_t> open;
+	for (const auto& entity : doc.entities) {
+		const Vec3 o = entity.origin() + Vec3{0, 0, 8};
+		const auto i = index(int((o.x - lo.x) / cell), int((o.y - lo.y) / cell), int((o.z - lo.z) / cell));
+		if (state[i] == 0) {
+			state[i] = 2;
+			open.push_back(i);
+		}
+	}
+	while (!open.empty()) {
+		const std::size_t i = open.back();
+		open.pop_back();
+		const int x = int(i % nx), y = int((i / nx) % ny), z = int(i / (std::size_t(nx) * ny));
+		if (x == 0 || y == 0 || z == 0 || x == nx - 1 || y == ny - 1 || z == nz - 1) return true;
+		for (const auto& [dx, dy, dz] : std::initializer_list<std::array<int, 3>>{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}) {
+			const auto j = index(x + dx, y + dy, z + dz);
+			if (state[j] == 0) {
+				state[j] = 2;
+				open.push_back(j);
+			}
+		}
+	}
+	return false;
+}
+
+int countClass(const MapDocument& doc, std::string_view classname) {
+	return int(std::count_if(doc.entities.begin(), doc.entities.end(), [&](const Entity& e) { return e.classname() == classname; }));
+}
+
+const Entity* firstOfClass(const MapDocument& doc, std::string_view classname) {
+	for (const auto& entity : doc.entities) {
+		if (entity.classname() == classname) return &entity;
+	}
+	return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("tutorial map: inside, tunnel and outside under the sky, sealed, everything to play with") {
+	MapDocument doc;
+	edit::TutorialMapOptions options;
+	options.materials.ground = "NATURE/GRASS";
+	History history;
+	history.push(edit::tutorialMap(doc, options));
+	const edit::TutorialMapLayout layout;
+
+	// Sealed: no way from any entity out of the map, also through the doorways.
+	CHECK_FALSE(leaks(doc));
+	// The flood fill sees a leak when one is there: a hole in the outside wall's sky part.
+	{
+		MapDocument holed = doc;
+		const auto skyWall = std::find_if(holed.world.solids.begin(), holed.world.solids.end(), [&](const Solid& solid) {
+			Bounds box;
+			for (const auto& corner : solidCorners(solid)) box.add(corner);
+			return solid.sides.front().material == "TOOLS/TOOLSSKYBOX" && box.min.x < layout.outdoor.min.x && box.max.z > 512;
+		});
+		REQUIRE(skyWall != holed.world.solids.end());
+		holed.world.solids.erase(skyWall);
+		CHECK(leaks(holed));
+	}
+
+	// Sky: the 2D sky, sky brushes above the outside, the light that fits the sky.
+	CHECK(doc.world.get("skyname") == "sky_day01_01");
+	int skyBrushes = 0, grass = 0;
+	for (const auto& solid : doc.world.solids) {
+		skyBrushes += solid.sides.front().material == "TOOLS/TOOLSSKYBOX";
+		grass += solid.sides.front().material == "NATURE/GRASS";
+	}
+	CHECK(skyBrushes >= 5);
+	CHECK(grass >= 2);
+	const auto* sun = firstOfClass(doc, "light_environment");
+	REQUIRE(sun);
+	CHECK(sun->get("_light") == "237 218 143 800");
+	CHECK(firstOfClass(doc, "env_sun"));
+	CHECK(firstOfClass(doc, "shadow_control"));
+	CHECK_FALSE(firstOfClass(doc, "env_global_light"));   // only for Mapbase
+	CHECK_FALSE(firstOfClass(doc, "sky_camera"));         // 3D skybox only when chosen
+
+	// Three areas, each with its soundscape and cubemap; the player with suit, weapons, ammo.
+	CHECK(countClass(doc, "env_soundscape") == 3);
+	CHECK(countClass(doc, "env_cubemap") == 3);
+	CHECK(countClass(doc, "info_player_start") == 1);
+	const auto* suit = firstOfClass(doc, "item_suit");
+	REQUIRE(suit);
+	CHECK(suit->get("spawnflags") == "1");   // short logon
+	const Vec3 start = firstOfClass(doc, "info_player_start")->origin();
+	for (const char* weapon : {"weapon_crowbar", "weapon_pistol", "weapon_smg1", "weapon_shotgun"}) {
+		const auto* entity = firstOfClass(doc, weapon);
+		REQUIRE(entity);
+		CHECK(std::abs(entity->origin().x - start.x) < 1);   // on the start spot: taken at once
+		CHECK(std::abs(entity->origin().y - start.y) < 1);
+	}
+	CHECK(countClass(doc, "item_ammo_crate") == 3);
+	// The citizen is a fixed model, the target has no weapon, no grenades and stays neutral.
+	const auto* citizen = firstOfClass(doc, "npc_citizen");
+	REQUIRE(citizen);
+	CHECK(citizen->get("citizentype") == "4");
+	CHECK_FALSE(citizen->get("model").empty());
+	const auto* target = firstOfClass(doc, "npc_combine_s");
+	REQUIRE(target);
+	CHECK(target->get("additionalequipment") == "0");
+	CHECK(target->get("NumGrenades") == "0");
+	int peace = 0;
+	for (const auto& entity : doc.entities) {
+		if (entity.classname() == "ai_relationship" && entity.get("subject") == target->get("targetname") && entity.get("disposition") == "4") ++peace;
+	}
+	CHECK(peace == 2);
+	CHECK(countClass(doc, "info_node") >= 10);
+	CHECK(countClass(doc, "prop_physics") >= 3);
+
+	// Where things are: the player inside, the target outside, nothing stuck in a brush.
+	const auto inside = [](const Bounds& box, const Vec3& p) {
+		return p.x > box.min.x && p.x < box.max.x && p.y > box.min.y && p.y < box.max.y && p.z >= box.min.z && p.z < box.max.z;
+	};
+	CHECK(inside(layout.indoor, start));
+	CHECK(inside(layout.outdoor, target->origin()));
+	for (const auto& entity : doc.entities) {
+		const Vec3 o = entity.origin();
+		INFO(entity.classname());
+		CHECK((inside(layout.indoor, o) || inside(layout.tunnel, o) || inside(layout.outdoor, o)));
+	}
+	CHECK_FALSE(boxInSolid(doc, {start + Vec3{-16, -16, 1}, start + Vec3{16, 16, 72}}));
+	CHECK_FALSE(boxInSolid(doc, {target->origin() + Vec3{-16, -16, 1}, target->origin() + Vec3{16, 16, 72}}));
+	// The layout checks find nothing to complain about (player start, void, lightmaps, nodes).
+	CHECK(checkLayout(doc, {}).empty());
+	// Small: far below the engine's limits.
+	CHECK(doc.world.solids.size() < 80);
+	for (const auto& item : mapBudget(doc, BudgetLimits{})) {
+		INFO(item.name);
+		CHECK_FALSE(item.over());
+	}
+
+	history.undo(doc);
+	CHECK(doc.world.solids.empty());
+	CHECK(doc.entities.empty());
+}
+
+TEST_CASE("tutorial map: 3D skybox, Mapbase's global light, soundscapes from the game's list") {
+	MapDocument doc;
+	edit::TutorialMapOptions options;
+	options.skybox3d = true;
+	options.globalLight = true;
+	(void)edit::tutorialMap(doc, options);
+	const auto* camera = firstOfClass(doc, "sky_camera");
+	REQUIRE(camera);
+	CHECK(camera->get("scale") == "16");
+	CHECK(firstOfClass(doc, "env_global_light"));
+	CHECK_FALSE(leaks(doc));   // the skybox room is sealed too
+	// The camera's room lies below the map, apart from it.
+	CHECK(camera->origin().z < -1024);
+
+	const std::vector<std::string> names = {"d1_canals.util_drips", "d1_trainstation.util_city", "d1_town.Indoor_house", "ep2_caves.util_tunnel",
+	                                        "coast.wind_canyon"};
+	CHECK(edit::pickSoundscape(names, edit::SoundscapeArea::Indoor) == "d1_town.Indoor_house");
+	CHECK(edit::pickSoundscape(names, edit::SoundscapeArea::Tunnel) == "ep2_caves.util_tunnel");
+	CHECK(edit::pickSoundscape(names, edit::SoundscapeArea::Outdoor) == "d1_trainstation.util_city");
+	CHECK(edit::pickSoundscape({"Nothing"}, edit::SoundscapeArea::Tunnel).empty());
 }
 
 TEST_CASE("recent projects: newest first, one entry per map, kept as text") {

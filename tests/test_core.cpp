@@ -425,15 +425,16 @@ TEST_CASE("compile settings: steps, presets, game window, extra parameters, savi
 	CHECK(steps[2].name == "VRAD");
 	CHECK(steps[3].tool == CompileTool::Copy);
 	CHECK(steps[3].arguments == std::vector<std::string>{"/maps/src/arena.bsp", "/game/mod/maps/arena.bsp"});
-	// The game: console, windowed, 1920x1080 and no intro video by default.
+	// The game: console, windowed, 1920x1080, no intro video and cheats (impulse 101) by default.
 	const auto& game = steps[4];
 	CHECK(game.detached);
-	CHECK(sme::joinArguments(game.arguments) == "-console -windowed -w 1920 -h 1080 -novid -game /game/mod +map arena");
+	CHECK(sme::joinArguments(game.arguments) == "-console -windowed -w 1920 -h 1080 -novid -game /game/mod +sv_cheats 1 +map arena");
 
 	// The game's own launch options: what the settings decide is not doubled, the rest stays.
 	steps = sme::compileCommands(settings, "/maps/src/arena", "/game/mod", "-novid -dev -console -windowed -w 800 -h 600");
-	CHECK(sme::joinArguments(steps.back().arguments) == "-console -windowed -w 1920 -h 1080 -novid -dev -game /game/mod +map arena");
+	CHECK(sme::joinArguments(steps.back().arguments) == "-console -windowed -w 1920 -h 1080 -novid -dev -game /game/mod +sv_cheats 1 +map arena");
 	settings.console = false;
+	settings.cheats = false;
 	settings.windowed = false;
 	settings.width = settings.height = 0;
 	steps = sme::compileCommands(settings, "/maps/src/arena", "/game/mod", "-console");

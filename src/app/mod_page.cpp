@@ -4,6 +4,7 @@
 
 #include "editor.h"
 #include "enhancements.h"
+#include "new_mod_dialog.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -15,6 +16,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QUrl>
@@ -53,6 +55,35 @@ ModPage::ModPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(ed
 	m_details->setWordWrap(true);
 	v->addWidget(m_title);
 	v->addWidget(m_details);
+
+	// Missing base files: without skill.cfg weapons get no ammo, without the texts the HUD shows
+	// "#HL2_Pulse_Rifle".
+	m_baseFiles = new QWidget;
+	m_baseFiles->setObjectName("modBaseFiles");
+	auto* bh = new QHBoxLayout(m_baseFiles);
+	bh->setContentsMargins(0, 0, 0, 0);
+	m_baseFilesText = new QLabel;
+	m_baseFilesText->setProperty("role", "warning");
+	m_baseFilesText->setWordWrap(true);
+	auto* addBase = new QPushButton(tr("Add missing files"));
+	addBase->setObjectName("modBaseFilesAdd");
+	addBase->setProperty("accent", true);
+	bh->addWidget(m_baseFilesText, 1);
+	bh->addWidget(addBase);
+	m_baseFiles->setVisible(false);
+	v->addWidget(m_baseFiles);
+	connect(addBase, &QPushButton::clicked, this, [this] {
+		const auto result = addOpenModBaseFiles(m_editor);
+		if (!result.error.empty()) {
+			QMessageBox::warning(this, tr("Add missing files"), QString::fromStdString(result.error));
+		} else if (!result.notFound.empty()) {
+			QStringList missing;
+			for (const auto& file : result.notFound) missing << QString::fromStdString(file);
+			QMessageBox::information(this, tr("Add missing files"),
+			                         tr("Not found in this copy of Mapsmith or in the game: %1.").arg(missing.join(QStringLiteral(", "))));
+		}
+		refresh();
+	});
 
 	auto* folderButtons = new QWidget;
 	auto* fb = new QHBoxLayout(folderButtons);
@@ -129,6 +160,7 @@ void ModPage::refresh() {
 	if (!game || !entry) {
 		m_title->setText(tr("No game chosen"));
 		m_details->setText(tr("Pick a game or mod at the top (Game)."));
+		m_baseFiles->setVisible(false);
 		m_mapDir.clear();
 		return;
 	}
@@ -143,6 +175,16 @@ void ModPage::refresh() {
 	if (m_editor->hasFidelity()) traits << QStringLiteral("mapbase-fidelity");
 	if (!traits.isEmpty()) lines << tr("Uses: %1").arg(traits.join(QStringLiteral(", ")));
 	m_details->setText(lines.join('\n'));
+	const auto base = checkOpenModBaseFiles(m_editor);
+	m_baseFiles->setVisible(base && !base->complete());
+	if (base && !base->complete()) {
+		QStringList missing;
+		for (const auto& file : base->missingFiles) missing << QString::fromStdString(file);
+		if (base->missingTexts) missing << tr("the HUD texts");
+		m_baseFilesText->setText(tr("This mod lacks files of Half-Life 2: %1. Without them weapons get no ammo (impulse 101, ammo crates) "
+		                            "and the HUD shows names like #HL2_Pulse_Rifle. Adding keeps everything that is there.")
+		                             .arg(missing.join(QStringLiteral(", "))));
+	}
 
 	// Maps: the .vmf files in the map folder (and below it).
 	m_mapDir = m_editor->gameSettings().mapDir;

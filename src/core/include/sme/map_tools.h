@@ -90,6 +90,65 @@ struct StarterRoomMaterials {
 /// One undo step "Starter room".
 [[nodiscard]] Change starterRoom(MapDocument& doc, const StarterRoomMaterials& materials, const Vec3& size = {768, 768, 256});
 
+/// Materials of the tutorial map (the game's own when it has them, see the app's pick).
+struct TutorialMapMaterials {
+	std::string floor = "DEV/DEV_MEASUREGENERIC01B";     ///< Inside: floor
+	std::string walls = "DEV/DEV_MEASUREWALL01A";        ///< Inside: walls
+	std::string ceiling = "DEV/DEV_MEASUREGENERIC01";    ///< Inside and tunnel: ceiling
+	std::string tunnel = "DEV/DEV_MEASUREWALL01A";       ///< Tunnel: walls and floor
+	std::string ground = "DEV/DEV_MEASUREGENERIC01B";    ///< Outside: the ground (grass)
+	std::string path = "DEV/DEV_MEASUREGENERIC01";       ///< Outside: the path from the tunnel
+	std::string outerWalls = "DEV/DEV_MEASUREWALL01A";   ///< Outside: the walls around (below the sky)
+	std::string platform = "DEV/DEV_MEASUREGENERIC01";   ///< Outside: platform and steps
+	std::string rock = "DEV/DEV_MEASUREWALL01A";         ///< 3D skybox: hills
+};
+
+/// Where a soundscape plays in the tutorial map.
+enum class SoundscapeArea { Indoor, Tunnel, Outdoor };
+
+/// The best fitting soundscape of `names` for an area (by words in the name: "indoor",
+/// "tunnel", "city" ...; ties: alphabetical). Empty when none fits.
+[[nodiscard]] std::string pickSoundscape(const std::vector<std::string>& names, SoundscapeArea area);
+
+/// What the tutorial map has (all of it in every Source SDK Base 2013 Singleplayer install).
+struct TutorialMapOptions {
+	TutorialMapMaterials materials;
+	std::string skyName = "sky_day01_01";
+	/// A 3D skybox: a small room below the map with sky_camera (scale 16) and hills around the
+	/// outside area, drawn behind the 2D sky.
+	bool skybox3d = false;
+	/// env_global_light: Mapbase's sun shadow (a projected texture from the sun over the whole
+	/// map; dynamic shadows of props and NPCs outside). Only Mapbase's game code has it - other
+	/// games print an error for the unknown entity.
+	bool globalLight = false;
+	std::string indoorSoundscape = "d1_trainstation.util_city";
+	std::string tunnelSoundscape = "d1_canals.util_drips";
+	std::string outdoorSoundscape = "d1_trainstation.util_city";
+};
+
+/// Brushes of the tutorial map, for tests: the rooms' interiors (x/y/z bounds, walkable air).
+struct TutorialMapLayout {
+	Bounds indoor{{-512, -512, 0}, {512, 512, 256}};
+	Bounds tunnel{{-96, 528, 0}, {96, 1024, 160}};
+	Bounds outdoor{{-1024, 1040, 0}, {1024, 3072, 1024}};
+};
+
+/// A first map that teaches by example (replaces the starter room): an indoor room, a tunnel and
+/// an outside area under the sky, sealed by walls, ceiling and sky brushes (no leak).
+/// - Sky: worldspawn's skyname, tools/toolsskybox above the outside walls, optional 3D skybox;
+///   light_environment, env_sun, shadow_control (values that fit the sky), env_global_light
+///   optional; lights inside and in the tunnel.
+/// - env_soundscape in each area, env_cubemap in each area.
+/// - info_player_start inside with item_suit (short logon: the HEV suit from the first moment),
+///   crowbar, pistol, SMG and shotgun on the same spot (taken at once, so no NPC takes them);
+///   item_ammo_crate for pistol, SMG and shotgun ammo.
+/// - A friendly npc_citizen (fixed model, unarmed) inside, and a target: an unarmed Combine
+///   soldier outside without grenades that ai_relationship keeps neutral to the player and the
+///   citizen - it never shoots back.
+/// - Outside: a path, a platform with steps, a ramp and props (barrels, crates, barriers).
+/// One undo step "Tutorial map".
+[[nodiscard]] Change tutorialMap(MapDocument& doc, const TutorialMapOptions& options = {});
+
 } // namespace edit
 
 } // namespace sme

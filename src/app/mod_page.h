@@ -1,7 +1,8 @@
 // mod_page.h - The Overview tab of the Project page: what the editor
 // knows about the chosen game or mod - title, folders, the maps in its map folder, the search
 // paths of gameinfo.txt with what was found, the entity definitions (FGDs) and the mod's game
-// enhancements (mapbase-fidelity's effects, see enhancements.h).
+// enhancements (mapbase-fidelity's effects, see enhancements.h). A banner offers to add what a
+// Half-Life 2 based mod lacks of its base game (skill files, HUD texts; sme/mod_base_files.h).
 
 #pragma once
 
@@ -37,6 +38,8 @@ private:
 	Editor* m_editor;
 	QLabel* m_title;
 	QLabel* m_details;
+	QWidget* m_baseFiles;        ///< Banner: the mod lacks Half-Life 2's skill files or texts
+	QLabel* m_baseFilesText;
 	QListWidget* m_maps;
 	QTreeWidget* m_mounts;
 	QTreeWidget* m_fgds;
