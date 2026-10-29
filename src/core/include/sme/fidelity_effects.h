@@ -208,5 +208,8 @@ struct EffectCount {
 /// Every material on a brush side of these .vmf files ("brick/wall01", lower case), read quickly
 /// line by line (the files are not parsed as maps). Unreadable files are skipped.
 [[nodiscard]] std::set<std::string> vmfMaterialNames(const std::vector<std::filesystem::path>& vmfFiles);
+/// The mod's map sources in `mapDir` and below: every .vmf except the editor's autosaves (the
+/// "autosave" folders - old copies, often many) and the cordon copies the compile writes.
+[[nodiscard]] std::vector<std::filesystem::path> mapSourceFiles(const std::filesystem::path& mapDir);
 
 } // namespace sme

@@ -518,6 +518,21 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 	                "\t\t\t\"material\" \"concrete/concretefloor001a\"\n\t\t}\n\t\tside\n\t\t{\n\t\t\t\"material\" \"concrete/plain\"\n"
 	                "\t\t}\n\t\tside\n\t\t{\n\t\t\t\"material\" \"brick/shiny\"\n\t\t}\n\t}\n}\n");
 	const auto mapMaterials = vmfMaterialNames({f.root / "pattern/mapsrc/a.vmf", f.root / "pattern/mapsrc/missing.vmf"});
+	{
+		// The map sources of a mod: not the autosaves nor the cordon copies.
+		const auto dir = f.root / "pattern_sources";
+		std::filesystem::create_directories(dir / "sub" / "autosave");
+		std::filesystem::create_directories(dir / "Autosave");
+		for (const char* file : {"a.vmf", "sub/b.VMF", "sub/autosave/b.20261028.vmf", "Autosave/a.1.vmf", "a_cordon.vmf", "notes.txt"}) {
+			std::ofstream(dir / file) << "versioninfo\n{\n}\n";
+		}
+		const auto sources = mapSourceFiles(dir);
+		REQUIRE(sources.size() == 2);
+		CHECK(sources[0].filename() == "a.vmf");
+		CHECK(sources[1].filename() == "b.VMF");
+		CHECK(mapSourceFiles(dir / "missing").empty());
+		CHECK(mapSourceFiles({}).empty());
+	}
 	CHECK(mapMaterials == std::set<std::string>{"brick/brickwall001a", "brick/shiny", "concrete/concretefloor001a", "concrete/plain"});
 
 	const auto apply = [&](const EnhancementPlan& plan) {

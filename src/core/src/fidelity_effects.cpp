@@ -500,6 +500,25 @@ std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::st
 	return out;
 }
 
+std::vector<std::filesystem::path> mapSourceFiles(const std::filesystem::path& mapDir) {
+	std::vector<std::filesystem::path> out;
+	std::error_code ec;
+	if (mapDir.empty() || !std::filesystem::is_directory(mapDir, ec)) return out;
+	auto it = std::filesystem::recursive_directory_iterator(mapDir, std::filesystem::directory_options::skip_permission_denied, ec);
+	for (; !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+		const auto& path = it->path();
+		std::error_code typeError;
+		if (it->is_directory(typeError)) {
+			if (iequals(path.filename().string(), "autosave")) it.disable_recursion_pending();
+			continue;
+		}
+		const std::string name = toLower(path.filename().string());
+		if (name.ends_with(".vmf") && !name.ends_with("_cordon.vmf")) out.push_back(path);
+	}
+	std::sort(out.begin(), out.end());
+	return out;
+}
+
 std::set<std::string> vmfMaterialNames(const std::vector<std::filesystem::path>& vmfFiles) {
 	std::set<std::string> out;
 	static const std::regex line(R"re(^\s*"material"\s+"([^"]+)")re", ICASE);
