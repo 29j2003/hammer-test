@@ -170,7 +170,8 @@ Mapsmith).
 5. **Push** sends your commits to the remote. **Pull** gets new commits and merges them. **Fetch** only asks what is
    new and changes nothing.
 
-**History** lists the recent commits with their author and time. **Output** shows what git said.
+**History** lists the recent commits with their author and time. **Output** at the bottom (it opens by itself as soon
+as git says something) shows what git said.
 
 Other buttons appear when they make sense: **Open on GitHub** (the repository's page), **Open in Visual Studio** (when
 a `.sln` solution is in the folder) and **Update mod** (when the repository is the mod's source code, see
@@ -283,8 +284,8 @@ like `GitHub` or `repos` at the top of each drive – a folder named like the mo
 
 **Update mod** runs the checkout's `fidelity/update.ps1` for the open mod. You see its steps tick off – *Find Visual
 Studio 2022*, *Project files*, *Build game code*, *Copy DLLs into the mod*, *VRAD with baked AO*, *Game files* and
-*Done* – with a progress bar and the full output below. **Cancel** stops the script and the build it started. At the
-end a summary says how it went; when something failed it names the step and what to do, for example:
+*Done* – under **Steps and log** (folded away until you open it), with a slim progress bar and a one-line result
+above. **Cancel** stops the script and the build it started. At the end the summary says how it went; when something failed it names the step and what to do, for example:
 
 - *Visual Studio 2022 was not found* – install it (the free Community edition is enough) with the workload *Desktop
   development with C++*, then press Update mod again.

@@ -9,7 +9,8 @@
 //   --camera "x y z yaw pitch"
 //   --render lit|unlit|wire
 //   --dock NAME          raise a dock (Problems, Log, Outliner, ...)
-//   --page NAME          show a page of the side bar (map, materials, models, sounds, particles, project, texts; "mod" still works)
+//   --page NAME          show a page of the side bar (map, materials, models, animations, sounds, particles, project, texts;
+//                        "mod" still works; "project:<tab>" shows a tab of the Project page, e.g. project:features)
 //   --model PATH         show a model on the Models page (with --page models)
 //   --pick-edge          vertex tool with an edge of the first brush picked
 //   --particle NAME      show a particle system in the Particles browser (with --page particles)
@@ -246,12 +247,19 @@ int main(int argc, char** argv) {
 		}
 		if (parser.isSet("page")) {
 			static const QMap<QString, MainWindow::Page> PAGES = {{"map", MainWindow::Page::Map}, {"materials", MainWindow::Page::Materials}, {"models", MainWindow::Page::Models},
-				{"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles}, {"mod", MainWindow::Page::Project}, {"project", MainWindow::Page::Project}};
-			window.showPage(PAGES.value(parser.value("page").toLower(), MainWindow::Page::Map));
-			if (parser.value("page").compare("start", Qt::CaseInsensitive) == 0) window.showStartPage();
-			if (parser.value("page").compare("texts", Qt::CaseInsensitive) == 0) {
+				{"animations", MainWindow::Page::Animations}, {"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles},
+				{"mod", MainWindow::Page::Project}, {"project", MainWindow::Page::Project}};
+			// "project:features": a tab of the Project page by its title (case and spaces do not matter).
+			const QString page = parser.value("page").section(':', 0, 0).toLower();
+			const QString tab = parser.value("page").section(':', 1).toLower().remove(' ');
+			window.showPage(PAGES.value(page, MainWindow::Page::Map));
+			if (page == "start") window.showStartPage();
+			if (page == "texts") {
 				window.showPage(MainWindow::Page::Project);
 				window.projectTabs()->setCurrentWidget(window.textsPanel());
+			}
+			for (int i = 0; !tab.isEmpty() && i < window.projectTabs()->count(); ++i) {
+				if (window.projectTabs()->tabText(i).toLower().remove(' ').remove('&') == tab) window.projectTabs()->setCurrentIndex(i);
 			}
 		}
 		if (parser.isSet("particle")) {

@@ -5,6 +5,7 @@
 #include "editor.h"
 #include "enhancements.h"
 #include "new_mod_dialog.h"
+#include "ui_helpers.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -47,6 +48,7 @@ ModPage::ModPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(ed
 	auto* v = new QVBoxLayout(this);
 	v->setContentsMargins(16, 12, 16, 12);
 	v->setSpacing(10);
+	limitReadableWidth(this, 1400);
 	m_title = new QLabel;
 	m_title->setObjectName("pageTitle");
 	m_details = new QLabel;

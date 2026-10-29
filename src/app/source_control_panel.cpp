@@ -1,6 +1,7 @@
 // source_control_panel.cpp - Source control panel (see source_control_panel.h).
 
 #include "source_control_panel.h"
+#include "ui_helpers.h"
 #include "process_guard.h"
 
 #include "editor.h"
@@ -216,15 +217,15 @@ SourceControlPanel::SourceControlPanel(Editor* editor, QWidget* parent) : QWidge
 	m_pages->addWidget(message);
 	v->addWidget(m_pages, 1);
 
-	auto* output = card(tr("Output"));
-	auto* ov = new QVBoxLayout(output);
+	// What git said: folded away until there is something to read.
 	m_log = new QPlainTextEdit;
 	m_log->setObjectName("scmLog");
 	m_log->setReadOnly(true);
 	m_log->setMaximumHeight(110);
 	m_log->setMaximumBlockCount(500);
-	ov->addWidget(m_log);
-	v->addWidget(output);
+	v->addWidget(detailsFoldOut(m_log, tr("Output")));
+	openFoldOutOnText(m_log);
+	limitReadableWidth(this, 1100);
 
 	connect(choose, &QPushButton::clicked, this, [this] {
 		const QString folder = QFileDialog::getExistingDirectory(this, tr("Repository folder"), m_folder);

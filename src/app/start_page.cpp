@@ -11,14 +11,18 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
+#include <QLinearGradient>
 #include <QListWidget>
 #include <QLocale>
+#include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace sme::app {
 
@@ -45,7 +49,19 @@ QPixmap projectPicture(const QString& mapPath, const QSize& size) {
 	if (image.isNull()) {
 		// No picture yet: a calm placeholder with the map's first letter.
 		image = QImage(size, QImage::Format_RGB32);
-		image.fill(QColor(40, 42, 46));
+		QPainter painter(&image);
+		painter.setRenderHint(QPainter::Antialiasing);
+		QLinearGradient gradient(0, 0, size.width(), size.height());
+		gradient.setColorAt(0, QColor(48, 50, 56));
+		gradient.setColorAt(1, QColor(34, 35, 39));
+		painter.fillRect(image.rect(), gradient);
+		QFont font = painter.font();
+		font.setPixelSize(std::max(12, size.height() / 2));
+		font.setBold(true);
+		painter.setFont(font);
+		painter.setPen(QColor(245, 166, 35, 150));   // the accent, dimmed
+		const QString letter = QFileInfo(mapPath).completeBaseName().left(1).toUpper();
+		painter.drawText(image.rect(), Qt::AlignCenter, letter.isEmpty() ? QStringLiteral("?") : letter);
 	}
 	return QPixmap::fromImage(image.scaled(size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation).copy(QRect(QPoint(0, 0), size)));
 }

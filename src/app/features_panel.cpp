@@ -143,6 +143,7 @@ FeaturesPanel::FeaturesPanel(Editor* editor, ModCodePanel* modCode, QWidget* par
 	auto* v = new QVBoxLayout(content);
 	v->setContentsMargins(12, 10, 12, 10);
 	v->setSpacing(10);
+	limitReadableWidth(content, 1100);
 
 	// Install: the features Mapsmith brings, into the mod.
 	auto* install = card(tr("Install"));
@@ -169,6 +170,7 @@ FeaturesPanel::FeaturesPanel(Editor* editor, ModCodePanel* modCode, QWidget* par
 	m_installProgress = new QProgressBar;
 	m_installProgress->setObjectName("featuresInstallProgress");
 	m_installProgress->setTextVisible(false);
+	m_installProgress->setMaximumHeight(6);
 	m_installProgress->setRange(0, 3);
 	m_installProgress->setVisible(false);
 	inv->addWidget(m_installProgress);
@@ -181,8 +183,7 @@ FeaturesPanel::FeaturesPanel(Editor* editor, ModCodePanel* modCode, QWidget* par
 	m_progressClock->setInterval(500);
 	connect(m_progressClock, &QTimer::timeout, this, &FeaturesPanel::showProgress);
 	// What goes where, one line each.
-	auto* what = new QLabel(tr("<b>What gets installed</b>"
-	                           "<table cellspacing='0' cellpadding='2'>"
+	auto* what = new QLabel(tr("<table cellspacing='0' cellpadding='2'>"
 	                           "<tr><td>bin/client.dll, bin/server.dll</td><td>&nbsp;the game code: Mapbase with the features built in</td></tr>"
 	                           "<tr><td>bin/game_shader_dx9.dll</td><td>&nbsp;Mapbase's shaders (built together with the game code)</td></tr>"
 	                           "<tr><td>bin/game_shader_dx6.dll</td><td>&nbsp;the extra shaders: walls with depth, liquid, water, sky</td></tr>"
@@ -195,7 +196,7 @@ FeaturesPanel::FeaturesPanel(Editor* editor, ModCodePanel* modCode, QWidget* par
 	what->setTextFormat(Qt::RichText);
 	what->setWordWrap(true);
 	what->setProperty("role", "description");
-	inv->addWidget(what);
+	inv->addWidget(detailsFoldOut(what, tr("What gets installed")));
 	auto* removeRow = new QHBoxLayout;
 	m_removeButton = new QPushButton(tr("Remove features"));
 	m_removeButton->setObjectName("featuresRemove");
