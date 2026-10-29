@@ -469,7 +469,7 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		if (!bin.ok()) {
 			Problem p;
 			p.kind = Problem::Kind::ModBinIncomplete;
-			p.severity = Problem::Severity::Error;
+			p.severity = Problem::Severity::Warning;
 			p.action = "installFeatures";
 			const auto list = [](const std::vector<std::string>& files) {
 				std::string out;
@@ -480,9 +480,9 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 				p.message = "The mod's bin folder lacks " + list(bin.missing) +
 				            " - without Mapbase's shaders (game_shader_dx9.dll) the game draws many surfaces and the screen effects "
 				            "as wireframe (black lines across the view)";
-				p.message += bin.outdated.empty() ? "." : "; " + list(bin.outdated) + " are older than Mapsmith's.";
+				p.message += bin.outdated.empty() ? "." : "; " + list(bin.outdated) + " is older than Mapsmith's.";
 			} else {
-				p.message = "The mod's " + list(bin.outdated) + " are older than the ones Mapsmith brings (they may not match the features).";
+				p.message = "The mod's " + list(bin.outdated) + " is older than the one Mapsmith brings (it may lack shaders the features use).";
 			}
 			p.howToFix = context.bundle ? "Install the features (Project > Features): they bring the game code and Mapbase's shaders built together."
 			                            : "Copy Mapbase's bin folder (client.dll, server.dll, game_shader_dx9.dll) into the mod, or use the Windows "

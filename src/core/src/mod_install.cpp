@@ -651,7 +651,7 @@ ModBinState checkModBin(const fs::path& modDir, const FeatureBundle* bundle) {
 			state.missing.push_back(dll);
 			continue;
 		}
-		if (!bundle) continue;
+		if (!bundle || dll != "bin/game_shader_dx9.dll") continue;   // the game code: featuresOutdated() covers it
 		const auto* shipped = bundle->find(branch + dll.substr(4));
 		if (!shipped) shipped = bundle->find(dll);
 		if (!shipped || fileSha256(file) == shipped->sha256) continue;

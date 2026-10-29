@@ -146,12 +146,13 @@ struct FeatureInstallResult {
 /// What a Mapbase mod's bin folder lacks.
 struct ModBinState {
 	std::vector<std::string> missing;    ///< Mod-relative DLLs that are not there
-	std::vector<std::string> outdated;   ///< DLLs older (PE link time) than the bundle's
+	std::vector<std::string> outdated;   ///< bin/game_shader_dx9.dll when older (PE link time) than the bundle's
 	[[nodiscard]] bool ok() const { return missing.empty() && outdated.empty(); }
 };
 /// Checks a Mapbase mod's bin folder: mapbaseModDlls(), plus bin/game_shader_dx6.dll when Mapsmith
-/// installed the features there; "outdated" compares the PE link times with the bundle's files
-/// for the mod's branch (no bundle: only missing ones).
+/// installed the features there; "outdated" compares game_shader_dx9.dll's PE link time with the
+/// bundle's for the mod's branch (no bundle: only missing ones; the game code's version is
+/// featuresOutdated()'s business).
 [[nodiscard]] ModBinState checkModBin(const std::filesystem::path& modDir, const FeatureBundle* bundle);
 
 } // namespace sme
