@@ -109,6 +109,23 @@ namespace sme::app {
 
 namespace {
 
+/// The page stack, sized by the page that is shown: QStackedWidget asks every page for its size,
+/// so each show and resize of the window laid out all hidden pages (their texts above all).
+class PageStack : public QStackedWidget {
+public:
+	PageStack() {
+		connect(this, &QStackedWidget::currentChanged, this, [this] { updateGeometry(); });
+	}
+	[[nodiscard]] QSize sizeHint() const override {
+		QWidget* page = currentWidget();
+		return page ? QWidgetItem(page).sizeHint() : QSize();
+	}
+	[[nodiscard]] QSize minimumSizeHint() const override {
+		QWidget* page = currentWidget();
+		return page ? QWidgetItem(page).minimumSize() : QSize();
+	}
+};
+
 /// Opens a page when something is dragged over its side bar button (see the Map button).
 class PageDropSwitch : public QObject {
 public:
@@ -272,7 +289,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	}
 	// Pages of the side bar: the map (the views and their docks), Materials, Sounds,
 	// Particles and the Mod overview, each filling the middle.
-	m_pages = new QStackedWidget;
+	m_pages = new PageStack;
 	m_pages->setObjectName("workspacePages");
 	m_pages->addWidget(m_rows);
 	setCentralWidget(m_pages);
@@ -411,19 +428,49 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 void MainWindow::createDocks() {
 	// Every panel can float as its own window and go back (DockLayout: tabs and headers have the menu).
 	m_dockLayout = new DockLayout(this);
-	const auto addDock = [this](const QString& title, QWidget* widget, Qt::DockWidgetArea area) {
+	// The docks are placed and tabbed while still empty, and each panel is then built inside its
+	// dock (host(title) as its parent): tabbing filled docks laid out the whole window with every
+	// panel once per tab group, and moving a finished panel into its dock had the app's style
+	// sheet polish and lay out all of its widgets again - together most of the start-up time.
+	QHash<QString, QDockWidget*> docks;
+	const auto placeDock = [this, &docks](const QString& title, Qt::DockWidgetArea area) {
 		auto* dock = new QDockWidget(title, this);
 		dock->setObjectName(title);
-		dock->setWidget(widget);
 		addDockWidget(area, dock);
 		m_dockLayout->addDock(dock);
 		m_docks << dock;
+		docks.insert(title, dock);
 		return dock;
 	};
-	m_assets = new AssetBrowser(m_editor);
+	// Left: the tool's options, the Outliner, VisGroups and mapbase-fidelity's look per map as
+	// tabs. Right: only the properties of what is selected. Bottom: browsers, compiling, problems.
+	auto* tool = placeDock(tr("Tool"), Qt::LeftDockWidgetArea);
+	auto* outliner = placeDock(tr("Outliner"), Qt::LeftDockWidgetArea);
+	auto* mapLook = placeDock(tr("Map Look"), Qt::LeftDockWidgetArea);
+	auto* visgroups = placeDock(tr("VisGroups"), Qt::LeftDockWidgetArea);
+	tabifyDockWidget(tool, outliner);
+	tabifyDockWidget(tool, visgroups);
+	tabifyDockWidget(tool, mapLook);
+	tool->raise();
+	auto* properties = placeDock(tr("Object Properties"), Qt::RightDockWidgetArea);
+	auto* assets = placeDock(tr("Asset Browser"), Qt::BottomDockWidgetArea);
+	m_assetsDock = assets;
+	m_soundsDock = placeDock(tr("Sounds"), Qt::BottomDockWidgetArea);
+	m_particlesDock = placeDock(tr("Particles"), Qt::BottomDockWidgetArea);
+	for (const QString& title : {tr("Compile"), tr("Problems"), tr("Map Budget"), tr("Log")}) {
+		placeDock(title, Qt::BottomDockWidgetArea);
+	}
+	// Every undo step, next to the log (click one to go back or forward to it).
+	placeDock(tr("History"), Qt::BottomDockWidgetArea);
+	for (const QString& title : {tr("Sounds"), tr("Particles"), tr("Compile"), tr("Problems"), tr("Map Budget"), tr("History"), tr("Log")}) {
+		tabifyDockWidget(assets, docks.value(title));
+	}
+	const auto host = [&docks](const QString& title) { return docks.value(title); };
+	const auto fill = [&docks](const QString& title, QWidget* panel) { docks.value(title)->setWidget(panel); };
+	m_assets = new AssetBrowser(m_editor, host(tr("Asset Browser")));
 	// Make door picks door models and sounds from the browser's lists.
 	m_editor->setAssetNames([assets = m_assets] { return assets->modelNames(); }, [assets = m_assets] { return assets->soundNames(); });
-	m_properties = new PropertiesPanel(m_editor, m_assets, m_materials);
+	m_properties = new PropertiesPanel(m_editor, m_assets, m_materials, host(tr("Object Properties")));
 	// Connect: source and target picked - ask for the output and input next to the cursor.
 	connect(m_editor, &Editor::connectRequested, this, [this](int sourceId, int targetId) {
 		auto* popup = new ConnectPopup(m_editor, sourceId, targetId, this);
@@ -437,22 +484,27 @@ void MainWindow::createDocks() {
 		popup->move(at);
 		popup->show();
 	});
-	m_outliner = new Outliner(m_editor);
-	m_problems = new ProblemsPanel(m_editor, m_assets);
-	m_budget = new BudgetPanel(m_editor);
-	m_log = new LogPanel;
-	m_toolPanel = new ToolPanel(m_editor);
+	m_outliner = new Outliner(m_editor, host(tr("Outliner")));
+	m_problems = new ProblemsPanel(m_editor, m_assets, host(tr("Problems")));
+	m_budget = new BudgetPanel(m_editor, host(tr("Map Budget")));
+	m_log = new LogPanel(host(tr("Log")));
+	m_toolPanel = new ToolPanel(m_editor, host(tr("Tool")));
 	m_toolPanel->entityPicker()->setMaterialCache(m_materials);
 	m_toolPanel->entityPicker()->setModelThumbnails(m_assets->modelThumbnails());
 	m_outliner->setIconProvider([picker = m_toolPanel->entityPicker()](const QString& cls) { return picker->iconFor(cls); });
 	connect(m_toolPanel->entityPicker(), &EntityPicker::iconsChanged, m_outliner, &Outliner::refreshIcons);
-	m_sounds = new SoundBrowser(m_editor);
-	m_particles = new ParticleBrowser(m_editor, m_assets);
-	m_compileWindow = new CompileWindow(&m_compiler);
-	m_materialEditor = new MaterialEditor(m_editor, this);
+	m_sounds = new SoundBrowser(m_editor, host(tr("Sounds")));
+	m_particles = new ParticleBrowser(m_editor, m_assets, host(tr("Particles")));
+	m_compileWindow = new CompileWindow(&m_compiler, host(tr("Compile")));
+	// Pages go into the page stack as soon as they exist: adding a finished page moves every
+	// widget in it once more (the app style sheet polishes them all again - 15-50 ms a page).
+	m_materialEditor = new MaterialEditor(m_editor, m_pages);
+	m_pages->addWidget(m_materialEditor);
 	// Models page: every model with a 3D view; "Place in map" arms the entity tool with it.
 	m_modelsPage = new ModelsPage(m_editor, m_assets, m_materials);
+	m_pages->addWidget(m_modelsPage);
 	m_animationsPage = new AnimationsPage(m_editor, m_assets, m_materials);
+	m_pages->addWidget(m_animationsPage);
 	connect(m_animationsPage, &AnimationsPage::entityRequested, this, [this](int entityId) {
 		Selection one;
 		one.entities.push_back(entityId);
@@ -472,33 +524,36 @@ void MainWindow::createDocks() {
 	});
 	// Project page: everything around the maps - overview, all maps with batch compiling, the
 	// mod's main menu, source control and getting it ready to share.
-	m_modPage = new ModPage(m_editor);
+	m_projectPage = new QTabWidget;
+	m_projectPage->setObjectName("projectTabs");
+	m_projectPage->setDocumentMode(true);
+	m_pages->addWidget(m_projectPage);   // before its tabs (see above)
+	// The tabs' panels are built inside the tab widget's page stack (like the docks' panels).
+	auto* projectTabs = m_projectPage->findChild<QStackedWidget*>(QString(), Qt::FindDirectChildrenOnly);
+	m_modPage = new ModPage(m_editor, projectTabs);
 	const auto openFromProject = [this](const QString& path) {
 		if (maybeSave() && openMap(path)) showPage(Page::Map);
 	};
 	connect(m_modPage, &ModPage::openMapRequested, this, openFromProject);
 	connect(m_modPage, &ModPage::newModRequested, this, [this] { runNewModDialog(m_editor, this); });
-	m_mapsPanel = new MapsPanel(m_editor, &m_compiler);
+	m_mapsPanel = new MapsPanel(m_editor, &m_compiler, projectTabs);
 	connect(m_mapsPanel, &MapsPanel::openMapRequested, this, openFromProject);
-	m_projectPage = new QTabWidget;
-	m_projectPage->setObjectName("projectTabs");
-	m_projectPage->setDocumentMode(true);
 	m_projectPage->addTab(m_modPage, tr("Overview"));
 	m_projectPage->addTab(m_mapsPanel, tr("Maps"));
-	auto* menuEditor = new MenuEditor(m_editor);
+	auto* menuEditor = new MenuEditor(m_editor, projectTabs);
 	m_projectPage->addTab(menuEditor, tr("Menu"));
 	// Texts: the mod's localization and captions. Chapter titles live in the same file as the
 	// menu's: each tab picks up what the other saved.
-	m_textsPanel = new TextsPanel(m_editor, m_assets);
+	m_textsPanel = new TextsPanel(m_editor, m_assets, projectTabs);
 	m_projectPage->addTab(m_textsPanel, tr("Texts"));
 	connect(m_textsPanel, &TextsPanel::saved, menuEditor, [menuEditor] { menuEditor->refreshTitles(); });
 	connect(menuEditor, &MenuEditor::saved, m_textsPanel, [this] { m_textsPanel->reloadIfUnchanged(); });
-	auto* sourceControl = new SourceControlPanel(m_editor);
+	auto* sourceControl = new SourceControlPanel(m_editor, projectTabs);
 	m_projectPage->addTab(sourceControl, tr("Source control"));
 	// Build from source: for people who build the mod themselves (update after a pull, game
 	// files, report); its line on the Overview says when new code is waiting or an update runs.
 	// Normally Features installs what Mapsmith brings - this tab also runs that bundle's scripts.
-	m_modCode = new ModCodePanel(m_editor);
+	m_modCode = new ModCodePanel(m_editor, projectTabs);
 	m_modPage->addBanner(m_modCode->banner());
 	connect(sourceControl, &SourceControlPanel::pulled, m_modCode, &ModCodePanel::afterPull);
 	connect(sourceControl, &SourceControlPanel::updateModRequested, this, [this](const QString& root) {
@@ -522,11 +577,11 @@ void MainWindow::createDocks() {
 		});
 	};
 	connect(m_modCode, &ModCodePanel::modUpdated, this, reloadGame);
-	m_projectPage->addTab(new ShipPanel(m_editor), tr("Ship"));
+	m_projectPage->addTab(new ShipPanel(m_editor, projectTabs), tr("Ship"));
 	m_projectPage->addTab(m_modCode, tr("Build from source"));
 	// Features: Mapsmith's ready-built mapbase-fidelity installed into the mod (offered on the
 	// Overview, kept up to date), and which parts of it the mod has.
-	m_features = new FeaturesPanel(m_editor, m_modCode);
+	m_features = new FeaturesPanel(m_editor, m_modCode, projectTabs);
 	m_projectPage->insertTab(1, m_features, tr("Features"));
 	connect(m_features, &FeaturesPanel::installed, this, reloadGame);
 	m_modPage->addBanner(m_features->offer());
@@ -563,14 +618,10 @@ void MainWindow::createDocks() {
 	m_particlesPage = new QWidget;
 	m_particlesPage->setObjectName("particlesPage");
 	(new QVBoxLayout(m_particlesPage))->setContentsMargins(0, 0, 0, 0);
-	m_pages->addWidget(m_materialEditor);
-	m_pages->addWidget(m_modelsPage);
-	m_pages->addWidget(m_animationsPage);
 	m_pages->addWidget(m_soundsPage);
 	m_pages->addWidget(m_particlesPage);
-	m_pages->addWidget(m_projectPage);
 	// The start page: continue, recent projects, start new (shown at start, File > Start page).
-	m_startPage = new StartPage;
+	m_startPage = new StartPage(m_pages);
 	m_pages->addWidget(m_startPage);
 	connect(m_startPage, &StartPage::openProject, this, &MainWindow::openProject);
 	connect(m_startPage, &StartPage::newProjectRequested, this, &MainWindow::startNewProject);
@@ -588,36 +639,20 @@ void MainWindow::createDocks() {
 		m_pages->widget(i)->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);   // see showPage()
 	}
 
-	// Left: the tool's options, the Outliner and
-	// mapbase-fidelity's look per map as tabs. Right: only the properties of what is selected.
-	auto* tool = addDock(tr("Tool"), m_toolPanel, Qt::LeftDockWidgetArea);
-	auto* outliner = addDock(tr("Outliner"), m_outliner, Qt::LeftDockWidgetArea);
-	m_mapLook = new MapLookPanel(m_editor);
-	auto* mapLook = addDock(tr("Map Look"), m_mapLook, Qt::LeftDockWidgetArea);
-	auto* visgroups = addDock(tr("VisGroups"), new VisGroupsPanel(m_editor), Qt::LeftDockWidgetArea);
-	tabifyDockWidget(tool, outliner);
-	tabifyDockWidget(tool, visgroups);
-	tabifyDockWidget(tool, mapLook);
-	tool->raise();
-	auto* properties = addDock(tr("Object Properties"), m_properties, Qt::RightDockWidgetArea);
-	auto* assets = addDock(tr("Asset Browser"), m_assets, Qt::BottomDockWidgetArea);
-	m_assetsDock = assets;
-	auto* sounds = addDock(tr("Sounds"), m_sounds, Qt::BottomDockWidgetArea);
-	auto* particles = addDock(tr("Particles"), m_particles, Qt::BottomDockWidgetArea);
-	m_soundsDock = sounds;
-	m_particlesDock = particles;
-	auto* compile = addDock(tr("Compile"), m_compileWindow, Qt::BottomDockWidgetArea);
-	auto* problems = addDock(tr("Problems"), m_problems, Qt::BottomDockWidgetArea);
-	auto* budget = addDock(tr("Map Budget"), m_budget, Qt::BottomDockWidgetArea);
-	auto* log = addDock(tr("Log"), m_log, Qt::BottomDockWidgetArea);
-	tabifyDockWidget(assets, sounds);
-	tabifyDockWidget(assets, particles);
-	tabifyDockWidget(assets, compile);
-	tabifyDockWidget(assets, problems);
-	tabifyDockWidget(assets, budget);
-	// Every undo step, next to the log (click one to go back or forward to it).
-	auto* history = addDock(tr("History"), new HistoryPanel(m_editor), Qt::BottomDockWidgetArea);
-	tabifyDockWidget(assets, history);
+	m_mapLook = new MapLookPanel(m_editor, mapLook);
+	fill(tr("Tool"), m_toolPanel);
+	fill(tr("Outliner"), m_outliner);
+	fill(tr("Map Look"), m_mapLook);
+	fill(tr("VisGroups"), new VisGroupsPanel(m_editor, visgroups));
+	fill(tr("Object Properties"), m_properties);
+	fill(tr("Asset Browser"), m_assets);
+	fill(tr("Sounds"), m_sounds);
+	fill(tr("Particles"), m_particles);
+	fill(tr("Compile"), m_compileWindow);
+	fill(tr("Problems"), m_problems);
+	fill(tr("Map Budget"), m_budget);
+	fill(tr("Log"), m_log);
+	fill(tr("History"), new HistoryPanel(m_editor, host(tr("History"))));
 	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
 	connect(m_assets, &AssetBrowser::materialsIndexed, this, [this] {
 		// The Materials page opened before the list was ready.
@@ -674,7 +709,6 @@ void MainWindow::createDocks() {
 			m_assets->materialChanged(name);
 		}
 	});
-	tabifyDockWidget(assets, log);
 	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
 	connect(m_compileWindow, &CompileWindow::reportRequested, this, &MainWindow::makeReport);
 	connect(m_problems, &ProblemsPanel::reportRequested, this, &MainWindow::makeReport);

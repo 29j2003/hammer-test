@@ -12,6 +12,7 @@
 #include "editor.h"
 #include "sound_player.h"
 #include "toggle_switch.h"
+#include "ui_helpers.h"
 
 #include <QComboBox>
 #include <QCompleter>
@@ -39,17 +40,6 @@
 namespace sme::app {
 
 namespace {
-
-QLabel* note(const QString& text) {
-	auto* label = new QLabel(text);
-	label->setWordWrap(true);
-	label->setProperty("role", "description");
-	return label;
-}
-
-QString qs(const std::string& s) {
-	return QString::fromStdString(s);
-}
 
 /// "Opens" choices of a brush door: (type, hinge or slide) packed into one item value.
 struct OpenChoice {
@@ -330,7 +320,7 @@ void PropertiesPanel::buildDoorBox(QVBoxLayout* layout, const Entity& door) {
 	// Areaportal in the doorway: linked, or one click to link it.
 	if (const Entity* portal = doorAreaportal(m_editor->doc(), door)) {
 		if (areaportalLinked(*portal, door)) {
-			auto* linked = note(tr("Linked to the func_areaportal in its doorway: what is behind the closed door is not drawn."));
+			auto* linked = noteLabel(tr("Linked to the func_areaportal in its doorway: what is behind the closed door is not drawn."));
 			linked->setObjectName("doorPortalLinked");
 			v->addWidget(linked);
 		} else {
@@ -345,7 +335,7 @@ void PropertiesPanel::buildDoorBox(QVBoxLayout* layout, const Entity& door) {
 			v->addWidget(link);
 		}
 	} else {
-		v->addWidget(note(tr("Between two rooms? Put a func_areaportal brush (tools/toolsareaportal) in the doorway: the door links it here and "
+		v->addWidget(noteLabel(tr("Between two rooms? Put a func_areaportal brush (tools/toolsareaportal) in the doorway: the door links it here and "
 		                     "the game then skips what is behind the closed door.")));
 	}
 	layout->addWidget(box);

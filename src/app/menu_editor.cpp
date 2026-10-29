@@ -4,6 +4,7 @@
 
 #include "lazy_refresh.h"
 #include "editor.h"
+#include "ui_helpers.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -34,18 +35,6 @@
 namespace sme::app {
 
 namespace {
-
-QString qs(const std::string& text) {
-	return QString::fromStdString(text);
-}
-
-QImage toQImage(const ImageRgba& image) {
-	QImage out(image.width, image.height, QImage::Format_RGBA8888);
-	for (int y = 0; y < image.height; ++y) {
-		std::memcpy(out.scanLine(y), image.pixels.data() + static_cast<std::size_t>(y) * image.width * 4, static_cast<std::size_t>(image.width) * 4);
-	}
-	return out;
-}
 
 /// Small flat button for the cards (move, remove).
 QToolButton* cardButton(const QString& text, const QString& tip, const QString& name) {
@@ -151,11 +140,11 @@ MenuEditor::MenuEditor(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 	auto* splitter = new QSplitter(Qt::Horizontal);
 	outer->addWidget(splitter);
 
-	// Left: the sections in a scroll area.
-	auto* scroll = new QScrollArea;
+	// Left: the sections in a scroll area (both built in place: not polished twice).
+	auto* scroll = new QScrollArea(splitter);
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
-	auto* column = new QWidget;
+	auto* column = new QWidget(scroll->viewport());
 	auto* v = new QVBoxLayout(column);
 	v->setContentsMargins(12, 8, 12, 12);
 	v->setSpacing(6);
@@ -216,7 +205,7 @@ MenuEditor::MenuEditor(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 	splitter->addWidget(scroll);
 
 	// Right: the preview.
-	auto* right = new QWidget;
+	auto* right = new QWidget(splitter);
 	auto* rv = new QVBoxLayout(right);
 	rv->setContentsMargins(8, 8, 8, 8);
 	rv->addWidget(sectionHeader(tr("Preview")));

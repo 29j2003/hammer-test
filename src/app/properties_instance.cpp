@@ -7,6 +7,7 @@
 #include "properties_panel.h"
 
 #include "editor.h"
+#include "ui_helpers.h"
 
 #include <QDir>
 #include <QFileDialog>
@@ -27,13 +28,6 @@
 namespace sme::app {
 
 namespace {
-
-QLabel* note(const QString& text) {
-	auto* label = new QLabel(text);
-	label->setWordWrap(true);
-	label->setProperty("role", "description");
-	return label;
-}
 
 /// The instance's parameters ("$var type default" of its func_instance_parms), for the hint.
 QStringList instanceParameters(const MapDocument& instance) {
@@ -92,17 +86,17 @@ void PropertiesPanel::buildInstanceBox(QVBoxLayout* layout, const Entity& funcIn
 
 	std::shared_ptr<const MapDocument> instance;
 	if (settings.file.empty()) {
-		v->addWidget(note(tr("Pick the .vmf this instance shows. Its brushes and entities are drawn in place (read-only, cyan edges); "
+		v->addWidget(noteLabel(tr("Pick the .vmf this instance shows. Its brushes and entities are drawn in place (read-only, cyan edges); "
 		                     "VBSP merges them when compiling.")));
 	} else if (!file) {
-		auto* missing = note(tr("Not found next to the map or in the game's map folders."));
+		auto* missing = noteLabel(tr("Not found next to the map or in the game's map folders."));
 		missing->setProperty("role", "warning");
 		v->addWidget(missing);
 	} else {
 		InstanceCache cache;
 		std::string error;
 		instance = cache.load(*file, &error);
-		auto* found = note(instance ? tr("Shown from %1").arg(QDir::toNativeSeparators(fromPath(*file)))
+		auto* found = noteLabel(instance ? tr("Shown from %1").arg(QDir::toNativeSeparators(fromPath(*file)))
 		                            : tr("Could not read %1: %2").arg(fromPath(*file), QString::fromStdString(error)));
 		found->setObjectName("instanceStatus");
 		v->addWidget(found);
@@ -145,7 +139,7 @@ void PropertiesPanel::buildInstanceBox(QVBoxLayout* layout, const Entity& funcIn
 	if (instance) {
 		const auto parameters = instanceParameters(*instance);
 		if (!parameters.isEmpty()) {
-			v->addWidget(note(tr("This instance offers: %1").arg(parameters.join(QStringLiteral(" · ")))));
+			v->addWidget(noteLabel(tr("This instance offers: %1").arg(parameters.join(QStringLiteral(" · ")))));
 		}
 	}
 

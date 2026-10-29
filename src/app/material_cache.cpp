@@ -1,6 +1,7 @@
 // material_cache.cpp - Background material loading (see material_cache.h).
 
 #include "material_cache.h"
+#include "ui_helpers.h"
 
 #include <QMetaObject>
 #include <QPainter>
@@ -22,14 +23,6 @@
 namespace sme::app {
 
 namespace {
-
-QImage toQImage(const ImageRgba& image) {
-	QImage out(image.width, image.height, QImage::Format_RGBA8888);
-	for (int y = 0; y < image.height; ++y) {
-		std::memcpy(out.scanLine(y), image.pixels.data() + static_cast<std::size_t>(y) * image.width * 4, static_cast<std::size_t>(image.width) * 4);
-	}
-	return out;
-}
 
 // Height maps made for the relief preview, by source texture (walls share normal maps); emptied
 // when the game changes. A null image: the texture could not be made into heights.

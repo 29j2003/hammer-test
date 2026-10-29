@@ -154,6 +154,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `dock_layout` | Docks (`DockLayout`, von `MainWindow::createDocks` angelegt): Rechtsklick auf Tab (`MainWindow::contextMenuEvent` → `dockAtTab`, Titel → Dock) oder Kopfzeile (`dockHeader` mit ⋯-Knopf, nur wenn kein Tab das Dock benennt: schwebend oder allein) → Menü `dockMenu` (Float as window, Reattach, Back to original position, Set this as original position, Reset all panels). Schwebend = echtes Fenster (`Qt::Window` mit Min/Max/Close statt Qt-Tool-Fenster; nach dem Herausziehen erst, wenn keine Maustaste mehr gedrückt ist), Schließen des Fensters = Reattach. „Original“ je Dock: Bereich + Tab-Gruppe (Objektnamen) oder schwebend + Geometrie; Werk-Zustand aus `captureFactory()` nach dem Aufbau, eigener in `window/dockHome/<Name>`. Layout: `saveState(1)` in `window/state` (`closeEvent`; auf anderen Seiten der Stand vor dem Wegräumen, `m_mapDockState`), `restore()` am Ende des Konstruktors (dann keine Werk-Größen per `singleShot`). Schwebende Docks bleiben auf anderen Seiten sichtbar (außer den Browsern, die in ihre Seite wandern) |
 | `startup_trace` | Meilensteine des Starts (`startupMark`): mit `SME_STARTUP_TRACE=1` nach stderr (ms seit Start), mit `=quit` beendet sich das Programm kurz nach dem ersten Bild (zum Messen). Erstes Bild = erstes Paint des Hauptfensters + leere Ereignisschlange (`FirstFrameWatch` in `main.cpp`) |
 | `lazy_refresh` | `RefreshWhenShown`: Seiten, die beim Start niemand sieht (Project › Menu, Maps), lesen die Mod erst beim Anzeigen (`request()` sofort, wenn sichtbar, sonst beim nächsten Show); Texts liest per `showEvent` (`m_reloadOnShow`) |
+| `ui_helpers` | Nur Header: `qs` (Text des Kerns → QString), `toQImage` (ImageRgba → QImage, prüft die Pixelzahl), `noteLabel`/`capsLabel` (Beschriftungen in den Rollen des Style Sheets) |
 | `text_copy` | Kopieren: `makeTreeCopyable` (Strg+C, Kontextmenü Copy/Copy all) für Bäume wie die Kompilier-Meldungen, `addCopyAll` für Log und Kompilier-Ausgabe |
 | `start_page` | Startseite (in `m_pages`, nicht in `Page`): Continue mit Bild (beim Speichern aus dem 3D-View, `AppDataLocation/pictures`), Recent, Start new (`MainWindow::startNewProject` → `NewModDialog` + `createModAndSwitch` + `makeStarterMap`), „Show at startup“ (`start/show`); `--page start` für Screenshots |
 | `properties_panel`, `properties_instance`, `properties_door`, `properties_script` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose (`edit::poseNpc`), Justify; Hilfe-Fläche unten nur mit dem ersten Satz (`sme::shortSummary`, `setHelp`), Link More…/Less (`#more`/`#less`) schaltet, gemerkt in `properties/helpExpanded`; func_instance-Kasten; Door-Kasten (Öffnen, Richtung, Tempo, Schließen, Sounds mit ▶, Test open, Areaportal); Kasten „scriptBox“ für `scripted_sequence` (Startzustand in Worten aus `scriptState`, „Start on map start“, „Start with a trigger …“ wählt den neuen Trigger aus, Loop, Move to position, Not interrupted, Repeatable) und „citizenLook“ für `npc_citizen` (Kopf wählen, „Keep this head“) in `properties_script` |
@@ -623,6 +624,11 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Fenster gelesen), danach etwa 615–655 ms; das Spiel ist 15–50 ms später gelesen. Den größten Teil kostet der Bau der
   Widgets (etwa 450–550 ms, davon die vier GL-Ansichten 100–280 ms). Der UI-Test „panels: …“ prüft eine großzügige
   Grenze (8 s bis zum gezeigten Fenster mit Spiel) und dass Project › Menu beim Start nichts liest.
+  Danach (Aufräum-Durchgang, Median aus 9 Läufen): Fenster bauen 463 → 269 ms, erstes nutzbares Bild 763 → 601 ms;
+  Befehle (callgrind, Konstruktor `MainWindow`) 2,48 → 1,15 Mrd. Gekostet hatte vor allem das app-weite Style Sheet:
+  jedes Widget, das mit Inhalt in ein anderes wandert (Dock, Tab, Seite, Splitter, Scroll-Fläche), wird samt Inhalt
+  neu poliert und neu vermessen (Textumbruch!). Siehe Rezept „Neues Panel“. Messen: `valgrind --tool=callgrind
+  --toggle-collect='sme::app::MainWindow::MainWindow*'` mit `SME_STARTUP_TRACE=quit`.
 - Testdaten erzeugt `tests/fixture.cpp` (HL2 in zwei Bibliotheken, SDK Base 2013, Mapbase-artige Mod, VPKs, Hammer++)
   und `tests/demo.cpp` (prozedurale Texturen, Modell mit Animationen, Sounds, Demo-Karte mit absichtlichen Fehlern).
 
@@ -643,6 +649,12 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   `stopOwnProcesses(this)` (`process_guard.h`) aufrufen – sonst meldet `~QProcess` beim Schließen `finished` an ein
   halb abgebautes Panel (Absturz). Hintergrund-Jobs, die das `GameFileSystem` lesen, bei `Editor::gameAboutToChange`
   abwarten.
+- **Neues Panel / neue Seite**: Widgets dort bauen, wo sie bleiben – Elternteil im Konstruktor angeben
+  (`new QWidget(splitter)`, Inhalt einer Scroll-Fläche mit `scroll->viewport()` als Eltern, Docks: `host(title)` in
+  `MainWindow::createDocks`, Project-Tabs: `projectTabs`). Ein fertiges Widget umzuhängen poliert und vermisst es mit dem
+  app-weiten Style Sheet komplett neu (Start-Zeit, Neuaufbau von Object Properties). Sichtbarkeit nur bei Änderung
+  setzen (ein `setVisible` auf ein sichtbares Panel stößt dessen Layout sofort an); Panels, die selten zu sehen sind und
+  bei jeder Änderung neu lesen, mit `RefreshWhenShown` (`lazy_refresh`).
 - **Neues Spiel**: meist nichts zu tun. Bekannte App-IDs (Name, Engine-Zweig, Haupt-FGD) in `game_discovery.cpp`.
 
 ## Bauen, CI, Abgabe

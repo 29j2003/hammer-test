@@ -1,6 +1,7 @@
 // class_picker.cpp - Entity class search list (see class_picker.h).
 
 #include "class_picker.h"
+#include "ui_helpers.h"
 
 #include <sme/entity_catalog.h>
 
@@ -18,10 +19,6 @@
 namespace sme::app {
 
 namespace {
-
-QString qs(const std::string& s) {
-	return QString::fromStdString(s);
-}
 
 /// A section title in the list: not selectable, the arrow keys skip it.
 void addHeader(QListWidget* list, const QString& title) {

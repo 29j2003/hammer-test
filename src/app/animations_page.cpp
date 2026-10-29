@@ -8,6 +8,7 @@
 #include "model_cache.h"
 #include "model_viewer.h"
 #include "samples_folder.h"
+#include "ui_helpers.h"
 
 #include <sme/animation_use.h>
 #include <sme/assets.h>
@@ -57,10 +58,6 @@ namespace sme::app {
 
 namespace {
 
-QString qs(const std::string& s) {
-	return QString::fromStdString(s);
-}
-
 /// A section title in a list: not selectable.
 void addHeader(QListWidget* list, const QString& title) {
 	auto* item = new QListWidgetItem(title, list);
@@ -69,13 +66,6 @@ void addHeader(QListWidget* list, const QString& title) {
 	font.setBold(true);
 	item->setFont(font);
 	item->setForeground(QColor(240, 160, 40));
-}
-
-QLabel* hint(const QString& text) {
-	auto* label = new QLabel(text);
-	label->setWordWrap(true);
-	label->setProperty("role", "description");
-	return label;
 }
 
 constexpr int SCRUB_STEPS = 1000;
@@ -241,7 +231,7 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	pv->addWidget(m_log);
 	m_pendingBar->hide();
 	rv->addWidget(m_pendingBar);
-	rv->addWidget(hint(tr("Props play the animation as Default animation; a scripted_sequence gets it in the field you pick; "
+	rv->addWidget(noteLabel(tr("Props play the animation as Default animation; a scripted_sequence gets it in the field you pick; "
 	                      "an NPC gets a pose helper (a scripted_sequence that keeps it in the animation).")));
 	split->addWidget(right);
 	split->setStretchFactor(0, 2);

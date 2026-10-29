@@ -5,6 +5,7 @@
 
 #include "editor.h"
 #include "source_control_panel.h"
+#include "ui_helpers.h"
 
 #include <QCheckBox>
 #include <QDateTime>
@@ -68,10 +69,6 @@ QCheckBox* checkBox(const QString& text, const QString& name, const QString& tip
 	c->setObjectName(name);
 	c->setToolTip(tip);
 	return c;
-}
-
-QString qs(std::string_view text) {
-	return QString::fromUtf8(text.data(), qsizetype(text.size()));
 }
 
 /// The scripts' output: PowerShell writes in the console's code page on Windows, UTF-8 elsewhere.

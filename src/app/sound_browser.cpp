@@ -6,6 +6,7 @@
 #include "editor.h"
 #include "sound_player.h"
 #include "soundscape_editor.h"
+#include "ui_helpers.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -72,12 +73,6 @@ QListWidget#soundCategories { background: #232323; border: none; }
 QListWidget#soundCategories::item { padding: 5px 6px; border-radius: 4px; }
 QListWidget#soundCategories::item:selected { background: #3a3a3a; color: #ffffff; }
 )";
-
-QLabel* caps(const QString& text) {
-	auto* label = new QLabel(text.toUpper());
-	label->setProperty("role", "caps");
-	return label;
-}
 
 /// Color of a category's dot in the list.
 QColor categoryColor(int category) {
@@ -298,6 +293,8 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	setStyleSheet(STYLE);
 	auto* outer = new QHBoxLayout(this);
 	outer->setContentsMargins(4, 4, 4, 4);
+	// The parts are built inside the splitters they end up in: moving a finished part there would
+	// polish and lay out all of its widgets once more (start-up time).
 	auto* split = new QSplitter(Qt::Horizontal);
 	split->setChildrenCollapsible(false);
 	outer->addWidget(split);
@@ -310,7 +307,7 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	split->addWidget(m_categories);
 
 	// Search and the list.
-	auto* left = new QWidget;
+	auto* left = new QWidget(split);
 	auto* v = new QVBoxLayout(left);
 	v->setContentsMargins(0, 0, 0, 0);
 	auto* row = new QHBoxLayout;
@@ -353,7 +350,9 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	split->addWidget(left);
 
 	// Right: the player with the edit tools, and the sound script entry / soundscape editor.
-	auto* player = new QWidget;
+	m_rightSplit = new QSplitter(Qt::Horizontal, split);
+	m_rightSplit->setChildrenCollapsible(false);
+	auto* player = new QWidget(m_rightSplit);
 	auto* r = new QVBoxLayout(player);
 	r->setContentsMargins(4, 0, 0, 0);
 	r->setSpacing(6);
@@ -408,7 +407,7 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 		return button;
 	};
 	auto* headRow = new QHBoxLayout;
-	headRow->addWidget(caps(tr("Edit")));
+	headRow->addWidget(capsLabel(tr("Edit")));
 	m_selectionLabel = new QLabel;
 	m_selectionLabel->setProperty("role", "selection");
 	headRow->addWidget(m_selectionLabel, 1);
@@ -493,7 +492,9 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	controls->insertWidget(2, m_editHint);
 	m_editHint->hide();   // until the browser is low (resizeEvent)
 
-	auto* box = new QGroupBox(tr("Sound script entry"));
+	m_editors = new QStackedWidget(m_rightSplit);
+	auto* entryPage = new QWidget(m_editors);
+	auto* box = new QGroupBox(tr("Sound script entry"), entryPage);
 	auto* form = new QFormLayout(box);
 	m_entryName = new QLineEdit;
 	m_entryName->setObjectName("soundEntryName");
@@ -532,15 +533,13 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	form->addRow(waveButtons);
 	m_waves->setMaximumHeight(170);
 	// The form keeps its height; the rest of a tall column stays empty below it.
-	auto* entryPage = new QWidget;
 	auto* entryLayout = new QVBoxLayout(entryPage);
 	entryLayout->setContentsMargins(0, 0, 0, 0);
 	entryLayout->addWidget(box);
 	entryLayout->addStretch(1);
 	m_entryBox = entryPage;
-	m_scapeEditor = new SoundscapeEditor;
+	m_scapeEditor = new SoundscapeEditor(m_editors);
 	m_scapeEditor->setShownFile([this] { return m_file; });
-	m_editors = new QStackedWidget;
 	m_editors->addWidget(entryPage);
 	m_editors->addWidget(m_scapeEditor);
 	// Player above the editor on a tall page, beside it in the low dock (see resizeEvent).
@@ -550,8 +549,6 @@ SoundBrowser::SoundBrowser(Editor* editor, QWidget* parent) : QWidget(parent), m
 	left->setMinimumWidth(200);
 	player->setMinimumWidth(220);
 	m_editors->setMinimumWidth(200);
-	m_rightSplit = new QSplitter(Qt::Horizontal);
-	m_rightSplit->setChildrenCollapsible(false);
 	m_rightSplit->addWidget(player);
 	m_rightSplit->addWidget(m_editors);
 	m_rightSplit->setStretchFactor(0, 3);

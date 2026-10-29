@@ -1,6 +1,7 @@
 // soundscape_editor.cpp - Soundscape editor of the Sounds page (see soundscape_editor.h).
 
 #include "soundscape_editor.h"
+#include "ui_helpers.h"
 
 #include <QComboBox>
 #include <QCompleter>
@@ -39,16 +40,6 @@ const QStringList SOUND_LEVELS = {"",            "SNDLVL_NORM", "SNDLVL_NONE", "
                                   "SNDLVL_60dB", "SNDLVL_65dB", "SNDLVL_70dB", "SNDLVL_75dB", "SNDLVL_80dB", "SNDLVL_85dB", "SNDLVL_90dB",
                                   "SNDLVL_95dB", "SNDLVL_100dB", "SNDLVL_120dB", "SNDLVL_140dB"};
 
-QLabel* caps(const QString& text, const char* role = "caps") {
-	auto* label = new QLabel(text.toUpper());
-	label->setProperty("role", role);
-	return label;
-}
-
-QString qs(const std::string& s) {
-	return QString::fromStdString(s);
-}
-
 /// A text field bound to one string of the soundscape.
 QLineEdit* boundEdit(std::string& target, const QString& placeholder, const QString& tip = {}) {
 	auto* edit = new QLineEdit(qs(target));
@@ -86,7 +77,7 @@ SoundscapeEditor::SoundscapeEditor(QWidget* parent) : QWidget(parent), m_fileCom
 	v->setContentsMargins(8, 4, 4, 4);
 	v->setSpacing(8);
 	auto* head = new QHBoxLayout;
-	head->addWidget(caps(tr("Soundscape")));
+	head->addWidget(capsLabel(tr("Soundscape")));
 	head->addStretch(1);
 	v->addLayout(head);
 
@@ -117,7 +108,7 @@ SoundscapeEditor::SoundscapeEditor(QWidget* parent) : QWidget(parent), m_fileCom
 	v->addWidget(m_source);
 
 	auto* rulesHead = new QHBoxLayout;
-	rulesHead->addWidget(caps(tr("Sounds")));
+	rulesHead->addWidget(capsLabel(tr("Sounds")));
 	rulesHead->addStretch(1);
 	const auto addButton = [&](const QString& text, const QString& name, const QString& tip, SoundscapeRule::Kind kind) {
 		auto* b = new QPushButton(text);
@@ -269,7 +260,7 @@ QWidget* SoundscapeEditor::makeRuleCard(int index) {
 	                     : rule.kind == Kind::Random ? tr("Random sounds")
 	                     : rule.kind == Kind::Soundscape ? tr("Soundscape inside")
 	                                                     : qs(rule.key);
-	head->addWidget(caps(kind, "ruleKind"));
+	head->addWidget(capsLabel(kind, "ruleKind"));
 	head->addStretch(1);
 	const auto cardButton = [&](const QString& text, const QString& tip, const QString& name) {
 		auto* b = new QToolButton;

@@ -160,6 +160,8 @@ public:
 	void setFidelityLook(bool on);
 	/// A look value as the game would use it: the map's, else cfg/fidelity.cfg's, else the add-on's default.
 	[[nodiscard]] double lookValue(std::string_view cvar) const;
+	/// Every look value (lookSettings(), lower-case cvar names), the map read once for all.
+	[[nodiscard]] std::map<std::string, double> lookValues() const;
 	[[nodiscard]] double grid() const { return m_grid; }
 	void setGrid(double grid);
 	/// Grid used for snapping: the grid size, or 0 while snapping is off (Shift+W).
@@ -341,6 +343,8 @@ signals:
 	void doorTestRequested(int doorId);
 
 private:
+	/// lookValue() with the map's own values already read (mapLookValues).
+	[[nodiscard]] double resolveLookValue(std::string_view cvar, const std::map<std::string, std::string>& mapValues) const;
 	/// A door made with the entity tool or Tie to gets working keys, folded into the same undo step.
 	void setUpNewDoor(int id, const std::string& changeName);
 

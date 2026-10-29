@@ -700,8 +700,18 @@ void Editor::setFidelityLook(bool on) {
 }
 
 double Editor::lookValue(std::string_view cvar) const {
+	return resolveLookValue(cvar, mapLookValues(m_doc));
+}
+
+std::map<std::string, double> Editor::lookValues() const {
+	const auto mapValues = mapLookValues(m_doc);   // finds the map's look entities: once, not per value
+	std::map<std::string, double> values;
+	for (const auto& setting : lookSettings()) values[toLower(setting.cvar)] = resolveLookValue(setting.cvar, mapValues);
+	return values;
+}
+
+double Editor::resolveLookValue(std::string_view cvar, const std::map<std::string, std::string>& mapValues) const {
 	const std::string key = toLower(cvar);
-	const auto mapValues = mapLookValues(m_doc);
 	bool ok = false;
 	if (const auto it = mapValues.find(key); it != mapValues.end()) {
 		const double v = QString::fromStdString(it->second).toDouble(&ok);

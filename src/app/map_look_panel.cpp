@@ -3,6 +3,7 @@
 #include "map_look_panel.h"
 
 #include "editor.h"
+#include "lazy_refresh.h"
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -136,9 +137,12 @@ MapLookPanel::MapLookPanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 		m_rows[cvar] = {slider, spin, reset, label};
 	}
 	v->addStretch(1);
-	connect(editor, &Editor::documentChanged, this, &MapLookPanel::refresh);
-	connect(editor, &Editor::gameChanged, this, &MapLookPanel::refresh);
-	connect(editor, &Editor::settingsChanged, this, &MapLookPanel::refresh);
+	// Read when seen: the panel is a tab behind the Tool panel most of the time, and every edit
+	// changes the document.
+	auto* lazy = new RefreshWhenShown(this, [this] { refresh(); });
+	connect(editor, &Editor::documentChanged, lazy, &RefreshWhenShown::request);
+	connect(editor, &Editor::gameChanged, lazy, &RefreshWhenShown::request);
+	connect(editor, &Editor::settingsChanged, lazy, &RefreshWhenShown::request);
 	refresh();
 }
 
@@ -170,6 +174,7 @@ void MapLookPanel::resetValue(const std::string& cvar) {
 void MapLookPanel::refresh() {
 	m_refreshing = true;
 	const auto values = mapLookValues(m_editor->doc());
+	const auto current = m_editor->lookValues();
 	m_preview->setChecked(m_editor->fidelityLook());
 	m_note->setText(m_editor->hasFidelity()
 	                    ? tr("What mapbase-fidelity shows in this map. The map sets these when it loads (a logic_auto sends them to a "
@@ -179,16 +184,21 @@ void MapLookPanel::refresh() {
 	for (const auto& setting : lookSettings()) {
 		auto& row = m_rows.at(setting.cvar);
 		const bool own = values.contains(setting.cvar);
-		const double value = m_editor->lookValue(setting.cvar);
+		const double value = current.at(toLower(setting.cvar));
 		row.spin->setValue(value);
 		const double span = setting.maximum - setting.minimum;
 		row.slider->setValue(span > 0 ? int(std::lround((value - setting.minimum) / span * STEPS)) : 0);
 		row.reset->setEnabled(own);
-		QFont font = row.label->font();
-		font.setBold(own);
-		row.label->setFont(font);
-		row.spin->setProperty("inherited", !own);
-		row.spin->setStyleSheet(own ? QString() : QStringLiteral("color: palette(mid);"));
+		// Font and style only when they change: a new style sheet polishes the field again.
+		if (row.label->font().bold() != own) {
+			QFont font = row.label->font();
+			font.setBold(own);
+			row.label->setFont(font);
+		}
+		if (!row.spin->property("inherited").isValid() || row.spin->property("inherited").toBool() == own) {
+			row.spin->setProperty("inherited", !own);
+			row.spin->setStyleSheet(own ? QString() : QStringLiteral("color: palette(mid);"));
+		}
 	}
 	m_refreshing = false;
 }

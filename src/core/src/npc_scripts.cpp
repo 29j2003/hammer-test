@@ -97,7 +97,7 @@ Bounds sequenceTriggerBox(const MapDocument& doc, int scriptId) {
 	Vec3 origin, angles;
 	if (script && scriptId != 0) {
 		origin = script->origin();
-		parseVec3(script->get("angles", "0 0 0"), angles);
+		if (!parseVec3(script->get("angles", "0 0 0"), angles)) angles = {};   // unreadable: facing east
 	}
 	const double yaw = angles.y * std::numbers::pi / 180.0;
 	const Vec3 centre = origin + Vec3(std::cos(yaw), std::sin(yaw), 0) * 192.0;

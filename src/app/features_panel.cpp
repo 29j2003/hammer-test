@@ -5,6 +5,7 @@
 #include "editor.h"
 #include "enhancements.h"
 #include "mod_code_panel.h"
+#include "ui_helpers.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -48,10 +49,6 @@ QLabel* description(const QString& text) {
 	label->setProperty("role", "description");
 	label->setWordWrap(true);
 	return label;
-}
-
-QString qs(const char* text) {
-	return QString::fromUtf8(text);
 }
 
 } // namespace

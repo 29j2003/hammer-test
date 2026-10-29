@@ -309,7 +309,11 @@ void Viewport::updateLook() {
 	SceneRenderer::SkyLook sky;
 	SceneRenderer::Grade grade;
 	if (m_editor->fidelityLook()) {
-		const auto value = [this](const char* cvar) { return float(m_editor->lookValue(cvar)); };
+		const auto values = m_editor->lookValues();
+		const auto value = [&values](const char* cvar) {
+			const auto it = values.find(cvar);
+			return it != values.end() ? float(it->second) : 0.f;
+		};
 		sky.clouds = value("r_fidelity_sky_clouds");
 		sky.coverage = value("r_fidelity_sky_clouds_coverage");
 		sky.darkness = value("r_fidelity_sky_clouds_darkness");
@@ -1829,7 +1833,7 @@ void Viewport::updateDropGhost(const QPointF* pos) {
 	std::optional<Ghost> ghost;
 	if (pos && !m_dropModel.isEmpty()) {
 		m_dropPos = *pos;
-		m_editor->models()->get(m_dropModel);   // starts loading; modelReady shows the real size
+		static_cast<void>(m_editor->models()->get(m_dropModel));   // starts loading; modelReady shows the real size
 		Entity probe;
 		probe.set("classname", "prop_static");
 		probe.set("model", m_dropModel.toStdString());

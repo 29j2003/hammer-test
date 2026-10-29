@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "ui_helpers.h"
 
 #include <utility>
 
@@ -31,10 +32,6 @@
 namespace sme::app {
 
 namespace {
-
-QString qs(const std::string& text) {
-	return QString::fromStdString(text);
-}
 
 std::string ss(const QString& text) {
 	return text.toStdString();

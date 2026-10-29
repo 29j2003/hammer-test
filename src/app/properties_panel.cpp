@@ -11,6 +11,7 @@
 #include "enhancements.h"
 #include "material_cache.h"
 #include "toggle_switch.h"
+#include "ui_helpers.h"
 #include "wheel_guard.h"
 
 #include <QCheckBox>
@@ -89,10 +90,6 @@ QLabel* descriptionLabel(const QString& text) {
 	return label;
 }
 
-QString qs(const std::string& s) {
-	return QString::fromStdString(s);
-}
-
 /// Choices that are just yes/no ("0" No / "1" Yes): shown as a switch. Other two-way choices
 /// ("Do nothing" / "Cancel script") keep their list - a switch would not say what "on" means.
 bool isYesNo(const EntityProperty& property) {
@@ -114,14 +111,6 @@ QString helpText(const QString& title, const QString& key, const QString& type, 
 	if (!type.isEmpty()) text += QStringLiteral(" <span style='color:#8a909c'>(%1)</span>").arg(type.toHtmlEscaped());
 	if (!description.isEmpty()) text += QStringLiteral("<br>") + description.simplified().toHtmlEscaped();
 	return text;
-}
-
-QImage toQImage(const ImageRgba& image) {
-	QImage out(int(image.width), int(image.height), QImage::Format_RGBA8888);
-	for (unsigned y = 0; y < image.height; ++y) {
-		std::memcpy(out.scanLine(int(y)), image.pixels.data() + std::size_t(y) * image.width * 4, std::size_t(image.width) * 4);
-	}
-	return out;
 }
 
 QString studioPath(const std::string& helper) {
@@ -362,7 +351,9 @@ void PropertiesPanel::attachAssetMenu(QWidget* widget, const AssetRef& asset) {
 
 void PropertiesPanel::rebuild() {
 	m_defaultHelp.clear();
-	auto* content = new QWidget;
+	// Built inside the scroll area's viewport (hidden until setWidget shows it): moving the
+	// finished page there would polish and lay out every row once more.
+	auto* content = new QWidget(m_scroll->viewport());
 	auto* layout = new QVBoxLayout(content);
 	layout->setContentsMargins(8, 8, 8, 8);
 	layout->setSpacing(6);

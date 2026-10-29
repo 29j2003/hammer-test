@@ -5,6 +5,7 @@
 #include "editor.h"
 #include "enhancements.h"
 #include "material_preview.h"
+#include "ui_helpers.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -106,14 +107,6 @@ QVector3D parseColor(const QString& text, QVector3D fallback = {1, 1, 1}) {
 	QVector3D c(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat());
 	if (text.contains('{')) c /= 255.f;   // {r g b} is 0..255
 	return c;
-}
-
-QImage toImage(const ImageRgba& image) {
-	QImage out(int(image.width), int(image.height), QImage::Format_RGBA8888);
-	for (unsigned y = 0; y < image.height; ++y) {
-		std::memcpy(out.scanLine(int(y)), image.pixels.data() + std::size_t(y) * image.width * 4, std::size_t(image.width) * 4);
-	}
-	return out;
 }
 
 /// Grey help text under a switch.
@@ -317,13 +310,15 @@ private:
 MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
 	auto* outer = new QHBoxLayout(this);
 	outer->setContentsMargins(0, 0, 0, 0);
+	// The columns are built inside the splitter (and the scroll area) they end up in: moving a
+	// finished column there would polish and lay out all of its widgets once more (start-up time).
 	auto* split = new QSplitter(Qt::Horizontal);
 	split->setChildrenCollapsible(false);
 	outer->addWidget(split);
 
 	// Far left: every material of the game (the Asset Browser comes over while this page is shown,
 	// see MainWindow::showPage), below the ones edited lately.
-	auto* browse = new QWidget;
+	auto* browse = new QWidget(split);
 	auto* b = new QVBoxLayout(browse);
 	b->setContentsMargins(0, 0, 0, 6);
 	b->setSpacing(4);
@@ -352,12 +347,12 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	split->addWidget(browse);
 
 	// Middle: the parameters in groups.
-	auto* scroll = new QScrollArea;
+	auto* scroll = new QScrollArea(split);
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
 	scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	scroll->setMinimumWidth(420);
-	auto* fields = new QWidget;
+	auto* fields = new QWidget(scroll->viewport());
 	m_column = new QVBoxLayout(fields);
 	m_column->setContentsMargins(6, 10, 12, 10);
 	m_column->setSpacing(SECTION_SPACING);
@@ -380,7 +375,7 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	split->addWidget(scroll);
 
 	// Right: the preview, with its tool bar above.
-	auto* right = new QWidget;
+	auto* right = new QWidget(split);
 	auto* r = new QVBoxLayout(right);
 	r->setContentsMargins(6, 8, 10, 8);
 	r->setSpacing(6);
@@ -1173,7 +1168,7 @@ std::optional<HeightMap> MaterialEditor::currentHeights() const {
 
 void MaterialEditor::refreshHeights() {
 	const auto heights = currentHeights();
-	m_preview->setTexture(MaterialPreview::Height, heights ? toImage(heightImage(*heights)) : QImage());
+	m_preview->setTexture(MaterialPreview::Height, heights ? toQImage(heightImage(*heights)) : QImage());
 	QString text = heights ? m_heightOrigin : tr("none yet - make one from the normal map or the texture");
 	if (heights && m_heightInverted) text += tr(", upside down");
 	if (heights && std::any_of(m_zones.begin(), m_zones.end(), [](std::uint8_t z) { return z != 0; })) text += tr(", with painted zones");
@@ -1238,7 +1233,7 @@ void MaterialEditor::paintZones() {
 	                            .arg(QString::fromStdString(m_layout.describe()))
 	                      : tr("Left mouse paints, right mouse erases. Blue: no relief there (stays flat). Orange: upside down. "
 	                           "The texture repeats, so painting over an edge goes on at the other side.")));
-	const QImage background = m_baseImage.isNull() && heights ? toImage(heightImage(*heights)) : m_baseImage;
+	const QImage background = m_baseImage.isNull() && heights ? toQImage(heightImage(*heights)) : m_baseImage;
 	auto* painter = new HeightZonePainter(background, w, h, zones);
 	painter->setLayout(&m_layout);
 	painter->setUnitMode(m_layout.found());
@@ -1481,7 +1476,7 @@ void MaterialEditor::emitLive() {
 	const bool relief = m_shader.compare("Fidelity_Parallax", Qt::CaseInsensitive) == 0 || m_shader.compare("Fidelity_WorldVertexTransition", Qt::CaseInsensitive) == 0;
 	const auto heights = relief ? currentHeights() : std::nullopt;
 	m_liveName = m_name;
-	emit liveChanged(m_name, text, heights ? toImage(heightImage(*heights)) : QImage());
+	emit liveChanged(m_name, text, heights ? toQImage(heightImage(*heights)) : QImage());
 }
 
 void MaterialEditor::revertLive() {
@@ -1541,7 +1536,7 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 	m_textureWatcher.setFuture(track(QtConcurrent::run([fs, wanted] {
 		std::map<QString, QImage> images;
 		for (const auto& [key, name] : wanted) {
-			if (auto image = loadTexture(*fs, name, 512)) images[key] = toImage(*image);
+			if (auto image = loadTexture(*fs, name, 512)) images[key] = toQImage(*image);
 		}
 		return images;
 	})));

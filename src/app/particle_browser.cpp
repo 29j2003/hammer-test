@@ -6,6 +6,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "ui_helpers.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -85,10 +86,8 @@ QImage spriteOf(const GameFileSystem* fs, const std::string& materialName, bool*
 	const auto texture = material->previewTexture();
 	const auto image = texture.empty() ? std::nullopt : loadTexture(*fs, texture, SPRITE_SIZE);
 	if (!image || image->width == 0 || image->height == 0) return softDot();
-	QImage out(image->width, image->height, QImage::Format_RGBA8888);
-	for (int y = 0; y < image->height; ++y) {
-		std::memcpy(out.scanLine(y), image->pixels.data() + static_cast<std::size_t>(y) * image->width * 4, static_cast<std::size_t>(image->width) * 4);
-	}
+	QImage out = toQImage(*image);
+	if (out.isNull()) return softDot();
 	out = out.convertToFormat(QImage::Format_ARGB32_Premultiplied).scaled(SPRITE_SIZE, SPRITE_SIZE, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 	return out;
 }
@@ -603,7 +602,7 @@ void ParticleBrowser::showSystem(const QString& name, const QString& file) {
 }
 
 void ParticleBrowser::showParts(const ParticleDefinition* definition, const QString& file) {
-	auto* parts = new QWidget;
+	auto* parts = new QWidget(m_partsScroll->viewport());   // built in place: not polished twice
 	auto* v = new QVBoxLayout(parts);
 	v->setContentsMargins(8, 4, 12, 8);
 	v->setSpacing(6);

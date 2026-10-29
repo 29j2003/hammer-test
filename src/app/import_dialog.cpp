@@ -6,6 +6,7 @@
 #include "editor.h"
 #include "samples_folder.h"
 #include "sound_player.h"
+#include "ui_helpers.h"
 
 #include <sme/assets.h>
 #include <sme/filesystem.h>
@@ -43,10 +44,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-QString qs(const std::string& s) {
-	return QString::fromStdString(s);
-}
-
 std::optional<std::vector<std::byte>> readBytes(const QString& path) {
 	QFile file(path);
 	if (!file.open(QIODevice::ReadOnly) || file.size() > (512ll << 20)) return std::nullopt;
@@ -59,11 +56,6 @@ QString readText(const QString& path) {
 	QFile file(path);
 	if (!file.open(QIODevice::ReadOnly) || file.size() > (256ll << 20)) return {};
 	return QString::fromUtf8(file.readAll());
-}
-
-QImage toImage(const ImageRgba& image) {
-	QImage out(reinterpret_cast<const uchar*>(image.pixels.data()), image.width, image.height, image.width * 4, QImage::Format_RGBA8888);
-	return out.copy();
 }
 
 /// A picture next to `file` with one of the suffixes ("wall" -> "wall_normal.png").
@@ -494,7 +486,7 @@ bool ImportDialog::setSourceFile(const QString& path) {
 			auto image = decodeImageFile(*data, &error);
 			if (!image) return fail(tr("Not a picture Mapsmith can read (PNG, JPG, TGA, BMP)."));
 			m_image = std::move(image);
-			m_preview->setPixmap(QPixmap::fromImage(toImage(*m_image)).scaled(220, 140, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+			m_preview->setPixmap(QPixmap::fromImage(toQImage(*m_image)).scaled(220, 140, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 			const QString normal = findSibling(path, {"_normal", "_n", "_nrm", "_bump", "_normalmap"});
 			m_normalFile->setText(tr("none (a picture named like it with _normal next to it is taken)"));
 			if (!normal.isEmpty()) {

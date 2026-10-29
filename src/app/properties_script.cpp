@@ -8,6 +8,7 @@
 #include "properties_panel.h"
 
 #include "editor.h"
+#include "ui_helpers.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -24,17 +25,6 @@
 namespace sme::app {
 
 namespace {
-
-QString qs(const std::string& s) {
-	return QString::fromStdString(s);
-}
-
-QLabel* note(const QString& text, const char* role = "description") {
-	auto* label = new QLabel(text);
-	label->setWordWrap(true);
-	label->setProperty("role", role);
-	return label;
-}
 
 long long flagsOf(const Entity& entity) {
 	try {
@@ -86,9 +76,9 @@ void PropertiesPanel::buildScriptBox(QVBoxLayout* layout, const Entity& script) 
 	v->addWidget(summary);
 	const std::string npcName = script.get("m_iszEntity");
 	if (npcName.empty()) {
-		v->addWidget(note(tr("Set Target NPC to the name of the NPC that plays it."), "warning"));
+		v->addWidget(noteLabel(tr("Set Target NPC to the name of the NPC that plays it."), "warning"));
 	} else if (state.npcId == 0 && !npcName.starts_with("npc_")) {
-		v->addWidget(note(tr("No entity named \"%1\" in this map.").arg(qs(npcName)), "warning"));
+		v->addWidget(noteLabel(tr("No entity named \"%1\" in this map.").arg(qs(npcName)), "warning"));
 	}
 
 	auto* buttons = new QVBoxLayout;   // stacked: the panel is often narrow
@@ -172,7 +162,7 @@ void PropertiesPanel::buildScriptBox(QVBoxLayout* layout, const Entity& script) 
 	        "scriptNoInterrupt");
 	flagBox(tr("Repeatable"), tr("Can play again; without it the script is removed once it has played"), script_flags::REPEATABLE,
 	        (flags & script_flags::REPEATABLE) != 0, "scriptRepeatable");
-	v->addWidget(note(tr("Pre Action Idle: while the NPC waits for the start. Action: plays on BeginSequence. Post Action Idle: "
+	v->addWidget(noteLabel(tr("Pre Action Idle: while the NPC waits for the start. Action: plays on BeginSequence. Post Action Idle: "
 	                     "after the Action. Search Radius only matters when Target NPC is a class name.")));
 	layout->addWidget(box);
 }

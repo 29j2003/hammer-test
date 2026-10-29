@@ -3,6 +3,7 @@
 #include "ship_panel.h"
 
 #include "editor.h"
+#include "ui_helpers.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -37,10 +38,6 @@
 namespace sme::app {
 
 namespace {
-
-QString qs(const std::string& text) {
-	return QString::fromStdString(text);
-}
 
 QString sizeText(std::uint64_t bytes) {
 	return QLocale().formattedDataSize(static_cast<qint64>(bytes), 1, QLocale::DataSizeTraditionalFormat);
@@ -88,7 +85,7 @@ ShipPanel::ShipPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	auto* scroll = new QScrollArea;
 	scroll->setWidgetResizable(true);
 	scroll->setFrameShape(QFrame::NoFrame);
-	auto* content = new QWidget;
+	auto* content = new QWidget(scroll->viewport());   // built in place (see MainWindow::createDocks)
 	auto* layout = new QVBoxLayout(content);
 	layout->setContentsMargins(16, 12, 16, 12);
 	layout->setSpacing(12);
