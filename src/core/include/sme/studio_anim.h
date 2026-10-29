@@ -54,11 +54,17 @@ struct StudioSequence {
 	std::string name;
 	std::string activity;   ///< "ACT_IDLE" or empty
 	bool looping = false;
-	bool delta = false;     ///< Adds onto another pose (gestures, layers)
+	bool delta = false;     ///< Adds onto another pose (gestures, layers); previewed on top of the idle
+	/// A gesture or layer (delta, autoplay, or the "...default" base pose of
+	/// a gesture's inDelta/outDelta pair): played over other animations in the game, not alone.
+	bool layer = false;
+	int blends = 1;         ///< Blend samples (pose-parameter blends: 9-way aims, move_yaw ...); the centre one is shown
 	float fps = 30;
 	int frames = 1;
 	int model = 0;          ///< Which file of the AnimatedModel holds it (0 = the model itself, -1 = added frames)
-	int animation = 0;      ///< Its (first) animation in that file
+	int animation = 0;      ///< Its animation in that file (for blends the centre sample)
+	/// Other files that have a sequence of the same name (the engine plays the first one, `model`).
+	std::vector<std::string> alsoIn;
 	/// Seconds one pass takes (at least one frame).
 	[[nodiscard]] float duration() const { return frames > 1 && fps > 0 ? float(frames - 1) / fps : 0.f; }
 };
@@ -84,6 +90,9 @@ public:
 	[[nodiscard]] const std::vector<StudioSequence>& sequences() const { return m_sequences; }
 	/// Index of a sequence by name (case does not matter), -1 if there is none.
 	[[nodiscard]] int findSequence(std::string_view name) const;
+	/// The idle a delta sequence is shown on: the ACT_IDLE sequence (not a layer), else the first
+	/// looping sequence with "idle" in its name, else -1 (the rest pose).
+	[[nodiscard]] int idleSequence() const;
 	/// Paths of the files the sequences come from (index = StudioSequence::model).
 	[[nodiscard]] std::vector<std::string> files() const;
 

@@ -398,18 +398,25 @@ void AnimationsPage::fillModelList() {
 		addHeader(m_models, tr("In this map"));
 		for (const auto& model : inMap) add(model, model.section('/', -1));
 	}
-	QStringList all;
+	// The rest in two sections: characters (NPCs, creatures, people) and everything else.
+	std::vector<std::string> npcModels = m_editor->entities() ? npcClassModels(*m_editor->entities()) : std::vector<std::string>{};
+	QStringList npcs, others;
 	if (m_assets) {
 		int shown = 0;
 		for (const auto& model : m_assets->modelNames()) {
 			if (!matches(model)) continue;
-			all << model;
+			(isCharacterModel(model.toStdString(), npcModels) ? npcs : others) << model;
 			if (++shown >= 5000) break;   // the search narrows it down
 		}
 	}
-	if (!all.isEmpty()) {
-		addHeader(m_models, words.isEmpty() ? tr("All models") : tr("Models matching \"%1\"").arg(m_search->text()));
-		for (const auto& model : all) add(model, model.mid(model.startsWith("models/") ? 7 : 0));
+	const QString matching = words.isEmpty() ? QString() : tr(" matching \"%1\"").arg(m_search->text());
+	if (!npcs.isEmpty()) {
+		addHeader(m_models, tr("NPCs%1").arg(matching));
+		for (const auto& model : npcs) add(model, model.mid(model.startsWith("models/") ? 7 : 0));
+	}
+	if (!others.isEmpty()) {
+		addHeader(m_models, tr("Models%1").arg(matching));
+		for (const auto& model : others) add(model, model.mid(model.startsWith("models/") ? 7 : 0));
 	}
 	if (m_models->count() == 0) addHeader(m_models, tr("No model matches"));
 	if (current) m_models->setCurrentItem(current);
@@ -463,33 +470,71 @@ void AnimationsPage::showSequences() {
 	const auto files = m_animated->files();
 	QTreeWidgetItem* current = nullptr;
 	const auto& sequences = m_animated->sequences();
-	for (std::size_t i = 0; i < sequences.size(); ++i) {
-		const auto& seq = sequences[i];
-		const QString name = qs(seq.name), activity = qs(seq.activity);
-		const bool match = std::all_of(words.begin(), words.end(), [&](const QString& w) {
-			return name.contains(w, Qt::CaseInsensitive) || activity.contains(w, Qt::CaseInsensitive);
-		});
-		if (!match) continue;
-		auto* item = new QTreeWidgetItem(m_sequences);
-		item->setText(0, name);
-		item->setText(1, activity);
-		item->setText(2, seq.frames > 1 ? tr("%1 s").arg(double(seq.duration()), 0, 'f', 2) : tr("pose"));
-		const QString from = seq.model >= 0 && seq.model < int(files.size()) ? qs(files[std::size_t(seq.model)]).section('/', -1) : QString();
-		item->setText(3, seq.model == 0 ? tr("own") : seq.model < 0 ? tr("new - not built") : from);
-		if (seq.model < 0) {
-			for (int c = 0; c < 4; ++c) item->setForeground(c, QColor(240, 160, 40));
+	const int idle = m_animated->idleSequence();
+	// Animations first; gestures and layers (played over other animations in the game) after a
+	// header of their own - shown on top of the idle, as they would look in the game.
+	for (const bool layers : {false, true}) {
+		bool header = false;
+		for (std::size_t i = 0; i < sequences.size(); ++i) {
+			const auto& seq = sequences[i];
+			if (seq.layer != layers) continue;
+			const QString name = qs(seq.name), activity = qs(seq.activity);
+			const bool match = std::all_of(words.begin(), words.end(), [&](const QString& w) {
+				return name.contains(w, Qt::CaseInsensitive) || activity.contains(w, Qt::CaseInsensitive);
+			});
+			if (!match) continue;
+			if (layers && !header) {
+				header = true;
+				auto* title = new QTreeWidgetItem(m_sequences);
+				title->setText(0, tr("Gestures and layers"));
+				title->setToolTip(0, tr("Played over other animations in the game (a nod, a turn, a hand signal); shown on top of the idle%1")
+				                         .arg(idle >= 0 ? tr(" (%1)").arg(qs(sequences[std::size_t(idle)].name)) : QString()));
+				title->setFlags(Qt::NoItemFlags);
+				title->setData(0, Qt::UserRole, -1);
+				QFont font = title->font(0);
+				font.setBold(true);
+				title->setFont(0, font);
+				title->setForeground(0, QColor(240, 160, 40));
+				title->setFirstColumnSpanned(true);
+			}
+			auto* item = new QTreeWidgetItem(m_sequences);
+			item->setText(0, name);
+			item->setText(1, activity);
+			item->setText(2, seq.frames > 1 ? tr("%1 s").arg(double(seq.duration()), 0, 'f', 2) : tr("pose"));
+			const QString from = seq.model >= 0 && seq.model < int(files.size()) ? qs(files[std::size_t(seq.model)]).section('/', -1) : QString();
+			QString source = seq.model == 0 ? tr("own") : seq.model < 0 ? tr("new - not built") : from;
+			if (!seq.alsoIn.empty()) source += tr(" (+%1)").arg(seq.alsoIn.size());
+			item->setText(3, source);
+			if (seq.model < 0) {
+				for (int c = 0; c < 4; ++c) item->setForeground(c, QColor(240, 160, 40));
+			}
+			QStringList notes;
+			if (seq.looping) notes << tr("loops");
+			if (seq.delta) notes << tr("adds onto another pose - shown on the idle");
+			if (seq.blends > 1) notes << tr("a blend of %1 poses (aim or move direction) - the middle one is shown").arg(seq.blends);
+			if (layers && !seq.delta) notes << tr("a layer the game plays over other animations");
+			QString tip = tr("%1 frames at %2 fps").arg(seq.frames).arg(double(seq.fps));
+			if (!notes.isEmpty()) tip += ", " + notes.join(", ");
+			if (!seq.alsoIn.empty()) {
+				QStringList others;
+				for (const auto& other : seq.alsoIn) others << qs(other).section('/', -1);
+				tip += tr("\nAlso in %1 - the game plays the one from %2").arg(others.join(", "), seq.model == 0 ? tr("the model itself") : from);
+			}
+			item->setToolTip(0, tip);
+			item->setToolTip(3, tip);
+			item->setData(0, Qt::UserRole, int(i));
+			if (name.compare(previous, Qt::CaseInsensitive) == 0) current = item;
 		}
-		item->setToolTip(0, tr("%1 frames at %2 fps%3%4").arg(seq.frames).arg(double(seq.fps)).arg(seq.looping ? tr(", loops") : QString(),
-		                                                                            seq.delta ? tr(", adds onto another pose") : QString()));
-		item->setData(0, Qt::UserRole, int(i));
-		if (name.compare(previous, Qt::CaseInsensitive) == 0) current = item;
 	}
 	if (!current && m_sequences->topLevelItemCount() > 0) {
 		// Something to look at right away: the idle if there is one, else the first.
 		for (int i = 0; i < m_sequences->topLevelItemCount() && !current; ++i) {
-			if (m_sequences->topLevelItem(i)->text(1).compare("ACT_IDLE", Qt::CaseInsensitive) == 0) current = m_sequences->topLevelItem(i);
+			auto* item = m_sequences->topLevelItem(i);
+			if (item->data(0, Qt::UserRole).toInt() == idle && idle >= 0) current = item;
 		}
-		if (!current) current = m_sequences->topLevelItem(0);
+		for (int i = 0; i < m_sequences->topLevelItemCount() && !current; ++i) {
+			if (m_sequences->topLevelItem(i)->flags() & Qt::ItemIsSelectable) current = m_sequences->topLevelItem(i);
+		}
 	}
 	if (current) m_sequences->setCurrentItem(current);
 	m_sequences->resizeColumnToContents(1);
@@ -506,7 +551,7 @@ int AnimationsPage::sequenceIndex() const {
 
 QString AnimationsPage::currentSequence() const {
 	const auto* item = m_sequences->currentItem();
-	return item ? item->text(0) : QString();
+	return item && item->data(0, Qt::UserRole).toInt() >= 0 ? item->text(0) : QString();
 }
 
 bool AnimationsPage::selectSequence(const QString& name) {

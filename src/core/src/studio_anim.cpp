@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <set>
 
 namespace sme {
@@ -29,7 +30,8 @@ constexpr int MAX_ANIMS = 1 << 15;
 
 // Flags of mstudioanim_t and of animations/sequences.
 constexpr int ANIM_RAWPOS = 0x01, ANIM_RAWROT = 0x02, ANIM_ANIMPOS = 0x04, ANIM_ANIMROT = 0x08, ANIM_DELTA = 0x10, ANIM_RAWROT2 = 0x20;
-constexpr int STUDIO_LOOPING = 0x0001, STUDIO_DELTA = 0x0004;
+constexpr int STUDIO_LOOPING = 0x0001, STUDIO_DELTA = 0x0004, STUDIO_AUTOPLAY = 0x0008;
+constexpr int STUDIO_ALLZEROS = 0x20000;   // mstudioanimdesc_t: no data, every bone at rest
 
 /// Bounds-checked little-endian reads from a file.
 class Bytes {
@@ -278,8 +280,9 @@ std::optional<AnimatedModel> AnimatedModel::fromFiles(std::vector<FileData> file
 			}
 		}
 	}
-	// Sequences: the model's own, then each include's that are new (by name).
-	std::set<std::string> seen;
+	// Sequences: the model's own, then each include's that are new (by name); a name met again
+	// only notes the other file.
+	std::map<std::string, std::size_t> seen;
 	for (std::size_t f = 0; f < model.m_files.size(); ++f) {
 		const auto& file = model.m_files[f];
 		const Bytes mdl(file.mdl);
@@ -290,22 +293,47 @@ std::optional<AnimatedModel> AnimatedModel::fromFiles(std::vector<FileData> file
 			const long long s = seqIndex + i * SEQ_SIZE;
 			StudioSequence seq;
 			seq.name = mdl.str(s + mdl.i32(s + 4));
-			if (seq.name.empty() || !seen.insert(lowerName(seq.name)).second) continue;
+			if (seq.name.empty()) continue;
+			if (const auto it = seen.find(lowerName(seq.name)); it != seen.end()) {
+				auto& first = model.m_sequences[it->second];
+				if (std::find(first.alsoIn.begin(), first.alsoIn.end(), file.path) == first.alsoIn.end() &&
+				    !(first.model >= 0 && model.m_files[std::size_t(first.model)].path == file.path)) {
+					first.alsoIn.push_back(file.path);
+				}
+				continue;
+			}
+			seen.emplace(lowerName(seq.name), model.m_sequences.size());
 			seq.activity = mdl.str(s + mdl.i32(s + 8));
 			const int flags = mdl.i32(s + 12);
 			seq.looping = (flags & STUDIO_LOOPING) != 0;
 			seq.delta = (flags & STUDIO_DELTA) != 0;
+			seq.layer = seq.delta || (flags & STUDIO_AUTOPLAY) != 0;
 			seq.model = int(f);
-			seq.animation = mdl.get<std::int16_t>(s + mdl.i32(s + 60));   // the first blend of animindexindex
+			// Blends: groupsize[0] x groupsize[1] samples (animindexindex); the centre one stands for all.
+			const int across = std::clamp(mdl.i32(s + 68), 1, 64), down = std::clamp(mdl.i32(s + 72), 1, 64);
+			seq.blends = across * down;
+			const int centre = (down / 2) * across + across / 2;
+			seq.animation = mdl.get<std::int16_t>(s + mdl.i32(s + 60) + 2LL * centre);
 			if (seq.animation >= 0 && seq.animation < int(file.anims.size())) {
 				const auto& anim = file.anims[std::size_t(seq.animation)];
 				seq.fps = anim.fps > 0 ? anim.fps : 30.f;
 				seq.frames = anim.frames;
 				seq.delta = seq.delta || (anim.flags & STUDIO_DELTA) != 0;
+				seq.layer = seq.layer || seq.delta;
 			} else {
 				seq.animation = -1;
 			}
 			model.m_sequences.push_back(std::move(seq));
+		}
+	}
+	// The base poses of gestures ("..._45default" next to "..._45inDelta"/"..._45outDelta") are
+	// layers too: the game subtracts them, they are not meant to be played.
+	for (auto& seq : model.m_sequences) {
+		const std::string lower = lowerName(seq.name);
+		if (seq.layer || !lower.ends_with("default")) continue;
+		const std::string stem = seq.name.substr(0, seq.name.size() - 7);
+		if (model.findSequence(stem + "inDelta") >= 0 || model.findSequence(stem + "outDelta") >= 0 || model.findSequence(stem + "Delta") >= 0) {
+			seq.layer = true;
 		}
 	}
 	return model;
@@ -372,6 +400,16 @@ int AnimatedModel::addKeyframedSequence(StudioSequence sequence, std::vector<std
 	return int(m_sequences.size()) - 1;
 }
 
+int AnimatedModel::idleSequence() const {
+	for (std::size_t i = 0; i < m_sequences.size(); ++i) {
+		if (!m_sequences[i].layer && iequals(m_sequences[i].activity, "ACT_IDLE")) return int(i);
+	}
+	for (std::size_t i = 0; i < m_sequences.size(); ++i) {
+		if (!m_sequences[i].layer && m_sequences[i].looping && toLower(m_sequences[i].name).find("idle") != std::string::npos) return int(i);
+	}
+	return -1;
+}
+
 int AnimatedModel::findSequence(std::string_view name) const {
 	for (std::size_t i = 0; i < m_sequences.size(); ++i) {
 		if (iequals(m_sequences[i].name, name)) return int(i);
@@ -406,7 +444,7 @@ AnimatedModel::AnimData AnimatedModel::animData(const File& file, const AnimDesc
 		block = mdl.i32(entry);
 		index = mdl.i32(entry + 4);
 	}
-	if (block < 0) return {};
+	if (block < 0 || (anim.flags & STUDIO_ALLZEROS) != 0) return {};
 	if (block == 0) return {&file.mdl, anim.offset + index, local};
 	if (block >= int(file.aniBlocks.size()) || file.ani.empty()) return {};
 	const auto [start, end] = file.aniBlocks[std::size_t(block)];
@@ -512,6 +550,13 @@ void AnimatedModel::localPose(int sequence, float cycle, std::vector<AnimVec>& p
 	const File& file = m_files[std::size_t(seq.model)];
 	if (seq.animation < 0 || seq.animation >= int(file.anims.size())) return;
 	const AnimDesc& anim = file.anims[std::size_t(seq.animation)];
+	if (seq.delta) {
+		// A delta only says how far to move from another pose: shown on the idle (as the game
+		// layers it over what the NPC does), not on the rest pose it would bend out of shape.
+		if (const int idle = idleSequence(); idle >= 0 && idle != sequence && !m_sequences[std::size_t(idle)].delta) {
+			localPose(idle, 0.f, pos, quat);
+		}
+	}
 	// The include's own rest pose first for the bones it has (CalcVirtualAnimation), then the data.
 	if (seq.model != 0 && !seq.delta) {
 		for (std::size_t b = 0; b < file.bones.size(); ++b) {

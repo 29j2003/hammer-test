@@ -1102,6 +1102,7 @@ std::vector<std::byte> encodeAnimation(const StudioModelSpec& spec, const Studio
 	const auto valueOf = [&](int frame, std::size_t bone, int k) -> float {
 		const auto& rest = spec.bones[bone];
 		if (frame < int(anim.frames.size()) && bone < anim.frames[std::size_t(frame)].size()) return anim.frames[std::size_t(frame)][bone][std::size_t(k)];
+		if (anim.delta) return 0.f;   // a delta leaves the bones it does not list as they are
 		return k < 3 ? rest.pos[std::size_t(k)] : rest.rot[std::size_t(k - 3)];
 	};
 	const int n = last - first + 1;
@@ -1128,8 +1129,9 @@ std::vector<std::byte> encodeAnimation(const StudioModelSpec& spec, const Studio
 			const std::size_t streamBytes = 2 + 2 * std::size_t(n);
 			out.resize(entry + 4 + 12 + 6 * streamBytes, std::byte{0});
 			out[entry] = std::byte(bone);
-			out[entry + 1] = std::byte(0x08 | 0x04);   // ANIMROT | ANIMPOS
-			const auto& rest = spec.bones[bone];
+			out[entry + 1] = std::byte(0x08 | 0x04 | (anim.delta ? 0x10 : 0));   // ANIMROT | ANIMPOS (| DELTA)
+			// A delta's values are offsets on their own; the others count from the rest pose.
+			const auto rest = anim.delta ? StudioModelSpec::Bone{} : spec.bones[bone];
 			for (int k = 0; k < 6; ++k) {
 				const std::size_t stream = entry + 16 + std::size_t(k) * streamBytes;
 				const std::size_t pointer = entry + 4 + std::size_t(k) * 2;          // rot x y z, then pos x y z
@@ -1291,14 +1293,19 @@ StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
 			put32(mdl, desc + 4, static_cast<std::int32_t>(putString(mdl, "@" + anim.name) - desc));
 			putFloat(mdl, desc + 8, anim.fps);
 			put32(mdl, desc + 16, frames);
-			// The sequence: flags, activity, one blend that is this animation.
-			put32(mdl, seq + 12, anim.loop ? 1 : 0);
+			put32(mdl, desc + 12, anim.delta ? 0x0004 : 0);
+			// The sequence: flags, activity, its blend (this animation, or the listed ones).
+			put32(mdl, seq + 12, (anim.loop ? 1 : 0) | (anim.delta ? 0x0004 : 0));
 			put32(mdl, seq + 8, static_cast<std::int32_t>(putString(mdl, anim.activity) - seq));
-			const std::size_t blend = grow(mdl, 4);
-			const auto index = static_cast<std::int16_t>(i);
-			std::memcpy(mdl.data() + blend, &index, 2);
+			const std::vector<int> blendOf = anim.blend.empty() ? std::vector<int>{int(i)} : anim.blend;
+			const std::size_t blend = grow(mdl, 2 * blendOf.size() + 2);
+			for (std::size_t k = 0; k < blendOf.size(); ++k) {
+				const auto index = static_cast<std::int16_t>(blendOf[k]);
+				std::memcpy(mdl.data() + blend + 2 * k, &index, 2);
+			}
+			put32(mdl, seq + 56, static_cast<std::int32_t>(blendOf.size()));
 			put32(mdl, seq + 60, static_cast<std::int32_t>(blend - seq));
-			put32(mdl, seq + 68, 1);
+			put32(mdl, seq + 68, static_cast<std::int32_t>(blendOf.size()));
 			put32(mdl, seq + 72, 1);
 			// Where a run of frames goes: into the .mdl (block 0, from the desc) or the .ani (block 1).
 			const auto store = [&](int first, int last) -> std::pair<std::int32_t, std::int32_t> {

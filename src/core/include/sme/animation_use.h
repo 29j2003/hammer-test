@@ -28,6 +28,16 @@ struct SequenceKey {
 /// Whether the class is an NPC (npc_* / monster_*): its animation is set through a pose helper.
 [[nodiscard]] bool isNpcClass(std::string_view classname);
 
+/// The models the FGD gives its NPC classes (studio()/studioprop() of npc_* / monster_*), lower case.
+[[nodiscard]] std::vector<std::string> npcClassModels(const EntityCatalog& catalog);
+
+/// Whether a model is a character - an NPC, a creature, a person - rather than a prop: one of
+/// `npcModels` (npcClassModels, the map's NPCs), or in a character's folder or with a character's
+/// name (humans/, characters/, zombie, combine_soldier, alyx ...); props_*, weapons, items and gibs
+/// are not. Animation-only files (..._shared, _gestures, _postures, _ss, _anims) are not either:
+/// they have nothing to show.
+[[nodiscard]] bool isCharacterModel(std::string_view path, const std::vector<std::string>& npcModels = {});
+
 /// The model an entity animates: its "model" key; for scripted_sequence & co. the model of the
 /// NPC they name (m_iszEntity / target); else the class's FGD studio() model. Empty if none.
 [[nodiscard]] std::string animatedModel(const MapDocument& doc, const Entity& entity, const EntityCatalog* catalog);

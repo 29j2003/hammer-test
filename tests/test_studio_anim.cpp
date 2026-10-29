@@ -3,12 +3,15 @@
 
 #include "fixture.h"
 
+#include <sme/animation_use.h>
 #include <sme/filesystem.h>
 #include <sme/studio_anim.h>
 #include <sme/studio_model.h>
+#include <sme/text.h>
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <numbers>
@@ -207,6 +210,106 @@ TEST_CASE("animation: long ones in sections, data in the .ani, raw rotations, in
 		skinVertices(*geometry, model->skinning(1, 1), moved);
 		CHECK(centre(*geometry, moved, 1).y == doctest::Approx(-36).epsilon(0.01));
 	}
+}
+
+TEST_CASE("animation: deltas on the idle, gestures apart, blends at their centre, duplicates once, include lengths") {
+	std::string error;
+	// The base: an idle that rolls the root by 0.3; a delta "nod" that adds 0.2 to it; the base
+	// pose of a gesture pair; an aim blend of three poses.
+	auto base = armSpec();
+	base.include = "models/test_anim_shared.mdl";
+	base.animations.push_back({"idle", "ACT_IDLE", 30, true, roll(0.3f, 0.3f, 2)});
+	base.animations.push_back({"nod_delta", "ACT_GESTURE_NOD", 30, false, {}});
+	base.animations.back().delta = true;
+	base.animations.back().frames = {{{0, 0, 0, 0.2f, 0, 0}, {0, 0, 0, 0, 0, 0}}, {{0, 0, 0, 0.2f, 0, 0}, {0, 0, 0, 0, 0, 0}}};
+	base.animations.push_back({"turn_45default", "", 30, false, roll(0, 0, 1)});
+	base.animations.push_back({"turn_45inDelta", "", 30, false, {{{0, 0, 0, 0.1f, 0, 0}, {0, 0, 0, 0, 0, 0}}}});
+	base.animations.back().delta = true;
+	base.animations.push_back({"aim_left", "", 30, false, roll(-0.5f, -0.5f, 1)});
+	base.animations.push_back({"aim_mid", "", 30, false, roll(0.1f, 0.1f, 1)});
+	base.animations.push_back({"aim_right", "", 30, false, roll(0.5f, 0.5f, 1)});
+	base.animations.push_back({"aim", "ACT_AIM", 30, true, roll(0, 0, 1)});
+	base.animations.back().blend = {4, 5, 6};
+	const auto baseFiles = test::makeStudioModel(base);
+	// Two include models: both have "wave" (the first one wins, the other is noted), one has the idle too.
+	auto sharedSpec = [](float to) {
+		test::StudioModelSpec shared;
+		shared.groups.push_back({"body", {{"none", {}}}});
+		shared.bones = {{"hand", -1, {0, 0, 32}, {0, 0, 0}}, {"root", -1, {0, 0, 0}, {0, 0, 0}}};
+		shared.animations.push_back({"wave", "ACT_SIGNAL1", 15, false, {}});
+		for (int f = 0; f < 31; ++f) shared.animations.back().frames.push_back({{0, 0, 32, 0, 0, 0}, {0, 0, 0, to * float(f) / 30.f, 0, 0}});
+		shared.animations.push_back({"IDLE", "ACT_IDLE", 30, true, roll(0, 0, 2)});
+		return shared;
+	};
+	const auto sharedFiles = test::makeStudioModel(sharedSpec(PI / 2));
+	const auto otherFiles = test::makeStudioModel(sharedSpec(-PI / 2));
+	const auto model = AnimatedModel::fromFiles({{"models/test_anim.mdl", baseFiles.mdl, {}},
+	                                             {"models/test_anim_shared.mdl", sharedFiles.mdl, {}},
+	                                             {"models/test_anim_other.mdl", otherFiles.mdl, {}}},
+	                                            &error);
+	REQUIRE_MESSAGE(model, error);
+	const auto& seqs = model->sequences();
+	const auto find = [&](const char* name) {
+		const int i = model->findSequence(name);
+		REQUIRE(i >= 0);
+		return i;
+	};
+
+	// Gestures and layers apart; plain animations not.
+	CHECK_FALSE(seqs[std::size_t(find("idle"))].layer);
+	CHECK(seqs[std::size_t(find("nod_delta"))].delta);
+	CHECK(seqs[std::size_t(find("nod_delta"))].layer);
+	CHECK(seqs[std::size_t(find("turn_45default"))].layer);   // the base pose of turn_45inDelta
+	CHECK(seqs[std::size_t(find("turn_45inDelta"))].layer);
+	CHECK_FALSE(seqs[std::size_t(find("aim"))].layer);
+	CHECK(model->idleSequence() == find("idle"));
+
+	// A delta is shown on the idle: 0.3 + 0.2, not 0.2 on the rest pose.
+	std::vector<AnimVec> pos;
+	std::vector<AnimQuat> quat;
+	model->localPose(find("nod_delta"), 0, pos, quat);
+	CHECK(quat[0].x == doctest::Approx(std::sin(0.25f)).epsilon(0.01));
+	CHECK(quat[0].w == doctest::Approx(std::cos(0.25f)).epsilon(0.01));
+
+	// A blend of three: the middle one stands for it.
+	const auto& aim = seqs[std::size_t(find("aim"))];
+	CHECK(aim.blends == 3);
+	model->localPose(find("aim"), 0, pos, quat);
+	CHECK(quat[0].x == doctest::Approx(std::sin(0.05f)).epsilon(0.01));
+
+	// Duplicates: one entry each, the first file's, the other files noted; "IDLE" is the base's "idle".
+	CHECK(std::count_if(seqs.begin(), seqs.end(), [](const StudioSequence& q) { return iequals(q.name, "wave"); }) == 1);
+	CHECK(std::count_if(seqs.begin(), seqs.end(), [](const StudioSequence& q) { return iequals(q.name, "idle"); }) == 1);
+	const auto& wave = seqs[std::size_t(find("wave"))];
+	CHECK(wave.model == 1);
+	CHECK(wave.alsoIn == std::vector<std::string>{"models/test_anim_other.mdl"});
+	CHECK(seqs[std::size_t(find("idle"))].model == 0);
+	CHECK(seqs[std::size_t(find("idle"))].alsoIn.size() == 2);
+
+	// An include model's animation has its own length and plays: 31 frames at 15 fps, the root
+	// (second in the include's bone list, first in the model's) turning to a quarter turn.
+	CHECK(wave.frames == 31);
+	CHECK(wave.duration() == doctest::Approx(2.0));
+	model->localPose(find("wave"), 0.5f, pos, quat);
+	CHECK(quat[0].x == doctest::Approx(std::sin(PI / 8)).epsilon(0.01));
+	model->localPose(find("wave"), 1.f, pos, quat);
+	CHECK(quat[0].x == doctest::Approx(std::sin(PI / 4)).epsilon(0.01));
+}
+
+TEST_CASE("animation pages: characters apart from props") {
+	const std::vector<std::string> fgd{"models/odd/thing.mdl"};
+	CHECK(isCharacterModel("models/humans/group01/male_01.mdl"));
+	CHECK(isCharacterModel("models/Combine_Soldier.mdl"));
+	CHECK(isCharacterModel("models/zombie/classic.mdl"));
+	CHECK(isCharacterModel("models/alyx.mdl"));
+	CHECK(isCharacterModel("models/odd/thing.mdl", fgd));         // the FGD gives it to an NPC class
+	CHECK_FALSE(isCharacterModel("models/props_c17/oildrum001.mdl"));
+	CHECK_FALSE(isCharacterModel("models/props_junk/watermelon01.mdl"));
+	CHECK_FALSE(isCharacterModel("models/weapons/w_smg1.mdl"));
+	CHECK_FALSE(isCharacterModel("models/humans/male_shared.mdl"));  // animations only
+	CHECK_FALSE(isCharacterModel("models/humans/male_gestures.mdl"));
+	CHECK_FALSE(isCharacterModel("models/gibs/hgibs.mdl"));
+	CHECK_FALSE(isCharacterModel("models/odd/thing.mdl"));
 }
 
 TEST_CASE("animation: broken files never crash and keep the rest pose") {
