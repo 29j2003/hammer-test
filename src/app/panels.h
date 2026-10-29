@@ -85,6 +85,8 @@ private:
 	QLabel* m_summary;
 	std::vector<Problem> m_problems;
 	std::vector<Problem> m_leaks;
+	std::optional<FeatureBundle> m_bundle;   ///< The features Mapsmith brings (read once, again with "Check map")
+	bool m_bundleRead = false;
 	CheckCache m_cache;            ///< Models and sounds read by the checks (cleared with the game or "Check map")
 };
 

@@ -1,8 +1,10 @@
 # The mod's features (mapbase-fidelity, the add-on in mod/) built on Mapbase for Windows, so that
 # Mapsmith can install them into a mod without a compiler on the user's PC.
 #   1. Mapbase at the commit in mod/MAPBASE, with mod/mapbase.patch and the add-on's files
-#   2. VPC (Mapbase's creategameprojects / createmaptoolsprojects) and MSBuild with Visual Studio
-#      2022 (toolset v143): client and server for HL2 and Episodic, the shader DLL, VRAD
+#   2. VPC (Mapbase's creategameprojects / createshadersprojects / createmaptoolsprojects) and
+#      MSBuild with Visual Studio 2022 (toolset v143): client, server and Mapbase's shaders
+#      (game_shader_dx9.dll - a mod without it has no SDK_* shaders and the add-on's screen passes
+#      draw wireframe lines) for HL2 and Episodic, the add-on's shader DLL, VRAD
 #   3. tools/collect_mod_build.py packs the result as the feature bundle (artifact
 #      "mapsmith-features"); the Windows package puts it next to Mapsmith.exe as features/
 # The bundle is cached by the add-on's files: it is only built again when mod/ (or this build)
@@ -61,8 +63,9 @@ jobs:
         run: |
           reg add "HKLM\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\10.0\Projects\{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}" /v DefaultProjectExtension /t REG_SZ /d vcproj /f
           call creategameprojects.bat || exit /b 1
+          call createshadersprojects.bat || exit /b 1
           call createmaptoolsprojects.bat || exit /b 1
-          python ..\..\..\tools\repair_vpc_solution.py games.sln maptools.sln || exit /b 1
+          python ..\..\..\tools\repair_vpc_solution.py games.sln shaders.sln maptools.sln || exit /b 1
       - name: Build
         if: steps.cache.outputs.cache-hit != 'true'
         shell: pwsh
@@ -77,6 +80,9 @@ jobs:
           # Client and server (HL2, Episodic) and the add-on's shaders.
           & $msbuild games.sln -m -nologo -v:minimal "-p:Configuration=Release;Platform=$(Get-Platform games.sln)"
           if ($LASTEXITCODE -ne 0) { throw "games.sln failed" }
+          # Mapbase's own shaders (game_shader_dx9.dll, "Shaders (HL2)" and "Shaders (Episodic)").
+          & $msbuild shaders.sln -m -nologo -v:minimal "-p:Configuration=Release;Platform=$(Get-Platform shaders.sln)"
+          if ($LASTEXITCODE -ne 0) { throw "shaders.sln failed" }
           # VRAD only (the other map tools stay Mapbase's).
           $projects = [regex]::Matches((Get-Content maptools.sln -Raw), 'Project\("\{[^}]+\}"\)\s*=\s*"([^"]+)"') |
             ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '^(?i)vrad_(dll|launcher)$' }

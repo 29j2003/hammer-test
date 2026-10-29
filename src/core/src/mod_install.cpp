@@ -584,4 +584,82 @@ bool featuresOutdated(const FeatureBundle& bundle, const InstalledFeatures& inst
 	return bundle.version != installed.version;
 }
 
+std::vector<std::string> missingFeatureFiles(const FeatureBundle& bundle, const fs::path& modDir) {
+	std::vector<std::string> missing;
+	const auto gameinfo = readFileText(modDir / "gameinfo.txt");
+	if (!gameinfo) return missing;
+	std::error_code ec;
+	for (const auto& copy : featureInstallPlan(bundle, modBranch(*gameinfo))) {
+		if (!fs::is_regular_file(below(modDir, copy.to), ec)) missing.push_back(copy.to);
+	}
+	return missing;
+}
+
+std::optional<std::uint32_t> peLinkTime(std::span<const std::byte> data) {
+	const auto u16 = [&data](std::size_t at) { return std::uint32_t(data[at]) | std::uint32_t(data[at + 1]) << 8; };
+	const auto u32 = [&](std::size_t at) { return u16(at) | u16(at + 2) << 16; };
+	if (data.size() < 0x40 || data[0] != std::byte('M') || data[1] != std::byte('Z')) return std::nullopt;
+	const std::size_t pe = u32(0x3C);   // e_lfanew
+	if (pe > data.size() || data.size() - pe < 12) return std::nullopt;
+	if (data[pe] != std::byte('P') || data[pe + 1] != std::byte('E') || data[pe + 2] != std::byte(0) || data[pe + 3] != std::byte(0)) {
+		return std::nullopt;
+	}
+	return u32(pe + 8);   // COFF header: Machine, NumberOfSections, TimeDateStamp
+}
+
+std::optional<std::uint32_t> peLinkTimeOfFile(const fs::path& file) {
+	std::ifstream in(file, std::ios::binary);
+	if (!in) return std::nullopt;
+	std::vector<std::byte> head(4096);
+	in.read(reinterpret_cast<char*>(head.data()), std::streamsize(head.size()));
+	head.resize(std::size_t(in.gcount()));
+	return peLinkTime(head);
+}
+
+const std::vector<std::string>& mapbaseModDlls() {
+	static const std::vector<std::string> dlls = {"bin/client.dll", "bin/server.dll", "bin/game_shader_dx9.dll"};
+	return dlls;
+}
+
+std::vector<std::string> copyMapbaseBin(const fs::path& sourceModsDir, const fs::path& modDir) {
+	std::vector<std::string> copied;
+	const auto gameinfo = readFileText(modDir / "gameinfo.txt");
+	if (!gameinfo) return copied;
+	const fs::path from = sourceModsDir / ("mapbase_" + std::string(modBranchName(modBranch(*gameinfo)))) / "bin";
+	std::error_code ec;
+	for (const auto& dll : mapbaseModDlls()) {
+		const fs::path source = below(from.parent_path(), dll);
+		const fs::path target = below(modDir, dll);
+		if (!fs::is_regular_file(source, ec) || fs::exists(target, ec)) continue;
+		fs::create_directories(target.parent_path(), ec);
+		if (fs::copy_file(source, target, ec) && !ec) copied.push_back(dll);
+	}
+	return copied;
+}
+
+ModBinState checkModBin(const fs::path& modDir, const FeatureBundle* bundle) {
+	ModBinState state;
+	const auto gameinfo = readFileText(modDir / "gameinfo.txt");
+	if (!gameinfo) return state;
+	std::vector<std::string> needed = mapbaseModDlls();
+	if (readInstalledFeatures(modDir)) needed.emplace_back("bin/game_shader_dx6.dll");
+	const std::string branch = "bin/" + std::string(modBranchName(modBranch(*gameinfo))) + "/";
+	std::error_code ec;
+	for (const auto& dll : needed) {
+		const fs::path file = below(modDir, dll);
+		if (!fs::is_regular_file(file, ec)) {
+			state.missing.push_back(dll);
+			continue;
+		}
+		if (!bundle) continue;
+		const auto* shipped = bundle->find(branch + dll.substr(4));
+		if (!shipped) shipped = bundle->find(dll);
+		if (!shipped || fileSha256(file) == shipped->sha256) continue;
+		const auto have = peLinkTimeOfFile(file);
+		const auto ships = peLinkTimeOfFile(below(bundle->root, shipped->path));
+		if (have && ships && *have < *ships) state.outdated.push_back(dll);
+	}
+	return state;
+}
+
 } // namespace sme

@@ -29,6 +29,8 @@ jobs:
           python-version: "3.12"
       - name: Privacy (no e-mail addresses or secrets)
         run: python -I tools/check_privacy.py
+      - name: Tool tests (feature bundle contents)
+        run: python -I -m unittest discover -s tools/tests
 
   linux:
     needs: checks

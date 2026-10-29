@@ -20,6 +20,7 @@
 #include <sme/entity_catalog.h>
 #include <sme/history.h>
 #include <sme/map.h>
+#include <sme/mod_install.h>
 
 namespace sme {
 
@@ -53,6 +54,7 @@ struct Problem {
 		EntityOutsideWorld,     ///< layout_checks: a point entity in the void
 		LightmapScale,          ///< layout_checks: extreme lightmap scales (to = the new scale)
 		NpcsWithoutNodes,       ///< layout_checks: NPCs but no info_node (objects = the NPCs)
+		ModBinIncomplete,       ///< A Mapbase mod's bin lacks (or has old) client/server/shader DLLs (action installFeatures)
 	};
 
 	Severity severity = Severity::Warning;
@@ -62,7 +64,8 @@ struct Problem {
 	Selection objects;          ///< Objects to select/show
 	std::string fixLabel;       ///< Button text if an autofix exists, else empty
 	/// An action of the app instead of a map edit (the button runs it; applyFix does nothing):
-	/// "buildCubemaps" = compile with the Cubemaps step on.
+	/// "buildCubemaps" = compile with the Cubemaps step on; "installFeatures" = install the
+	/// features Mapsmith brings into the mod (Project > Features).
 	std::string action;
 
 	// Data for the autofix.
@@ -98,6 +101,10 @@ struct CheckContext {
 	/// the compiled map is only looked at when it is not older than the .vmf. Empty: skipped.
 	std::filesystem::path compiledMap;
 	std::filesystem::path mapSource;
+	/// The open mod's folder when it is built on Mapbase (its bin folder is checked), else empty;
+	/// `bundle`: the features Mapsmith brings (for "older than Mapsmith's"), may be null.
+	std::filesystem::path mapbaseModDir;
+	const FeatureBundle* bundle = nullptr;
 };
 
 /// Runs every check on the map (invalid brushes, missing materials/models, unknown classes, broken outputs, ...).

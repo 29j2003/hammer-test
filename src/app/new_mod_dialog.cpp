@@ -57,6 +57,10 @@ QString createModAndSwitch(Editor* editor, const ModTemplate& mod, const QString
 			const auto installed = installFeatures(*bundle, created.folder, vrad.exists() ? toPath(vrad.absolutePath()) : std::filesystem::path());
 			if (installed.ok) QSettings().setValue(QStringLiteral("features/deployPending/%1").arg(fromPath(created.folder)), true);
 		}
+		// Whatever is still missing in bin/ (no features in this copy of Mapsmith): Mapbase's own
+		// game code and shaders from its game folder next to the mod - without game_shader_dx9.dll
+		// the game would draw its SDK_* materials as wireframe.
+		(void)copyMapbaseBin(steam.sourceModsDir(), created.folder);
 	}
 	// Find it like every other mod and open it.
 	editor->discover(fromPath(steam.root()));
@@ -80,10 +84,20 @@ bool runNewModDialog(Editor* editor, QWidget* parent) {
 	}
 	QString note = QObject::tr("The mod \"%1\" is ready and open. Start Steam once so it shows up in the library.")
 	                   .arg(QString::fromStdString(dialog.modTemplate().title));
-	if (dialog.modTemplate().base == ModBase::Mapbase) {
-		note += editor->gameEntry() && readInstalledFeatures(editor->gameEntry()->gameDir)
-		            ? QObject::tr("\n\nMapbase's game code with Mapsmith's features is installed - the mod runs as it is.")
-		            : QObject::tr("\n\nMapbase: put Mapbase's game code (bin/client.dll and server.dll, or your own build) into the mod's bin folder.");
+	if (dialog.modTemplate().base == ModBase::Mapbase && editor->gameEntry()) {
+		const auto modDir = editor->gameEntry()->gameDir;
+		const auto bin = checkModBin(modDir, nullptr);
+		QStringList missing;
+		for (const auto& file : bin.missing) missing << QString::fromStdString(file);
+		if (!missing.isEmpty()) {
+			note += QObject::tr("\n\nMapbase: the mod's bin folder still lacks %1 - copy them from Mapbase (mapbase_episodic/bin) or use the "
+			                    "Windows version of Mapsmith, which brings them.")
+			            .arg(missing.join(QStringLiteral(", ")));
+		} else if (readInstalledFeatures(modDir)) {
+			note += QObject::tr("\n\nMapbase's game code with Mapsmith's features is installed - the mod runs as it is.");
+		} else {
+			note += QObject::tr("\n\nMapbase's game code and shaders are in the mod - it runs as it is.");
+		}
 	}
 	QMessageBox::information(parent, QObject::tr("New mod"), note);
 	return true;
