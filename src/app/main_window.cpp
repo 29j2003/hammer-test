@@ -36,6 +36,7 @@
 #include "tool_panel.h"
 #include "updater.h"
 #include "viewport.h"
+#include "dialog_fit.h"
 #include "wheel_guard.h"
 
 #include <QAction>
@@ -249,6 +250,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	setDockNestingEnabled(true);
 	setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::AllowNestedDocks);
 	// The mouse wheel scrolls panels instead of switching tabs or changing fields (once per app).
+	DialogFitter::install();   // every dialog and window fits the screen (scrolls when taller)
 	if (!qApp->property("smeWheelGuard").toBool()) {
 		qApp->installEventFilter(new WheelGuard(qApp));
 		qApp->setProperty("smeWheelGuard", true);

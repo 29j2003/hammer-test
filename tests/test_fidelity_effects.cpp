@@ -519,11 +519,11 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 	                "\t\t}\n\t\tside\n\t\t{\n\t\t\t\"material\" \"brick/shiny\"\n\t\t}\n\t}\n}\n");
 	const auto mapMaterials = vmfMaterialNames({f.root / "pattern/mapsrc/a.vmf", f.root / "pattern/mapsrc/missing.vmf"});
 	{
-		// The map sources of a mod: not the autosaves nor the cordon copies.
+		// The map sources of a mod: not the autosaves (in their folder or as timestamped copies anywhere) nor the cordon copies.
 		const auto dir = f.root / "pattern_sources";
 		std::filesystem::create_directories(dir / "sub" / "autosave");
 		std::filesystem::create_directories(dir / "Autosave");
-		for (const char* file : {"a.vmf", "sub/b.VMF", "sub/autosave/b.20261028.vmf", "Autosave/a.1.vmf", "a_cordon.vmf", "notes.txt"}) {
+		for (const char* file : {"a.vmf", "sub/b.VMF", "sub/autosave/b.20261028.vmf", "Autosave/a.1.vmf", "a_cordon.vmf", "notes.txt", "test.20261028-084357.vmf"}) {
 			std::ofstream(dir / file) << "versioninfo\n{\n}\n";
 		}
 		const auto sources = mapSourceFiles(dir);
