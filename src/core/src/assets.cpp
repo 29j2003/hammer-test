@@ -70,6 +70,7 @@ constexpr std::size_t HDR_VERSION = 4;
 constexpr std::size_t HDR_NAME = 12;
 constexpr std::size_t HDR_HULL_MIN = 104;
 constexpr std::size_t HDR_FLAGS = 152;
+constexpr std::size_t HDR_NUM_BONES = 156;
 constexpr std::size_t HDR_NUM_SEQ = 188;
 constexpr std::size_t HDR_SEQ_INDEX = 192;
 constexpr std::size_t HDR_NUM_TEXTURES = 204;
@@ -208,6 +209,7 @@ std::optional<ModelInfo> readModelInfo(std::span<const std::byte> data, std::str
 	info.mass = r.f32(HDR_MASS);
 	if (!(info.mass >= 0 && info.mass < 1e7f)) info.mass = 0;   // also NaN
 	info.skinCount = std::clamp(r.i32(HDR_NUM_SKINFAMILIES), 1, MAX_ITEMS);
+	info.boneCount = std::clamp(r.i32(HDR_NUM_BONES), 0, MAX_ITEMS);
 	const int keyValueIndex = r.i32(HDR_KEYVALUE_INDEX), keyValueSize = r.i32(HDR_KEYVALUE_SIZE);
 	if (keyValueIndex > 0 && keyValueSize > 0 && r.fits(static_cast<std::size_t>(keyValueIndex), static_cast<std::size_t>(keyValueSize))) {
 		info.keyValues = r.str(keyValueIndex, static_cast<std::size_t>(std::min(keyValueSize, 65536)));

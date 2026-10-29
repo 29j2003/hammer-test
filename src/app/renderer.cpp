@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <tuple>
 
@@ -1116,7 +1117,18 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			PickItem pick;
 			pick.entityId = entity.id;
 			pick.bounds = box;
+			pick.model = geometry;
+			pick.rotation = r;
+			pick.origin = o;
+			pick.seeThrough = edit::isSeeThroughHelper(entity);
 			m_pickItems.push_back(std::move(pick));
+			if (edit::isSeeThroughHelper(entity)) {
+				// Its own sprite at its feet too: the spot to click when it stands where its NPC stands.
+				Bounds marker;
+				marker.add(o - Vec3{8, 8, 0});
+				marker.add(o + Vec3{8, 8, 16});
+				boxes.push_back({entity.id, marker, color, QString::fromStdString(edit::entitySprite(entity, catalog))});
+			}
 		} else {
 			boxes.push_back({entity.id, box, color, QString::fromStdString(edit::entitySprite(entity, catalog))});
 		}
@@ -2282,13 +2294,39 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 	if (!m_doc) {
 		return std::nullopt;
 	}
+	// Exact hits (brush faces, point entity boxes, model triangles) compete by distance; a
+	// model's box without a triangle hit counts at its back side. Point entity boxes win over
+	// models up to SMALL_BONUS units in front of them (not over brushes).
+	constexpr double SMALL_BONUS = 16;
+	enum class Kind { Brush, Box, Model, StandIn };
 	std::optional<PickResult> best;
+	double bestRank = 0;
+	Kind bestKind = Kind::Brush;
+	double nearestBrush = std::numeric_limits<double>::max();
+	struct Candidate {
+		PickResult result;
+		double rank;
+		Kind kind;
+	};
+	std::vector<Candidate> entityHits;
+	const auto offer = [&](const PickResult& r, double rank, Kind kind) {
+		if (kind == Kind::Brush) {
+			nearestBrush = std::min(nearestBrush, rank);
+			if (!best || rank < bestRank) {
+				best = r;
+				bestRank = rank;
+				bestKind = kind;
+			}
+			return;
+		}
+		entityHits.push_back({r, rank, kind});
+	};
 	for (const auto& item : m_pickItems) {
 		if ((item.solid.solidId != 0 && item.entityId == 0 && m_hidden.contains(item.solid)) || (item.entityId != 0 && m_hidden.containsEntity(item.entityId))) {
 			continue;
 		}
 		const double boxHit = intersect(ray, item.bounds);
-		if (boxHit < 0 || (best && boxHit > best->distance)) {
+		if (boxHit < 0 || (best && bestKind == Kind::Brush && boxHit > bestRank + SMALL_BONUS)) {
 			continue;
 		}
 		if (item.solid.solidId == 0) {
@@ -2296,9 +2334,50 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 				continue;
 			}
 			PickResult r;
+			r.entityId = item.entityId;
+			if (item.model) {
+				// The triangles, in the model's own space (the rotation's transpose turns back).
+				const Vec3 d = ray.direction, o = ray.origin - item.origin;
+				const auto back = [&item](const Vec3& v) {
+					const auto& m = item.rotation.m;
+					return Vec3{m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z, m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z,
+					            m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z};
+				};
+				const Ray local{back(o), back(d)};
+				const auto& vertices = item.model->vertices;
+				const auto& indices = item.model->indices;
+				double nearest = -1;
+				Vec3 normal;
+				for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
+					if (indices[t] >= vertices.size() || indices[t + 1] >= vertices.size() || indices[t + 2] >= vertices.size()) continue;
+					const auto& pa = vertices[indices[t]].position;
+					const auto& pb = vertices[indices[t + 1]].position;
+					const auto& pc = vertices[indices[t + 2]].position;
+					const Vec3 a{pa[0], pa[1], pa[2]}, b{pb[0], pb[1], pb[2]}, c{pc[0], pc[1], pc[2]};
+					double dist;
+					if (intersectTriangle(local, a, b, c, dist) && (nearest < 0 || dist < nearest)) {
+						nearest = dist;
+						normal = normalize(cross(b - a, c - a));
+					}
+				}
+				if (nearest >= 0) {
+					r.distance = nearest;
+					r.point = ray.origin + ray.direction * nearest;
+					r.normal = item.rotation * normal;
+					offer(r, nearest, item.seeThrough ? Kind::StandIn : Kind::Model);
+				} else {
+					// Between the legs: the box, at its back side (anything exact in front wins).
+					const Vec3 far = ray.origin + ray.direction * (boxHit + length(item.bounds.size()));
+					const double exit = intersect(Ray{far, -ray.direction}, item.bounds);
+					r.distance = boxHit;
+					r.point = ray.origin + ray.direction * boxHit;
+					r.normal = -ray.direction;
+					offer(r, exit >= 0 ? boxHit + length(item.bounds.size()) - exit : boxHit, item.seeThrough ? Kind::StandIn : Kind::Model);
+				}
+				continue;
+			}
 			r.distance = boxHit;
 			r.point = ray.origin + ray.direction * boxHit;
-			r.entityId = item.entityId;
 			// Normal of the box side that was hit.
 			const Vec3 c = item.bounds.center(), half = item.bounds.size() * 0.5, local = r.point - c;
 			int axis = 0;
@@ -2312,7 +2391,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 			}
 			r.normal = {};
 			r.normal[axis] = local[axis] >= 0 ? 1 : -1;
-			best = r;
+			offer(r, boxHit, Kind::Box);
 			continue;
 		}
 		if (item.detached && facesOnly) {
@@ -2326,7 +2405,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 			// Displacements: pick the triangles; other faces of the brush still use the planes.
 			for (std::size_t t = 0; t + 2 < item.triangles.size(); t += 3) {
 				double dist;
-				if (intersectTriangle(ray, item.triangles[t], item.triangles[t + 1], item.triangles[t + 2], dist) && (!best || dist < best->distance)) {
+				if (intersectTriangle(ray, item.triangles[t], item.triangles[t + 1], item.triangles[t + 2], dist) && (!best || dist < bestRank)) {
 					PickResult r;
 					r.distance = dist;
 					r.point = ray.origin + ray.direction * dist;
@@ -2334,12 +2413,12 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 					r.solid = item.solid;
 					r.entityId = item.entityId;
 					r.sideId = solid->sides[static_cast<std::size_t>(item.triangleSides[t / 3])].id;
-					best = r;
+					offer(r, dist, Kind::Brush);
 				}
 			}
 			continue;
 		}
-		if (const auto hit = intersect(ray, *solid); hit && (!best || hit->distance < best->distance)) {
+		if (const auto hit = intersect(ray, *solid); hit && (!best || hit->distance < bestRank)) {
 			PickResult r;
 			r.distance = hit->distance;
 			r.point = ray.origin + ray.direction * hit->distance;
@@ -2347,7 +2426,19 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 			r.solid = item.solid;
 			r.entityId = item.entityId;
 			r.sideId = solid->sides[static_cast<std::size_t>(hit->sideIndex)].id;
-			best = r;
+			offer(r, hit->distance, Kind::Brush);
+		}
+	}
+	// Point entities and models against the nearest brush and each other.
+	for (const auto& hit : entityHits) {
+		double rank = hit.rank;
+		if (hit.kind == Kind::Box && hit.rank <= nearestBrush) rank -= SMALL_BONUS;   // a helper inside a model
+		if (hit.kind == Kind::StandIn) rank += 0.5;                                    // ties go to the real NPC
+		if (hit.rank > nearestBrush) continue;                                         // behind a wall
+		if (!best || rank < bestRank) {
+			best = hit.result;
+			bestRank = rank;
+			bestKind = hit.kind;
 		}
 	}
 	return best;

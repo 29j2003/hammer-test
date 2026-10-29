@@ -2,9 +2,12 @@
 
 #include <sme/animation_use.h>
 
+#include <sme/filesystem.h>
+#include <sme/npc_scripts.h>
 #include <sme/text.h>
 
 #include <algorithm>
+#include <cctype>
 
 namespace sme {
 
@@ -23,9 +26,6 @@ std::string studioHelperModel(const EntityClass& cls) {
 bool isScriptClass(std::string_view classname) {
 	return startsWithI(classname, "scripted_") || startsWithI(classname, "aiscripted_");
 }
-
-// scripted_sequence spawnflags (HL2 FGD): No Interruptions, Override AI, Loop in Post Idle.
-constexpr long long POSE_FLAGS = 32 | 64 | 256;
 
 } // namespace
 
@@ -95,6 +95,107 @@ bool isCharacterModel(std::string_view path, const std::vector<std::string>& npc
 		if (isWord(folder)) return true;
 	}
 	return isWord(stem);
+}
+
+bool isAnimationOnlyModel(std::string_view path) {
+	const std::string lower = toLower(normalizePath(path));
+	if (!lower.ends_with(".mdl")) return false;
+	const std::string stem = lower.substr(lower.find_last_of('/') + 1, lower.size() - lower.find_last_of('/') - 5);
+	for (const std::string_view suffix : {"_shared", "_gestures", "_postures", "_ss", "_anims", "_animations"}) {
+		if (stem.ends_with(suffix)) return true;
+	}
+	return false;
+}
+
+bool isAnimatedModel(const ModelInfo& info) {
+	if (info.boneCount < 2) return false;   // a rigid prop: nothing in it can move
+	if (!info.includeModels.empty()) return true;
+	return std::any_of(info.sequences.begin(), info.sequences.end(), [](const std::string& sequence) {
+		std::string name = toLower(sequence);
+		while (!name.empty() && (std::isdigit(static_cast<unsigned char>(name.back())) || name.back() == '_')) name.pop_back();
+		if (!name.empty() && name.front() == '@') name.erase(0, 1);
+		return !(name.empty() || name == "idle" || name == "ref" || name == "reference" || name == "ragdoll" || name == "bindpose" ||
+		         name == "bind_pose" || name == "a_ref" || name == "still");
+	});
+}
+
+bool hasAnimations(const GameFileSystem& fs, std::string_view path) {
+	if (isAnimationOnlyModel(path)) return false;
+	const auto data = fs.read(normalizePath(path));
+	if (!data) return false;
+	const auto info = readModelInfo(*data);
+	return info && isAnimatedModel(*info);
+}
+
+namespace {
+
+/// The words of a name: runs of letters (digits and other characters split them).
+std::vector<std::string> nameWords(std::string_view text) {
+	std::vector<std::string> words;
+	std::string word;
+	for (const char c : text) {
+		if (std::isalpha(static_cast<unsigned char>(c))) {
+			word += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		} else if (!word.empty()) {
+			words.push_back(std::move(word));
+			word.clear();
+		}
+	}
+	if (!word.empty()) words.push_back(std::move(word));
+	return words;
+}
+
+} // namespace
+
+SequenceSituation classifySequence(std::string_view name, std::string_view activity, bool layer) {
+	using namespace sequence_weapon;
+	const std::string lowerName = toLower(name), lowerActivity = toLower(activity);
+	const std::string both = lowerName + " " + lowerActivity;
+	const auto has = [&both](std::string_view word) { return both.find(word) != std::string::npos; };
+	SequenceSituation out;
+	unsigned weapons = 0;
+	if (has("pistol")) weapons |= PISTOL;
+	if (has("smg")) weapons |= SMG1;
+	if (has("ar2")) weapons |= AR2;
+	if (has("rifle")) weapons |= SMG1 | AR2;
+	if (has("shotgun")) weapons |= SHOTGUN;
+	if (has("rpg")) weapons |= RPG;
+	if (has("crossbow")) weapons |= CROSSBOW;
+	if (has("melee") || has("stunstick") || has("crowbar")) weapons |= MELEE;
+	if (has("grenade") || has("throw")) weapons |= GRENADE;
+	if (weapons == 0 || has("unarmed")) weapons |= UNARMED;
+	out.weapons = weapons;
+
+	const auto nameWordsList = nameWords(lowerName);
+	const auto activityWords = nameWords(lowerActivity);
+	const auto anyWord = [](const std::vector<std::string>& words, auto&& test) { return std::any_of(words.begin(), words.end(), test); };
+	out.crouch = has("crouch") || anyWord(activityWords, [](const std::string& w) { return w == "low"; });
+
+	const auto startsWithAny = [](const std::string& word, std::initializer_list<std::string_view> prefixes) {
+		return std::any_of(prefixes.begin(), prefixes.end(), [&word](std::string_view p) { return word.starts_with(p); });
+	};
+	// Map-named scenes: d1_t01_..., d3_c17_..., ep1_..., ep2_..., e3_...
+	const std::string firstToken = lowerName.substr(0, lowerName.find('_'));
+	const bool mapNamed = firstToken.size() < lowerName.size() && firstToken.size() >= 2 && firstToken.size() <= 3 &&
+	                      (firstToken[0] == 'd' || firstToken.starts_with("ep") || firstToken == "e3") &&
+	                      std::isdigit(static_cast<unsigned char>(firstToken.back())) &&
+	                      std::all_of(firstToken.begin() + (firstToken.starts_with("ep") ? 2 : 1), firstToken.end(),
+	                                  [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; });
+	const bool noActivity = lowerActivity.empty() || lowerActivity == "act_invalid";
+	if (layer || lowerActivity.starts_with("act_gesture") || lowerName.starts_with("g_") || has("gesture")) {
+		out.kind = SequenceKind::Gesture;
+	} else if (mapNamed) {
+		out.kind = SequenceKind::Scene;
+	} else if (anyWord(activityWords, [&](const std::string& w) { return startsWithAny(w, {"walk", "run", "sprint", "jog"}); }) ||
+	           (noActivity && anyWord(nameWordsList, [&](const std::string& w) { return startsWithAny(w, {"walk", "run", "sprint", "jog"}); }))) {
+		out.kind = SequenceKind::Move;
+	} else if (anyWord(activityWords, [](const std::string& w) { return w.find("idle") != std::string::npos || w == "busy"; }) ||
+	           (noActivity && anyWord(nameWordsList, [](const std::string& w) { return w.find("idle") != std::string::npos; }))) {
+		out.kind = SequenceKind::Idle;
+	} else if (noActivity) {
+		out.kind = SequenceKind::Scene;
+	}
+	return out;
 }
 
 std::string animatedModel(const MapDocument& doc, const Entity& entity, const EntityCatalog* catalog) {
@@ -179,39 +280,21 @@ Change useSequence(MapDocument& doc, int entityId, std::string_view sequence, st
 	}
 	if (!isNpcClass(entity->classname())) return {};
 	// An NPC: a scripted_sequence at its feet keeps it in the animation (its pose helper).
+	if (newModel.empty()) return poseNpc(doc, entityId, name);
 	Transaction t(doc, "Use animation");
-	t.touchEntity(entityId);
 	switchModel(t, entityId);
-	Entity* npc = doc.findEntity(entityId);
-	std::string npcName = npc->get("targetname");
-	if (npcName.empty()) {
-		npcName = npc->classname() + "_" + std::to_string(npc->id);
-		npc->set("targetname", npcName);
-	}
-	const Vec3 origin = npc->origin();
-	const std::string angles = npc->get("angles", "0 0 0");
-	for (auto& other : doc.entities) {
-		if (iequals(other.classname(), "scripted_sequence") && iequals(other.get("targetname"), npcName + "_pose")) {
-			t.touchEntity(other.id);
-			other.set("m_iszIdle", name);
-			other.set("m_iszEntity", npcName);
-			return t.finish();
+	Change modelChange = t.finish();
+	Change pose = poseNpc(doc, entityId, name);
+	// One undo step: the model switch keeps the NPC's oldest state, the pose adds the helper.
+	for (auto& e : pose.entities) {
+		auto it = std::find_if(modelChange.entities.begin(), modelChange.entities.end(), [&e](const Change::EntityState& o) { return o.entityId == e.entityId; });
+		if (it != modelChange.entities.end()) {
+			it->after = std::move(e.after);
+		} else {
+			modelChange.entities.push_back(std::move(e));
 		}
 	}
-	Entity script;
-	script.id = doc.newEntityId();
-	t.touchEntity(script.id);
-	script.set("classname", "scripted_sequence");
-	script.set("targetname", npcName + "_pose");
-	script.set("m_iszEntity", npcName);
-	script.set("m_iszIdle", name);
-	script.set("m_fMoveTo", "0");
-	script.set("onplayerdeath", "0");
-	script.setOrigin(origin);
-	script.set("angles", angles);
-	script.set("spawnflags", std::to_string(POSE_FLAGS));
-	doc.entities.push_back(std::move(script));
-	return t.finish();
+	return modelChange;
 }
 
 } // namespace edit
