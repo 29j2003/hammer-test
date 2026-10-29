@@ -103,8 +103,8 @@ struct ModelAttachment {
 [[nodiscard]] std::vector<ModelAttachment> readAttachments(std::span<const std::byte> mdl);
 
 /// The reference .smd of a compiled model: its skeleton at rest and its triangles (turned back
-/// for studiomdl; materials by their file name).
-[[nodiscard]] std::string referenceSmd(const ModelGeometry& geometry, const std::vector<StudioBone>& bones);
+/// for studiomdl; materials by their file name, or with `materialPaths` as the meshes name them).
+[[nodiscard]] std::string referenceSmd(const ModelGeometry& geometry, const std::vector<StudioBone>& bones, bool materialPaths = false);
 /// The .qc of the new model (see the file comment).
 [[nodiscard]] std::string animationModelQc(std::string_view originalModel, const ModelGeometry& geometry, const ModelInfo& info,
                                            const std::vector<ModelAttachment>& attachments, const std::vector<ImportedAnimation>& animations);

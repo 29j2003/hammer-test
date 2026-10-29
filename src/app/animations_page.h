@@ -40,6 +40,8 @@ class QTreeWidget;
 
 namespace sme::app {
 
+class ModelExportDialog;
+
 class AssetBrowser;
 class Editor;
 class MaterialCache;
@@ -79,6 +81,8 @@ public:
 	[[nodiscard]] QTreeWidget* sequenceList() const { return m_sequences; }
 	[[nodiscard]] QListWidget* usesList() const { return m_uses; }
 	[[nodiscard]] QPushButton* useButton() const { return m_use; }
+	/// "Export ...": the export dialog for one animation of the shown model (deletes itself when closed).
+	ModelExportDialog* exportSequence(const QString& sequence);
 	/// Filters of the sequence list (item data: sequence_weapon bits, 0 = all / stance -1 all, 0
 	/// standing, 1 crouching / kind -1 all, else SequenceKind).
 	[[nodiscard]] QComboBox* weaponFilter() const { return m_weaponFilter; }
@@ -174,7 +178,8 @@ private:
 	QListWidget* m_uses = nullptr;
 	QPushButton* m_use = nullptr;
 	QPushButton* m_add = nullptr;
-	QPushButton* m_addSample = nullptr;   ///< "Use a sample ...": the dialog in samples/animations
+	QPushButton* m_addSample = nullptr;
+	QPushButton* m_export = nullptr;   ///< "Use a sample ...": the dialog in samples/animations
 	QTimer* m_timer = nullptr;
 	QTimer* m_mapRefresh = nullptr;
 	QElapsedTimer m_clock;

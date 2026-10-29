@@ -514,7 +514,7 @@ void AnimatedModel::applyFrame(const File& file, const AnimDesc& anim, int frame
 	}
 }
 
-void AnimatedModel::localPose(int sequence, float cycle, std::vector<AnimVec>& pos, std::vector<AnimQuat>& quat) const {
+void AnimatedModel::localPose(int sequence, float cycle, std::vector<AnimVec>& pos, std::vector<AnimQuat>& quat, bool deltaOnIdle) const {
 	const auto& own = bones();
 	pos.resize(own.size());
 	quat.resize(own.size());
@@ -545,7 +545,7 @@ void AnimatedModel::localPose(int sequence, float cycle, std::vector<AnimVec>& p
 	const File& file = m_files[std::size_t(seq.model)];
 	if (seq.animation < 0 || seq.animation >= int(file.anims.size())) return;
 	const AnimDesc& anim = file.anims[std::size_t(seq.animation)];
-	if (seq.delta) {
+	if (seq.delta && deltaOnIdle) {
 		// A delta only says how far to move from another pose: shown on the idle (as the game
 		// layers it over what the NPC does), not on the rest pose it would bend out of shape.
 		if (const int idle = idleSequence(); idle >= 0 && idle != sequence && !m_sequences[std::size_t(idle)].delta) {

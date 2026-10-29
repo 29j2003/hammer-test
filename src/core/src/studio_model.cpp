@@ -155,8 +155,11 @@ bool readVtxMesh(const Reader& vtx, long long mesh, const StripLayout& layout, s
 
 } // namespace
 
-std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int skin, std::string* error,
-                                                const std::function<bool(const std::string&)>& materialExists, int body) {
+namespace {
+
+/// buildModelGeometry, or with `onlyPart` >= 0 the triangles of that body part's model `onlyModel` alone.
+std::optional<ModelGeometry> buildGeometry(const ModelFiles& files, int skin, std::string* error, const std::function<bool(const std::string&)>& materialExists,
+                                           int body, int onlyPart, int onlyModel) {
 	const auto fail = [&](const std::string& message) -> std::optional<ModelGeometry> {
 		if (error) *error = message;
 		return std::nullopt;
@@ -273,6 +276,7 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 	const long long bodyPartIndex = mdl.i32(HDR_BODYPART_INDEX);
 	if (numBodyParts < 0 || !mdl.fits(bodyPartIndex, static_cast<long long>(numBodyParts) * BODYPART_SIZE)) return fail("body parts out of range");
 	if (vtx.i32(VTX_NUM_BODYPARTS) != numBodyParts) return fail("model files do not belong together (.vtx body parts)");
+	if (onlyPart >= numBodyParts) return fail("no such body part");
 	const long long vtxBodyParts = vtx.i32(VTX_BODYPART_OFFSET);
 
 	for (const StripLayout layout : {StripLayout{25, 27}, StripLayout{33, 35}}) {
@@ -283,7 +287,9 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 			const long long part = bodyPartIndex + static_cast<long long>(b) * BODYPART_SIZE;
 			const int numModels = count(mdl.i32(part + 4), 256);
 			const int base = std::max(1, mdl.i32(part + 8));
-			const int choice = numModels > 0 ? (std::max(0, body) / base) % numModels : 0;
+			if (onlyPart >= 0 && b != onlyPart) continue;
+			if (onlyPart >= 0 && (onlyModel < 0 || onlyModel >= numModels)) return fail("no such model in the body part");
+			const int choice = onlyPart >= 0 ? onlyModel : numModels > 0 ? (std::max(0, body) / base) % numModels : 0;
 			const long long modelIndex = part + mdl.i32(part + 12) + static_cast<long long>(choice) * MODEL_SIZE;
 			const long long vtxPart = vtxBodyParts + static_cast<long long>(b) * 8;
 			if (numModels <= 0) continue;
@@ -344,6 +350,22 @@ std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int ski
 		}
 	}
 	return fail("triangle file (.vtx) does not match the model");
+}
+
+} // namespace
+
+std::optional<ModelGeometry> buildModelGeometry(const ModelFiles& files, int skin, std::string* error,
+                                                const std::function<bool(const std::string&)>& materialExists, int body) {
+	return buildGeometry(files, skin, error, materialExists, body, -1, 0);
+}
+
+std::optional<ModelGeometry> buildBodyPartGeometry(const ModelFiles& files, int part, int model, std::string* error,
+                                                   const std::function<bool(const std::string&)>& materialExists) {
+	if (part < 0) {
+		if (error) *error = "no such body part";
+		return std::nullopt;
+	}
+	return buildGeometry(files, 0, error, materialExists, 0, part, model);
 }
 
 std::optional<ModelGeometry> loadModelGeometry(const GameFileSystem& fs, std::string_view modelPath, int skin, std::string* error, int body) {

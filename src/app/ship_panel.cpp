@@ -94,14 +94,16 @@ ShipPanel::ShipPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	buildModCard(layout);
 	buildWorkshopCard(layout);
 
-	auto* logLayout = card(layout, tr("Output"));
+	// What the jobs did: folded away until there is something to read.
 	m_log = new QPlainTextEdit;
 	m_log->setObjectName("shipLog");
 	m_log->setReadOnly(true);
 	m_log->setMinimumHeight(110);
 	m_log->setPlaceholderText(tr("What the jobs above did shows up here."));
-	logLayout->addWidget(m_log);
+	layout->addWidget(detailsFoldOut(m_log, tr("Output")));
+	openFoldOutOnText(m_log);
 	layout->addStretch(1);
+	limitReadableWidth(content, 1100);
 	scroll->setWidget(content);
 	outer->addWidget(scroll);
 
@@ -183,6 +185,7 @@ void ShipPanel::buildMapCard(QVBoxLayout* layout) {
 	m_files->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 	m_files->header()->setSectionResizeMode(3, QHeaderView::Interactive);
 	m_files->header()->resizeSection(3, 220);
+	m_files->hide();   // shown with the result of "Check what the map needs"
 	v->addWidget(m_files);
 
 	auto* readmeLabel = new QLabel(tr("Readme for players (optional, goes into the ZIP as readme.txt)"));
@@ -427,6 +430,7 @@ void ShipPanel::scan() {
 
 void ShipPanel::showDependencies() {
 	m_files->clear();
+	m_files->setVisible(!m_deps.files.empty());   // an empty list only takes room until the check ran
 	if (m_deps.files.empty()) {
 		m_summary->setText(m_editor->game() ? tr("Not checked yet.") : tr("Pick a game or mod first."));
 		return;

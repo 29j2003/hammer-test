@@ -1,6 +1,8 @@
 // animations_page.cpp - The Animations page (see animations_page.h).
 
 #include "animations_page.h"
+
+#include "model_export_dialog.h"
 #include "process_guard.h"
 
 #include "asset_browser.h"
@@ -202,6 +204,10 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	addRow->setContentsMargins(0, 0, 0, 0);
 	addRow->addWidget(m_add, 1);
 	addRow->addWidget(m_addSample);
+	m_export = new QPushButton(tr("Export ..."));
+	m_export->setObjectName("animationExport");
+	m_export->setToolTip(tr("Export the chosen animation as an .smd (with the model's reference and a .qc) to edit it in Blender"));
+	addRow->addWidget(m_export);
 	rv->addLayout(addRow);
 	// New animations wait here until they are built into the mod.
 	m_pendingBar = new QFrame;
@@ -269,6 +275,18 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 		for (const auto& [model, animated] : m_scanner.result()) m_animatedModels.insert(model, animated);
 		if (!m_listRefresh->isActive()) m_listRefresh->start();
 		checkNext();
+	});
+	connect(m_export, &QPushButton::clicked, this, [this] { exportSequence(currentSequence()); });
+	m_sequences->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(m_sequences, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+		auto* item = m_sequences->itemAt(pos);
+		if (!item) return;
+		m_sequences->setCurrentItem(item);
+		const QString sequence = currentSequence();
+		if (sequence.isEmpty()) return;
+		QMenu menu;
+		menu.addAction(tr("Export animation ..."), this, [this, sequence] { exportSequence(sequence); });
+		menu.exec(m_sequences->viewport()->mapToGlobal(pos));
 	});
 	connect(m_sequences, &QTreeWidget::currentItemChanged, this, [this] {
 		m_cycle = 0;
@@ -1118,6 +1136,14 @@ bool AnimationsPage::compileImports() {
 	process->start(program, {"-game", gameDir, "-nop4", "-verbose", QDir(folder).filePath("model.qc")});
 	updatePendingBar();
 	return true;
+}
+
+ModelExportDialog* AnimationsPage::exportSequence(const QString& sequence) {
+	if (m_model.isEmpty() || sequence.isEmpty()) return nullptr;
+	auto* dialog = new ModelExportDialog(m_editor, m_model, {sequence}, this);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	dialog->show();
+	return dialog;
 }
 
 } // namespace sme::app

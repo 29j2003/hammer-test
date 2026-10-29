@@ -348,7 +348,7 @@ std::vector<ModelAttachment> readAttachments(std::span<const std::byte> mdl) {
 	return out;
 }
 
-std::string referenceSmd(const ModelGeometry& geometry, const std::vector<StudioBone>& bones) {
+std::string referenceSmd(const ModelGeometry& geometry, const std::vector<StudioBone>& bones, bool materialPaths) {
 	std::string out = "version 1\nnodes\n";
 	if (bones.empty()) {
 		out += "0 \"root\" -1\n";
@@ -370,7 +370,7 @@ std::string referenceSmd(const ModelGeometry& geometry, const std::vector<Studio
 	}
 	out += "end\ntriangles\n";
 	for (const auto& mesh : geometry.meshes) {
-		const std::string material = clean(mesh.material.substr(mesh.material.find_last_of('/') + 1));
+		const std::string material = clean(materialPaths ? mesh.material : mesh.material.substr(mesh.material.find_last_of('/') + 1));
 		for (std::uint32_t t = 0; t + 2 < mesh.indexCount; t += 3) {
 			out += material + "\n";
 			for (int k = 0; k < 3; ++k) {

@@ -120,9 +120,10 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	v->setSpacing(10);
 
 	// Not needed for the features: Project > Features installs them.
-	m_bundleNote = new QLabel(tr("<b>Only for building the mod from its own source code.</b> The mod's features (ambient occlusion, "
-	                             "light shafts, liquid in bottles ...) come with Mapsmith: Project &gt; Features installs and updates "
-	                             "them - no compiler, no scripts. Make report works here either way."));
+	m_bundleNote = new QLabel(tr("<b>Only for building the mod from its own source code.</b> The features come ready-built: "
+	                             "Project &gt; Features installs them."));
+	m_bundleNote->setToolTip(tr("The mod's features (ambient occlusion, light shafts, liquid in bottles ...) come with Mapsmith: "
+	                            "Project > Features installs and updates them - no compiler, no scripts. Make report works here either way."));
 	m_bundleNote->setObjectName("modCodeBundleNote");
 	m_bundleNote->setWordWrap(true);
 	m_bundleNote->setProperty("role", "description");
@@ -201,8 +202,22 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	av->addWidget(network);
 	v->addWidget(automatic);
 
-	// The run: steps | summary, progress and log.
+	// The run: a slim progress bar and one line of result; the steps and the log fold out.
+	m_progress = new QProgressBar;
+	m_progress->setObjectName("modCodeProgress");
+	m_progress->setTextVisible(false);
+	m_progress->setMaximumHeight(6);
+	m_progress->setRange(0, int(listedSteps[std::size(listedSteps) - 1]));
+	m_progress->setValue(0);
+	v->addWidget(m_progress);
+	m_summary = new QLabel;
+	m_summary->setObjectName("modCodeSummary");
+	m_summary->setWordWrap(true);
+	m_summary->setTextFormat(Qt::RichText);
+	m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	v->addWidget(m_summary);
 	auto* split = new QSplitter(Qt::Horizontal);
+	split->setObjectName("modCodeDetails");
 	split->setChildrenCollapsible(false);
 	m_steps = new QListWidget;
 	m_steps->setObjectName("modCodeSteps");
@@ -211,30 +226,17 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	for (const auto step : listedSteps) m_steps->addItem(qs(updateStepName(step)));
 	m_steps->setMinimumWidth(200);
 	split->addWidget(m_steps);
-	auto* right = new QWidget;
-	auto* rightLayout = new QVBoxLayout(right);
-	rightLayout->setContentsMargins(0, 0, 0, 0);
-	m_progress = new QProgressBar;
-	m_progress->setObjectName("modCodeProgress");
-	m_progress->setTextVisible(false);
-	m_progress->setRange(0, int(listedSteps[std::size(listedSteps) - 1]));
-	m_progress->setValue(0);
-	rightLayout->addWidget(m_progress);
-	m_summary = new QLabel;
-	m_summary->setObjectName("modCodeSummary");
-	m_summary->setWordWrap(true);
-	m_summary->setTextFormat(Qt::RichText);
-	m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	rightLayout->addWidget(m_summary);
 	m_log = new QPlainTextEdit;
 	m_log->setObjectName("modCodeLog");
 	m_log->setReadOnly(true);
 	m_log->setMaximumBlockCount(5000);
 	m_log->setLineWrapMode(QPlainTextEdit::NoWrap);
-	rightLayout->addWidget(m_log, 1);
-	split->addWidget(right);
+	split->addWidget(m_log);
 	split->setStretchFactor(1, 1);
-	v->addWidget(split, 1);
+	split->setMinimumHeight(180);
+	v->addWidget(detailsFoldOut(split, tr("Steps and log")));
+	v->addStretch(1);
+	limitReadableWidth(this, 1100);
 
 	// The line on the Overview tab.
 	auto* banner = new QFrame;
@@ -423,11 +425,8 @@ void ModCodePanel::showRepository() {
 	if (m_gameKey.isEmpty()) {
 		m_state->setText(tr("Open a mod first (the game button at the top)."));
 	} else if (m_root.isEmpty()) {
-		m_state->setText(m_bundle ? tr("No source code chosen - not needed: the features come with Mapsmith (Project > Features). "
-		                               "Only if you build the mod yourself, press Choose folder ... and pick the folder with "
-		                               "fidelity and sp in it.")
-		                          : tr("No source code found for this mod. If the mod is built from its own code (Mapbase with "
-		                               "mapbase-fidelity), press Choose folder ... and pick the folder with fidelity and sp in it."));
+		m_state->setText(m_bundle ? tr("Not needed for the features. If you build the mod yourself: Choose folder ... (the one with fidelity and sp).")
+		                          : tr("None found for this mod. If it is built from its own code: Choose folder ... (the one with fidelity and sp)."));
 	} else if (!scripts) {
 		m_state->setText(tr("This folder has no fidelity/update.ps1 - choose the folder of the mod's source code."));
 	} else {
