@@ -58,6 +58,7 @@
 #include <QMessageBox>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QContextMenuEvent>
 #include <QFrame>
 #include <QOpenGLWidget>
 #include <QStandardPaths>
@@ -105,6 +106,9 @@
 #include "history_panel.h"
 #include "replace_materials_dialog.h"
 #include "dialog_fit.h"
+#include "dock_layout.h"
+#include "lazy_refresh.h"
+#include "menu_editor.h"
 #include "shortcut_dialog.h"
 #include "compile.h"
 #include "compile_window.h"
@@ -6550,4 +6554,184 @@ TEST_CASE("samples: \"Use a sample\" points to the shipped sample files") {
 		CHECK(QFileInfo(QDir(folder).filePath(file)).isFile());
 	}
 	CHECK(QFileInfo(QDir(samplesFolder(SAMPLE_ANIMATIONS)).filePath("hl2_human_wave.smd")).isFile());
+}
+
+TEST_CASE("panels: short help with More, panels float as windows and come back, the layout is kept, the start is quick") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	// A class with a long description (real FGDs have whole paragraphs).
+	{
+		std::ofstream fgd(f.mod / "mymod.fgd", std::ios::app);
+		fgd << "\n@PointClass base(Targetname) = logic_longtext : \"Keeps a long text. It goes on about many things nobody needs "
+		       "while mapping, line after line, until the panel has no room left for the keys - these are the last words.\" []\n";
+	}
+	QElapsedTimer clock;
+	clock.start();
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	{
+		MainWindow window(&editor);
+		window.selectGame("sourcemods/mymod");
+		REQUIRE(editor.game());
+		window.setQuadLayout(false);
+		window.resize(1400, 900);
+		window.show();
+		REQUIRE(QTest::qWaitForWindowExposed(&window));
+		// 1. The start: window and game in a few seconds even with software OpenGL (a guard against
+		// something slow sneaking in, not a benchmark); pages nobody looks at are read when shown.
+		const qint64 startMs = clock.elapsed();
+		INFO("window with game shown after " << startMs << " ms");
+		CHECK(startMs < 8000);
+		auto* menuEditor = window.findChild<MenuEditor*>();
+		REQUIRE(menuEditor);
+		auto* menuLazy = menuEditor->findChild<RefreshWhenShown*>();
+		REQUIRE(menuLazy);
+		CHECK(menuLazy->pending());
+		window.showPage(MainWindow::Page::Project);
+		window.projectTabs()->setCurrentWidget(menuEditor);
+		settle();
+		CHECK_FALSE(menuLazy->pending());
+		window.showPage(MainWindow::Page::Map);
+		settle();
+
+		// 2. Object Properties: the description is short, "More..." shows all of it (remembered).
+		window.raiseDock("Object Properties");
+		const auto* longClass = editor.entities()->find("logic_longtext");
+		REQUIRE(longClass);
+		auto [placed, longId] = edit::placeEntity(editor.doc(), "logic_longtext", {0, 0, 64}, longClass);
+		editor.commit(std::move(placed));
+		Selection one;
+		one.entities.push_back(longId);
+		editor.setSelection(one);
+		settle();
+		auto* help = window.properties()->findChild<QLabel*>("propertyHelp");
+		REQUIRE(help);
+		CHECK(help->isVisible());
+		CHECK(help->text().contains("Keeps a long text."));
+		CHECK_FALSE(help->text().contains("last words"));
+		CHECK(help->text().contains("#more"));
+		emit help->linkActivated("#more");
+		CHECK(help->text().contains("last words"));
+		CHECK(help->text().contains("#less"));
+		CHECK(QSettings().value("properties/helpExpanded").toBool());
+		emit help->linkActivated("#less");
+		CHECK_FALSE(help->text().contains("last words"));
+		CHECK_FALSE(QSettings().value("properties/helpExpanded").toBool());
+
+		// 3. A right click on a bottom panel's tab: its menu; "Float as window" makes a real window.
+		auto* layout = window.dockLayout();
+		REQUIRE(layout);
+		auto* log = window.findChild<QDockWidget*>("Log");
+		auto* assets = window.findChild<QDockWidget*>("Asset Browser");
+		auto* problems = window.findChild<QDockWidget*>("Problems");
+		REQUIRE(log);
+		REQUIRE(assets);
+		REQUIRE(problems);
+		CHECK(window.tabifiedDockWidgets(log).contains(assets));
+		window.raiseDock("Log");
+		settle();
+		QTabBar* bar = nullptr;
+		int index = -1;
+		for (auto* candidate : window.findChildren<QTabBar*>(QString(), Qt::FindDirectChildrenOnly)) {
+			for (int i = 0; candidate->isVisible() && i < candidate->count(); ++i) {
+				if (candidate->tabText(i) == "Log") {
+					bar = candidate;
+					index = i;
+				}
+			}
+		}
+		REQUIRE(bar);
+		const QPoint at = bar->tabRect(index).center();
+		CHECK(layout->dockAtTab(bar->mapToGlobal(at)) == log);
+		QContextMenuEvent rightClick(QContextMenuEvent::Mouse, at, bar->mapToGlobal(at));
+		QApplication::sendEvent(bar, &rightClick);
+		settle();
+		auto* menu = window.findChild<QMenu*>("dockMenu");
+		REQUIRE(menu);
+		for (const char* name : {"dockFloat", "dockReattach", "dockHome", "dockSetHome", "dockReset"}) {
+			INFO(name);
+			CHECK(menu->findChild<QAction*>(name));
+		}
+		CHECK(menu->findChild<QAction*>("dockFloat")->isEnabled());
+		CHECK_FALSE(menu->findChild<QAction*>("dockReattach")->isEnabled());
+		menu->findChild<QAction*>("dockFloat")->trigger();
+		menu->close();
+		settle();
+		CHECK(log->isFloating());
+		CHECK(DockLayout::isRealWindow(log));
+		CHECK(log->isVisible());
+		CHECK((log->windowFlags() & Qt::WindowMaximizeButtonHint));
+		CHECK(log->titleBarWidget()->objectName() == "dockHeader");   // a header with the menu button
+		CHECK(log->width() >= 640);
+		log->showMaximized();
+		settle();
+		CHECK(log->isMaximized());
+		log->showNormal();
+		settle();
+
+		// 4. Reattach: back into the bottom tabs.
+		layout->reattach(log);
+		settle();
+		CHECK_FALSE(log->isFloating());
+		CHECK(window.dockWidgetArea(log) == Qt::BottomDockWidgetArea);
+		CHECK(window.tabifiedDockWidgets(log).contains(assets));
+		CHECK(log->titleBarWidget()->objectName() != "dockHeader");   // the tab names it
+
+		// 5. Moved to the left: "Back to original position" puts it next to the Asset Browser again.
+		window.addDockWidget(Qt::LeftDockWidgetArea, log);
+		settle();
+		CHECK(window.dockWidgetArea(log) == Qt::LeftDockWidgetArea);
+		layout->backToHome(log);
+		settle();
+		CHECK(window.dockWidgetArea(log) == Qt::BottomDockWidgetArea);
+		CHECK(window.tabifiedDockWidgets(log).contains(assets));
+
+		// 6. "Set this as original position": Problems as a window on its own is its home now.
+		layout->floatAsWindow(problems);
+		problems->setGeometry(120, 120, 700, 500);
+		settle();
+		layout->setHome(problems);
+		layout->reattach(problems);
+		settle();
+		CHECK_FALSE(problems->isFloating());
+		layout->backToHome(problems);
+		settle();
+		CHECK(problems->isFloating());
+		CHECK(DockLayout::isRealWindow(problems));
+
+		// The window may close with a floating panel on another page: the layout is saved as on the map.
+		window.showPage(MainWindow::Page::Project);
+		settle();
+		CHECK(problems->isVisible());   // a floating panel stays on another page
+		CHECK_FALSE(assets->isVisible());
+		window.showPage(MainWindow::Page::Map);
+		settle();
+		layout->save();
+	}
+	{
+		// 7. The next start: the same layout, Problems floating as a real window again.
+		MainWindow second(&editor);
+		second.resize(1400, 900);
+		second.show();
+		REQUIRE(QTest::qWaitForWindowExposed(&second));
+		settle();
+		auto* problems = second.findChild<QDockWidget*>("Problems");
+		auto* assets = second.findChild<QDockWidget*>("Asset Browser");
+		REQUIRE(problems);
+		CHECK(problems->isFloating());
+		CHECK(DockLayout::isRealWindow(problems));
+		// 8. "Reset all panels": the factory layout, the own home forgotten.
+		second.dockLayout()->resetToFactory();
+		settle();
+		CHECK_FALSE(problems->isFloating());
+		CHECK(second.dockWidgetArea(problems) == Qt::BottomDockWidgetArea);
+		CHECK(second.tabifiedDockWidgets(problems).contains(assets));
+		CHECK_FALSE(QSettings().contains("window/dockHome/Problems"));
+	}
 }

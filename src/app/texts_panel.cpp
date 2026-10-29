@@ -5,6 +5,8 @@
 #include "asset_browser.h"
 #include "editor.h"
 
+#include <utility>
+
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -241,13 +243,24 @@ TextsPanel::TextsPanel(Editor* editor, AssetBrowser* assets, QWidget* parent) : 
 		setText(token, language, m_edit->toPlainText());
 		updatePreview();
 	});
-	connect(editor, &Editor::gameChanged, this, &TextsPanel::reload);
-	reload();
+	// Read when the tab is seen (showEvent), not at the start while nobody looks at it.
+	connect(editor, &Editor::gameChanged, this, [this] {
+		if (isVisible()) {
+			reload();
+		} else {
+			m_reloadOnShow = true;
+		}
+	});
+	m_reloadOnShow = true;
 }
 
 void TextsPanel::showEvent(QShowEvent* event) {
 	QWidget::showEvent(event);
-	reloadIfUnchanged();   // the Menu tab or another program may have written the files
+	if (std::exchange(m_reloadOnShow, false)) {
+		reload();   // another game since it was last read
+	} else {
+		reloadIfUnchanged();   // the Menu tab or another program may have written the files
+	}
 }
 
 void TextsPanel::reloadIfUnchanged() {

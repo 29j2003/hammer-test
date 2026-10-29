@@ -2,6 +2,8 @@
 
 #include "editor.h"
 
+#include "startup_trace.h"
+
 #include "enhancements.h"
 #include "model_cache.h"
 
@@ -190,6 +192,7 @@ bool Editor::openGame(const QString& key, QString* error) {
 	}
 	std::string loadError;
 	auto game = loadGame(*entry, m_discovery.steam, fgds, &loadError);
+	startupMark("game read (mounts, FGDs)");
 	if (!game) {
 		if (error) {
 			*error = QString::fromStdString(loadError);
@@ -208,6 +211,7 @@ bool Editor::openGame(const QString& key, QString* error) {
 	                std::filesystem::exists(m_game->entry.gameDir / "bin" / "game_shader_dx6.dll");
 	QSettings().setValue("editor/game", key);
 	emit gameChanged();
+	startupMark("game shown in the panels");
 	emit message(tr("Game: %1 (%2 entity classes, %3 search paths)")
 	                 .arg(QString::fromStdString(m_game->entry.title))
 	                 .arg(m_game->entities.size())

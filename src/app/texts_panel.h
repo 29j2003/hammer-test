@@ -89,6 +89,7 @@ private:
 	LocalizationSet m_set;                                 ///< The shown set
 	std::map<std::string, LocalizationFile> m_files;       ///< lowercase language -> its file
 	bool m_modified = false;
+	bool m_reloadOnShow = false;   ///< The game changed while the tab was hidden: read it when shown
 	bool m_filling = false;
 
 	QComboBox* m_setBox;

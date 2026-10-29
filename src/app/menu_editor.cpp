@@ -2,6 +2,7 @@
 
 #include "menu_editor.h"
 
+#include "lazy_refresh.h"
 #include "editor.h"
 
 #include <QCheckBox>
@@ -233,8 +234,10 @@ MenuEditor::MenuEditor(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 	splitter->setStretchFactor(0, 3);
 	splitter->setStretchFactor(1, 2);
 
-	connect(editor, &Editor::gameChanged, this, &MenuEditor::reload);
-	reload();
+	// Read when the tab is seen (not at the start, while nobody looks at it).
+	auto* lazy = new RefreshWhenShown(this, [this] { reload(); });
+	connect(editor, &Editor::gameChanged, lazy, &RefreshWhenShown::request);
+	lazy->request();
 }
 
 void MenuEditor::buildInfoSection(QVBoxLayout* layout) {
