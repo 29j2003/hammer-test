@@ -346,7 +346,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   (`MaterialEditor`), Models (`ModelsPage`), Sounds, Particles, Project (`QTabWidget` „projectTabs“: Overview = `ModPage`, Features, Maps, Menu,
   Texts, Source control, Ship, Build from source). Sound- und Partikel-Browser sind beim Mappen
   Docks; `showPage()` hängt sie in ihre Seite um und beim Zurückgehen wieder ins Dock. Solange nicht „Map“ vorn ist,
-  blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus und schaltet die Tasten
+  blendet `setMapWorkspaceShown(false)` Docks und Werkzeugleisten (außer der Seitenleiste) aus – *bevor* die neue Seite vorn ist
+  (sonst machte die größere Seite das Fenster breiter und Qt ließ die leeren Tab-Leisten der Docks stehen) – und schaltet die Tasten
   der Karte ab (außer Datei/Hilfe). `raiseDock("Map"/"Materials"/"Material Editor"/"Project")` zeigt die Seite ("Mod" geht
   weiterhin), jeder andere Dock-Name die Karte mit dem Dock. Screenshots: `--page project|sounds|animations|…`, ein Tab der Project-Seite mit `--page project:<tab>` (Titel ohne Leerzeichen, z. B. `project:buildfromsource`), `--pick-edge` (Kante gewählt).
 - Seite Models (`ModelsPage`): nutzt die Modell-Liste des Asset Browsers (`modelNames()`, nach `materialsIndexed`) und
@@ -676,7 +677,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 - **Updates**: `Updater` fragt beim Start `api.github.com/repos/29j2003/hammer-test/releases/latest` (abschaltbar,
   `--no-update-check`, `SME_NO_UPDATE_CHECK`; Tests und Screenshots fragen nie). Neuer als `VERSION` (`compareVersions`)
   → Frage „Update now / Later / Skip“, Versionsknopf unten rechts wird zum Update-Knopf. Download der
-  `*-windows.zip`, SHA-256 aus der `.sha256` (`checksumFor`) muss passen; dann schreibt der Editor ein PowerShell-Skript,
+  `*-windows.zip`, SHA-256 aus ihrer eigenen `<zip>.sha256` (sonst `SHA256SUMS`; nicht die `.sha256` des Installers) (`checksumFor`) muss passen; dann schreibt der Editor ein PowerShell-Skript,
   das auf das Ende des Editors wartet, die ZIP über den Programmordner entpackt und die neue Version startet. Nur unter
   Windows und wenn der Ordner beschreibbar ist, sonst öffnet sich die Release-Seite.
 - **Release**: `VERSION` erhöhen und committen, `git tag -a vX.Y.Z -m "<Release-Text>"`, Tag pushen. Der Workflow

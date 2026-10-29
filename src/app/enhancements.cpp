@@ -102,6 +102,7 @@ void GameEnhancements::gameChanged() {
 	m_keptOwn.clear();
 	m_containerModels.clear();
 	m_liquidModels.clear();
+	m_modelNotes.clear();
 	m_failed.clear();
 	m_lastWritten = 0;
 	m_settings = {};
@@ -242,7 +243,14 @@ void GameEnhancements::finished() {
 		emit m_editor->message(tr("Game enhancements: model copies with liquid: %1").arg(result.writtenModels.join(QStringLiteral(", "))));
 		emit modelsChanged(result.writtenModels);
 	}
-	for (const auto& note : result.plan.modelNotes) emit m_editor->message(tr("Game enhancements: %1").arg(QString::fromStdString(note)));
+	// Each run plans everything again: a note ("kept ... (the mod has its own)") goes to the log once.
+	QSet<QString> notes;
+	for (const auto& note : result.plan.modelNotes) {
+		const QString text = QString::fromStdString(note);
+		if (!m_modelNotes.contains(text)) emit m_editor->message(tr("Game enhancements: %1").arg(text));
+		notes.insert(text);
+	}
+	m_modelNotes = std::move(notes);
 	if (!m_failed.isEmpty()) {
 		emit m_editor->message(tr("Game enhancements: could not write %1").arg(m_failed.join(QStringLiteral(", "))));
 	}

@@ -790,6 +790,9 @@ void MainWindow::showPage(Page page) {
 	borrow(m_sounds, m_soundsDock, m_soundsPage, page == Page::Sounds);
 	borrow(m_particles, m_particlesDock, m_particlesPage, page == Page::Particles);
 	if (page == Page::Project) m_modPage->refresh();
+	// The map's docks go before another page shows: with them still there the bigger page widened
+	// the window past its size and left the docks' tab bars, empty, around the page.
+	if (page != Page::Map) setMapWorkspaceShown(false);
 	m_pages->setCurrentWidget(target);
 	// A stacked widget is as wide as its widest page; only the shown page may count, or the map
 	// with its docks would need the Materials page's width too.
@@ -1782,13 +1785,14 @@ bool MainWindow::save(bool saveAs) {
 
 void MainWindow::showStartPage() {
 	m_startPage->refresh();
+	setMapWorkspaceShown(false);   // before the page (see showPage)
 	m_pages->setCurrentWidget(m_startPage);
 	for (auto* widget : {static_cast<QWidget*>(m_rows), static_cast<QWidget*>(m_materialEditor), static_cast<QWidget*>(m_modelsPage),
-	                     static_cast<QWidget*>(m_soundsPage), static_cast<QWidget*>(m_particlesPage), static_cast<QWidget*>(m_projectPage)}) {
+	                     static_cast<QWidget*>(m_animationsPage), static_cast<QWidget*>(m_soundsPage), static_cast<QWidget*>(m_particlesPage),
+	                     static_cast<QWidget*>(m_projectPage)}) {
 		widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 	}
 	m_startPage->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-	setMapWorkspaceShown(false);
 	if (m_pageGroup) {
 		// No side bar page is current while the start page shows.
 		m_pageGroup->setExclusive(false);

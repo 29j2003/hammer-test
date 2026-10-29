@@ -157,7 +157,14 @@ bool ModelExportDialog::exportNow() {
 	options.pictures = options.materials;
 	const GameFileSystem* files = &game->files;
 	const std::string model = m_model.toStdString();
-	const std::filesystem::path folder = QDir::toNativeSeparators(m_folder->text().trimmed()).toStdWString();
+	std::filesystem::path folder = QDir::toNativeSeparators(m_folder->text().trimmed()).toStdWString();
+	if (folder.is_relative()) {
+		// A typed "foo" means inside the mod, not next to wherever Mapsmith was started from.
+		const auto* entry = m_editor->gameEntry();
+		if (!entry) return false;
+		folder = entry->gameDir / folder;
+		m_folder->setText(QString::fromStdWString(folder.wstring()));
+	}
 	m_cancel->store(false);
 	m_done->store(0);
 	m_total->store(1);
