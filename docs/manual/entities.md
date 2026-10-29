@@ -232,14 +232,27 @@ one out again, also after a restart.
 
 The **Animations** button in the side bar (under *Models*) plays the animations of any model.
 
-- **Models** on the left: **In this map** first (the models the map's NPCs and props use, most used first), then
-  **NPCs** (people, creatures and every model an NPC class of the game uses) and **Models** (props, weapons and the
-  rest, including animation-only files like `male_shared.mdl`). The search box finds them by words in their path, in
-  both sections.
+- **Models** on the left: only models that really animate - a skeleton with more than a still pose (a bottle or a
+  crate with just its `idle` is left out, and so are animation-only files like `male_shared.mdl`). Mapsmith reads the
+  model headers in the background when the page opens (*Looking for animated models ...* counts down). **In this map**
+  comes first (the models the map's NPCs and props use, most used first), then **NPCs** (people, creatures and every
+  model an NPC class of the game uses) and **Models** (animated props and the rest). The search box finds them by
+  words in their path, in every section.
 - **Pick a model** to see its animations on the right: its own and those it borrows from other models
   (`$includemodel`, e.g. the citizens' walks from `male_shared.mdl`), each with its **activity** (`ACT_WALK` ...),
   length (*pose* for a single frame) and where it comes from. The search above the list finds names and activities.
   The model's idle animation is shown first.
+- **Filters** under the search narrow the list to a situation, each choice with how many animations it has:
+  - **Weapon** - the weapon the character holds: *Unarmed*, *Pistol*, *SMG1*, *AR2*, *Shotgun*, *RPG*, *Crossbow*,
+    *Melee*, *Grenade*. Mapsmith reads it from the activity and the name (`ACT_IDLE_SMG1`, `ACT_RUN_RIFLE`,
+    `shootAR2`); *rifle* counts for SMG1 and AR2 (Half-Life 2's people hold both alike). Animations without a weapon
+    in their name count as *Unarmed*.
+  - **Stance** - *Standing* or *Crouching* (`crouch`, the `..._LOW` activities).
+  - **Kind** - *Idle*, *Walk and run*, *Actions* (attacks, reloads, flinches ...), *Gestures* (layers played over
+    others) and *Scenes*: animations made for one moment of a map (`d1_t01_BreakRoom_WatchBreen`, or without an
+    activity) - the ones for a `scripted_sequence`.
+
+  Choosing an animation the filters hide (from *Used in this map*, or ▶ in *Object Properties*) resets them.
 - **Gestures and layers** are listed apart, below the normal animations: gestures, flinches and other *delta*
   animations only add a movement on top of what the NPC is doing, so they are shown on top of the model's idle
   instead of on their own (on their own they would bend the body into a broken pose). In the game they play over the
@@ -289,13 +302,60 @@ read - export `.smd`.
 Select an NPC or a `prop_dynamic`. The **Animation / pose** box (**Animation** for props) lists the model's
 animations.
 
-- **Pose NPC in this animation**: places a `scripted_sequence` that keeps the NPC in that animation (a real NPC, with
-  its idle loop). **Keep quiet (no idle speech)** and **Don't drop weapons** set the matching flags.
+- **Pose NPC in this animation**: places a `scripted_sequence` at the NPC's feet that keeps it in that animation from
+  the start of the map (the animation as *Pre Action Idle*, with *Start on Spawn*, *No Interruptions* and *Override
+  AI*). It stays a real NPC. **Keep quiet (no idle speech)** and **Don't drop weapons** set the matching flags.
 - **Turn into a static prop_dynamic**: replaces the NPC with its model, standing in the animation. Good for scenery
   people who should never move.
 - For a `prop_dynamic`: **Play this animation (DefaultAnim)**.
 
-The 3D view shows props and NPCs with their real model and textures.
+The 3D view shows props and NPCs with their real model and textures. A click picks a model where its triangles are (a
+click beside an NPC goes to what is behind it, a click between its legs still takes it when nothing is close behind).
+A `scripted_sequence` shows its NPC see-through where the NPC will stand, and its own icon at its feet: click the
+body for the NPC, the icon for the script - also when both stand on the same spot. Point entities (NPCs, props,
+`scripted_sequence`, lights ...) have no resize squares: they keep their size and only move and turn (move and
+rotate tools); the squares are for brushes.
+
+### Citizens: a fixed head
+
+An `npc_citizen` picks a **random head** every time the map starts - its *model* only decides male or female. The
+**Look** box shows this; choose a head (`group01` citizens, `group02` refugees, `group03` rebels, `group03m` medics)
+and click **Keep this head**: the citizen becomes type *Unique* with that model, and looks the same every time.
+
+## Scripted sequences: an NPC plays a scene
+
+A `scripted_sequence` makes the NPC named in *Target NPC* play animations:
+
+- **Pre Action Idle** - while the NPC waits at the script for the start.
+- **Entry** (optional) - once, on the way into the Action.
+- **Action** - the scene itself (e.g. `d1_t01_BreakRoom_WatchBreen`).
+- **Post Action Idle** - after the Action.
+
+The **Scripted sequence** box in *Object Properties* says in plain words how the script starts and sets it up:
+
+- **How it starts.** A script **without a name** starts by itself when the map starts. A **named** one waits for the
+  input **BeginSequence**. *Start on Spawn* on a named script only moves the NPC to its spot and keeps it in the *Pre
+  Action Idle* - the Action never plays until something sends BeginSequence. That is why *Start on Spawn* alone
+  "does nothing". Two buttons do it right:
+  - **Start on map start** - turns on *Start on Spawn* and lets a `logic_auto` send BeginSequence when the map
+    starts: the Action plays right away.
+  - **Start with a trigger ...** - puts a `trigger_once` box (players only) in front of the script, sending
+    BeginSequence when the player walks in, and turns on *Start on Spawn* so the NPC already waits at its spot in the
+    *Pre Action Idle*. The new trigger is selected: move and size it where the player should start the scene. One
+    undo step.
+- **Loop**: *Play once*; *Loop the Action* (*Loop Action Animation* - repeats the Action until the `StopActionLoop`
+  input); or *Loop the Post Action Idle after it* (*Loop in Post Idle* - the Action plays once, then the Post Action
+  Idle repeats; Mapsmith uses the Action there if no Post Action Idle is set).
+- **Move to position**: *No* plays the scene where the NPC stands; *Walk* and *Run* need a way to the script (an
+  `info_node` network or a clear straight line) - without one the NPC never arrives and the scene never plays (Walk
+  is Hammer's default); *Instantly* puts the NPC on the script's spot, facing its direction.
+- **Not interrupted** (*No Interruptions* and *Override AI*): enemies, damage and the NPC's own AI do not stop the
+  scene. **Repeatable**: it can play again (without it the script is removed after playing once).
+- *Search Radius* only matters when *Target NPC* is a class name instead of a name.
+
+Example - a citizen who looks angry until the player arrives, then watches Breen in a loop: *Pre Action Idle*
+`idle_angry`, *Action* `d1_t01_BreakRoom_WatchBreen`, **Loop the Action**, **Start with a trigger ...**, and **Keep
+this head** on the citizen.
 
 ![An NPC in the 3D view](images/npc.png)
 
