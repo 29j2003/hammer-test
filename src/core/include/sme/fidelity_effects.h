@@ -163,6 +163,13 @@ struct EffectChange {
 	std::filesystem::path heightFile;
 	std::vector<std::byte> heightVtf;
 };
+/// A model copy to write or remove (containers with their own liquid material, sme/container_models.h).
+struct ModelFileChange {
+	std::string model;            ///< "models/props_junk/glassjug01.mdl"
+	std::filesystem::path file;   ///< <mod>/models/....mdl
+	bool remove = false;          ///< Delete the file (else write `bytes`)
+	std::vector<std::byte> bytes;
+};
 /// What bringing the mod's materials in line with the settings changes. Hand-written materials
 /// of the mod (no generated marker) are never touched; they are listed in `keptOwn`.
 struct EnhancementPlan {
@@ -171,6 +178,11 @@ struct EnhancementPlan {
 	std::map<GameEffect, int> active;   ///< Materials that have the effect after the changes
 	int patternRelief = 0;              ///< Walls of the mod's maps with Mapsmith's pattern relief
 	int heldBack = 0;                   ///< Materials that would get an effect but the shader DLL is missing
+	std::vector<ModelFileChange> modelChanges;   ///< Model copies of containers (planContainerModels)
+	std::optional<std::string> modelsManifest;   ///< New text of fidelity_models.txt ("" = remove it; nullopt = as it is)
+	std::vector<std::string> liquidModels;       ///< Container models with their own copy and liquid after the changes
+	std::vector<std::string> containerModels;    ///< Every container model that gets such a copy while Liquid is on
+	std::vector<std::string> modelNotes;         ///< "kept models/x.mdl (the mod has its own)"
 
 	[[nodiscard]] int activeCount() const;
 };

@@ -6,6 +6,7 @@
 #include "compile_window.h"
 #include "connect_popup.h"
 #include "enhancements.h"
+#include "model_cache.h"
 #include "map_look_panel.h"
 #include "features_panel.h"
 #include "mod_code_panel.h"
@@ -708,6 +709,11 @@ void MainWindow::createDocks() {
 			if (m_materials->isKnown(name)) m_materials->reload(name);
 			m_assets->materialChanged(name);
 		}
+	});
+	// ... and model copies of containers (their own liquid material): the views load them again.
+	connect(m_editor->enhancements(), &GameEnhancements::modelsChanged, this, [this](const QStringList& models) {
+		for (const auto& model : models) m_editor->models()->forget(model);
+		for (auto* view : m_views) view->update();
 	});
 	connect(m_compileWindow, &CompileWindow::compileAgain, this, &MainWindow::compile);
 	connect(m_compileWindow, &CompileWindow::reportRequested, this, &MainWindow::makeReport);

@@ -297,7 +297,7 @@ std::vector<GeneratedFile> generatedModFiles(const fs::path& modDir) {
 	}
 	// Copies deploy.ps1 lists in its manifests (models, steeper bump maps, height maps, sounds).
 	const std::pair<const char*, const char*> manifests[] = {
-		{"fidelity_models.txt", "model copy made by deploy.bat"},
+		{"fidelity_models.txt", "model copy with liquid (deploy.bat or Game enhancements)"},
 		{"fidelity_bumps.txt", "bump map made by deploy.bat"},
 		{"fidelity_heights.txt", "height map made by deploy.bat"},
 		{"fidelity_distant.txt", "distant sound made by deploy.bat"},
