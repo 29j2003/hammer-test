@@ -53,6 +53,21 @@ TEST_CASE("text helpers") {
 	CHECK(normalizeMaterialName("materials\\Tools/ToolsNodraw.vmt") == "tools/toolsnodraw");
 }
 
+TEST_CASE("short summary of a long description") {
+	CHECK(shortSummary("  Short text.  ") == "Short text.");
+	const std::string longText =
+	    "An entity that controls the sky, e.g. the colour of the fog. It also sets the sun and many other things that "
+	    "nobody reads in full because the panel is small and the text goes on and on.";
+	CHECK(shortSummary(longText) == "An entity that controls the sky, e.g. the colour of the fog.");
+	const std::string noSentence(std::string(30, 'a') + " " + std::string(200, 'b'));
+	CHECK(shortSummary(noSentence, 20, 100) == std::string(30, 'a') + "\u2026");
+	const std::string words = "word, word, word, word, word, word, word, word, word, word, word, word, word, word";
+	const std::string cut = shortSummary(words, 10, 40);
+	CHECK(cut.size() <= 40 + 3);
+	CHECK(cut.find(",\u2026") == std::string::npos);
+	CHECK(cut.substr(cut.size() - 3) == "\u2026");
+}
+
 TEST_CASE("steam libraries and app manifests") {
 	Fixture f;
 	test::createFixture(f);

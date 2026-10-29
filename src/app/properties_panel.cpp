@@ -174,9 +174,16 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 	m_help->setTextFormat(Qt::RichText);
 	m_help->setAlignment(Qt::AlignTop | Qt::AlignLeft);
 	m_help->setContentsMargins(10, 8, 10, 8);
-	m_help->setMinimumHeight(64);
 	m_help->setProperty("role", "help");
+	m_help->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+	m_help->setFocusPolicy(Qt::NoFocus);   // clicking "More…" must not take the focus from the key
 	layout->addWidget(m_help);
+	m_helpExpanded = QSettings().value("properties/helpExpanded", false).toBool();
+	connect(m_help, &QLabel::linkActivated, this, [this](const QString& link) {
+		m_helpExpanded = link == QLatin1String("#more");
+		QSettings().setValue("properties/helpExpanded", m_helpExpanded);
+		setHelp(m_helpFull);
+	});
 	connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) { showHelp(now); });
 	for (const auto& name : QSettings().value("properties/collapsed").toStringList()) {
 		m_collapsed.insert(name);
@@ -424,8 +431,27 @@ void PropertiesPanel::rebuild() {
 		}
 		m_focusConnection = -1;
 	}
-	m_help->setText(m_defaultHelp);
-	m_help->setVisible(!m_defaultHelp.isEmpty());
+	setHelp(m_defaultHelp);
+}
+
+void PropertiesPanel::setHelp(const QString& html) {
+	m_helpFull = html;
+	m_help->setVisible(!html.isEmpty());
+	// helpText(): "<b>title</b> key (type)<br>description" - only the description is shortened.
+	const qsizetype split = html.indexOf(QLatin1String("<br>"));
+	if (split < 0) {
+		m_help->setText(html);
+		return;
+	}
+	const QString description = html.mid(split + 4);
+	const QString summary = QString::fromStdString(shortSummary(description.toStdString()));
+	if (summary == description) {
+		m_help->setText(html);
+	} else if (m_helpExpanded) {
+		m_help->setText(html + QStringLiteral(" <a href='#less'>%1</a>").arg(tr("Less")));
+	} else {
+		m_help->setText(html.left(split + 4) + summary + QStringLiteral(" <a href='#more'>%1</a>").arg(tr("More\u2026")));
+	}
 }
 
 void PropertiesPanel::showHelp(QWidget* focused) {
@@ -433,8 +459,7 @@ void PropertiesPanel::showHelp(QWidget* focused) {
 	for (QWidget* w = focused; w; w = w->parentWidget()) {
 		if (w == m_content || w == this) break;
 		if (const QVariant help = w->property("help"); help.isValid()) {
-			m_help->setText(help.toString());
-			m_help->setVisible(true);
+			setHelp(help.toString());
 			return;
 		}
 	}
