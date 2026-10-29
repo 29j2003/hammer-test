@@ -682,6 +682,11 @@ void MainWindow::createDocks() {
 	connect(m_problems, &ProblemsPanel::reportRequested, this, &MainWindow::makeReport);
 	connect(m_problems, &ProblemsPanel::actionRequested, this, [this](const QString& action) {
 		if (action == QLatin1String("buildCubemaps")) buildCubemapsInCompile();
+		if (action == QLatin1String("installFeatures")) {
+			showPage(Page::Project);
+			m_projectPage->setCurrentWidget(m_features);
+			if (m_features->installNow()) QTimer::singleShot(0, m_problems, &ProblemsPanel::runChecks);
+		}
 	});
 	connect(m_compileWindow, &CompileWindow::showLeak, this, [this] {
 		for (auto* view : m_views) {

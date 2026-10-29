@@ -5,11 +5,15 @@
 
 #include "fixture.h"
 
+#include <sme/checks.h>
+#include <sme/map.h>
 #include <sme/mod_install.h>
 #include <sme/text.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 
 using namespace sme;
 namespace fs = std::filesystem;
@@ -47,7 +51,7 @@ TEST_CASE("mod install: the bundle's manifest, checked; the mod's branch from ga
 	const auto bundle = readFeatureBundle(dir, &error);
 	REQUIRE_MESSAGE(bundle, error);
 	CHECK(bundle->version == "0.1.0+abc1234");
-	CHECK(bundle->files.size() == 11);
+	CHECK(bundle->files.size() == 13);
 	CHECK(bundle->find("BIN/episodic/client.dll"));   // case does not matter
 	CHECK(verifyFeatureBundle(*bundle));
 	const auto scripts = bundledScripts(*bundle);
@@ -113,6 +117,7 @@ TEST_CASE("mod install: into a mod with backups, current files untouched, update
 	CHECK(result.vrad);
 	CHECK(read(mod / "bin" / "client.dll") == "episodic client one");
 	CHECK(read(mod / "bin" / "server.dll") == "episodic server one");
+	CHECK(read(mod / "bin" / "game_shader_dx9.dll") == "episodic mapbase shaders one");   // Mapbase's own shaders
 	CHECK(read(mod / "bin" / "game_shader_dx6.dll") == "shaders one");
 	CHECK(read(mod / "shaders" / "fxc" / "fidelity_ssao_ps20b.vcs") == "ssao one");
 	CHECK(read(mod / "bin" / "client.dll.mapsmith-backup") == "mapbase client");
@@ -130,7 +135,7 @@ TEST_CASE("mod install: into a mod with backups, current files untouched, update
 	REQUIRE(installed);
 	CHECK(installed->version == "0.1.0+aaa");
 	CHECK(installed->branch == ModBranch::Episodic);
-	CHECK(installed->files.size() == 5);
+	CHECK(installed->files.size() == 6);
 	CHECK(installed->files.at("bin/client.dll") == sha256Hex("episodic client one"));
 	CHECK(installed->backups.size() == 2);
 	CHECK(installed->autoexecLine);
@@ -167,7 +172,7 @@ TEST_CASE("mod install: into a mod with backups, current files untouched, update
 	installed = readInstalledFeatures(mod);
 	REQUIRE(installed);
 	CHECK(installed->version == "0.2.0+bbb");
-	CHECK(installed->files.size() == 4);
+	CHECK(installed->files.size() == 5);
 
 	// The mapper changed a file of the install by hand: a removal leaves it.
 	write(mod / "cfg" / "fidelity.cfg", "// my own changes\n");
@@ -179,6 +184,7 @@ TEST_CASE("mod install: into a mod with backups, current files untouched, update
 	CHECK(read(mod / "bin" / "server.dll") == "mapbase server");
 	CHECK_FALSE(fs::exists(mod / "bin" / "client.dll.mapsmith-backup"));
 	CHECK_FALSE(fs::exists(mod / "bin" / "game_shader_dx6.dll"));
+	CHECK_FALSE(fs::exists(mod / "bin" / "game_shader_dx9.dll"));   // there was none before
 	CHECK(read(mod / "cfg" / "fidelity.cfg") == "// my own changes\n");
 	CHECK(read(mod / "cfg" / "autoexec.cfg") == "bind f5 jpeg\r\n");
 	CHECK(read(sdkBin / "vrad.exe") == "mapbase vrad");
@@ -205,6 +211,7 @@ TEST_CASE("mod install: an HL2 mod, a deploy.bat install before, VRAD already ou
 	auto result = installFeatures(*bundle, mod, sdkBin);
 	REQUIRE_MESSAGE(result.ok, result.error);
 	CHECK(read(mod / "bin" / "client.dll") == "hl2 client one");
+	CHECK(read(mod / "bin" / "game_shader_dx9.dll") == "hl2 mapbase shaders one");
 	CHECK_FALSE(fs::exists(mod / "bin" / "client.dll.mapsmith-backup"));   // there was none
 	CHECK(read(mod / "cfg" / "autoexec.cfg") == "exec fidelity\t// mapbase-fidelity\n");
 	CHECK(read(sdkBin / "fidelity_backup" / "fidelity_backup.txt") == "ours vrad.exe\r\n");
@@ -231,5 +238,146 @@ TEST_CASE("mod install: an HL2 mod, a deploy.bat install before, VRAD already ou
 	}
 	fs::permissions(mod / "bin", fs::perms::owner_write, fs::perm_options::add);
 #endif
+	fs::remove_all(root);
+}
+
+namespace {
+
+/// A minimal Windows DLL header: "MZ", e_lfanew, "PE\0\0" and the COFF link time.
+std::string peFile(std::uint32_t linkTime, std::string_view tail) {
+	std::string data(0x98, '\0');
+	data[0] = 'M';
+	data[1] = 'Z';
+	data[0x3C] = char(0x80);
+	data.replace(0x80, 4, std::string("PE\0\0", 4));
+	data[0x84] = char(0x4C);   // i386
+	data[0x85] = char(0x01);
+	for (int i = 0; i < 4; ++i) data[0x88 + i] = char((linkTime >> (8 * i)) & 0xFF);
+	return data + std::string(tail);
+}
+
+} // namespace
+
+TEST_CASE("mod install: PE link time") {
+	const auto bytes = [](const std::string& text) {
+		return std::vector<std::byte>(reinterpret_cast<const std::byte*>(text.data()), reinterpret_cast<const std::byte*>(text.data()) + text.size());
+	};
+	CHECK(peLinkTime(bytes(peFile(0x5F3E2A10, "code"))) == 0x5F3E2A10u);
+	CHECK_FALSE(peLinkTime(bytes("")));
+	CHECK_FALSE(peLinkTime(bytes("not a dll at all, just some text that is long enough for the header check")));
+	auto noPe = peFile(1, "");
+	noPe[0x80] = 'X';
+	CHECK_FALSE(peLinkTime(bytes(noPe)));
+	auto pastEnd = peFile(1, "");
+	pastEnd[0x3C] = char(0xF0);   // e_lfanew beyond the data
+	CHECK_FALSE(peLinkTime(bytes(pastEnd)));
+	const auto file = fs::temp_directory_path() / "sme_pe_link_time.dll";
+	write(file, peFile(1234567, "rest"));
+	CHECK(peLinkTimeOfFile(file) == 1234567u);
+	fs::remove(file);
+	CHECK_FALSE(peLinkTimeOfFile(file));
+}
+
+TEST_CASE("mod install: a Mapbase mod's bin - missing DLLs, an old game_shader_dx9.dll, filled from Mapbase, incomplete installs") {
+	const auto root = fs::temp_directory_path() / "sme_mod_bin";
+	fs::remove_all(root);
+	const auto sourcemods = root / "sourcemods";
+	const auto mod = sourcemods / "test2";
+	const auto bundleDir = root / "features";
+	test::makeFeatureBundle(bundleDir, "1.0", "one");
+	// The bundle's Mapbase shaders as real headers: newer than the mod's old copy.
+	write(bundleDir / "bin" / "episodic" / "game_shader_dx9.dll", peFile(2000, "new shaders"));
+	{
+		auto text = read(bundleDir / "manifest.txt");
+		const auto at = text.find("  bin/episodic/game_shader_dx9.dll");
+		text.replace(text.rfind('\n', at) + 1, 64, sha256Hex(peFile(2000, "new shaders")));
+		write(bundleDir / "manifest.txt", text);
+	}
+	const auto bundle = readFeatureBundle(bundleDir);
+	REQUIRE(bundle);
+	REQUIRE(verifyFeatureBundle(*bundle));
+
+	// Not a mod: nothing to say.
+	CHECK(checkModBin(mod, &*bundle).ok());
+	CHECK(copyMapbaseBin(sourcemods, mod).empty());
+
+	// A new mod with only client.dll and server.dll (what test2 had): the shaders are missing.
+	write(mod / "gameinfo.txt", "GameInfo { FileSystem { SearchPaths { game |all_source_engine_paths|ep2 } } }\n");
+	write(mod / "bin" / "client.dll", "mapbase client");
+	write(mod / "bin" / "server.dll", "mapbase server");
+	auto state = checkModBin(mod, nullptr);
+	CHECK_FALSE(state.ok());
+	CHECK(state.missing == std::vector<std::string>{"bin/game_shader_dx9.dll"});
+	CHECK(state.outdated.empty());
+
+	// Filled from Mapbase's own game folder next to it (the branch's), never overwriting.
+	write(sourcemods / "mapbase_episodic" / "bin" / "client.dll", "mapbase_episodic client");
+	write(sourcemods / "mapbase_episodic" / "bin" / "game_shader_dx9.dll", peFile(1000, "old shaders"));
+	write(sourcemods / "mapbase_hl2" / "bin" / "game_shader_dx9.dll", "wrong branch");
+	CHECK(copyMapbaseBin(sourcemods, mod) == std::vector<std::string>{"bin/game_shader_dx9.dll"});
+	CHECK(read(mod / "bin" / "game_shader_dx9.dll") == peFile(1000, "old shaders"));
+	CHECK(read(mod / "bin" / "client.dll") == "mapbase client");
+	CHECK(checkModBin(mod, nullptr).ok());
+
+	// With the bundle: Mapbase's game_shader_dx9.dll is older than Mapsmith's. The game code is not
+	// judged by its age (that is the features' version).
+	state = checkModBin(mod, &*bundle);
+	CHECK(state.missing.empty());
+	CHECK(state.outdated == std::vector<std::string>{"bin/game_shader_dx9.dll"});
+
+	// A newer one than the bundle's is fine, so is the bundle's own.
+	write(mod / "bin" / "game_shader_dx9.dll", peFile(3000, "even newer"));
+	CHECK(checkModBin(mod, &*bundle).ok());
+
+	// Installed features: the missing game_shader_dx6.dll is found, and the install counts as
+	// incomplete until all its files are there again.
+	REQUIRE(installFeatures(*bundle, mod).ok);
+	CHECK(checkModBin(mod, &*bundle).ok());
+	CHECK(missingFeatureFiles(*bundle, mod).empty());
+	fs::remove(mod / "bin" / "game_shader_dx6.dll");
+	fs::remove(mod / "bin" / "game_shader_dx9.dll");
+	state = checkModBin(mod, &*bundle);
+	CHECK(state.missing == std::vector<std::string>{"bin/game_shader_dx9.dll", "bin/game_shader_dx6.dll"});
+	CHECK(missingFeatureFiles(*bundle, mod) == std::vector<std::string>{"bin/game_shader_dx9.dll", "bin/game_shader_dx6.dll"});
+	REQUIRE(installFeatures(*bundle, mod).ok);
+	CHECK(missingFeatureFiles(*bundle, mod).empty());
+	CHECK(read(mod / "bin" / "game_shader_dx9.dll") == peFile(2000, "new shaders"));
+	fs::remove_all(root);
+}
+
+TEST_CASE("mod install: the Problems list warns about a Mapbase mod without its shaders") {
+	const auto root = fs::temp_directory_path() / "sme_mod_bin_check";
+	fs::remove_all(root);
+	const auto mod = root / "test2";
+	write(mod / "gameinfo.txt", "GameInfo { FileSystem { SearchPaths { game |all_source_engine_paths|ep2 } } }\n");
+	write(mod / "bin" / "client.dll", "mapbase client");
+	write(mod / "bin" / "server.dll", "mapbase server");
+	const MapDocument doc;
+	const auto find = [](const std::vector<Problem>& problems) {
+		const auto it = std::find_if(problems.begin(), problems.end(), [](const Problem& p) { return p.kind == Problem::Kind::ModBinIncomplete; });
+		return it == problems.end() ? std::optional<Problem>() : std::optional<Problem>(*it);
+	};
+	CHECK_FALSE(find(checkMap(doc, CheckContext{})));   // not a Mapbase mod (or none known)
+
+	CheckContext context;
+	context.mapbaseModDir = mod;
+	auto problem = find(checkMap(doc, context));
+	REQUIRE(problem);
+	CHECK(problem->severity == Problem::Severity::Warning);
+	CHECK(problem->action == "installFeatures");
+	CHECK(problem->message.find("bin/game_shader_dx9.dll") != std::string::npos);
+	CHECK(problem->message.find("wireframe") != std::string::npos);
+	CHECK(problem->fixLabel.empty());   // no bundle: nothing to install from
+
+	test::makeFeatureBundle(root / "features", "1.0", "one");
+	const auto bundle = readFeatureBundle(root / "features");
+	REQUIRE(bundle);
+	context.bundle = &*bundle;
+	problem = find(checkMap(doc, context));
+	REQUIRE(problem);
+	CHECK(problem->fixLabel == "Install features");
+
+	REQUIRE(installFeatures(*bundle, mod).ok);
+	CHECK_FALSE(find(checkMap(doc, context)));
 	fs::remove_all(root);
 }

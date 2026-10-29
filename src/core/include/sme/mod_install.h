@@ -8,8 +8,9 @@
 // (shaders, cfg) and its PowerShell scripts (deploy.ps1 for the generated materials, report.ps1
 // for Make report). manifest.txt lists every file with its SHA-256.
 //
-// installFeatures() copies the files into a mod: bin/client.dll and bin/server.dll of the mod's
-// branch (Episodic when gameinfo.txt mounts ep2/episodic, else HL2), bin/game_shader_dx6.dll, the
+// installFeatures() copies the files into a mod: bin/client.dll, bin/server.dll and
+// bin/game_shader_dx9.dll (Mapbase's own shaders, SDK_*) of the mod's branch (Episodic when
+// gameinfo.txt mounts ep2/episodic, else HL2), bin/game_shader_dx6.dll (the add-on's shaders), the
 // game files, the "exec fidelity" line in cfg/autoexec.cfg (the same line deploy.ps1 writes) and,
 // when the SDK's bin folder is known, VRAD (the files there before go into bin/fidelity_backup,
 // the folder update.ps1 uses, so either can put them back). A file it replaces that is not its
@@ -21,7 +22,10 @@
 
 #include <filesystem>
 #include <map>
+#include <cstddef>
+#include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -119,5 +123,36 @@ struct FeatureInstallResult {
 
 /// The installed version is not the bundle's (an update is due).
 [[nodiscard]] bool featuresOutdated(const FeatureBundle& bundle, const InstalledFeatures& installed);
+/// Files of the bundle's install plan for the mod's branch that the mod does not have (mod-relative,
+/// e.g. "bin/game_shader_dx9.dll" after an install from an older bundle without it): the install
+/// is incomplete and should run again.
+[[nodiscard]] std::vector<std::string> missingFeatureFiles(const FeatureBundle& bundle, const std::filesystem::path& modDir);
+
+/// The link time in a Windows DLL's PE header (seconds since 1970), nullopt if it is not a PE file.
+[[nodiscard]] std::optional<std::uint32_t> peLinkTime(std::span<const std::byte> data);
+[[nodiscard]] std::optional<std::uint32_t> peLinkTimeOfFile(const std::filesystem::path& file);
+
+/// The DLLs a Mapbase mod needs in its bin folder: the game code and Mapbase's shaders. Without
+/// game_shader_dx9.dll the game knows no SDK_* shader: such materials and the add-on's screen
+/// passes fall back to wireframe (black lines across the view).
+[[nodiscard]] const std::vector<std::string>& mapbaseModDlls();   ///< "bin/client.dll", "bin/server.dll", "bin/game_shader_dx9.dll"
+
+/// Fills a Mapbase mod's bin folder from Mapbase's own game folder next to it
+/// (`sourceModsDir`/mapbase_episodic/bin or mapbase_hl2/bin, by the mod's branch): copies the
+/// mapbaseModDlls() the mod does not have yet (never overwrites). Returns the mod-relative files
+/// copied; used when Mapsmith brings no features (or they could not be installed).
+[[nodiscard]] std::vector<std::string> copyMapbaseBin(const std::filesystem::path& sourceModsDir, const std::filesystem::path& modDir);
+
+/// What a Mapbase mod's bin folder lacks.
+struct ModBinState {
+	std::vector<std::string> missing;    ///< Mod-relative DLLs that are not there
+	std::vector<std::string> outdated;   ///< bin/game_shader_dx9.dll when older (PE link time) than the bundle's
+	[[nodiscard]] bool ok() const { return missing.empty() && outdated.empty(); }
+};
+/// Checks a Mapbase mod's bin folder: mapbaseModDlls(), plus bin/game_shader_dx6.dll when Mapsmith
+/// installed the features there; "outdated" compares game_shader_dx9.dll's PE link time with the
+/// bundle's for the mod's branch (no bundle: only missing ones; the game code's version is
+/// featuresOutdated()'s business).
+[[nodiscard]] ModBinState checkModBin(const std::filesystem::path& modDir, const FeatureBundle* bundle);
 
 } // namespace sme

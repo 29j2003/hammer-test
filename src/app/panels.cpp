@@ -4,6 +4,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "features_panel.h"
 #include "mod_code_panel.h"
 #include "text_copy.h"
 
@@ -154,6 +155,7 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	layout->addWidget(m_list, 1);
 	connect(check, &QPushButton::clicked, this, [this] {
 		m_cache = {};   // read models and sounds again (they may have changed on disk)
+		m_bundleRead = false;
 		runChecks();
 	});
 	connect(editor, &Editor::gameChanged, this, [this] { m_cache = {}; });
@@ -183,6 +185,15 @@ void ProblemsPanel::runChecks() {
 		const QFileInfo vmf(m_editor->filePath());
 		context.mapSource = toPath(vmf.absoluteFilePath());
 		context.compiledMap = m_editor->game()->entry.gameDir / "maps" / toPath(vmf.completeBaseName() + ".bsp");
+	}
+	// A Mapbase mod's bin folder (game code, Mapbase's shaders), against the features Mapsmith brings.
+	if (const auto* entry = m_editor->gameEntry(); entry && entry->usesMapbase && m_editor->game()) {
+		context.mapbaseModDir = m_editor->game()->entry.gameDir;
+		if (!m_bundleRead) {
+			m_bundle = readFeatureBundle(featureBundleDir());
+			m_bundleRead = true;
+		}
+		context.bundle = m_bundle ? &*m_bundle : nullptr;
 	}
 	m_problems = checkMap(m_editor->doc(), context);
 	showProblems();

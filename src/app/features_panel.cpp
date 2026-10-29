@@ -187,6 +187,7 @@ FeaturesPanel::FeaturesPanel(Editor* editor, ModCodePanel* modCode, QWidget* par
 	auto* what = new QLabel(tr("<b>What gets installed</b>"
 	                           "<table cellspacing='0' cellpadding='2'>"
 	                           "<tr><td>bin/client.dll, bin/server.dll</td><td>&nbsp;the game code: Mapbase with the features built in</td></tr>"
+	                           "<tr><td>bin/game_shader_dx9.dll</td><td>&nbsp;Mapbase's shaders (built together with the game code)</td></tr>"
 	                           "<tr><td>bin/game_shader_dx6.dll</td><td>&nbsp;the extra shaders: walls with depth, liquid, water, sky</td></tr>"
 	                           "<tr><td>shaders/fxc/*.vcs</td><td>&nbsp;the compiled shader programs</td></tr>"
 	                           "<tr><td>cfg/fidelity.cfg</td><td>&nbsp;the settings (the ticks below), run by autoexec.cfg</td></tr>"
@@ -373,7 +374,9 @@ FeaturesPanel::InstallState FeaturesPanel::installState() const {
 	if (m_modDir.empty()) return InstallState::NoMod;
 	const auto installed = readInstalledFeatures(m_modDir);
 	if (!installed) return InstallState::NotInstalled;
-	return featuresOutdated(*m_bundle, *installed) ? InstallState::Outdated : InstallState::Current;
+	// An install from an older bundle may lack files the bundle has now (Mapbase's shaders).
+	return featuresOutdated(*m_bundle, *installed) || !missingFeatureFiles(*m_bundle, m_modDir).empty() ? InstallState::Outdated
+	                                                                                                     : InstallState::Current;
 }
 
 std::filesystem::path FeaturesPanel::sdkBin() const {
@@ -406,8 +409,15 @@ void FeaturesPanel::showInstall() {
 			break;
 		}
 		case InstallState::Outdated:
-			text = tr("<span style='color:#f5a524; font-size:15px'><b>Update available</b></span> - installed: version %1, Mapsmith brings %2.")
-			           .arg(QString::fromStdString(installed->version), QString::fromStdString(m_bundle->version));
+			if (const auto missing = missingFeatureFiles(*m_bundle, m_modDir); !missing.empty() && !featuresOutdated(*m_bundle, *installed)) {
+				QStringList files;
+				for (const auto& file : missing) files << QString::fromStdString(file);
+				text = tr("<span style='color:#f5a524; font-size:15px'><b>Incomplete</b></span> - the mod lacks %1. Install again to add it.")
+				           .arg(files.join(QStringLiteral(", ")).toHtmlEscaped());
+			} else {
+				text = tr("<span style='color:#f5a524; font-size:15px'><b>Update available</b></span> - installed: version %1, Mapsmith brings %2.")
+				           .arg(QString::fromStdString(installed->version), QString::fromStdString(m_bundle->version));
+			}
 			break;
 	}
 	if (state != InstallState::NoBundle) m_installState->setToolTip({});

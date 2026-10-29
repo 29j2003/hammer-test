@@ -5440,6 +5440,100 @@ TEST_CASE("features from Mapsmith: offered on the Overview, installed by one cli
 	qunsetenv("SME_FEATURES_DIR");
 }
 
+TEST_CASE("problems: a Mapbase mod without Mapbase's shaders is warned about, Install features fills its bin") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	QTemporaryDir bundleDir;
+	const auto bundle = toPath(bundleDir.path());
+	test::makeFeatureBundle(bundle, "1.0+aaa", "one");
+	qputenv("SME_FEATURES_DIR", bundleDir.path().toUtf8());
+
+	// What the new mod test2 had: Mapbase's game code, but no game_shader_dx9.dll - the game drew
+	// the SDK_* materials and screen passes as wireframe.
+	test::Fixture f;
+	test::createFixture(f);
+	test::writeText(f.mod / "bin" / "client.dll", "mapbase client");
+	test::writeText(f.mod / "bin" / "server.dll", "mapbase server");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.gameEntry());
+	REQUIRE(editor.gameEntry()->usesMapbase);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	auto* features = window.featuresPanel();
+	REQUIRE(features);
+	REQUIRE(features->bundle());
+	window.modCodePanel()->setCommandFactory([](ModCodeAction, const ModCodeScripts& scripts, const std::filesystem::path&) {
+		ScriptCommand command;   // no PowerShell in the test
+		command.workingDir = scripts.root;
+#ifdef Q_OS_WIN
+		command.program = "cmd.exe";
+		command.args = {"/c", "echo", "Done."};
+#else
+		command.program = "sh";
+		command.args = {"-c", "echo Done."};
+#endif
+		return std::optional<ScriptCommand>(command);
+	});
+	QSignalSpy installed(features, &FeaturesPanel::installed);
+	const auto waitInstalled = [&](int count) {
+		for (int i = 0; i < 500 && installed.count() < count; ++i) QTest::qWait(20);
+		settle();
+		return installed.count() >= count;
+	};
+	const auto warning = [&]() -> QPushButton* {
+		window.raiseDock("Problems");
+		window.problems()->runChecks();
+		settle();
+		bool listed = false;
+		for (auto* label : window.problems()->findChildren<QLabel*>()) {
+			listed |= label->text().contains("bin/game_shader_dx9.dll") && label->text().contains("wireframe");
+		}
+		if (!listed) return nullptr;
+		for (auto* button : window.problems()->findChildren<QPushButton*>()) {
+			if (button->text() == "Install features") return button;
+		}
+		return nullptr;
+	};
+
+	// The Problems list warns and offers the install; one click puts the files in.
+	auto* install = warning();
+	REQUIRE(install);
+	QTest::mouseClick(install, Qt::LeftButton);
+	REQUIRE(waitInstalled(1));
+	CHECK(window.projectTabs()->currentWidget() == features);
+	CHECK(readFileText(f.mod / "bin" / "game_shader_dx9.dll") == "hl2 mapbase shaders one");
+	CHECK(readFileText(f.mod / "bin" / "client.dll") == "hl2 client one");
+	CHECK(features->installState() == FeaturesPanel::InstallState::Current);
+	settle();
+	CHECK_FALSE(warning());
+
+	// An install that lost a file (or came from a Mapsmith without Mapbase's shaders) is
+	// "Incomplete" on the Features card; Install again adds it.
+	features->findChild<QCheckBox*>("featuresAutoUpdate")->setChecked(false);
+	std::filesystem::remove(f.mod / "bin" / "game_shader_dx9.dll");
+	features->reloadBundle();
+	settle();
+	CHECK(features->installState() == FeaturesPanel::InstallState::Outdated);
+	auto* state = features->findChild<QLabel*>("featuresInstallState");
+	REQUIRE(state);
+	CHECK(state->text().contains("Incomplete"));
+	CHECK(state->text().contains("bin/game_shader_dx9.dll"));
+	CHECK(warning());
+	QTest::mouseClick(features->findChild<QPushButton*>("featuresInstall"), Qt::LeftButton);
+	REQUIRE(waitInstalled(2));
+	CHECK(readFileText(f.mod / "bin" / "game_shader_dx9.dll") == "hl2 mapbase shaders one");
+	CHECK(features->installState() == FeaturesPanel::InstallState::Current);
+	CHECK_FALSE(warning());
+	qunsetenv("SME_FEATURES_DIR");
+}
+
 TEST_CASE("animations page: a model's sequences played in 3D, where the map uses them, put on an entity") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());

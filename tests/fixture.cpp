@@ -134,8 +134,10 @@ void makeFeatureBundle(const std::filesystem::path& root, std::string_view versi
 	const std::vector<std::pair<std::string, std::string>> files = {
 		{"bin/episodic/client.dll", "episodic client " + t},
 		{"bin/episodic/server.dll", "episodic server " + t},
+		{"bin/episodic/game_shader_dx9.dll", "episodic mapbase shaders " + t},
 		{"bin/hl2/client.dll", "hl2 client " + t},
 		{"bin/hl2/server.dll", "hl2 server " + t},
+		{"bin/hl2/game_shader_dx9.dll", "hl2 mapbase shaders " + t},
 		{"bin/game_shader_dx6.dll", "shaders " + t},
 		{"vrad/vrad.exe", "vrad " + t},
 		{"vrad/vrad_dll.dll", "vrad dll " + t},

@@ -461,6 +461,36 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		p.howToFix = "Keep one sky_camera in the 3D skybox and delete the others.";
 		problems.push_back(std::move(p));
 	}
+	// The mod itself: a Mapbase mod needs its game code and Mapbase's shaders in bin/. Without
+	// game_shader_dx9.dll every SDK_* material and the features' screen passes fall back to
+	// wireframe - black lines across the view and see-through surfaces.
+	if (!context.mapbaseModDir.empty()) {
+		const auto bin = checkModBin(context.mapbaseModDir, context.bundle);
+		if (!bin.ok()) {
+			Problem p;
+			p.kind = Problem::Kind::ModBinIncomplete;
+			p.severity = Problem::Severity::Warning;
+			p.action = "installFeatures";
+			const auto list = [](const std::vector<std::string>& files) {
+				std::string out;
+				for (const auto& file : files) out += (out.empty() ? "" : ", ") + file;
+				return out;
+			};
+			if (!bin.missing.empty()) {
+				p.message = "The mod's bin folder lacks " + list(bin.missing) +
+				            " - without Mapbase's shaders (game_shader_dx9.dll) the game draws many surfaces and the screen effects "
+				            "as wireframe (black lines across the view)";
+				p.message += bin.outdated.empty() ? "." : "; " + list(bin.outdated) + " is older than Mapsmith's.";
+			} else {
+				p.message = "The mod's " + list(bin.outdated) + " is older than the one Mapsmith brings (it may lack shaders the features use).";
+			}
+			p.howToFix = context.bundle ? "Install the features (Project > Features): they bring the game code and Mapbase's shaders built together."
+			                            : "Copy Mapbase's bin folder (client.dll, server.dll, game_shader_dx9.dll) into the mod, or use the Windows "
+			                              "version of Mapsmith, which brings them.";
+			p.fixLabel = context.bundle ? "Install features" : "";
+			problems.push_back(std::move(p));
+		}
+	}
 	// Where things are: player start in a brush, entities in the void, lightmap scales, NPC nodes.
 	for (auto& p : checkLayout(doc, context)) problems.push_back(std::move(p));
 	return problems;

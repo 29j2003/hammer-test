@@ -159,6 +159,12 @@ materials, takes away those it made, and the Game enhancements box says so with 
 Material Editor will not save a material with one of these shaders then either. *Sway in the wind* is Mapbase's own
 and works without it.
 
+The screen effects (ambient occlusion, light shafts, the image pass) are drawn with **Mapbase's shaders**
+(`bin/game_shader_dx9.dll`, also installed with the features). If that file is missing, the console lists
+`SDK_screenspace_general`, `SDK_VertexLitGeneric` and others as unknown shaders and every screen effect becomes a set of
+**straight black lines across the view**. The **Problems** list warns about it with an **Install features** button.
+A message that `fidelity/rain_map` was not found is harmless: the game makes that texture itself while it runs.
+
 ## Tips
 
 - Make the light right first (sun direction, `light_environment` colours, light entities), then use the Image values

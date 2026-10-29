@@ -4,8 +4,13 @@
 After CI built Mapbase with the add-on from mod/ (see .github/workflows/mod.yml), this collects
 what Mapsmith installs into a mod (sme/mod_install.h):
 
-  bin/episodic/client.dll, server.dll   for mods on Half-Life 2: Episode Two
-  bin/hl2/client.dll, server.dll        for mods on Half-Life 2
+  bin/episodic/client.dll, server.dll, game_shader_dx9.dll
+                                        for mods on Half-Life 2: Episode Two
+  bin/hl2/client.dll, server.dll, game_shader_dx9.dll
+                                        for mods on Half-Life 2
+                                        (game_shader_dx9.dll: Mapbase's own shaders - SDK_VertexLitGeneric,
+                                        SDK_screenspace_general ...; without it the game falls back to
+                                        wireframe for them and the add-on's screen passes draw lines)
   bin/game_shader_dx6.dll               the add-on's shaders (Fidelity_Parallax, Fidelity_Liquid ...)
   vrad/vrad.exe, vrad_dll.dll           VRAD with baked ambient occlusion (-fidelityao)
   fidelity/game/...                     the add-on's game files (compiled shaders, cfg)
@@ -29,6 +34,10 @@ import sys
 from pathlib import Path
 
 GAMES = ("episodic", "hl2")
+# Per game: the DLLs a complete Mapbase mod has in its bin folder, and the project folder below
+# sp/src whose Release folder may hold them (client, server: games.sln; game_shader_dx9:
+# shaders.sln, VPC group "shaders").
+GAME_DLLS = (("client", "game/client"), ("server", "game/server"), ("game_shader_dx9", "materialsystem/stdshaders"))
 # Scripts the bundle needs at the user's: deploy.ps1 and what it loads, report.ps1, the sound tool.
 # update.ps1 builds from source and stays out.
 SCRIPT_SUFFIXES = (".ps1", ".cs")
@@ -48,7 +57,9 @@ def release_folders(project: Path, game: str | None = None) -> list[Path]:
         name = child.name.lower()
         if not child.is_dir() or not name.startswith("release"):
             continue
-        if game and name not in (f"release_mod_{game}", f"release_{game}", f"releasemod_{game}", f"release{game}"):
+        wanted = (f"release_mod_{game}", f"release_{game}", f"releasemod_{game}", f"release{game}",
+                  f"release_dx9_mod_{game}")   # (the last one: game_shader_dx9's Release_dx9_$GAMENAME)
+        if game and name not in wanted:
             continue
         out.append(child)
     return out
@@ -59,11 +70,11 @@ def find_built(source: Path) -> dict[str, Path]:
     game_dir = source / "sp" / "game"
     files: dict[str, Path] = {}
     for game in GAMES:
-        for name in ("client", "server"):
+        for name, project in GAME_DLLS:
             built = newest([game_dir / f"mod_{game}" / "bin" / f"{name}.dll"] +
-                           [f / f"{name}.dll" for f in release_folders(src / "game" / name, game)])
+                           [f / f"{name}.dll" for f in release_folders(src / project, game)])
             if not built:
-                raise SystemExit(f"{name}.dll for {game} was not built (looked in sp/game/mod_{game}/bin and sp/src/game/{name}/Release_mod_{game})")
+                raise SystemExit(f"{name}.dll for {game} was not built (looked in sp/game/mod_{game}/bin and sp/src/{project}/Release*_mod_{game})")
             files[f"bin/{game}/{name}.dll"] = built
     # (OUTBINDIR is sp/game/$GAMENAME/bin: mod_episodic or mod_hl2 - both the same shaders)
     shader = newest(list(game_dir.rglob("game_shader_dx6.dll")) + list((src / "materialsystem" / "fidelity").rglob("game_shader_dx6.dll")))
