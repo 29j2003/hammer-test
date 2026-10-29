@@ -2900,7 +2900,7 @@ TEST_CASE("ux: whole tiles in a low dock, recent popup, the Materials page follo
 	window.showStartPage();
 	settle();
 	CHECK(window.startPageShown());
-	CHECK(window.animationsPage()->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored);
+	CHECK((window.animationsPage()->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored));   // MSVC: doctest cannot print the enum
 	auto* start = window.startPage();
 	REQUIRE(start);
 	auto* continueButton = start->findChild<QPushButton*>("startContinue");
