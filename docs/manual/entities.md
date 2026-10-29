@@ -233,10 +233,21 @@ one out again, also after a restart.
 The **Animations** button in the side bar (under *Models*) plays the animations of any model.
 
 - **Models** on the left: **In this map** first (the models the map's NPCs and props use, most used first), then
-  **All models**. The search box finds them by words in their path.
+  **NPCs** (people, creatures and every model an NPC class of the game uses) and **Models** (props, weapons and the
+  rest, including animation-only files like `male_shared.mdl`). The search box finds them by words in their path, in
+  both sections.
 - **Pick a model** to see its animations on the right: its own and those it borrows from other models
   (`$includemodel`, e.g. the citizens' walks from `male_shared.mdl`), each with its **activity** (`ACT_WALK` ...),
   length (*pose* for a single frame) and where it comes from. The search above the list finds names and activities.
+  The model's idle animation is shown first.
+- **Gestures and layers** are listed apart, below the normal animations: gestures, flinches and other *delta*
+  animations only add a movement on top of what the NPC is doing, so they are shown on top of the model's idle
+  instead of on their own (on their own they would bend the body into a broken pose). In the game they play over the
+  NPC's walk or idle as well.
+- **Blends** (one animation made of several poses, e.g. aiming left to right) show their middle pose; the tooltip
+  says how many poses it has.
+- An animation found in several included models is listed **once**; *From* shows `(+N)` and the tooltip names the
+  other models and which one the game plays (the first one).
 - **Pick an animation** to play it in 3D: **▶ / ❚❚** (or **Space**) plays and pauses, the slider scrubs through it,
   the speed box plays it from 0.1× to 2×, **Loop** repeats it (off: it stops on the last frame). Turn the model like
   on the Models page.

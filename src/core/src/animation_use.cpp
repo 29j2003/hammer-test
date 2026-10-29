@@ -4,6 +4,8 @@
 
 #include <sme/text.h>
 
+#include <algorithm>
+
 namespace sme {
 
 namespace {
@@ -41,6 +43,58 @@ std::vector<SequenceKey> sequenceKeys(std::string_view classname) {
 
 bool isNpcClass(std::string_view classname) {
 	return startsWithI(classname, "npc_") || startsWithI(classname, "monster_");
+}
+
+std::vector<std::string> npcClassModels(const EntityCatalog& catalog) {
+	std::vector<std::string> out;
+	for (const auto* cls : catalog.placeable()) {
+		if (!isNpcClass(cls->name)) continue;
+		if (auto model = studioHelperModel(*cls); !model.empty()) {
+			model = toLower(model);
+			if (std::find(out.begin(), out.end(), model) == out.end()) out.push_back(std::move(model));
+		}
+	}
+	return out;
+}
+
+bool isCharacterModel(std::string_view path, const std::vector<std::string>& npcModels) {
+	const std::string lower = toLower(normalizePath(path));
+	if (!lower.ends_with(".mdl")) return false;
+	const std::string stem = lower.substr(lower.find_last_of('/') + 1, lower.size() - lower.find_last_of('/') - 5);
+	for (const std::string_view suffix : {"_shared", "_gestures", "_postures", "_ss", "_anims", "_animations", "_gib", "gibs"}) {
+		if (stem.ends_with(suffix)) return false;
+	}
+	if (std::find(npcModels.begin(), npcModels.end(), lower) != npcModels.end()) return true;
+	// Folders of the path (after models/) decide first: props and the like never are characters.
+	std::vector<std::string> folders;
+	{
+		std::string rest = lower.starts_with("models/") ? lower.substr(7) : lower;
+		std::size_t at = 0;
+		for (std::size_t slash; (slash = rest.find('/', at)) != std::string::npos; at = slash + 1) folders.push_back(rest.substr(at, slash - at));
+	}
+	for (const auto& folder : folders) {
+		if (folder.starts_with("props") || folder == "weapons" || folder == "items" || folder == "gibs" || folder == "effects" ||
+		    folder == "editor" || folder == "shadertest" || folder == "vehicles" || folder == "foliage" || folder == "cliffs" ||
+		    folder == "nature" || folder == "maps" || folder == "skybox" || folder == "phxtended" || folder == "xqm") {
+			return false;
+		}
+	}
+	static constexpr std::string_view characterWords[] = {
+		"humans", "human", "characters", "character", "player", "npc", "npcs", "monster", "monsters", "creatures", "zombie",
+		"headcrab", "antlion", "combine_s", "combine_super", "police", "metropolice", "vortigaunt", "alyx", "barney", "breen",
+		"kleiner", "eli", "mossman", "gman", "odessa", "monk", "citizen", "male_0", "female_0", "dog", "crow", "pigeon",
+		"seagull", "stalker", "hunter", "strider", "gunship", "combine_dropship", "manhack", "advisor", "fassassin",
+		"zombine", "soldier", "scientist", "survivor"};
+	const auto isWord = [](const std::string& text) {
+		for (const auto word : characterWords) {
+			if (text == word || text.starts_with(word)) return true;
+		}
+		return false;
+	};
+	for (const auto& folder : folders) {
+		if (isWord(folder)) return true;
+	}
+	return isWord(stem);
 }
 
 std::string animatedModel(const MapDocument& doc, const Entity& entity, const EntityCatalog* catalog) {
