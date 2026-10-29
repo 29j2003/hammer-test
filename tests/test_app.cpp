@@ -5489,6 +5489,19 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 	REQUIRE(page->modelList()->count() > 1);
 	CHECK_FALSE(page->modelList()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "In this map"
 	CHECK(page->modelList()->item(1)->data(Qt::UserRole).toString() == citizenModel);
+	// Then the characters and the props apart, each under its own header.
+	{
+		QString section;
+		QMap<QString, QString> sectionOf;
+		for (int i = 0; i < page->modelList()->count(); ++i) {
+			auto* item = page->modelList()->item(i);
+			if (!item->flags().testFlag(Qt::ItemIsEnabled)) section = item->text();
+			else if (section != "In this map") sectionOf[item->data(Qt::UserRole).toString()] = section;
+		}
+		CHECK(sectionOf.value(citizenModel) == "NPCs");
+		CHECK(sectionOf.value("models/props_demo/crate01.mdl") == "Models");
+		CHECK(sectionOf.value("models/humans/male_shared.mdl") == "Models");   // animations only: nothing to show as an NPC
+	}
 
 	QSignalSpy loaded(page, &AnimationsPage::modelLoaded);
 	page->modelList()->setCurrentRow(1);
@@ -5506,6 +5519,9 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 	CHECK(list->currentItem()->text(1) == "ACT_WALK");
 	CHECK(list->currentItem()->text(3) == "male_shared.mdl");
 	CHECK(list->currentItem()->text(0) == "walk_all");
+	// An include model's animation has its length (not "pose") and frames to play.
+	CHECK(list->currentItem()->text(2).endsWith(" s"));
+	CHECK(page->animated()->sequences()[std::size_t(page->animated()->findSequence("walk_all"))].frames > 1);
 
 	// The pose moves the vertices: a quarter into the walk the legs swing (the right leg forward).
 	for (int i = 0; i < 20 && !page->viewer()->model(); ++i) QTest::qWait(50);
