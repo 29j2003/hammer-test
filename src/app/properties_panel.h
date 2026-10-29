@@ -122,6 +122,10 @@ private:
 	/// Doors: how it opens (swing with hinge side and direction, or slide), speed, closing, locked,
 	/// sounds with play buttons, Test open, and the areaportal in its doorway (properties_door.cpp).
 	void buildDoorBox(QVBoxLayout* layout, const Entity& door);
+	/// scripted_sequence: how it starts (map start, trigger), loops, moves the NPC (properties_script.cpp).
+	void buildScriptBox(QVBoxLayout* layout, const Entity& script);
+	/// npc_citizen: a fixed head instead of a random one (properties_script.cpp).
+	void buildCitizenLook(QVBoxLayout* layout, const Entity& citizen);
 	/// ambient_generic: whether its sound file loops, against the "Is NOT Looped" flag, with a fix.
 	void buildSoundLoopBox(QVBoxLayout* layout, const Entity& ambient);
 	void buildBrushes(QVBoxLayout* layout);

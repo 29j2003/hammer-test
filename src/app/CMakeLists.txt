@@ -39,6 +39,7 @@ add_library(smeapp STATIC
 	replace_materials_dialog.cpp
 	properties_instance.cpp
 	properties_door.cpp
+	properties_script.cpp
 	connect_popup.cpp
 	renderer.cpp
 	renderer_cubemaps.cpp

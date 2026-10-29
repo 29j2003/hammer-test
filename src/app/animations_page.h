@@ -1,6 +1,8 @@
 // animations_page.h - The Animations page of the side bar: pick a model (the map's NPCs and
-// props first, then every model, with search), see its sequences - its own and those of its
-// $includemodel models, with activity and length - and play one in a 3D view (play/pause,
+// props first, then every model, with search - only models that really animate, a skeleton with
+// more than a still pose, found by reading the headers in the background), see its sequences -
+// its own and those of its $includemodel models, with activity and length, filtered by weapon,
+// stance and kind (idle, walk/run, actions, gestures, scenes) - and play one in a 3D view (play/pause,
 // scrub, speed, loop). It lists which entities of the map play which of the model's animations
 // and puts the chosen one on the selected entity ("Use on selected entity": a prop's
 // DefaultAnim, a scripted_sequence's fields, an NPC's pose helper). "Add animation ..." brings
@@ -10,6 +12,7 @@
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
+#include <QHash>
 #include <QPointer>
 #include <QWidget>
 
@@ -76,6 +79,13 @@ public:
 	[[nodiscard]] QTreeWidget* sequenceList() const { return m_sequences; }
 	[[nodiscard]] QListWidget* usesList() const { return m_uses; }
 	[[nodiscard]] QPushButton* useButton() const { return m_use; }
+	/// Filters of the sequence list (item data: sequence_weapon bits, 0 = all / stance -1 all, 0
+	/// standing, 1 crouching / kind -1 all, else SequenceKind).
+	[[nodiscard]] QComboBox* weaponFilter() const { return m_weaponFilter; }
+	[[nodiscard]] QComboBox* stanceFilter() const { return m_stanceFilter; }
+	[[nodiscard]] QComboBox* kindFilter() const { return m_kindFilter; }
+	/// Models still to be checked for animations (0: the list is complete).
+	[[nodiscard]] int modelsToCheck() const { return int(m_scanQueue.size()) + (m_scanner.isRunning() ? 1 : 0); }
 
 	/// Puts the current sequence on the selected entity (`key`: which field of a
 	/// scripted_sequence; empty: its Pre Action Idle). False with a message if that is not possible.
@@ -99,6 +109,8 @@ public:
 signals:
 	/// The model's animations were read (or could not be).
 	void modelLoaded();
+	/// Every model has been checked for animations (the list shows all animated models).
+	void modelsChecked();
 	/// An entity in "Used in this map" was double-clicked: select it in the map.
 	void entityRequested(int entityId);
 	/// studiomdl finished (ok: the new model is in the mod and shown).
@@ -111,6 +123,11 @@ protected:
 private:
 	void refreshModels();
 	void fillModelList();
+	/// Queues the models not checked yet (the map's first) and starts checking them.
+	void checkModels();
+	void checkNext();
+	/// Fills the filter drop-downs with the counts of the shown model's sequences.
+	void updateFilters();
 	void loadAnimations();
 	void showSequences();
 	void updateUses();
@@ -138,6 +155,11 @@ private:
 
 	QLineEdit* m_search = nullptr;
 	QListWidget* m_models = nullptr;
+	QHash<QString, bool> m_animatedModels;   ///< Lower-case path -> really animates (checked so far)
+	QStringList m_scanQueue;                  ///< Models still to check, in order
+	QFutureWatcher<QList<QPair<QString, bool>>> m_scanner;
+	int m_scanGeneration = 0;
+	QTimer* m_listRefresh = nullptr;          ///< Coalesces list updates while checking
 	QStringList m_mapModels;          ///< Models the map's entities animate, most used first
 	ModelViewer* m_viewer = nullptr;
 	QLabel* m_title = nullptr;
@@ -147,6 +169,9 @@ private:
 	QCheckBox* m_loop = nullptr;
 	QLabel* m_time = nullptr;
 	QLineEdit* m_sequenceSearch = nullptr;
+	QComboBox* m_weaponFilter = nullptr;
+	QComboBox* m_stanceFilter = nullptr;
+	QComboBox* m_kindFilter = nullptr;
 	QTreeWidget* m_sequences = nullptr;
 	QListWidget* m_uses = nullptr;
 	QPushButton* m_use = nullptr;

@@ -80,6 +80,9 @@ public:
 	void requestFrame();
 	/// How many frames this view has drawn so far (for the frame limit).
 	[[nodiscard]] quint64 framesDrawn() const { return m_framesDrawn; }
+	/// Whether the selection shows resize squares: brushes with the Select or Scale tool, never
+	/// point entities alone (NPCs, models, scripted_sequence keep their size - they move and turn).
+	[[nodiscard]] bool showsResizeHandles() const { return resizeHandles(); }
 	/// The door whose "Test open" is playing (0: none).
 	[[nodiscard]] int doorTestId() const { return m_doorTest.id; }
 	/// Line from a compile leak (.lin pointfile); empty clears it.
@@ -146,7 +149,7 @@ private:
 	void updateGizmoDrag(const QPointF& pos);
 	void finishGizmoDrag(bool clone);
 	[[nodiscard]] bool scaling() const;   ///< Scale handle being dragged
-	/// The selection shows resize squares (Scale tool, or Select tool with brushes selected).
+	/// The selection shows resize squares (see showsResizeHandles()).
 	[[nodiscard]] bool resizeHandles() const;
 	/// Clouds and colour grading of mapbase-fidelity from the editor's look values.
 	void updateLook();

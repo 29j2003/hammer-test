@@ -30,6 +30,7 @@
 #include <sme/entity_catalog.h>
 #include <sme/instances.h>
 #include <sme/map.h>
+#include <sme/studio_model.h>
 
 #include "camera.h"
 #include "material_cache.h"
@@ -130,7 +131,10 @@ public:
 	/// Puts the OpenGL state back to what QPainter expects (call before painting text on top).
 	void endFrame();
 
-	/// Ray picking against brushes (incl. displacements) and entity boxes.
+	/// Ray picking against brushes (incl. displacements), entity boxes and models. Models are hit on
+	/// their triangles (a hit in their box only counts as at its back side), and a point entity's
+	/// box wins over a model up to 16 units in front of it - the helper at an NPC's feet stays
+	/// clickable; a helper's see-through stand-in loses ties to the NPC it stands for.
 	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false) const;
 
 	/// Numbers about the scene and the last frame (status bar and its tooltip).
@@ -193,6 +197,10 @@ private:
 		std::vector<Vec3> triangles;   ///< Displacement triangles (picked instead of the planes)
 		std::vector<int> triangleSides;
 		const Solid* detached = nullptr;   ///< Instance content: not in the document (selects its func_instance)
+		std::shared_ptr<const ModelGeometry> model;   ///< Model entities: picked on these triangles
+		Mat3 rotation;                     ///< The model's placement
+		Vec3 origin;
+		bool seeThrough = false;           ///< A helper's see-through stand-in (scripted_sequence showing its NPC)
 	};
 	struct ModelInstance {
 		QString path;

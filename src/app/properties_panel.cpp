@@ -63,6 +63,7 @@
 #include <sme/history.h>
 #include <sme/io_links.h>
 #include <sme/map_tools.h>
+#include <sme/npc_scripts.h>
 #include <sme/sky_presets.h>
 #include <sme/soundscape_area.h>
 #include <sme/text.h>
@@ -811,6 +812,12 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 	if (entityIds.size() == 1 && !world) {
 		buildNpcHelper(layout, *first, definition);
 	}
+	if (entityIds.size() == 1 && iequals(classname, "scripted_sequence")) {
+		buildScriptBox(layout, *first);
+	}
+	if (entityIds.size() == 1 && iequals(classname, "npc_citizen")) {
+		buildCitizenLook(layout, *first);
+	}
 	if (entityIds.size() == 1 && iequals(classname, "env_cubemap")) {
 		buildCubemapBox(layout, *first);
 	}
@@ -1553,63 +1560,31 @@ void PropertiesPanel::buildNpcHelper(QVBoxLayout* layout, const Entity& entity, 
 	v->addWidget(descriptionLabel(tr("Pose = real NPC, idle loop via scripted_sequence. Static prop = only the animated model.")));
 	layout->addWidget(box);
 
-	// Sets flags by their FGD display name, so the right bits are used in every game.
-	const auto setFlagsByName = [](Entity& e, const EntityClass* cls, const std::vector<std::pair<QString, bool>>& wanted) {
-		if (!cls) {
-			return;
-		}
-		for (const auto& property : cls->properties) {
-			if (property.kind != EntityProperty::Kind::Flags) {
-				continue;
-			}
-			auto bits = std::stoull(e.get(property.name, "0").empty() ? "0" : e.get(property.name, "0"));
+	// The NPC's flags by their FGD display name, so the right bits are used in every game.
+	const auto flagBits = [definition](const QString& name) {
+		long long bits = 0;
+		for (const auto& property : definition ? definition->properties : std::vector<EntityProperty>{}) {
+			if (property.kind != EntityProperty::Kind::Flags) continue;
 			for (const auto& flag : property.flags) {
-				for (const auto& [name, on] : wanted) {
-					if (qs(flag.displayName).contains(name, Qt::CaseInsensitive)) {
-						bits = on ? (bits | flag.value) : (bits & ~flag.value);
-					}
-				}
+				if (qs(flag.displayName).contains(name, Qt::CaseInsensitive)) bits |= static_cast<long long>(flag.value);
 			}
-			e.set(property.name, std::to_string(bits));
 		}
+		return bits;
 	};
 
-	connect(pose, &QPushButton::clicked, this, [this, combo, gag, noDrop, entityId, definition, setFlagsByName] {
+	connect(pose, &QPushButton::clicked, this, [this, combo, gag, noDrop, entityId, flagBits] {
 		const QString sequence = combo->currentText().trimmed();
 		if (sequence.isEmpty()) {
 			emit m_editor->message(tr("Choose an animation first"));
 			return;
 		}
-		auto& doc = m_editor->doc();
-		Transaction t(doc, "Pose NPC");
-		auto* npc = doc.findEntity(entityId);
-		if (!npc) {
-			return;
-		}
-		t.touchEntity(entityId);
-		std::string name = npc->get("targetname");
-		if (name.empty()) {
-			name = npc->classname() + "_" + std::to_string(npc->id);
-			npc->set("targetname", name);
-		}
-		setFlagsByName(*npc, definition, {{"Gag", gag->isChecked()}, {"drop weapon", noDrop->isChecked()}});
-		const auto* scriptClass = m_editor->entities() ? m_editor->entities()->find("scripted_sequence") : nullptr;
-		Entity script;
-		script.id = doc.newEntityId();
-		t.touchEntity(script.id);
-		script.set("classname", "scripted_sequence");
-		script.set("targetname", name + "_pose");
-		script.set("m_iszEntity", name);
-		script.set("m_iszIdle", sequence.toStdString());
-		script.set("m_fMoveTo", "0");
-		script.set("onplayerdeath", "0");
-		script.setOrigin(npc->origin());
-		script.set("angles", npc->get("angles", "0 0 0"));
-		script.set("spawnflags", "0");
-		setFlagsByName(script, scriptClass, {{"No Interruptions", true}, {"Override AI", true}, {"Loop in Post Idle", true}});
-		doc.entities.push_back(std::move(script));
-		m_editor->commit(t.finish());
-		emit m_editor->message(tr("%1 now idles in \"%2\" (scripted_sequence %3_pose)").arg(qs(name), sequence, qs(name)));
+		long long set = 0, clear = 0;
+		(gag->isChecked() ? set : clear) |= flagBits(QStringLiteral("Gag"));
+		(noDrop->isChecked() ? set : clear) |= flagBits(QStringLiteral("drop weapon"));
+		m_editor->commit(edit::poseNpc(m_editor->doc(), entityId, sequence.toStdString(), set, clear));
+		const Entity* npc = m_editor->doc().findEntity(entityId);
+		const QString name = npc ? qs(npc->get("targetname")) : QString();
+		emit m_editor->message(tr("%1 now idles in \"%2\" from map start (scripted_sequence %3_pose)").arg(name, sequence, name));
 	});
 
 	connect(toProp, &QPushButton::clicked, this, [this, combo, entityId] {

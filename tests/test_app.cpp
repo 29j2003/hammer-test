@@ -65,6 +65,8 @@
 #include <QWheelEvent>
 
 #include <sme/studio_anim.h>
+#include <sme/animation_use.h>
+#include <sme/npc_scripts.h>
 #include <sme/audio.h>
 #include <sme/sound_edit.h>
 #include <sme/samples.h>
@@ -5582,6 +5584,11 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 	CHECK(page->isVisible());
 	// "Add a sample ..." opens the shipped samples (build/samples next to the test program).
 	CHECK(page->findChild<QPushButton*>("animationSample")->isEnabled());
+	// Only models that really animate: their headers are read in the background.
+	for (int i = 0; i < 400 && page->modelsToCheck() > 0; ++i) QTest::qWait(25);
+	CHECK(page->modelsToCheck() == 0);
+	QTest::qWait(400);   // the list refills once the check is done
+	settle();
 	// The map's animated models come first.
 	REQUIRE(page->modelList()->count() > 1);
 	CHECK_FALSE(page->modelList()->item(0)->flags().testFlag(Qt::ItemIsEnabled));   // "In this map"
@@ -5596,8 +5603,13 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 			else if (section != "In this map") sectionOf[item->data(Qt::UserRole).toString()] = section;
 		}
 		CHECK(sectionOf.value(citizenModel) == "NPCs");
-		CHECK(sectionOf.value("models/props_demo/crate01.mdl") == "Models");
-		CHECK(sectionOf.value("models/humans/male_shared.mdl") == "Models");   // animations only: nothing to show as an NPC
+		// A crate or a bottle has only its still "idle", the shared animations nothing to show.
+		CHECK_FALSE(sectionOf.contains("models/props_demo/crate01.mdl"));
+		CHECK_FALSE(sectionOf.contains("models/props_junk/glassbottle01a.mdl"));
+		CHECK_FALSE(sectionOf.contains("models/humans/male_shared.mdl"));
+		for (int i = 0; i < page->modelList()->count(); ++i) {
+			CHECK_FALSE(page->modelList()->item(i)->text().contains("crate01"));   // not "In this map" either
+		}
 	}
 
 	QSignalSpy loaded(page, &AnimationsPage::modelLoaded);
@@ -5612,7 +5624,35 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 	CHECK(names.mid(0, 5) == QStringList{"idle_subtle", "lineidle01", "lineidle02", "cower", "cower_idle"});
 	CHECK(names.contains("walk_all"));
 	CHECK(page->currentSequence() == "idle_subtle");   // the idle is shown first
+	// Filters: weapon, stance, kind (with counts); choosing a hidden animation resets them.
+	const auto shown = [list] {
+		QStringList out;
+		for (int i = 0; i < list->topLevelItemCount(); ++i) {
+			if (list->topLevelItem(i)->flags() & Qt::ItemIsSelectable) out << list->topLevelItem(i)->text(0);
+		}
+		return out;
+	};
+	const auto choose = [](QComboBox* combo, int value) {
+		const int index = combo->findData(value);
+		REQUIRE(index > 0);
+		combo->setCurrentIndex(index);
+		emit combo->activated(index);
+	};
+	choose(page->weaponFilter(), int(sequence_weapon::SMG1));
+	CHECK(page->weaponFilter()->currentText() == "SMG1 (1)");
+	CHECK(page->weaponFilter()->findData(int(sequence_weapon::PISTOL)) < 0);   // none in this model
+	CHECK(shown() == QStringList{"Idle_Relaxed_SMG1_1"});
+	page->weaponFilter()->setCurrentIndex(0);
+	choose(page->stanceFilter(), 1);
+	CHECK(shown() == QStringList{"crouch_idle"});
+	page->stanceFilter()->setCurrentIndex(0);
+	choose(page->kindFilter(), int(SequenceKind::Move));
+	CHECK(shown() == QStringList{"walk_all", "run_all"});
+	choose(page->kindFilter(), int(SequenceKind::Scene));
+	CHECK(shown() == QStringList{"lean_wall"});
 	REQUIRE(page->selectSequence("walk_all"));
+	CHECK(page->kindFilter()->currentIndex() == 0);
+	CHECK(list->topLevelItemCount() == 13);
 	CHECK(list->currentItem()->text(1) == "ACT_WALK");
 	CHECK(list->currentItem()->text(3) == "male_shared.mdl");
 	CHECK(list->currentItem()->text(0) == "walk_all");
@@ -5678,6 +5718,7 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 	REQUIRE(helper);
 	CHECK(helper->get("m_iszIdle") == "cower_idle");
 	CHECK(helper->get("m_iszEntity") == "citizen_01");
+	CHECK(helper->get("spawnflags") == "112");   // Start on Spawn: it idles from map start
 	one.entities = {scriptId};
 	editor.setSelection(one);
 	REQUIRE(page->selectSequence("lean_wall"));
@@ -5725,6 +5766,156 @@ TEST_CASE("animations page: a model's sequences played in 3D, where the map uses
 		window.grab().save(shot);
 	}
 	page->setPlaying(false);
+}
+
+TEST_CASE("npc scenes: clicking an NPC and its script, no resize squares, the scripted_sequence box, a fixed head") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	int citizen = 0;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01") citizen = e.id;
+	}
+	REQUIRE(citizen != 0);
+	{
+		Transaction t(editor.doc(), "Face +X");
+		t.touchEntity(citizen);
+		editor.doc().findEntity(citizen)->set("angles", "0 0 0");
+		editor.commit(t.finish());
+	}
+	// The pose helper stands exactly where its NPC stands and shows the NPC see-through.
+	editor.commit(edit::poseNpc(editor.doc(), citizen, "cower_idle"));
+	const int helper = editor.doc().entities.back().id;
+	REQUIRE(editor.doc().findEntity(helper)->classname() == "scripted_sequence");
+	const Vec3 feet = editor.doc().findEntity(citizen)->origin();
+
+	// Clicking: the body picks the NPC (before, the see-through stand-in won the tie and the NPC
+	// could not be clicked), the spot at its feet the script.
+	Viewport* view = window.view3D();
+	REQUIRE(view);
+	const auto pickAt = [view](const Vec3& from, const Vec3& to) {
+		const auto hit = view->renderer().pick(Ray{from, normalize(to - from)});
+		return hit ? hit->entityId : -1;
+	};
+	const Vec3 chest = feet + Vec3{0, 0, 48};
+	int picked = -1;
+	for (int i = 0; i < 100 && picked != citizen; ++i) {   // the model loads in the background
+		settle();
+		picked = pickAt(chest + Vec3{200, 0, 0}, chest);
+	}
+	CHECK(picked == citizen);
+	CHECK(pickAt(feet + Vec3{0, 0, 200}, feet + Vec3{0, 0, 66}) == citizen);   // the head from above
+	CHECK(pickAt(feet + Vec3{200, 0, 8}, feet + Vec3{0, 0, 8}) == helper);     // between the legs: the script's sprite
+
+	// No resize squares for point entities with Select or Scale - only for brushes.
+	Selection only;
+	only.entities = {citizen};
+	editor.setSelection(only);
+	editor.setTool(Editor::Tool::Select);
+	CHECK_FALSE(view->showsResizeHandles());
+	editor.setTool(Editor::Tool::Scale);
+	CHECK_FALSE(view->showsResizeHandles());
+	only.entities = {helper};
+	editor.setSelection(only);
+	CHECK_FALSE(view->showsResizeHandles());
+	only.entities.clear();
+	only.solids.push_back(SolidRef{0, editor.doc().world.solids.front().id});
+	editor.setSelection(only);
+	CHECK(view->showsResizeHandles());
+	editor.setTool(Editor::Tool::Select);
+	CHECK(view->showsResizeHandles());
+
+	// The scripted_sequence box: Julius' setup - Start on Spawn on a named script with an Action.
+	auto [placeScript, scriptId] = edit::placeEntity(editor.doc(), "scripted_sequence", feet + Vec3{64, 0, 0}, editor.entities()->find("scripted_sequence"),
+	                                                 {{"targetname", "watch"}, {"m_iszEntity", "citizen_01"}, {"m_iszIdle", "lineidle01"},
+	                                                  {"m_iszPlay", "cower"}, {"spawnflags", "16"}});
+	editor.commit(std::move(placeScript));
+	only = {};
+	only.entities = {scriptId};
+	editor.setSelection(only);
+	settle();
+	auto* props = window.properties();
+	auto* box = props->findChild<QGroupBox*>("scriptBox");
+	REQUIRE(box);
+	CHECK(box->findChild<QLabel*>("scriptStart")->text().contains("Action never plays"));
+	// Loop the action.
+	auto* loop = box->findChild<QComboBox*>("scriptLoop");
+	REQUIRE(loop);
+	const int loopAction = loop->findData(int(ScriptState::Loop::Action));
+	loop->setCurrentIndex(loopAction);
+	emit loop->activated(loopAction);
+	settle();
+	CHECK(editor.doc().findEntity(scriptId)->get("m_bLoopActionSequence") == "1");
+	// Move to position: instantly.
+	box = props->findChild<QGroupBox*>("scriptBox");
+	auto* moveTo = box->findChild<QComboBox*>("scriptMoveTo");
+	const int instantly = moveTo->findData(QStringLiteral("4"));
+	moveTo->setCurrentIndex(instantly);
+	emit moveTo->activated(instantly);
+	settle();
+	CHECK(editor.doc().findEntity(scriptId)->get("m_fMoveTo") == "4");
+	// Start with a trigger: one undo step, the trigger is selected to be moved into place.
+	const std::size_t before = editor.doc().entities.size();
+	box = props->findChild<QGroupBox*>("scriptBox");
+	box->findChild<QPushButton*>("scriptTrigger")->click();
+	settle();
+	REQUIRE(editor.doc().entities.size() == before + 1);
+	const Entity& trigger = editor.doc().entities.back();
+	CHECK(trigger.classname() == "trigger_once");
+	REQUIRE(trigger.connections.size() == 1);
+	CHECK(trigger.connections[0].target == "watch");
+	CHECK(trigger.connections[0].input == "BeginSequence");
+	REQUIRE(editor.selection().entities.size() == 1);
+	CHECK(editor.selection().entities.front() == trigger.id);
+	editor.setSelection(only);
+	settle();
+	box = props->findChild<QGroupBox*>("scriptBox");
+	CHECK(box->findChild<QLabel*>("scriptStart")->text().contains("watch_trigger"));
+	editor.undo();
+	CHECK(editor.doc().entities.size() == before);
+	// Start on map start: a logic_auto sends BeginSequence.
+	settle();
+	box = props->findChild<QGroupBox*>("scriptBox");
+	box->findChild<QPushButton*>("scriptAtMapStart")->click();
+	settle();
+	CHECK(scriptState(editor.doc(), scriptId).start == ScriptState::Start::AtMapStart);
+	box = props->findChild<QGroupBox*>("scriptBox");
+	CHECK_FALSE(box->findChild<QPushButton*>("scriptAtMapStart")->isEnabled());
+
+	// The citizen: random head until "Keep this head".
+	only.entities = {citizen};
+	editor.setSelection(only);
+	settle();
+	auto* look = props->findChild<QGroupBox*>("citizenLook");
+	REQUIRE(look);
+	CHECK(look->findChild<QLabel*>("citizenLookState")->text().contains("Random head"));
+	auto* heads = look->findChild<QComboBox*>("citizenHead");
+	CHECK(heads->currentData().toString() == "models/humans/group01/male_07.mdl");
+	heads->setCurrentIndex(heads->findData(QStringLiteral("models/humans/group03/female_02.mdl")));
+	look->findChild<QPushButton*>("citizenKeepLook")->click();
+	settle();
+	CHECK(editor.doc().findEntity(citizen)->get("citizentype") == "4");
+	CHECK(editor.doc().findEntity(citizen)->get("model") == "models/humans/group03/female_02.mdl");
+	look = props->findChild<QGroupBox*>("citizenLook");
+	CHECK(look->findChild<QLabel*>("citizenLookState")->text().contains("female_02"));
 }
 
 #ifndef _WIN32

@@ -29,6 +29,8 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QProgressBar>
+#include <QScrollBar>
+#include <QSet>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -159,6 +161,24 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	m_sequenceSearch->setPlaceholderText(tr("Search animations (name or activity) ..."));
 	m_sequenceSearch->setClearButtonEnabled(true);
 	rv->addWidget(m_sequenceSearch);
+	// Filters: the situation a sequence is made for (sme::classifySequence).
+	auto* filters = new QHBoxLayout;
+	filters->setContentsMargins(0, 0, 0, 0);
+	m_weaponFilter = new QComboBox;
+	m_weaponFilter->setObjectName("animationWeaponFilter");
+	m_weaponFilter->setToolTip(tr("The weapon the character holds: its animations (from the activity and the name - "
+	                              "ACT_IDLE_SMG1, run_rifle ...); Unarmed: no weapon in the name"));
+	m_stanceFilter = new QComboBox;
+	m_stanceFilter->setObjectName("animationStanceFilter");
+	m_kindFilter = new QComboBox;
+	m_kindFilter->setObjectName("animationKindFilter");
+	m_kindFilter->setToolTip(tr("Scenes: made for one moment of a map (d1_t01_..., or without activity) - for scripted_sequence"));
+	for (auto* combo : {m_weaponFilter, m_stanceFilter, m_kindFilter}) {
+		combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		combo->setMinimumContentsLength(6);
+		filters->addWidget(combo, 1);
+	}
+	rv->addLayout(filters);
 	m_sequences = new QTreeWidget;
 	m_sequences->setObjectName("animationSequences");
 	m_sequences->setHeaderLabels({tr("Animation"), tr("Activity"), tr("Length"), tr("From")});
@@ -247,6 +267,19 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 		if (item && (item->flags() & Qt::ItemIsEnabled)) selectModel(item->data(Qt::UserRole).toString());
 	});
 	connect(m_sequenceSearch, &QLineEdit::textChanged, this, &AnimationsPage::showSequences);
+	for (auto* combo : {m_weaponFilter, m_stanceFilter, m_kindFilter}) {
+		connect(combo, &QComboBox::activated, this, &AnimationsPage::showSequences);
+	}
+	m_listRefresh = new QTimer(this);
+	m_listRefresh->setSingleShot(true);
+	m_listRefresh->setInterval(300);
+	connect(m_listRefresh, &QTimer::timeout, this, &AnimationsPage::fillModelList);
+	connect(&m_scanner, &QFutureWatcherBase::finished, this, [this] {
+		if (m_scanner.property("generation").toInt() != m_scanGeneration) return;
+		for (const auto& [model, animated] : m_scanner.result()) m_animatedModels.insert(model, animated);
+		if (!m_listRefresh->isActive()) m_listRefresh->start();
+		checkNext();
+	});
 	connect(m_sequences, &QTreeWidget::currentItemChanged, this, [this] {
 		m_cycle = 0;
 		m_clock.restart();
@@ -303,6 +336,7 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 				if (const auto smd = parseSmd(pending.smdText.toStdString())) addPreviewSequence(*m_animated, *smd, pending.options);
 			}
 		}
+		updateFilters();
 		showSequences();
 		if (!m_pendingSequence.isEmpty()) {
 			selectSequence(m_pendingSequence);
@@ -316,8 +350,12 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	connect(editor, &Editor::gameAboutToChange, this, [this] {
 		++m_generation;
 		m_loader.waitForFinished();   // it reads the old game's files
+		++m_scanGeneration;
+		m_scanner.waitForFinished();
 	});
 	connect(editor, &Editor::gameChanged, this, [this] {
+		m_animatedModels.clear();
+		m_scanQueue.clear();
 		m_model.clear();
 		m_animated.reset();
 		m_geometry.reset();
@@ -328,7 +366,11 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	connect(editor, &Editor::documentChanged, this, [this] { m_mapRefresh->start(); });
 	connect(editor, &Editor::documentReplaced, this, [this] { m_mapRefresh->start(); });
 	connect(editor, &Editor::selectionChanged, this, &AnimationsPage::updateUseButton);
-	connect(assets, &AssetBrowser::materialsIndexed, this, &AnimationsPage::fillModelList);
+	connect(assets, &AssetBrowser::materialsIndexed, this, [this] {
+		checkModels();
+		fillModelList();
+	});
+	updateFilters();
 	refreshModels();
 	updateTransport();
 	updateUseButton();
@@ -338,6 +380,8 @@ AnimationsPage::~AnimationsPage() {
 	stopOwnProcesses(this);   // studiomdl may still run: its finish must not reach a page that is gone
 	++m_generation;
 	m_loader.waitForFinished();
+	++m_scanGeneration;
+	m_scanner.waitForFinished();
 }
 
 void AnimationsPage::showEvent(QShowEvent* event) {
@@ -374,6 +418,44 @@ void AnimationsPage::refreshModels() {
 		m_mapModels = models;
 		fillModelList();
 	}
+	checkModels();
+}
+
+void AnimationsPage::checkModels() {
+	if (!isVisible() || !m_editor->game()) return;   // no reading thousands of files while mapping elsewhere
+	QStringList queue;
+	QSet<QString> queued;
+	const auto add = [&](const QString& model) {
+		const QString key = model.toLower();
+		if (!m_animatedModels.contains(key) && !queued.contains(key)) {
+			queued.insert(key);
+			queue << key;
+		}
+	};
+	for (const auto& model : m_mapModels) add(model);   // the map's first
+	if (m_assets) {
+		for (const auto& model : m_assets->modelNames()) add(model);
+	}
+	m_scanQueue = queue;
+	if (!m_scanner.isRunning()) checkNext();
+}
+
+void AnimationsPage::checkNext() {
+	if (m_scanQueue.isEmpty()) {
+		emit modelsChecked();
+		return;
+	}
+	if (!isVisible() || !m_editor->game()) return;   // showEvent goes on
+	constexpr int BATCH = 48;
+	const QStringList batch = m_scanQueue.mid(0, BATCH);
+	m_scanQueue.remove(0, std::min<qsizetype>(BATCH, m_scanQueue.size()));
+	const GameFileSystem* fs = &m_editor->game()->files;
+	m_scanner.setProperty("generation", m_scanGeneration);
+	m_scanner.setFuture(QtConcurrent::run([fs, batch] {
+		QList<QPair<QString, bool>> out;
+		for (const auto& model : batch) out.append({model, hasAnimations(*fs, model.toStdString())});
+		return out;
+	}));
 }
 
 void AnimationsPage::fillModelList() {
@@ -381,7 +463,9 @@ void AnimationsPage::fillModelList() {
 	const auto matches = [&words](const QString& path) {
 		return std::all_of(words.begin(), words.end(), [&path](const QString& w) { return path.contains(w, Qt::CaseInsensitive); });
 	};
+	const auto animates = [this](const QString& path) { return m_animatedModels.value(path.toLower(), false); };
 	QSignalBlocker block(m_models);
+	const int scroll = m_models->verticalScrollBar()->value();
 	m_models->clear();
 	QListWidgetItem* current = nullptr;
 	const auto add = [&](const QString& path, const QString& text) {
@@ -392,7 +476,7 @@ void AnimationsPage::fillModelList() {
 	};
 	QStringList inMap;
 	for (const auto& model : m_mapModels) {
-		if (matches(model)) inMap << model;
+		if (matches(model) && animates(model)) inMap << model;
 	}
 	if (!inMap.isEmpty()) {
 		addHeader(m_models, tr("In this map"));
@@ -404,7 +488,7 @@ void AnimationsPage::fillModelList() {
 	if (m_assets) {
 		int shown = 0;
 		for (const auto& model : m_assets->modelNames()) {
-			if (!matches(model)) continue;
+			if (!matches(model) || !animates(model)) continue;
 			(isCharacterModel(model.toStdString(), npcModels) ? npcs : others) << model;
 			if (++shown >= 5000) break;   // the search narrows it down
 		}
@@ -418,8 +502,13 @@ void AnimationsPage::fillModelList() {
 		addHeader(m_models, tr("Models%1").arg(matching));
 		for (const auto& model : others) add(model, model.mid(model.startsWith("models/") ? 7 : 0));
 	}
-	if (m_models->count() == 0) addHeader(m_models, tr("No model matches"));
+	if (const int left = modelsToCheck(); left > 0) {
+		addHeader(m_models, tr("Looking for animated models ... (%1 left)").arg(m_scanQueue.size()));
+	} else if (m_models->count() == 0) {
+		addHeader(m_models, tr("No animated model matches"));
+	}
 	if (current) m_models->setCurrentItem(current);
+	m_models->verticalScrollBar()->setValue(scroll);
 }
 
 void AnimationsPage::selectModel(const QString& path) {
@@ -458,6 +547,49 @@ void AnimationsPage::loadAnimations() {
 	m_loader.setFuture(QtConcurrent::run([fs, path] { return AnimatedModel::load(*fs, path); }));
 }
 
+void AnimationsPage::updateFilters() {
+	// Counts per weapon, stance and kind of the shown model's sequences.
+	struct Choice {
+		const char* text;
+		int value;
+	};
+	static const Choice WEAPONS[] = {{QT_TR_NOOP("Unarmed"), int(sequence_weapon::UNARMED)}, {QT_TR_NOOP("Pistol"), int(sequence_weapon::PISTOL)},
+	                                 {QT_TR_NOOP("SMG1"), int(sequence_weapon::SMG1)},         {QT_TR_NOOP("AR2"), int(sequence_weapon::AR2)},
+	                                 {QT_TR_NOOP("Shotgun"), int(sequence_weapon::SHOTGUN)},   {QT_TR_NOOP("RPG"), int(sequence_weapon::RPG)},
+	                                 {QT_TR_NOOP("Crossbow"), int(sequence_weapon::CROSSBOW)}, {QT_TR_NOOP("Melee"), int(sequence_weapon::MELEE)},
+	                                 {QT_TR_NOOP("Grenade"), int(sequence_weapon::GRENADE)}};
+	static const Choice STANCES[] = {{QT_TR_NOOP("Standing"), 0}, {QT_TR_NOOP("Crouching"), 1}};
+	static const Choice KINDS[] = {{QT_TR_NOOP("Idle"), int(SequenceKind::Idle)},       {QT_TR_NOOP("Walk and run"), int(SequenceKind::Move)},
+	                               {QT_TR_NOOP("Actions"), int(SequenceKind::Action)},  {QT_TR_NOOP("Gestures"), int(SequenceKind::Gesture)},
+	                               {QT_TR_NOOP("Scenes"), int(SequenceKind::Scene)}};
+	std::map<int, int> weapons, stances, kinds;
+	if (m_animated) {
+		for (const auto& seq : m_animated->sequences()) {
+			const auto situation = classifySequence(seq.name, seq.activity, seq.layer || seq.delta);
+			for (const auto& w : WEAPONS) {
+				if (situation.weapons & unsigned(w.value)) ++weapons[w.value];
+			}
+			++stances[situation.crouch ? 1 : 0];
+			++kinds[int(situation.kind)];
+		}
+	}
+	const auto fill = [this](QComboBox* combo, const QString& all, int allValue, const auto& choices, std::map<int, int>& counts) {
+		const QVariant kept = combo->currentIndex() > 0 ? combo->currentData() : QVariant();
+		QSignalBlocker block(combo);
+		combo->clear();
+		combo->addItem(all, allValue);
+		for (const auto& choice : choices) {
+			const int count = counts[choice.value];
+			if (count == 0 && !(kept.isValid() && kept.toInt() == choice.value)) continue;   // none in this model
+			combo->addItem(tr("%1 (%2)").arg(tr(choice.text)).arg(count), choice.value);
+		}
+		combo->setCurrentIndex(kept.isValid() ? std::max(0, combo->findData(kept)) : 0);
+	};
+	fill(m_weaponFilter, tr("All weapons"), 0, WEAPONS, weapons);
+	fill(m_stanceFilter, tr("Any stance"), -1, STANCES, stances);
+	fill(m_kindFilter, tr("All kinds"), -1, KINDS, kinds);
+}
+
 void AnimationsPage::showSequences() {
 	const QString previous = currentSequence();
 	QSignalBlocker block(m_sequences);
@@ -471,6 +603,13 @@ void AnimationsPage::showSequences() {
 	QTreeWidgetItem* current = nullptr;
 	const auto& sequences = m_animated->sequences();
 	const int idle = m_animated->idleSequence();
+	const unsigned weapon = m_weaponFilter->currentData().toUInt();
+	const int stance = m_stanceFilter->currentData().toInt(), kind = m_kindFilter->currentData().toInt();
+	const auto passes = [&](const StudioSequence& seq) {
+		const auto situation = classifySequence(seq.name, seq.activity, seq.layer || seq.delta);
+		return (weapon == 0 || (situation.weapons & weapon)) && (stance < 0 || situation.crouch == (stance == 1)) &&
+		       (kind < 0 || int(situation.kind) == kind);
+	};
 	// Animations first; gestures and layers (played over other animations in the game) after a
 	// header of their own - shown on top of the idle, as they would look in the game.
 	for (const bool layers : {false, true}) {
@@ -482,7 +621,7 @@ void AnimationsPage::showSequences() {
 			const bool match = std::all_of(words.begin(), words.end(), [&](const QString& w) {
 				return name.contains(w, Qt::CaseInsensitive) || activity.contains(w, Qt::CaseInsensitive);
 			});
-			if (!match) continue;
+			if (!match || !passes(seq)) continue;
 			if (layers && !header) {
 				header = true;
 				auto* title = new QTreeWidgetItem(m_sequences);
@@ -560,6 +699,15 @@ bool AnimationsPage::selectSequence(const QString& name) {
 		return false;
 	}
 	if (!m_sequenceSearch->text().isEmpty()) m_sequenceSearch->clear();
+	// A filter that hides it is reset.
+	bool hidden = true;
+	for (int i = 0; i < m_sequences->topLevelItemCount() && hidden; ++i) {
+		hidden = m_sequences->topLevelItem(i)->text(0).compare(name, Qt::CaseInsensitive) != 0;
+	}
+	if (hidden && (m_weaponFilter->currentIndex() > 0 || m_stanceFilter->currentIndex() > 0 || m_kindFilter->currentIndex() > 0)) {
+		for (auto* combo : {m_weaponFilter, m_stanceFilter, m_kindFilter}) combo->setCurrentIndex(0);
+		showSequences();
+	}
 	for (int i = 0; i < m_sequences->topLevelItemCount(); ++i) {
 		if (m_sequences->topLevelItem(i)->text(0).compare(name, Qt::CaseInsensitive) == 0) {
 			m_sequences->setCurrentItem(m_sequences->topLevelItem(i));

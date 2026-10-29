@@ -2210,14 +2210,13 @@ bool Viewport::handleFacesCamera(const Vec3& point, int axis, int side) const {
 
 bool Viewport::resizeHandles() const {
 	const auto tool = m_editor->tool();
-	if (tool == Editor::Tool::Scale) {
-		return true;
-	}
 	// Select tool: squares on the sides of selected brushes resize them right away (Hammer's 2D
 	// views, Source 2's bounding box handles) - no need to switch to Scale.
-	if (tool != Editor::Tool::Select || m_editor->selectMode() != Editor::SelectMode::Object) {
+	if (tool != Editor::Tool::Scale && (tool != Editor::Tool::Select || m_editor->selectMode() != Editor::SelectMode::Object)) {
 		return false;
 	}
+	// Only brushes have a size to change: point entities (NPCs, models, scripted_sequence, lights)
+	// keep theirs - they move and turn, so neither tool offers squares for them alone.
 	const auto& selection = m_editor->selection();
 	if (!selection.solids.empty()) {
 		return true;
