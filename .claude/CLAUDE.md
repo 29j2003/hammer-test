@@ -47,7 +47,7 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   Commit-Nachrichten; keine E-Mail-Adressen in Dateien (`tools/check_privacy.py`, CI-Job `checks`). GitHub Actions nur mit Commit-SHA pinnen, `permissions: contents: read`.
 - Doku: `README.md` (Nutzer, Englisch, aktueller Stand, kurz), Handbuch `docs/manual/` (Englisch, GitHub Pages, ausführlich,
   inkl. Mapping-Grundlagen) und `docs/ENTWICKLUNG.md` (Entwickler, Deutsch). XBLAH's Modding Tool nur in der README als Inspiration nennen
-  („inspired by“), sonst nirgends; nichts übernehmen. Valves Hammer/Source 2 als Verhaltens-Referenz in Kommentaren ist ok.
+  („inspired by“), sonst nirgends (Ausnahme: das erzeugte `mod/` spiegelt die Bau-Hinweise des Mod-Repos); nichts übernehmen. Valves Hammer/Source 2 als Verhaltens-Referenz in Kommentaren ist ok.
 - Leistung zählt: nichts pro Frame neu aufbauen, was sich nicht geändert hat; Auswahl ändert nur Flags, nicht die Geometrie; Widgets dort bauen, wo sie bleiben (Rezept „Neues Panel“ in docs/ENTWICKLUNG.md).
 - Nicht im Spiel/auf Windows getestet heißt nicht getestet: im Bericht ausdrücklich so nennen.
 
