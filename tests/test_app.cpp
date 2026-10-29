@@ -2181,6 +2181,95 @@ TEST_CASE("displacement tool: make, sculpt with the mouse, undo, create by click
 	CHECK_FALSE(topSide()->dispInfo());
 }
 
+TEST_CASE("performance: a big map opens, edits and selects quickly") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+
+	// 6000 blocks in a grid (36000 faces, several materials) and 1500 entities with models.
+	MapDocument big;
+	const char* materials[] = {"demo/concrete", "demo/brick", "demo/metal", "tools/toolsnodraw"};
+	for (int i = 0; i < 6000; ++i) {
+		const double x = (i % 80) * 80.0, y = (i / 80) * 80.0;
+		big.world.solids.push_back(makeBlock(big, box({x, y, 0}, {x + 64, y + 64, 64.0 + (i % 7) * 16.0}), materials[i % 4]));
+	}
+	for (int i = 0; i < 1500; ++i) {
+		Entity e;
+		e.id = big.newEntityId();
+		e.keyValues = {{"classname", i % 3 ? "prop_static" : "light"}, {"origin", std::to_string((i % 50) * 120) + " " + std::to_string((i / 50) * 120) + " 96"}};
+		if (i % 3) e.set("model", "models/props_demo/crate01.mdl");
+		big.entities.push_back(std::move(e));
+	}
+	QTemporaryDir maps;
+	const QString path = maps.filePath("big.vmf");
+	{
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(QByteArray::fromStdString(big.serialize()));
+	}
+	QElapsedTimer clock;
+	clock.start();
+	REQUIRE(window.openMap(path));
+	window.view3D()->repaint();
+	QApplication::processEvents();
+	const qint64 openMs = clock.elapsed();
+
+	// A small edit (move one block): commit plus everything listening to the change.
+	Selection one;
+	one.solids.push_back(SolidRef{0, editor.doc().world.solids[10].id});
+	editor.setSelection(one);
+	settle();
+	clock.restart();
+	for (int i = 0; i < 5; ++i) {
+		editor.commit(edit::translate(editor.doc(), editor.selection(), {16, 0, 0}, false));
+		QApplication::processEvents();
+	}
+	window.view3D()->repaint();
+	QApplication::processEvents();
+	const qint64 editMs = clock.elapsed() / 5;
+
+	// Selecting other objects: flags only, no rebuild of the geometry.
+	clock.restart();
+	for (int i = 0; i < 20; ++i) {
+		Selection s;
+		s.solids.push_back(SolidRef{0, editor.doc().world.solids[std::size_t(100 + i * 50)].id});
+		editor.setSelection(s);
+		QApplication::processEvents();
+	}
+	window.view3D()->repaint();
+	QApplication::processEvents();
+	const qint64 selectMs = clock.elapsed() / 20;
+
+	// Frames of the full view.
+	clock.restart();
+	for (int i = 0; i < 10; ++i) {
+		window.view3D()->camera().yaw += 2.f;
+		window.view3D()->repaint();
+	}
+	const qint64 frameMs = clock.elapsed() / 10;
+	MESSAGE("big map: open " << openMs << " ms, edit " << editMs << " ms, select " << selectMs << " ms, frame " << frameMs << " ms");
+	// Generous bounds (software OpenGL on CI): they catch a change that makes these many times slower.
+	CHECK(openMs < 60000);
+	CHECK(editMs < 3000);
+	CHECK(selectMs < 1500);
+	CHECK(frameMs < 3000);
+}
+
 TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page lists every material") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());

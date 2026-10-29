@@ -201,7 +201,7 @@ void ProblemsPanel::showProblems() {
 	std::stable_sort(all.begin(), all.end(), [](const Problem* a, const Problem* b) { return a->severity < b->severity; });
 
 	// A row is a widget with labels and buttons: thousands of them (a big map with many problems)
-	// froze the editor for half a minute. The worst come first; the rest are counted, not listed.
+	// froze the editor for seconds. The worst come first; the rest are counted, not listed.
 	constexpr int MAX_ROWS = 150;
 	int errors = 0, warnings = 0, rows = 0;
 	for (const Problem* problem : all) {
