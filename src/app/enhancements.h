@@ -10,6 +10,7 @@
 
 #include <QFutureWatcher>
 #include <QGroupBox>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 
@@ -118,6 +119,7 @@ private:
 	QStringList m_keptOwn;
 	std::set<std::string> m_containerModels;   ///< Containers on shared materials (own model copies)
 	QStringList m_liquidModels;                ///< Those with their copy and liquid now
+	QSet<QString> m_modelNotes;                ///< Notes on model copies already in the log (each sync plans again)
 	QStringList m_failed;
 	int m_lastWritten = 0;
 	int m_patternRelief = 0;
