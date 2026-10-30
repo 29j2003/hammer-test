@@ -3,6 +3,7 @@
 #include <sme/text.h>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -98,6 +99,78 @@ std::string shortSummary(std::string_view text, std::size_t fullLimit, std::size
 		head.remove_suffix(1);
 	}
 	return std::string(head) + "\u2026";
+}
+
+namespace {
+
+bool isWordChar(char c) {
+	return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '-';
+}
+
+/// At `pos` a word ends: "(s)" / "(es)" after it, or "/other" (vertex/vertices). Returns the
+/// length of that marker part and fills in the plural ending or the plural word.
+bool pluralMarker(std::string_view text, std::size_t wordStart, std::size_t wordEnd, bool one, std::string& out, std::size_t& end) {
+	const std::string_view word = text.substr(wordStart, wordEnd - wordStart);
+	for (const std::string_view suffix : {std::string_view("(s)"), std::string_view("(es)")}) {
+		if (text.substr(wordEnd, suffix.size()) == suffix) {
+			out = std::string(word);
+			if (!one) out += suffix.substr(1, suffix.size() - 2);
+			end = wordEnd + suffix.size();
+			return true;
+		}
+	}
+	if (wordEnd < text.size() && text[wordEnd] == '/') {
+		std::size_t other = wordEnd + 1;
+		while (other < text.size() && isWordChar(text[other])) ++other;
+		if (other > wordEnd + 1) {
+			out = std::string(one ? word : text.substr(wordEnd + 1, other - wordEnd - 1));
+			end = other;
+			return true;
+		}
+	}
+	return false;
+}
+
+} // namespace
+
+std::string englishPlural(std::string_view text, int n) {
+	const std::size_t at = text.find("%n ");
+	if (at == std::string_view::npos || n < 0) return std::string(text);
+	const bool one = n == 1;
+	std::string result(text.substr(0, at + 3));
+	std::size_t pos = at + 3;
+	bool found = false;
+	// The counted noun: one of the next three words (a few words like "new" or "entity" may come first).
+	for (int words = 0; words < 3 && pos < text.size(); ++words) {
+		std::size_t end = pos;
+		while (end < text.size() && isWordChar(text[end])) ++end;
+		if (end == pos) break;
+		std::string replaced;
+		std::size_t after = 0;
+		if (pluralMarker(text, pos, end, one, replaced, after)) {
+			result += replaced;
+			pos = after;
+			found = true;
+			break;
+		}
+		result.append(text.substr(pos, end - pos));
+		pos = end;
+		if (pos >= text.size() || text[pos] != ' ') break;
+		result += ' ';
+		++pos;
+	}
+	// "face(s) or overlay(s)": the nouns joined with " or " count the same.
+	while (found && text.substr(pos, 4) == " or ") {
+		std::size_t start = pos + 4, end = start;
+		while (end < text.size() && isWordChar(text[end])) ++end;
+		std::string replaced;
+		std::size_t after = 0;
+		if (end == start || !pluralMarker(text, start, end, one, replaced, after)) break;
+		result += " or " + replaced;
+		pos = after;
+	}
+	result.append(text.substr(pos));
+	return result;
 }
 
 std::string normalizePath(std::string_view path) {

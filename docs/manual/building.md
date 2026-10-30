@@ -62,7 +62,7 @@ down to 0.125 units for fine detail.
 **Snap to objects.** Moving with a corner square, dragging a side square and drawing a block also stop at the corners
 and sides of other brushes and models - a green square shows where. This works off the grid too: a wall that ends at
 x = 4.5 is met exactly, without changing the grid, so no gaps open at corners. Hold **Alt** while dragging to go past
-them this once; **Shift+O** (also *Map > Snap to objects*, *Objects* in the status bar and the check box in the tool
+them this once; **Shift+O** (also *Map > Snap to objects*, *Object snap* in the tool bar and the status bar and the check box in the tool
 panel) turns it off until you turn it on again.
 
 While you drag, the size in Object Properties and in the status bar changes with the mouse.

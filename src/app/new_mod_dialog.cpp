@@ -400,6 +400,7 @@ void NewModDialog::validate() {
 	m_where->setText(dir.empty() ? QString() : tr("Will be created in %1").arg(QDir::toNativeSeparators(fromPath(dir / folder))));
 	m_problem->setText(problem);
 	m_create->setEnabled(problem.isEmpty());
+	m_create->setToolTip(problem);   // a greyed button says why when the mouse rests on it
 }
 
 } // namespace sme::app

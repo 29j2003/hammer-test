@@ -76,8 +76,13 @@ signals:
 	/// "buildCubemaps").
 	void actionRequested(const QString& action);
 
+protected:
+	bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
 	void showProblems();
+	/// Gives every row the height its wrapped text and buttons need at the list's width.
+	void fitRows();
 
 	Editor* m_editor;
 	AssetBrowser* m_assets;

@@ -134,6 +134,7 @@
 #include "model_viewer.h"
 #include "animations_page.h"
 #include "model_export_dialog.h"
+#include "plural_text.h"
 #include "models_page.h"
 #include "map_look_panel.h"
 #include "material_preview.h"
@@ -7053,6 +7054,8 @@ int main(int argc, char** argv) {
 	QApplication app(argc, argv);
 	QApplication::setOrganizationName("hammer-test-tests");
 	QApplication::setApplicationName("Mapsmith Tests");
+	PluralTranslator plurals;   // as in main.cpp: "1 file", not "1 file(s)"
+	QApplication::installTranslator(&plurals);
 	StrayWindowWatch strays;
 	app.installEventFilter(&strays);
 	ExternalOpenTrap external;
@@ -7352,4 +7355,87 @@ TEST_CASE("panels: short help with More, panels float as windows and come back, 
 		CHECK(second.tabifiedDockWidgets(problems).contains(assets));
 		CHECK_FALSE(QSettings().contains("window/dockHome/Problems"));
 	}
+}
+
+TEST_CASE("ux review: problem rows show their buttons, counts read naturally, shortcuts by name, one main start button") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	QSettings().setValue("start/show", false);
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	REQUIRE(window.openMap(fromPath(f.mod / "mapsrc/demo.vmf")));
+	settle();
+
+	// Problems: every row is as tall as its wrapped text and buttons (the buttons were cut off,
+	// the text had gaps), and the summary counts in plain English.
+	window.problems()->runChecks();
+	settle();
+	auto* list = window.problems()->findChild<QListWidget*>();
+	REQUIRE(list);
+	REQUIRE(list->count() > 0);
+	for (int i = 0; i < list->count(); ++i) {
+		QWidget* row = list->itemWidget(list->item(i));
+		if (!row) continue;
+		// Exactly what the row needs at the list's width: no gaps, nothing cut off.
+		CHECK(list->item(i)->sizeHint().height() == row->layout()->totalHeightForWidth(list->viewport()->width() - 2 * list->spacing()));
+	}
+	int problemsWithButtons = 0;
+	for (int i = 0; i < list->count(); ++i) {
+		QWidget* row = list->itemWidget(list->item(i));
+		if (!row) continue;
+		for (auto* button : row->findChildren<QPushButton*>()) {
+			const QRect inRow(button->mapTo(row, QPoint(0, 0)), button->size());
+			CHECK(row->rect().contains(inRow));
+			++problemsWithButtons;
+		}
+	}
+	CHECK(problemsWithButtons > 0);
+	QLabel* summary = nullptr;
+	for (auto* label : window.problems()->findChildren<QLabel*>()) {
+		if (label->text().contains("warning")) summary = label;
+	}
+	REQUIRE(summary);
+	CHECK_FALSE(summary->text().contains("(s)"));
+	CHECK(QCoreApplication::translate("x", "%n file(s) written.", nullptr, 1) == "1 file written.");
+	CHECK(QCoreApplication::translate("x", "%n file(s) written.", nullptr, 2) == "2 files written.");
+
+	// Status bar: the object snap is named so (not "Objects", the selection mode next to it).
+	auto* status = window.findChild<QLabel*>("statusGrid");
+	REQUIRE(status);
+	CHECK(status->text().contains("Object snap"));
+
+	// Shortcuts: commands by their menu names; Qt's own helper actions are not listed.
+	{
+		ShortcutDialog dialog(&window, &window);
+		auto* table = dialog.findChild<QTableWidget*>();
+		REQUIRE(table);
+		bool rope = false;
+		for (int row = 0; row < table->rowCount(); ++row) {
+			const QString name = table->item(row, 0)->text();
+			CHECK_FALSE(name.startsWith("_q_"));
+			CHECK_FALSE(name.contains('&'));
+			rope = rope || name.startsWith("Make rope");
+		}
+		CHECK(rope);
+	}
+
+	// Start page: one main (accent) button - Continue once there is a project, else Start new.
+	window.showStartPage();
+	settle();
+	auto* startNew = window.startPage()->findChild<QPushButton*>("startNew");
+	REQUIRE(startNew);
+	auto* continueButton = window.startPage()->findChild<QPushButton*>("startContinue");
+	REQUIRE(continueButton);
+	CHECK(continueButton->isVisible() != startNew->property("accent").toBool());
 }

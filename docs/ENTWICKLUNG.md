@@ -62,7 +62,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 
 | Modul | Aufgabe |
 |---|---|
-| `text` | Pfad-Normalisierung (Kleinbuchstaben, `/`), case-insensitive Suche auf der Platte; `shortSummary` (Kurzform langer Beschreibungen: erster Satz, sonst an einer Wortgrenze gekürzt mit „…“) |
+| `text` | Pfad-Normalisierung (Kleinbuchstaben, `/`), case-insensitive Suche auf der Platte; `shortSummary` (Kurzform langer Beschreibungen: erster Satz, sonst an einer Wortgrenze gekürzt mit „…“); `englishPlural` (Einzahl/Mehrzahl für gezählte Texte: „%n file(s)“, „%n brush(es)“, „%n vertex/vertices“ – das Wort nach `%n`, bis zu drei Wörter weiter, und mit „ or “ verbundene) |
 | `version` | Versionsnummern vergleichen, Prüfsummen-Listen lesen (Update-Prüfung) |
 | `math` | nur Header: `Vec3`, `Mat3`, `Plane`, `Bounds`, `Ray` |
 | `steam` | Steam finden (Registry, Standardordner, `SME_STEAM_ROOT`), `libraryfolders.vdf`, `appmanifest_*.acf` |
@@ -161,11 +161,12 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `startup_trace` | Meilensteine des Starts (`startupMark`): mit `SME_STARTUP_TRACE=1` nach stderr (ms seit Start), mit `=quit` beendet sich das Programm kurz nach dem ersten Bild (zum Messen). Erstes Bild = erstes Paint des Hauptfensters + leere Ereignisschlange (`FirstFrameWatch` in `main.cpp`) |
 | `lazy_refresh` | `RefreshWhenShown`: Seiten, die beim Start niemand sieht (Project › Menu, Maps), lesen die Mod erst beim Anzeigen (`request()` sofort, wenn sichtbar, sonst beim nächsten Show); Texts liest per `showEvent` (`m_reloadOnShow`) |
 | `ui_helpers` | Nur Header: `qs` (Text des Kerns → QString), `toQImage` (ImageRgba → QImage, prüft die Pixelzahl), `noteLabel`/`capsLabel` (Beschriftungen in den Rollen des Style Sheets), `limitReadableWidth` (Inhalt einer Seite höchstens N px breit, mittig: die Seitenränder des Layouts wachsen beim Resize – Project › Overview 1400, Features/Ship/Source control/Build from source 1100), `detailsFoldOut` („▸ Steps and log“, „▸ Output“, „▸ What gets installed“: Knopf `<objectName>Toggle`, Inhalt zu), `openFoldOutOnText` (Log klappt auf, sobald Text kommt) |
+| `plural_text` | `PluralTranslator`: QTranslator, in `main.cpp` (und im UI-Test-`main`) installiert; beantwortet nur gezählte Texte (`tr("%n file(s)", nullptr, n)`) über `englishPlural` – Mapsmith hat keine Übersetzungen, ohne ihn stand „1 file(s)“ da |
 | `text_copy` | Kopieren: `makeTreeCopyable` (Strg+C, Kontextmenü Copy/Copy all) für Bäume wie die Kompilier-Meldungen, `addCopyAll` für Log und Kompilier-Ausgabe |
 | `start_page` | Startseite (in `m_pages`, nicht in `Page`): Continue mit Bild (beim Speichern aus dem 3D-View, `AppDataLocation/pictures`), Recent, Start new (`MainWindow::startNewProject` → `NewModDialog` + `createModAndSwitch` + `makeStarterMap`), „Show at startup“ (`start/show`); ohne Bild ein Platzhalter mit dem Anfangsbuchstaben der Karte; `--page start` für Screenshots |
 | `properties_panel`, `properties_instance`, `properties_door`, `properties_script` | Dock Object Properties: Smart Edit, Outputs/Inputs, NPC-Pose (`edit::poseNpc`), Justify; Hilfe-Fläche unten nur mit dem ersten Satz (`sme::shortSummary`, `setHelp`), Link More…/Less (`#more`/`#less`) schaltet, gemerkt in `properties/helpExpanded`; func_instance-Kasten; Door-Kasten (Öffnen, Richtung, Tempo, Schließen, Sounds mit ▶, Test open, Areaportal); Kasten „scriptBox“ für `scripted_sequence` (Startzustand in Worten aus `scriptState`, „Start on map start“, „Start with a trigger …“ wählt den neuen Trigger aus, Loop, Move to position, Not interrupted, Repeatable) und „citizenLook“ für `npc_citizen` (Kopf wählen, „Keep this head“) in `properties_script` |
 | `connect_popup` | Popup nach Quelle + Ziel: vorgeschlagene Output→Input-Paare, Listen, Delay; Enter verbindet (`Editor::beginConnect`/`finishConnect` → Signal `connectRequested`) |
-| `panels` | Docks Outliner, Problems, Log |
+| `panels` | Docks Outliner, Problems, Log; Problems: jede Zeile ein Widget, Höhe per `fitRows` aus `totalHeightForWidth` bei der echten Breite (die eigene sizeHint rät eine schmale Breite: Lücken im Text, Knöpfe abgeschnitten), neu bei jeder Größenänderung |
 | `visgroups_panel` | Dock VisGroups |
 | `map_look_panel` | Dock Map Look (mapbase-fidelity-Look der Karte) |
 | `history_panel` | Dock History (alle Undo-Schritte) |
@@ -247,7 +248,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Billboards gezeichnet (`drawSprites`, ein Batch pro Material). `parallax_obb`-Flächen haben `FLAG_VOLUME` (nur sichtbar,
   wenn ausgewählt).
 - Einrasten an Objekten (Kern `snapping`, Schalter `Editor::objectSnap`, gespeichert als `editor/objectSnap`, Standard an;
-  Shift+O, Map › Snap to objects, Werkzeugleiste, Link „Objects“ in der Statusleiste, Häkchen `objectSnapCheck` im Tool-Panel
+  Shift+O, Map › Snap to objects, Werkzeugleiste („Object snap“), Link „Object snap“ in der Statusleiste, Häkchen `objectSnapCheck` im Tool-Panel
   bei Select/Move/Scale; Alt beim Ziehen: nur dieses Mal nicht). Beim Ziehen-Start sammelt `Viewport::collectSnapTargets`
   einmal die Ecken aller nicht gezogenen, nicht versteckten Brushes und Entity-Boxen (`snapCorners`). Verschieben:
   Ecken-Quadrate (`Handle::Corner`) rasten auf die Ecke nächst der Maus ein (`nearestCorner`, `SNAP_PIXELS` = 14 px),

@@ -34,6 +34,12 @@ namespace sme {
 /// a word, so HTML entities and UTF-8 sequences stay whole.
 [[nodiscard]] std::string shortSummary(std::string_view text, std::size_t fullLimit = 120, std::size_t maxChars = 170);
 
+/// English singular or plural for a counted text with Qt's "%n": the noun right after "%n" (up to
+/// three words on) written "file(s)", "brush(es)" or "vertex/vertices" becomes "file" for n == 1 and
+/// "files" otherwise, and so does a noun joined to it with " or ". Texts without such a noun come
+/// back unchanged. Mapsmith ships no translations, so this stands in for Qt's numerus forms.
+[[nodiscard]] std::string englishPlural(std::string_view text, int n);
+
 /// Normalizes a game-relative path for lookups: forward slashes, lowercase,
 /// no leading "./" or "/", no duplicate or trailing slashes.
 [[nodiscard]] std::string normalizePath(std::string_view path);

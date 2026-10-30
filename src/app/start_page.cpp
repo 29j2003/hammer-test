@@ -17,6 +17,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QStyle>
 #include <QScrollArea>
 #include <QSettings>
 #include <QStandardPaths>
@@ -129,9 +130,10 @@ StartPage::StartPage(QWidget* parent) : QWidget(parent) {
 	big.setBold(true);
 	title->setFont(big);
 	column->addWidget(title);
-	auto* subtitle = new QLabel(tr("Pick up where you left off, or start something new."));
-	subtitle->setProperty("role", "description");
-	column->addWidget(subtitle);
+	m_subtitle = new QLabel;
+	m_subtitle->setObjectName("startSubtitle");
+	m_subtitle->setProperty("role", "description");
+	column->addWidget(m_subtitle);
 
 	auto* row = new QHBoxLayout;
 	row->setSpacing(14);
@@ -175,8 +177,8 @@ StartPage::StartPage(QWidget* parent) : QWidget(parent) {
 	nv->addWidget(freshText);
 	nv->addStretch(1);
 	auto* startNew = new QPushButton(tr("Start new project"));
+	m_startNew = startNew;
 	startNew->setObjectName("startNew");
-	startNew->setProperty("accent", true);
 	startNew->setMinimumHeight(40);
 	nv->addWidget(startNew);
 	auto* openMap = new QPushButton(tr("Open a map ..."));
@@ -225,6 +227,15 @@ void StartPage::refresh() {
 	m_projects = loadRecentProjects();
 	m_showAtStartup->setChecked(showAtStartup());
 	m_continueCard->setVisible(!m_projects.empty());
+	// Nothing to pick up yet (first start): say what there is to do instead.
+	// One main button: Continue when there is a project, else Start new project.
+	if (m_startNew->property("accent").toBool() != m_projects.empty()) {
+		m_startNew->setProperty("accent", m_projects.empty());
+		m_startNew->style()->unpolish(m_startNew);
+		m_startNew->style()->polish(m_startNew);
+	}
+	m_subtitle->setText(m_projects.empty() ? tr("Start a new project, or open a map you already have.")
+	                                       : tr("Pick up where you left off, or start something new."));
 	if (!m_projects.empty()) {
 		const auto& last = m_projects.front();
 		const QString map = QString::fromStdString(last.mapPath);

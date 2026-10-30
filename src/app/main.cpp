@@ -38,6 +38,7 @@
 
 #include "asset_browser.h"
 #include "autosaver.h"
+#include "plural_text.h"
 #include "editor.h"
 #include "icons.h"
 #include "main_window.h"
@@ -123,6 +124,8 @@ int main(int argc, char** argv) {
 	migrateOldSettings();
 	QApplication::setApplicationVersion(SME_VERSION);
 	applyDarkStyle(app);
+	PluralTranslator plurals;
+	QApplication::installTranslator(&plurals);
 	QApplication::setWindowIcon(appIcon());
 	startupMark("Qt ready");
 

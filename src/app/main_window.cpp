@@ -312,7 +312,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	m_cursorLabel = new QLabel;
 	m_gridLabel = new QLabel;
 	m_gridLabel->setObjectName("statusGrid");
-	m_gridLabel->setToolTip(tr("Click \"Snap\" (grid, Shift+W) or \"Objects\" (corners of other objects, Shift+O) to switch them"));
+	m_gridLabel->setToolTip(tr("Click \"Snap\" (grid, Shift+W) or \"Object snap\" (corners of other objects, Shift+O) to switch them"));
 	m_gridLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
 	connect(m_gridLabel, &QLabel::linkActivated, this, [this](const QString& key) {
 		if (key == "snap") m_editor->setSnapping(!m_editor->snapping());
@@ -1307,6 +1307,8 @@ void MainWindow::createActions() {
 	auto* objectSnapAction = action(tr("Snap to objects"), QKeySequence("Shift+O"), [this] { m_editor->setObjectSnap(!m_editor->objectSnap()); });
 	objectSnapAction->setCheckable(true);
 	objectSnapAction->setChecked(m_editor->objectSnap());
+	objectSnapAction->setIcon(icon("snap"));
+	objectSnapAction->setIconText(tr("Object snap"));   // the tool bar's short name; menus keep "Snap to objects"
 	objectSnapAction->setToolTip(tr("Moving, resizing and drawing stop at corners and sides of other objects, also off the grid (Shift+O; hold Alt to "
 	                                "drag past them)"));
 	top->addAction(objectSnapAction);
@@ -2222,12 +2224,13 @@ void MainWindow::updateStatusInfo() {
 	const auto onOff = [this](bool on) {
 		return on ? QStringLiteral("<span style='color:#5ccf7a'>%1</span>").arg(tr("on")) : QStringLiteral("<span style='color:#7a7a7a'>%1</span>").arg(tr("off"));
 	};
-	// "Snap" and "Objects" are links: a click switches them.
+	// "Snap" and "Object snap" are links: a click switches them ("Objects" alone read like the
+	// Objects/Faces selection mode next to it).
 	const auto link = [](const QString& key, const QString& text) { return QStringLiteral("<a href='%1' style='text-decoration:none'>%2</a>").arg(key, text); };
 	m_gridLabel->setText(tr("Grid %1  ·  %2 %3  ·  %4 %5  ·  Angle %6°  ·  Texture lock %7")
 	                         .arg(m_editor->grid())
 	                         .arg(link("snap", tr("Snap")), onOff(m_editor->snapping()))
-	                         .arg(link("objects", tr("Objects")), onOff(m_editor->objectSnap()))
+	                         .arg(link("objects", tr("Object snap")), onOff(m_editor->objectSnap()))
 	                         .arg(m_editor->rotationSnap())
 	                         .arg(onOff(m_editor->textureLock())));
 }

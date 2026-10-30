@@ -244,6 +244,7 @@ public:
 		m_arrow->setAutoRaise(true);
 		m_arrow->setArrowType(Qt::DownArrow);
 		m_arrow->setFixedSize(20, 20);
+		m_arrow->setToolTip(QObject::tr("Show or hide %1").arg(title));
 		h->addWidget(m_arrow);
 		if (toggle) {
 			toggle->setText(title);
@@ -384,7 +385,15 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	m_shape = new QComboBox;
 	m_shape->addItems({tr("Wall"), tr("Cube"), tr("Sphere")});
 	m_lighting = new QComboBox;
-	m_lighting->addItems({tr("Sun (outdoors)"), tr("Lamp (indoors, warm)"), tr("Night (dim, cold)"), tr("Unlit (texture only)")});
+	// Short names (the bar is narrow on small screens), the full meaning in each item's tool tip.
+	const std::pair<QString, QString> lights[] = {{tr("Sun"), tr("Sun - outdoors, bright and neutral")},
+	                                              {tr("Lamp"), tr("Lamp - indoors, warm")},
+	                                              {tr("Night"), tr("Night - dim and cold")},
+	                                              {tr("Unlit"), tr("Unlit - the texture only, no light")}};
+	for (const auto& [name, tip] : lights) {
+		m_lighting->addItem(name);
+		m_lighting->setItemData(m_lighting->count() - 1, tip, Qt::ToolTipRole);
+	}
 	m_lighting->setToolTip(tr("Right drag in the preview moves the light"));
 	// The bar must not make the page wider than small screens: the boxes may shrink (the full
 	// names are in their lists).
