@@ -20,6 +20,7 @@
 #include <sme/entity_catalog.h>
 #include <sme/history.h>
 #include <sme/map.h>
+#include <sme/map_budget.h>
 #include <sme/mod_install.h>
 
 namespace sme {
@@ -54,7 +55,10 @@ struct Problem {
 		EntityOutsideWorld,     ///< layout_checks: a point entity in the void
 		LightmapScale,          ///< layout_checks: extreme lightmap scales (to = the new scale)
 		NpcsWithoutNodes,       ///< layout_checks: NPCs but no info_node (objects = the NPCs)
+		PropOriginInSolid,      ///< layout_checks: a prop's origin inside a brush - it is lit black
 		ModBinIncomplete,       ///< A Mapbase mod's bin lacks (or has old) client/server/shader DLLs (action installFeatures)
+		NearEngineLimit,        ///< optimization_checks: 85 % or more of a MAX_MAP_* limit (map_budget)
+		DetailCandidates,       ///< optimization_checks: world brushes that are only details (fix: tie to func_detail)
 	};
 
 	Severity severity = Severity::Warning;
@@ -105,6 +109,8 @@ struct CheckContext {
 	/// `bundle`: the features Mapsmith brings (for "older than Mapsmith's"), may be null.
 	std::filesystem::path mapbaseModDir;
 	const FeatureBundle* bundle = nullptr;
+	/// The engine limits of the open game (budgetLimitsForApp); null: Source SDK 2013's.
+	const BudgetLimits* limits = nullptr;
 };
 
 /// Runs every check on the map (invalid brushes, missing materials/models, unknown classes, broken outputs, ...).

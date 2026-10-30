@@ -131,6 +131,9 @@ selects the objects in the map, and often a button that fixes it right away. The
 | An `info_player_start` inside a brush (the player needs 32 × 32 × 72 units free above it, else he spawns stuck or falls through the floor) | **Move onto the floor** |
 | A point entity outside the map, in the void (VBSP reports a leak from it) | — |
 | Faces with a lightmap scale below 4 (very costly light) or above 128 (very blurry light); tool faces do not count | **Set to 16** / **Set to 64** |
+| A prop whose origin is inside a brush - models are lit at their origin, so it turns black in the game | — (raise it, or give it a lighting origin with an `info_lighting`) |
+| The map uses 85 % or more of an engine limit (brushes, brush sides, planes, entities, overlays, ...), or is over one - VBSP would stop with `MAX_MAP_...` | — (the line says what helps; **Map Budget** shows all limits) |
+| World brushes that are only details - round shapes (9 or more sides) and small pieces (16 units or less) - make VVIS slow (hint) | **Make func_detail** (keep a brush world if it closes the map off from the void: detail brushes do not seal) |
 | NPCs that walk, but no `info_node` in the map (they cannot find paths: they stand still or walk into walls) | **Place nodes around the NPCs** (a few on the free floor around each NPC - add more along the ways they should walk) |
 | No light entities (hint) | — |
 | The map leaks | — |

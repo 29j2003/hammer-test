@@ -63,6 +63,33 @@ constexpr std::array KNOWN = {
 	             "VVIS needs the .prt file VBSP writes only for a sealed map. Fix the leak first (Problems shows it), then compile again."},
 	KnownMessage{"couldn't open", CompileMessage::Severity::Error,
 	             "A file could not be opened. For VVIS/VRAD this usually means VBSP failed or the map leaked (no .prt file)."},
+	// The engine limits one by one (VBSP: "ERROR: MAX_MAP_..."; View > Map Budget counts them while building).
+	KnownMessage{"max_map_brushsides", CompileMessage::Severity::Error,
+	             "Too many brush sides (65536; VBSP adds up to 6 bevel sides per brush). func_detail does not help here (detail brushes "
+	             "count too): merge boxes, delete hidden brushes, use fewer segments on round shapes, and turn detailed brushwork into models."},
+	KnownMessage{"max_map_brushes", CompileMessage::Severity::Error,
+	             "Too many brushes (8192, func_detail and tool brushes included). Merge boxes that lie side by side, delete hidden or "
+	             "unused brushes, and turn detailed brushwork into models."},
+	KnownMessage{"max_map_planes", CompileMessage::Severity::Error,
+	             "Too many different planes (65536). Odd angles and off-grid vertices each make new planes: snap brushes to the grid "
+	             "(Ctrl+B), use fewer round shapes or fewer segments, and turn detailed brushwork into models."},
+	KnownMessage{"max_map_entities", CompileMessage::Severity::Error,
+	             "Too many entities. Remove unused ones; props that never move can be prop_static (compiled into the map); logic that "
+	             "runs once can often be one logic_relay."},
+	KnownMessage{"max_map_overlays", CompileMessage::Severity::Error, "Too many info_overlay entities (512). Use fewer overlays."},
+	KnownMessage{"max_map_dispinfo", CompileMessage::Severity::Error,
+	             "Too many displacements (2048). Use fewer, larger displacements (power 3 or 4 instead of many small ones)."},
+	KnownMessage{"max_map_texinfo", CompileMessage::Severity::Error,
+	             "Too many different texture alignments (texinfo). Faces with odd shifts, scales or rotations each count: align faces "
+	             "of a wall alike (Face mode, Justify) and use fewer different materials."},
+	KnownMessage{"max_map_portals", CompileMessage::Severity::Error,
+	             "Too many vis portals. Make round shapes, small pieces and props-like brushwork func_detail so vis ignores them."},
+	KnownMessage{"microbrush", CompileMessage::Severity::Warning,
+	             "A brush is so tiny (under about 1 unit) that VBSP drops it. Select it (Problems lists invalid brushes) and delete it or "
+	             "make it bigger."},
+	KnownMessage{"t-junction", CompileMessage::Severity::Warning,
+	             "Too many places where faces meet off their corners (t-junctions). Usually harmless; on very large maps make details "
+	             "func_detail and keep brushes on the grid."},
 	KnownMessage{"max_map_", CompileMessage::Severity::Error,
 	             "The map is over an engine limit (brushes, planes, entities, ...). Turn details into func_detail, merge or remove brushes."},
 	KnownMessage{"too many", CompileMessage::Severity::Error, "An engine limit was reached (see the message)."},

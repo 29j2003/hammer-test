@@ -4,6 +4,8 @@
 // - point entities outside every world brush (in the void: VBSP reports a leak from them),
 // - faces with an extreme lightmap scale (below 4: very costly lightmaps; above 128: blurry
 //   light, and 0 or less is invalid),
+// - props (static, dynamic, physics) whose origin is inside a brush: models are lit at their origin,
+//   so they turn black in the game (a common Hammer surprise),
 // - NPCs in a map without info_node: they cannot find paths and stand still or walk straight
 //   into walls. The fix places a few nodes around every NPC, on free floor.
 //

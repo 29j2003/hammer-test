@@ -195,6 +195,10 @@ void ProblemsPanel::runChecks() {
 		}
 		context.bundle = m_bundle ? &*m_bundle : nullptr;
 	}
+	// The open game's engine limits (newer branches allow more entities).
+	const auto* game = m_editor->game();
+	const BudgetLimits limits = budgetLimitsForApp(game ? (game->entry.ownerAppId != 0 ? game->entry.ownerAppId : game->entry.baseAppId) : 0);
+	context.limits = &limits;
 	m_problems = checkMap(m_editor->doc(), context);
 	showProblems();
 }
