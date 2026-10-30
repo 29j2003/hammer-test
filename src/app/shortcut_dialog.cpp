@@ -12,22 +12,32 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QTableWidget>
+#include <QRegularExpression>
 #include <QVBoxLayout>
 
 namespace sme::app {
 
 namespace {
 
+/// What the list shows for a command: its menu text (without the "&" of mnemonics), else its name.
+QString commandLabel(const QAction* action) {
+	QString text = action->text();
+	text.remove(QRegularExpression(QStringLiteral("&(?!&)")));
+	text = text.trimmed();
+	return text.isEmpty() ? action->objectName() : text;
+}
+
 QList<QAction*> commands(QWidget* owner) {
 	QList<QAction*> out;
 	QSet<QString> seen;
 	for (auto* a : owner->findChildren<QAction*>()) {
-		if (!a->objectName().isEmpty() && !seen.contains(a->objectName())) {
-			seen.insert(a->objectName());
-			out << a;
-		}
+		const QString name = a->objectName();
+		// Qt's own helper actions (the clear button of a search field: "_q_qlineeditclearaction") are no commands.
+		if (name.isEmpty() || name.startsWith(QLatin1String("_q_")) || a->isSeparator() || seen.contains(name)) continue;
+		seen.insert(name);
+		out << a;
 	}
-	std::sort(out.begin(), out.end(), [](QAction* a, QAction* b) { return a->objectName().toLower() < b->objectName().toLower(); });
+	std::sort(out.begin(), out.end(), [](QAction* a, QAction* b) { return commandLabel(a).compare(commandLabel(b), Qt::CaseInsensitive) < 0; });
 	return out;
 }
 
@@ -78,7 +88,7 @@ void ShortcutDialog::fill() {
 	int row = 0;
 	for (auto* action : list) {
 		const QString name = action->objectName();
-		auto* label = new QTableWidgetItem(name);
+		auto* label = new QTableWidgetItem(commandLabel(action));
 		label->setFlags(label->flags() & ~Qt::ItemIsEditable);
 		label->setToolTip(action->toolTip());
 		m_table->setItem(row, 0, label);
@@ -109,7 +119,7 @@ void ShortcutDialog::checkConflicts() {
 	QMap<QString, QStringList> byKey;
 	for (auto* action : commands(m_owner)) {
 		const QString key = action->shortcut().toString(QKeySequence::NativeText);
-		if (!key.isEmpty()) byKey[key] << action->objectName();
+		if (!key.isEmpty()) byKey[key] << commandLabel(action);
 	}
 	QStringList lines;
 	for (auto it = byKey.cbegin(); it != byKey.cend(); ++it) {

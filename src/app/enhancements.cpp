@@ -423,6 +423,7 @@ EnhancementsSection::EnhancementsSection(GameEnhancements* enhancements, QWidget
 		const auto& info = gameEffectInfo(effect);
 		auto* toggle = new ToggleSwitch;
 		toggle->setObjectName(QStringLiteral("enhancementMod:%1").arg(QLatin1String(info.id)));
+		toggle->setToolTip(tr("%1 on or off for the whole mod").arg(QString::fromUtf8(info.title)));
 		connect(toggle, &QCheckBox::toggled, this, [this, effect](bool on) { m_enhancements->setEffectEnabled(effect, on); });
 		auto* title = new QLabel(QStringLiteral("<b>%1</b>").arg(QString::fromUtf8(info.title).toHtmlEscaped()));
 		auto* count = noteLabel();

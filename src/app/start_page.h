@@ -57,6 +57,8 @@ signals:
 private:
 	std::vector<RecentProject> m_projects;
 	QPushButton* m_continue;
+	QPushButton* m_startNew;     ///< The main button only while there is no project to continue
+	QLabel* m_subtitle;          ///< Under the title: depends on whether there is a project to continue
 	QLabel* m_continuePicture;
 	QLabel* m_continueTitle;
 	QLabel* m_continueDetail;

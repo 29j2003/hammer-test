@@ -53,6 +53,26 @@ TEST_CASE("text helpers") {
 	CHECK(normalizeMaterialName("materials\\Tools/ToolsNodraw.vmt") == "tools/toolsnodraw");
 }
 
+TEST_CASE("english plural for counted texts") {
+	CHECK(englishPlural("%n file(s) written.", 1) == "%n file written.");
+	CHECK(englishPlural("%n file(s) written.", 3) == "%n files written.");
+	CHECK(englishPlural("%n brush(es)", 2) == "%n brushes");
+	CHECK(englishPlural("%n brush(es)", 1) == "%n brush");
+	CHECK(englishPlural("%n entity/entities found", 0) == "%n entities found");
+	CHECK(englishPlural("%n entity/entities found", 1) == "%n entity found");
+	CHECK(englishPlural("Sewed %n vertex/vertices", 1) == "Sewed %n vertex");
+	// A few words may come first; nouns joined with "or" count the same; later nouns stay.
+	CHECK(englishPlural("%n new change(s) on the remote.", 1) == "%n new change on the remote.");
+	CHECK(englishPlural("%n entity class(es)", 4) == "%n entity classes");
+	CHECK(englishPlural("%n face(s) or overlay(s) will change", 1) == "%n face or overlay will change");
+	CHECK(englishPlural("%n triangle(s), %1 material(s).", 1) == "%n triangle, %1 material(s).");
+	// Nothing to do.
+	CHECK(englishPlural("%n kept (your own material)", 1) == "%n kept (your own material)");
+	CHECK(englishPlural("%n faces)", 1) == "%n faces)");
+	CHECK(englishPlural("No count here (s)", 1) == "No count here (s)");
+	CHECK(englishPlural("%n file(s)", -1) == "%n file(s)");
+}
+
 TEST_CASE("short summary of a long description") {
 	CHECK(shortSummary("  Short text.  ") == "Short text.");
 	const std::string longText =

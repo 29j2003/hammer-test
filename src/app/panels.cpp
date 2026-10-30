@@ -131,6 +131,7 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	auto* layout = new QVBoxLayout(this);
 	layout->setContentsMargins(0, 0, 0, 0);
 	auto* top = new QHBoxLayout;
+	top->setContentsMargins(8, 4, 4, 4);
 	m_summary = new QLabel(tr("Not checked yet"));
 	auto* check = new QPushButton(tr("Check map"));
 	check->setToolTip(tr("Look for problems now (also runs before every compile)"));
@@ -152,6 +153,8 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	m_list = new QListWidget;
 	m_list->setWordWrap(true);
 	m_list->setSelectionMode(QAbstractItemView::NoSelection);
+	m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+	m_list->viewport()->installEventFilter(this);
 	layout->addWidget(m_list, 1);
 	connect(check, &QPushButton::clicked, this, [this] {
 		m_cache = {};   // read models and sounds again (they may have changed on disk)
@@ -276,9 +279,9 @@ void ProblemsPanel::showProblems() {
 		buttons->addStretch(1);
 		v->addLayout(buttons);
 		auto* item = new QListWidgetItem(m_list);
-		item->setSizeHint(widget->sizeHint());
 		m_list->setItemWidget(item, widget);
 	}
+	fitRows();
 	if (rows > MAX_ROWS) {
 		auto* more = new QListWidgetItem(tr("... and %n more not listed here - fix the ones above, then check again.", nullptr,
 		                                    rows - MAX_ROWS),
@@ -288,8 +291,28 @@ void ProblemsPanel::showProblems() {
 	if (all.empty()) {
 		m_summary->setText(tr("✔ No problems found"));
 	} else {
-		m_summary->setText(tr("%1 errors, %2 warnings, %3 hints").arg(errors).arg(warnings).arg(static_cast<int>(all.size()) - errors - warnings));
+		const int hints = static_cast<int>(all.size()) - errors - warnings;
+		m_summary->setText(QStringLiteral("%1, %2, %3").arg(tr("%n error(s)", nullptr, errors), tr("%n warning(s)", nullptr, warnings),
+		                                                     tr("%n hint(s)", nullptr, hints)));
 	}
+}
+
+void ProblemsPanel::fitRows() {
+	// A row's own size hint guesses a narrow width for its wrapped labels: rows came out too tall
+	// (gaps between the lines) or too short (the buttons cut off). Measure at the real width.
+	const int width = m_list->viewport()->width() - 2 * m_list->spacing();
+	for (int i = 0; i < m_list->count(); ++i) {
+		QListWidgetItem* item = m_list->item(i);
+		QWidget* widget = m_list->itemWidget(item);
+		if (!widget || !widget->layout()) continue;
+		const int height = widget->layout()->hasHeightForWidth() ? widget->layout()->totalHeightForWidth(width) : widget->sizeHint().height();
+		item->setSizeHint(QSize(width, height));
+	}
+}
+
+bool ProblemsPanel::eventFilter(QObject* watched, QEvent* event) {
+	if (watched == m_list->viewport() && event->type() == QEvent::Resize) fitRows();
+	return QWidget::eventFilter(watched, event);
 }
 
 QString ProblemsPanel::problemsText() const {
