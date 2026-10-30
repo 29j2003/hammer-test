@@ -36,7 +36,44 @@ std::vector<Vec3> ring(const Bounds& box, int sides, double z, bool coarse) {
 	return out;
 }
 
+/// Where an arch's corners lie: shared by makeShape() and archOuterPoints().
+struct ArchFrame {
+	int pieces;
+	double arc, start, rx, ry, ix, iy;
+	Vec3 c;
+	bool coarse;
+
+	ArchFrame(const Bounds& box, const ShapeOptions& options) {
+		const Vec3 size = box.size();
+		pieces = std::clamp(options.sides, 1, 64);
+		arc = std::clamp(options.arc, 1.0, 360.0);
+		start = options.startAngle;
+		const double width = std::clamp(options.wallWidth, 1.0, std::min(size.x, size.y) / 2);
+		c = box.center();
+		rx = size.x / 2;
+		ry = size.y / 2;
+		ix = rx - width;
+		iy = ry - width;
+		coarse = std::min({size.x, size.y}) >= 32;
+	}
+	[[nodiscard]] double angle(int i) const { return start + arc * i / pieces; }
+	[[nodiscard]] Vec3 at(double rxx, double ryy, double degrees, double z) const {
+		const double a = degrees * PI / 180;
+		return tidy(Vec3{c.x + rxx * std::cos(a), c.y + ryy * std::sin(a), z}, coarse);
+	}
+	[[nodiscard]] Vec3 outer(double degrees, double z) const { return at(rx, ry, degrees, z); }
+	[[nodiscard]] Vec3 inner(double degrees, double z) const { return at(ix, iy, degrees, z); }
+};
+
 } // namespace
+
+std::vector<Vec3> archOuterPoints(const Bounds& box, const ShapeOptions& options) {
+	std::vector<Vec3> out;
+	if (box.empty()) return out;
+	const ArchFrame frame(box, options);
+	for (int i = 0; i <= frame.pieces; ++i) out.push_back(frame.outer(frame.angle(i), 0));
+	return out;
+}
 
 std::string shapeName(ShapeOptions::Kind kind) {
 	switch (kind) {
@@ -106,20 +143,12 @@ std::vector<Solid> makeShape(MapDocument& doc, const Bounds& box, const ShapeOpt
 		}
 		case ShapeOptions::Kind::Arch: {
 			// Pieces between an outer ellipse (the box) and an inner one `wallWidth` smaller.
-			const int pieces = std::clamp(options.sides, 1, 64);
-			const double arc = std::clamp(options.arc, 1.0, 360.0);
-			const double width = std::clamp(options.wallWidth, 1.0, std::min(size.x, size.y) / 2);
-			const Vec3 c = box.center();
-			const double rx = size.x / 2, ry = size.y / 2, ix = rx - width, iy = ry - width;
-			const auto at = [&](double rxx, double ryy, double degrees, double z) {
-				const double a = degrees * PI / 180;
-				return tidy(Vec3{c.x + rxx * std::cos(a), c.y + ryy * std::sin(a), z}, coarse);
-			};
-			for (int i = 0; i < pieces; ++i) {
-				const double a0 = options.startAngle + arc * i / pieces, a1 = options.startAngle + arc * (i + 1) / pieces;
+			const ArchFrame frame(box, options);
+			for (int i = 0; i < frame.pieces; ++i) {
+				const double a0 = frame.angle(i), a1 = frame.angle(i + 1);
 				const double z0 = lo.z + options.addHeight * i, z1 = hi.z + options.addHeight * i;
-				add({at(rx, ry, a0, z0), at(rx, ry, a1, z0), at(ix, iy, a0, z0), at(ix, iy, a1, z0), at(rx, ry, a0, z1), at(rx, ry, a1, z1),
-				     at(ix, iy, a0, z1), at(ix, iy, a1, z1)});
+				add({frame.outer(a0, z0), frame.outer(a1, z0), frame.inner(a0, z0), frame.inner(a1, z0), frame.outer(a0, z1), frame.outer(a1, z1),
+				     frame.inner(a0, z1), frame.inner(a1, z1)});
 			}
 			break;
 		}

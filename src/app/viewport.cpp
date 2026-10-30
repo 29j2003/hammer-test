@@ -2323,8 +2323,10 @@ void Viewport::updateShapePreview() {
 		setPreviewSolids({});
 		return;
 	}
+	// As it will be made: settings reduced to the box, fitted into the brushes around it (with the
+	// filled gaps and the neighbours cut around it).
 	MapDocument scratch;
-	setPreviewSolids(makeShape(scratch, m_blockBox, m_editor->shapeOptions(), m_editor->currentMaterial().toStdString()));
+	setPreviewSolids(planShape(m_editor->doc(), scratch, m_blockBox, m_editor->shapeOptions(), m_editor->currentMaterial().toStdString()).resultSolids());
 }
 
 void Viewport::updateBlockDrag(const QPointF& pos) {

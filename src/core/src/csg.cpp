@@ -631,4 +631,33 @@ double solidVolume(const Solid& solid) {
 	return std::abs(volume);
 }
 
+bool solidContains(const Solid& solid, const Vec3& p, double tolerance) {
+	for (const auto& side : solid.sides) {
+		const Plane plane = side.plane();
+		if (dot(plane.normal, p) - plane.dist > tolerance) return false;
+	}
+	return !solid.sides.empty();
+}
+
+std::vector<NearbySolid> solidsNear(const MapDocument& doc, const Bounds& around, double margin, const std::vector<SolidRef>& skip) {
+	std::vector<NearbySolid> out;
+	const auto collect = [&](const Entity& entity, int entityId) {
+		for (const auto& solid : entity.solids) {
+			const SolidRef ref{entityId, solid.id};
+			if (std::find(skip.begin(), skip.end(), ref) != skip.end()) continue;
+			const auto geometry = buildBrushGeometry(solid);
+			if (!geometry.valid) continue;
+			const Bounds& box = geometry.bounds;
+			if (box.max.x < around.min.x - margin || box.min.x > around.max.x + margin || box.max.y < around.min.y - margin ||
+			    box.min.y > around.max.y + margin || box.max.z < around.min.z - margin || box.min.z > around.max.z + margin) {
+				continue;
+			}
+			out.push_back({ref, &solid, box});
+		}
+	};
+	collect(doc.world, 0);
+	for (const auto& entity : doc.entities) collect(entity, entity.id);
+	return out;
+}
+
 } // namespace sme

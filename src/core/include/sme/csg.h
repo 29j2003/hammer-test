@@ -83,4 +83,17 @@ struct VertexEdit {
 /// Volume of a convex brush (cubic units).
 [[nodiscard]] double solidVolume(const Solid& solid);
 
+/// Whether `p` lies inside the convex brush (on a face counts, within `tolerance` units).
+[[nodiscard]] bool solidContains(const Solid& solid, const Vec3& p, double tolerance = 0.01);
+
+/// A brush near some place (world or brush entity) and the box around it.
+struct NearbySolid {
+	SolidRef ref;
+	const Solid* solid = nullptr;
+	Bounds bounds;
+};
+/// Valid brushes (world and brush entities) whose boxes come within `margin` units of `around`,
+/// except those in `skip`: the neighbours an edit has to fit in with.
+[[nodiscard]] std::vector<NearbySolid> solidsNear(const MapDocument& doc, const Bounds& around, double margin, const std::vector<SolidRef>& skip = {});
+
 } // namespace sme

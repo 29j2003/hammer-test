@@ -601,6 +601,17 @@ QWidget* makeShapePage(Editor* editor) {
 	form->addRow(QObject::tr("Add height"), addHeight);
 	form->addRow(QObject::tr("Steps"), steps);
 	v->addLayout(form);
+	auto* fit = new QCheckBox(QObject::tr("Fit to surroundings"));
+	fit->setObjectName("shapeFit");
+	fit->setToolTip(QObject::tr("Fills the gaps between the shape and the walls or floor it is drawn against (an arch in a corner, "
+	                            "a shape standing in a hole of a floor) and cuts brushes it reaches into around it. Off: the shape "
+	                            "alone, as drawn."));
+	v->addWidget(fit);
+	auto* limited = new QLabel;
+	limited->setObjectName("shapeLimited");
+	limited->setWordWrap(true);
+	limited->setProperty("role", "warning");
+	v->addWidget(limited);
 	auto* live = new QLabel;
 	live->setWordWrap(true);
 	live->setStyleSheet("color: #8a90a0;");
@@ -618,6 +629,14 @@ QWidget* makeShapePage(Editor* editor) {
 		width->setValue(int(o.wallWidth));
 		addHeight->setValue(int(o.addHeight));
 		steps->setValue(o.steps);
+		fit->setChecked(o.fit);
+		fit->setVisible(o.kind != ShapeOptions::Kind::Block);
+		const auto& notes = editor->shapeLimits().notes;
+		QStringList said;
+		for (const auto& note : notes) said << QString::fromStdString(note);
+		limited->setText(editor->shapeEditable() && !said.isEmpty() ? QObject::tr("Limited to what the box takes: %1.").arg(said.join(", "))
+		                                                             : QString());
+		limited->setVisible(!limited->text().isEmpty());
 		const bool round = o.kind == ShapeOptions::Kind::Cylinder || o.kind == ShapeOptions::Kind::Spike || o.kind == ShapeOptions::Kind::Sphere;
 		const bool isArch = o.kind == ShapeOptions::Kind::Arch;
 		for (auto* w : std::initializer_list<QWidget*>{sides}) {
@@ -644,8 +663,10 @@ QWidget* makeShapePage(Editor* editor) {
 		o.wallWidth = width->value();
 		o.addHeight = addHeight->value();
 		o.steps = steps->value();
+		o.fit = fit->isChecked();
 		editor->setShapeOptions(o);
 	};
+	QObject::connect(fit, &QCheckBox::toggled, page, store);
 	QObject::connect(kind, &QComboBox::currentIndexChanged, page, store);
 	for (auto* s : {sides, arc, start, width, addHeight, steps}) {
 		QObject::connect(s, &QSpinBox::valueChanged, page, store);

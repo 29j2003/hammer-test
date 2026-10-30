@@ -26,6 +26,7 @@
 #include <sme/instances.h>
 #include <sme/map.h>
 #include <sme/map_tools.h>
+#include <sme/shape_fit.h>
 
 namespace sme::app {
 
@@ -233,6 +234,8 @@ public:
 	void createBrushEntity(const Bounds& box);
 	/// The shape created last can still be changed through setShapeOptions().
 	[[nodiscard]] bool shapeEditable() const;
+	/// What the box of the shape created last could not take (settings reduced to fit).
+	[[nodiscard]] const ShapeLimits& shapeLimits() const { return m_shapeLimits; }
 
 	// --- Operations on the selection -----------------------------------------
 	void deleteSelection();
@@ -413,6 +416,7 @@ private:
 	std::vector<std::pair<std::string, std::string>> m_currentEntityKeys;
 	bool m_randomYaw = false;
 	ShapeOptions m_shapeOptions;
+	ShapeLimits m_shapeLimits;   ///< Settings reduced for the shape created last
 	std::function<QStringList()> m_modelNames, m_soundNames;
 	int m_connectSource = 0;   ///< Connect mode: the entity whose output is being made (0 = off)
 	bool m_footerModified = false;   ///< Cordons changed (not part of undo, like in Hammer)

@@ -66,6 +66,7 @@ add_library(smecore STATIC
 	src/particles.cpp
 	src/material.cpp
 	src/scene_export.cpp
+	src/shape_fit.cpp
 	src/shapes.cpp
 	src/snapping.cpp
 	src/steam.cpp

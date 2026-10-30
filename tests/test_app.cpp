@@ -1933,6 +1933,50 @@ TEST_CASE("editing with the mouse in the real window") {
 		editor.setShapeOptions(ShapeOptions{});
 		CHECK(editor.doc().world.solids.size() == before);
 
+		// Fit to surroundings: an arch drawn into the corner of two walls fills the space behind its
+		// curve; switched off in the Tool panel, the arch is rebuilt alone (still one undo step).
+		editor.createShape(box({4128, 3936, 0}, {4144, 4144, 128}));   // east wall
+		editor.createShape(box({3936, 4128, 0}, {4128, 4144, 128}));   // north wall
+		const auto walls = editor.doc().world.solids.size();
+		ShapeOptions corner = arch;
+		corner.arc = 90;
+		corner.sides = 4;
+		corner.wallWidth = 16;
+		corner.fit = true;
+		editor.clearSelection();   // else the wall made last would become the arch
+		editor.setShapeOptions(corner);
+		editor.createShape(box({4000, 4000, 0}, {4128, 4128, 128}));
+		CHECK(editor.doc().world.solids.size() > walls + 4);   // the arch and what fills behind it
+		CHECK(editor.shapeEditable());
+		auto* fitBox = window.findChild<QCheckBox*>("shapeFit");
+		REQUIRE(fitBox);
+		CHECK(fitBox->isChecked());
+		const Camera viewCamera = view->camera();   // the shots move the camera; the clicks below need it back
+		if (!qEnvironmentVariableIsEmpty("SME_ARCH_SHOTS")) {
+			view->frameSelection();
+			settle();
+			view->grabFramebuffer().save(qEnvironmentVariable("SME_ARCH_SHOTS") + "/arch_fit_on.png");
+		}
+		fitBox->setChecked(false);
+		CHECK(editor.doc().world.solids.size() == walls + 4);
+		CHECK_FALSE(editor.shapeOptions().fit);
+		CHECK(QSettings().value("shape/fit").toBool() == false);
+		if (!qEnvironmentVariableIsEmpty("SME_ARCH_SHOTS")) {
+			settle();
+			view->grabFramebuffer().save(qEnvironmentVariable("SME_ARCH_SHOTS") + "/arch_fit_off.png");
+			view->camera() = viewCamera;
+			view->update();
+		}
+		editor.undo();
+		CHECK(editor.doc().world.solids.size() == walls);
+		editor.undo();
+		editor.undo();
+		CHECK(editor.doc().world.solids.size() == before);
+		corner.fit = true;
+		editor.setShapeOptions(corner);
+		CHECK(fitBox->isChecked());
+		editor.setShapeOptions(ShapeOptions{});
+
 		// Brush tools: hollow a block into a room, merge two blocks, then undo both.
 		editor.createShape(box({512, 512, 0}, {640, 640, 128}));
 		const auto room = editor.selection();

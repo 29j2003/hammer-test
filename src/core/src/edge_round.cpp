@@ -72,26 +72,12 @@ double touchArea(const Solid& a, const Solid& b) {
 	return area;
 }
 
-bool contains(const Solid& solid, const Vec3& p) {
-	for (const auto& side : solid.sides) {
-		const Plane plane = side.plane();
-		if (dot(plane.normal, p) - plane.dist > 0.01) return false;
-	}
-	return !solid.sides.empty();
-}
-
 const FaceGeometry* faceOf(const BrushGeometry& geometry, const Solid& solid, int sideId) {
 	for (const auto& face : geometry.faces) {
 		if (solid.sides[static_cast<std::size_t>(face.sideIndex)].id == sideId) return &face;
 	}
 	return nullptr;
 }
-
-/// A neighbouring brush with its planes and bounds (for the cover test).
-struct Neighbour {
-	const Solid* solid = nullptr;
-	Bounds bounds;
-};
 
 /// Everything the planning works on.
 struct Corner {
@@ -104,7 +90,7 @@ struct Corner {
 	Vec3 origin;          ///< A point on the corner line
 	double angle = 0;     ///< Between the face normals
 	double c = 0;         ///< cos(angle)
-	std::vector<Neighbour> neighbours;
+	std::vector<NearbySolid> neighbours;
 
 	[[nodiscard]] double along(const Vec3& p) const { return dot(d, p - origin); }
 
@@ -114,9 +100,9 @@ struct Corner {
 		const Vec3 nearA = q + planeA.normal * 0.5 - planeB.normal * 0.5;
 		const Vec3 nearB = q + planeB.normal * 0.5 - planeA.normal * 0.5;
 		const auto inside = [&](const Vec3& p) {
-			return std::any_of(neighbours.begin(), neighbours.end(), [&](const Neighbour& n) {
+			return std::any_of(neighbours.begin(), neighbours.end(), [&](const NearbySolid& n) {
 				return p.x >= n.bounds.min.x - 0.01 && p.x <= n.bounds.max.x + 0.01 && p.y >= n.bounds.min.y - 0.01 && p.y <= n.bounds.max.y + 0.01 &&
-				       p.z >= n.bounds.min.z - 0.01 && p.z <= n.bounds.max.z + 0.01 && contains(*n.solid, p);
+				       p.z >= n.bounds.min.z - 0.01 && p.z <= n.bounds.max.z + 0.01 && solidContains(*n.solid, p);
 			});
 		};
 		return inside(nearA) && inside(nearB);
@@ -365,22 +351,7 @@ EdgeRoundPlan planEdgeRound(const MapDocument& doc, MapDocument& ids, const Face
 		around.add(buildBrushGeometry(*originals.back()).bounds);
 	}
 	// Neighbours that may cover the corner (every other brush near the two).
-	const auto collect = [&](const Entity& entity) {
-		for (const auto& solid : entity.solids) {
-			const SolidRef ref{&entity == &doc.world ? 0 : entity.id, solid.id};
-			if (std::find(targets.begin(), targets.end(), ref) != targets.end()) continue;
-			const auto geometry = buildBrushGeometry(solid);
-			if (!geometry.valid) continue;
-			const Bounds& box = geometry.bounds;
-			if (box.max.x < around.min.x - 2 || box.min.x > around.max.x + 2 || box.max.y < around.min.y - 2 || box.min.y > around.max.y + 2 ||
-			    box.max.z < around.min.z - 2 || box.min.z > around.max.z + 2) {
-				continue;
-			}
-			corner.neighbours.push_back({&solid, box});
-		}
-	};
-	collect(doc.world);
-	for (const auto& entity : doc.entities) collect(entity);
+	corner.neighbours = solidsNear(doc, around, 2, targets);
 
 	// Pieces: parts of the brushes in front of a face's plane stay as they are; the rest is
 	// split where the neighbours' cover begins or ends.

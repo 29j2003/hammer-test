@@ -93,6 +93,19 @@ The **Tool** tab shows the shape settings:
 Change the settings **right after** creating a shape and it is rebuilt with the new values. You do not need to draw
 it again.
 
+**Fit to surroundings** (on by default, for every shape but the plain block) fits the shape into what is already there:
+
+- An arch drawn **against walls** (a rounded room corner, a curved wall along a wall) gets the space between its curve
+  and those walls filled, so no void stays behind it.
+- A shape standing **in a hole of a floor** (its box reaches below the floor's top and the floor lies around it) gets
+  the floor filled around it, with the floor's texture.
+- Brushes the shape **reaches into** (a floor it is sunk into, a wall it goes through) are cut around it.
+
+The preview while you draw shows all of this. Switch it off to get the shape alone, exactly as drawn. Settings the box
+cannot take (a wall wider than half the arch, more pieces, sides or steps than fit) are reduced to what fits instead of
+failing; the Tool panel says what was limited. Drawing a shape snaps to the corners of other objects like a block does
+(see *Snap to objects*).
+
 The material of new blocks is the **current material**: the one you last picked in the Asset Browser.
 
 ## Clip

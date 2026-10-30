@@ -22,6 +22,7 @@ struct ShapeOptions {
 	double wallWidth = 16;      ///< Arch: thickness of the ring
 	double addHeight = 0;       ///< Arch: each piece this much higher than the one before (spiral)
 	int steps = 8;              ///< Stairs: number of steps (rising towards +Y)
+	bool fit = true;            ///< Fit to surroundings: fill gaps, carve neighbours (shape_fit; not for plain blocks)
 };
 
 /// Readable name ("arch").
@@ -30,5 +31,9 @@ struct ShapeOptions {
 /// Brushes for the shape inside `box` (new ids from the document, world-aligned textures).
 /// Empty if the shape does not fit (box too small for the settings).
 [[nodiscard]] std::vector<Solid> makeShape(MapDocument& doc, const Bounds& box, const ShapeOptions& options, const std::string& material);
+
+/// Arch: the corners on its outer side where its pieces meet (pieces + 1 of them, z = 0), exactly
+/// as makeShape() places them.
+[[nodiscard]] std::vector<Vec3> archOuterPoints(const Bounds& box, const ShapeOptions& options);
 
 } // namespace sme

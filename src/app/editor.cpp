@@ -75,6 +75,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_shapeOptions.wallWidth = settings.value("shape/width", m_shapeOptions.wallWidth).toDouble();
 	m_shapeOptions.addHeight = settings.value("shape/addHeight", m_shapeOptions.addHeight).toDouble();
 	m_shapeOptions.steps = settings.value("shape/steps", m_shapeOptions.steps).toInt();
+	m_shapeOptions.fit = settings.value("shape/fit", m_shapeOptions.fit).toBool();
 	m_rotationSnap = settings.value("editor/rotationSnap", 15.0).toDouble();
 	m_randomYaw = settings.value("entities/randomYaw", false).toBool();
 	m_enhancements = std::make_unique<GameEnhancements>(this);
@@ -1111,13 +1112,19 @@ void Editor::setShapeOptions(const ShapeOptions& options) {
 	settings.setValue("shape/width", options.wallWidth);
 	settings.setValue("shape/addHeight", options.addHeight);
 	settings.setValue("shape/steps", options.steps);
+	settings.setValue("shape/fit", options.fit);
 	if (shapeEditable()) {
-		// Rebuild the shape just made; merged into its "Create" step.
-		auto solids = makeShape(m_doc, m_lastShape.box, m_shapeOptions, m_lastShape.material);
-		if (!solids.empty()) {
-			auto [change, refs] = edit::replaceSolids(m_doc, m_lastShape.refs, std::move(solids), m_lastShape.name);
-			commitMerged(std::move(change));
+		// Rebuild the shape just made: its "Create" step is taken back (with what fitting it into
+		// the map changed around it) and made again with the new settings - still one undo step.
+		const auto shape = m_lastShape;
+		if (m_history.undo(m_doc)) {
+			ShapePlan plan = planShape(m_doc, m_doc, shape.box, m_shapeOptions, shape.material);
+			if (!plan.ok()) plan = planShape(m_doc, m_doc, shape.box, ShapeOptions{}, shape.material);   // never leave nothing
+			auto [change, refs] = applyShapePlan(m_doc, plan, shape.name);
+			m_shapeLimits = plan.limits;
+			m_lastShape = shape;
 			m_lastShape.refs = refs;
+			commit(std::move(change));
 			m_lastShape.revision = m_history.revision();
 			Selection selection;
 			selection.solids = refs;
@@ -1137,18 +1144,25 @@ bool Editor::shapeEditable() const {
 
 void Editor::createShape(const Bounds& box) {
 	const std::string material = m_currentMaterial.toStdString();
-	auto [change, refs] = edit::createShape(m_doc, box, m_shapeOptions, material);
-	if (refs.empty()) {
+	const ShapePlan plan = planShape(m_doc, m_doc, box, m_shapeOptions, material);
+	if (!plan.ok()) {
 		emit message(tr("The %1 does not fit into this box - make it bigger or change the settings in the Tool panel")
 		                 .arg(QString::fromStdString(shapeName(m_shapeOptions.kind))));
 		return;
 	}
-	m_lastShape = {box, refs, change.name, material, 0, true};
+	const std::string name = "Create " + shapeName(m_shapeOptions.kind);
+	auto [change, refs] = applyShapePlan(m_doc, plan, name);
+	m_shapeLimits = plan.limits;
+	m_lastShape = {box, refs, name, material, 0, true};
 	commit(std::move(change));
 	m_lastShape.revision = m_history.revision();
 	Selection selection;
 	selection.solids = refs;
 	setSelection(std::move(selection));
+	if (plan.limits.limited()) {
+		emit message(tr("%1: %2").arg(QString::fromStdString(shapeName(m_shapeOptions.kind)),
+		                                QString::fromStdString(plan.limits.notes.front())));
+	}
 }
 
 // --- Brush tools ---------------------------------------------------------------------------
