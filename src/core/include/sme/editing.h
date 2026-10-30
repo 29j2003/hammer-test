@@ -167,7 +167,8 @@ struct MergeOutcome {
 };
 /// Merges the selected world brushes (see MergeOutcome); nullopt if fewer than two or no volume.
 [[nodiscard]] std::optional<MergeOutcome> merge(MapDocument& doc, const Selection& selection);
-/// Rounds (segments > 1) or bevels the edge between two faces of one brush.
+/// Rounds (segments > 1) or bevels the corner between two faces, of one brush or of two (see
+/// edge_round.h: never leaves a hole, makes a radius that does not fit smaller).
 [[nodiscard]] std::optional<Change> roundEdge(MapDocument& doc, const FaceRef& a, const FaceRef& b, double radius, int segments);
 /// Vertex tool: the edges of the selected brushes whose two corners are both in `corners`, each
 /// as the two faces that meet there.

@@ -163,6 +163,12 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		m_selectionDirty = true;
 		requestFrame();
 	});
+	// A live preview of an edit (rounding an edge): its brushes stand in for the hidden originals.
+	connect(editor, &Editor::brushPreviewChanged, this, [this] {
+		setPreviewSolids(m_editor->brushPreview());
+		m_selectionDirty = true;
+		requestFrame();
+	});
 	connect(editor, &Editor::settingsChanged, this, &Viewport::requestFrame);
 	connect(editor, &Editor::connectModeChanged, this, &Viewport::requestFrame);
 	connect(editor, &Editor::doorTestRequested, this, &Viewport::startDoorTest);
@@ -554,7 +560,7 @@ void Viewport::paintGL() {
 	if (params.mode == SceneRenderer::Mode::Lit && params.reflections && m_renderer.cubemapWorkPending() && !m_cubemapTimer.isActive()) {
 		m_cubemapTimer.start(m_renderer.cubemapDelayMs());
 	}
-	if (toolPreview) {
+	if (toolPreview || !m_editor->brushPreview().empty()) {
 		m_renderer.drawPreviewSolids(params);
 	}
 	if (dragging && scaling()) {

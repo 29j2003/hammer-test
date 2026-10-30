@@ -4,6 +4,7 @@
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/edge_round.h>
 #include <sme/material.h>
 #include <sme/studio_model.h>
 #include <sme/text.h>
@@ -1006,21 +1007,8 @@ std::optional<MergeOutcome> merge(MapDocument& doc, const Selection& selection) 
 }
 
 std::optional<Change> roundEdge(MapDocument& doc, const FaceRef& a, const FaceRef& b, double radius, int segments) {
-	if (!(a.solid == b.solid)) {
-		return std::nullopt;
-	}
-	const auto* solid = doc.findSolid(a.solid);
-	if (!solid) {
-		return std::nullopt;
-	}
-	auto rounded = sme::roundEdge(doc, *solid, a.sideId, b.sideId, radius, segments);
-	if (!rounded) {
-		return std::nullopt;
-	}
-	Transaction t(doc, segments > 1 ? "Round edge" : "Bevel edge");
-	t.touchSolid(a.solid);
-	*doc.findSolid(a.solid) = std::move(*rounded);
-	return t.finish();
+	const auto plan = planEdgeRound(doc, doc, a, b, radius, segments);
+	return applyEdgeRound(doc, plan, segments > 1 ? "Round edge" : "Bevel edge");
 }
 
 std::vector<EdgeFaces> edgesAtCorners(const MapDocument& doc, const Selection& selection, const std::vector<Vec3>& corners) {
@@ -1063,12 +1051,28 @@ std::optional<Change> shapeEdges(MapDocument& doc, const std::vector<EdgeFaces>&
 		if (!(a.solid == b.solid)) continue;
 		const auto* solid = doc.findSolid(a.solid);
 		if (!solid) continue;
-		std::optional<Solid> result;
-		switch (shape) {
-			case EdgeShape::Wedge: result = cutEdge(doc, *solid, a.sideId, b.sideId, std::nullopt); break;
-			case EdgeShape::Bevel: result = cutEdge(doc, *solid, a.sideId, b.sideId, size); break;
-			case EdgeShape::Round: result = sme::roundEdge(doc, *solid, a.sideId, b.sideId, size, std::max(2, segments)); break;
+		if (shape != EdgeShape::Wedge) {
+			// Bevel and round go the way of the dialog: no hole next to covering neighbours, a
+			// size that does not fit is made smaller. A bevel cuts `size` in along both faces.
+			double radius = size;
+			if (shape == EdgeShape::Bevel) {
+				const Side* sa = nullptr;
+				const Side* sb = nullptr;
+				for (const auto& side : solid->sides) {
+					if (side.id == a.sideId) sa = &side;
+					if (side.id == b.sideId) sb = &side;
+				}
+				if (!sa || !sb) continue;
+				const double angle = std::acos(std::clamp(dot(sa->plane().normal, sb->plane().normal), -1.0, 1.0));
+				radius = size / std::max(1e-3, std::tan(angle / 2));
+			}
+			const auto plan = planEdgeRound(doc, doc, a, b, radius, shape == EdgeShape::Bevel ? 1 : std::max(2, segments));
+			if (!plan.ok()) continue;
+			applyEdgeRound(doc, t, plan);
+			++done;
+			continue;
 		}
+		std::optional<Solid> result = cutEdge(doc, *solid, a.sideId, b.sideId, std::nullopt);
 		if (!result) continue;
 		t.touchSolid(a.solid);
 		*doc.findSolid(a.solid) = std::move(*result);
