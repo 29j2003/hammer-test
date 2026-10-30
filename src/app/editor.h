@@ -17,6 +17,7 @@
 
 #include <sme/clipboard.h>
 #include <sme/doors.h>
+#include <sme/edge_round.h>
 #include <sme/editing.h>
 #include <sme/fidelity_look.h>
 #include <sme/visibility.h>
@@ -254,6 +255,13 @@ public:
 	void carveWithSelection();
 	void mergeSelection();
 	void roundSelectedEdge(double radius, int segments);
+	/// What rounding the corner between the two selected faces would do (nothing changes; see
+	/// edge_round.h). Not ok() without two selected faces.
+	[[nodiscard]] EdgeRoundPlan planSelectedEdgeRound(double radius, int segments) const;
+	/// Brushes shown as they would become (a live preview); `replaced` are hidden meanwhile.
+	void setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced);
+	void clearBrushPreview() { setBrushPreview({}, {}); }
+	[[nodiscard]] const std::vector<Solid>& brushPreview() const { return m_brushPreview; }
 	/// Corners picked with the vertex tool (the views keep them in step; the edge actions use them).
 	[[nodiscard]] const std::vector<Vec3>& vertexCorners() const { return m_vertexCorners; }
 	void setVertexCorners(const std::vector<Vec3>& corners);
@@ -328,6 +336,8 @@ signals:
 	void documentReplaced();     ///< New/opened map (views reset the camera)
 	/// The selection changed (views only update flags).
 	void selectionChanged();
+	/// The live brush preview changed (setBrushPreview).
+	void brushPreviewChanged();
 	/// Another tool was chosen.
 	void toolChanged();
 	/// A view or tool setting changed (grid, snapping, render mode, ...).
@@ -376,6 +386,8 @@ private:
 	std::uint32_t m_hiddenKinds = 0;
 	mutable Selection m_hiddenAll;        ///< m_hidden plus the filtered kinds, made when needed
 	mutable bool m_hiddenDirty = true;
+	std::vector<Solid> m_brushPreview;        ///< Live preview of an edit (see setBrushPreview)
+	std::vector<SolidRef> m_previewReplaced;  ///< Brushes the preview stands in for (hidden meanwhile)
 	Tool m_tool = Tool::Select;
 	SelectMode m_selectMode = SelectMode::Object;
 	RenderMode m_renderMode = RenderMode::Lit;

@@ -35,6 +35,7 @@ class QContextMenuEvent;
 
 namespace sme::app {
 
+class RoundEdgeDialog;
 class AssetBrowser;
 class DockLayout;
 class CompileWindow;
@@ -209,6 +210,7 @@ private:
 	bool m_mapHidden = false;
 	QByteArray m_mapDockState;                  ///< The docks' layout before another tab put them away
 	QPointer<ImportDialog> m_importDialog;     ///< The open import dialog
+	QPointer<RoundEdgeDialog> m_roundDialog;   ///< The open "Round or bevel edge" dialog
 	bool m_reloadPending = false;               ///< The game is read again soon (the mod's files changed)
 	bool m_quad = false;
 	QPointer<Viewport> m_active;

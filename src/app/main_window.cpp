@@ -32,6 +32,7 @@
 #include "panels.h"
 #include "particle_browser.h"
 #include "properties_panel.h"
+#include "round_edge_dialog.h"
 #include "shortcut_dialog.h"
 #include "sound_browser.h"
 #include "tool_panel.h"
@@ -2381,29 +2382,22 @@ void MainWindow::pasteSpecialDialog() {
 void MainWindow::roundEdgeDialog() {
 	if (m_editor->selection().faces.size() != 2) {
 		QMessageBox::information(this, tr("Round edge"),
-		                         tr("Select the two faces next to the edge first:\nFaces mode (3), click one face, Ctrl+click the other."));
+		                         tr("Select the two faces next to the edge first:\nFaces mode (3), click one face, Ctrl+click the other.\n"
+		                            "They may belong to two brushes (the outer corner of an L of two walls)."));
 		return;
 	}
-	QDialog dialog(this);
-	dialog.setWindowTitle(tr("Round or bevel edge"));
-	auto* form = new QFormLayout(&dialog);
-	auto* radius = new QDoubleSpinBox;
-	radius->setRange(1, 4096);
-	radius->setValue(QSettings().value("brushes/roundRadius", 16.0).toDouble());
-	radius->setSuffix(tr(" units"));
-	auto* segments = new QSpinBox;
-	segments->setRange(1, 32);
-	segments->setValue(QSettings().value("brushes/roundSegments", 4).toInt());
-	form->addRow(tr("Radius"), radius);
-	form->addRow(tr("Segments (1 = bevel)"), segments);
-	auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-	form->addRow(buttons);
-	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-	if (dialog.exec() == QDialog::Accepted) {
-		QSettings().setValue("brushes/roundRadius", radius->value());
-		QSettings().setValue("brushes/roundSegments", segments->value());
-		m_editor->roundSelectedEdge(radius->value(), segments->value());
+	if (m_roundDialog) {
+		m_roundDialog->raise();
+		m_roundDialog->activateWindow();
+		return;
+	}
+	// Beside the map, not in front of it: the views show the result while the values change.
+	m_roundDialog = new RoundEdgeDialog(m_editor, this);
+	m_roundDialog->setAttribute(Qt::WA_DeleteOnClose);
+	m_roundDialog->show();
+	if (m_active) {
+		const QPoint corner = m_active->mapToGlobal(QPoint(16, 16));
+		m_roundDialog->move(corner);
 	}
 }
 

@@ -130,9 +130,20 @@ the Tool tab then offers:
 
 The same three are in the right-click menu while edges are picked. All picked edges change in one undo step.
 
-Another way to round a corner: in Faces mode select the **two faces** next to an edge (click one, Ctrl+click the
+Another way to round a corner: in Faces mode select the **two faces** next to it (click one, Ctrl+click the
 other) and choose **Brushes > Round or bevel edge ...** (Ctrl+Shift+R). Set the *Radius* and the number of
-*Segments* (1 makes a bevel).
+*Segments* (1 makes a bevel). The window stays open beside the map and the views show the result while you change
+the values; **OK** applies it (one undo step), **Cancel** leaves the map as it was.
+
+- **Two brushes:** the faces may belong to two brushes that meet at a corner, for example the outer corner of an
+  L made of two walls. The curve runs on across both brushes.
+- **Inner corners** (a wall standing on a floor: select the floor's top and the wall's face) are filled with a curve
+  of small brushes.
+- **No holes:** where other brushes lie against both faces - a platform sunk into a floor that was cut out around
+  it - the brush stays square inside them and is rounded only above. The floor's texture continues into the
+  rounded corner.
+- **Too big:** a radius that does not fit is made as big as fits, shown as *Limited to N units*. Bevel and Round in
+  the Edge box behave the same.
 
 ## Polygon
 

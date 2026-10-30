@@ -527,10 +527,11 @@ TEST_CASE("edges from the vertex tool: wedge, bevel, round") {
 		auto change = edit::shapeEdges(doc, edges, edit::EdgeShape::Round, 16, 4);
 		REQUIRE(change);
 		CHECK(doc.findSolid(ref)->sides.size() == 6 + 4 * 4);
-		// Too big to fit: nothing.
+		// Too big to fit: made as big as fits (Julius: the tool must never just refuse).
 		MapDocument other;
 		auto [s2, r2] = make(other);
-		CHECK_FALSE(edit::shapeEdges(other, edit::edgesAtCorners(other, s2, edge), edit::EdgeShape::Bevel, 100, 0));
+		REQUIRE(edit::shapeEdges(other, edit::edgesAtCorners(other, s2, edge), edit::EdgeShape::Bevel, 100, 0));
+		CHECK(isConvexValid(*other.findSolid(r2)));
 	}
 }
 

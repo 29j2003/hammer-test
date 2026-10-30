@@ -425,6 +425,7 @@ const Selection& Editor::hidden() const {
 		return m_hiddenAll;
 	}
 	m_hiddenAll = m_hidden;
+	m_hiddenAll.solids.insert(m_hiddenAll.solids.end(), m_previewReplaced.begin(), m_previewReplaced.end());
 	if (!m_hiddenVisGroups.empty()) {
 		const auto grouped = hiddenByVisGroups(m_doc, m_hiddenVisGroups);
 		m_hiddenAll.solids.insert(m_hiddenAll.solids.end(), grouped.solids.begin(), grouped.solids.end());
@@ -1192,12 +1193,37 @@ void Editor::roundSelectedEdge(double radius, int segments) {
 		emit message(tr("Select the two faces next to the edge (face mode, Ctrl+click)"));
 		return;
 	}
-	auto change = edit::roundEdge(m_doc, m_selection.faces[0], m_selection.faces[1], radius, segments);
+	clearBrushPreview();
+	const auto plan = planEdgeRound(m_doc, m_doc, m_selection.faces[0], m_selection.faces[1], radius, segments);
+	auto change = applyEdgeRound(m_doc, plan, segments > 1 ? "Round edge" : "Bevel edge");
 	if (!change) {
-		emit message(tr("These faces do not share an edge of one brush, or the radius is too big"));
+		emit message(tr("Not rounded: %1").arg(QString::fromStdString(plan.problem)));
 		return;
 	}
 	commit(std::move(*change));
+	if (plan.clamped) {
+		emit message(tr("Rounded with %1 units - the largest radius that fits here").arg(plan.radius));
+	}
+}
+
+EdgeRoundPlan Editor::planSelectedEdgeRound(double radius, int segments) const {
+	if (m_selection.faces.size() != 2) {
+		EdgeRoundPlan plan;
+		plan.problem = "Select the two faces next to the edge (face mode, Ctrl+click)";
+		return plan;
+	}
+	MapDocument scratch;   // ids for the preview only; applying plans again with the map's own
+	return planEdgeRound(m_doc, scratch, m_selection.faces[0], m_selection.faces[1], radius, segments);
+}
+
+void Editor::setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced) {
+	if (solids.empty() && replaced.empty() && m_brushPreview.empty() && m_previewReplaced.empty()) {
+		return;
+	}
+	m_brushPreview = std::move(solids);
+	m_previewReplaced = std::move(replaced);
+	m_hiddenDirty = true;
+	emit brushPreviewChanged();
 }
 
 void Editor::setVertexCorners(const std::vector<Vec3>& corners) {

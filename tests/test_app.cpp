@@ -119,6 +119,7 @@
 #include "compile.h"
 #include "compile_window.h"
 #include "properties_panel.h"
+#include "round_edge_dialog.h"
 #include "ship_panel.h"
 #include "toggle_switch.h"
 #include "connect_popup.h"
@@ -7066,6 +7067,91 @@ int main(int argc, char** argv) {
 }
 
 #include "test_app.moc"
+
+TEST_CASE("round edge: the dialog shows the result live, across two brushes, a too big radius limited") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	Editor editor;
+	MainWindow window(&editor);
+	window.resize(1200, 800);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	// The outer corner of an L of two walls (Julius: "do not share an edge of one brush").
+	const auto block = [&](Vec3 lo, Vec3 hi) {
+		Bounds box;
+		box.add(lo);
+		box.add(hi);
+		auto [change, ref] = edit::createBlock(editor.doc(), box, "WALL");
+		editor.commit(std::move(change));
+		return ref;
+	};
+	const SolidRef along = block({0, 0, 0}, {256, 16, 128});
+	const SolidRef across = block({0, 16, 0}, {16, 256, 128});
+	const auto facing = [&](const SolidRef& ref, Vec3 normal) {
+		for (const auto& side : editor.doc().findSolid(ref)->sides) {
+			if (dot(side.plane().normal, normal) > 0.999) return FaceRef{ref, side.id};
+		}
+		return FaceRef{};
+	};
+	editor.setSelectMode(Editor::SelectMode::Face);
+	Selection faces;
+	faces.faces = {facing(along, {0, -1, 0}), facing(across, {-1, 0, 0})};
+	editor.setSelection(faces);
+	const std::string before = editor.doc().serialize();
+	const auto open = [&] {
+		for (auto* a : window.findChildren<QAction*>()) {
+			if (a->text() == "Round or bevel edge ...") a->trigger();
+		}
+		settle();
+		return window.findChild<RoundEdgeDialog*>("roundEdgeDialog");
+	};
+
+	// Opened beside the map (not modal): the preview stands in for both walls at once.
+	auto* dialog = open();
+	REQUIRE(dialog);
+	CHECK_FALSE(dialog->isModal());
+	auto* radius = dialog->findChild<QDoubleSpinBox*>("roundRadius");
+	auto* segments = dialog->findChild<QSpinBox*>("roundSegments");
+	REQUIRE(radius);
+	REQUIRE(segments);
+	radius->setValue(40);
+	segments->setValue(8);
+	QTest::qWait(150);
+	CHECK(editor.brushPreview().size() == 2);
+	CHECK(editor.hidden().solids.size() == 2);
+	CHECK(dialog->note().contains("both brushes"));
+	CHECK(editor.doc().serialize() == before);   // nothing changed yet
+	// Too big: shown limited, still allowed.
+	radius->setValue(300);
+	QTest::qWait(150);
+	CHECK(dialog->note().contains("Limited to"));
+	CHECK_FALSE(editor.brushPreview().empty());
+	// Cancel: the map stays as it was, the preview goes.
+	dialog->reject();
+	settle();
+	CHECK(editor.brushPreview().empty());
+	CHECK(editor.hidden().solids.empty());
+	CHECK(editor.doc().serialize() == before);
+
+	// OK: applied as one undo step.
+	dialog = open();
+	REQUIRE(dialog);
+	dialog->findChild<QDoubleSpinBox*>("roundRadius")->setValue(40);
+	QTest::qWait(150);
+	dialog->accept();
+	settle();
+	CHECK(editor.brushPreview().empty());
+	CHECK(editor.doc().serialize() != before);
+	CHECK(editor.doc().world.solids.size() == 2);
+	for (const auto& solid : editor.doc().world.solids) CHECK(isConvexValid(solid));
+	editor.undo();
+	CHECK(editor.doc().serialize() == before);
+}
 
 TEST_CASE("samples: \"Use a sample\" points to the shipped sample files") {
 	// The build writes the samples to build/samples; the test program in build/tests finds them
