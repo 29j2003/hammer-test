@@ -303,7 +303,15 @@ bool scaleSolid(Solid& solid, const Bounds& from, const Bounds& to) {
 	for (auto& side : solid.sides) {
 		for (auto& p : side.planePoints) {
 			for (int i = 0; i < 3; ++i) {
-				p[i] = to.min[i] + (p[i] - from.min[i]) * ts[i] / fs[i];
+				// The box's own sides land exactly on the new box (a side snapped to 4.5 stays 4.5,
+				// no 4.4999999 that opens a gap); points in between scale along.
+				if (std::abs(p[i] - from.min[i]) < 1e-9) {
+					p[i] = to.min[i];
+				} else if (std::abs(p[i] - from.max[i]) < 1e-9) {
+					p[i] = to.max[i];
+				} else {
+					p[i] = to.min[i] + (p[i] - from.min[i]) * ts[i] / fs[i];
+				}
 			}
 		}
 	}

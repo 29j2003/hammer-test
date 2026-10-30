@@ -6917,6 +6917,94 @@ TEST_CASE("models page: export for editing writes the model as .smd files and a 
 	settle();
 }
 
+TEST_CASE("resizing: the side stops at another brush's corner off the grid, the size follows live, the switch turns it off") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	editor.setGrid(16);
+	editor.setShapeOptions(ShapeOptions{});
+	CHECK(editor.objectSnap());   // on by default
+	// The neighbour sits off the grid: its side at x = 180.5.
+	editor.createShape(box({180.5, 0, 0}, {244.5, 96, 32}));
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(150, -480, 330);
+	view->camera().yaw = 90;
+	view->camera().pitch = -32;
+	view->update();
+	settle();
+	window.raiseDock("Object Properties");
+
+	// Drags the +X side square of a fresh 128 x 96 x 32 brush to x = 178 and lets go; returns its
+	// new max x. `during` runs while the mouse is held at the end (mid-drag).
+	const auto dragSide = [&](const std::function<void()>& during) {
+		editor.createShape(box({0, 0, 0}, {128, 96, 32}));
+		editor.setTool(Editor::Tool::Select);
+		settle();
+		const SolidRef dragged = editor.selection().solids.front();
+		const Vec3 side{128, 48, 16};
+		QTest::mouseMove(view, screen(view, side));
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, side));
+		QTest::mouseMove(view, screen(view, side + Vec3{20, 0, 0}));
+		QTest::mouseMove(view, screen(view, Vec3{178, 48, 16}));
+		settle();
+		during();
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, Vec3{178, 48, 16}));
+		settle();
+		return boundsOf(editor, dragged).max.x;
+	};
+
+	// Snapped: exactly onto the neighbour's side, not the grid's 176. The size reads live.
+	const double snapped = dragSide([&] {
+		auto* size = window.properties()->findChild<QLabel*>("selectionSize");
+		REQUIRE(size);
+		CHECK(size->text().startsWith("180.5 × 96 × 32"));   // before letting go
+		REQUIRE(editor.liveBounds());
+		CHECK(editor.liveBounds()->max.x == 180.5);
+		CHECK(window.findChild<QLabel*>("statusGrid"));
+		view->grabFramebuffer().save(shotDir + "/resize_snap.png");
+	});
+	CHECK(snapped == 180.5);
+	CHECK_FALSE(editor.liveBounds());   // gone after the drag
+	REQUIRE(window.properties()->findChild<QLabel*>("selectionSize"));
+	CHECK(window.properties()->findChild<QLabel*>("selectionSize")->text().startsWith("180.5 × 96 × 32"));
+	// One undo step brings the old size back.
+	const SolidRef first = editor.selection().solids.front();
+	editor.undo();
+	CHECK(boundsOf(editor, first).max.x == 128);
+
+	// Switched off (the tool panel's check box, Shift+O, Map menu, status bar): the grid alone.
+	auto* check = window.findChild<QCheckBox*>("objectSnapCheck");
+	REQUIRE(check);
+	CHECK(check->isChecked());
+	check->click();
+	CHECK_FALSE(editor.objectSnap());
+	CHECK_FALSE(QSettings().value("editor/objectSnap", true).toBool());   // kept
+	const double onGrid = dragSide([&] { view->grabFramebuffer().save(shotDir + "/resize_snap_off.png"); });
+	CHECK(onGrid == 176);
+	// And back on from the status bar link.
+	auto* status = window.findChild<QLabel*>("statusGrid");
+	REQUIRE(status);
+	emit status->linkActivated("objects");
+	CHECK(editor.objectSnap());
+	CHECK(check->isChecked());
+}
+
 namespace {
 
 /// Watches for windows that pop up by accident: a widget shown before it is put into a layout is

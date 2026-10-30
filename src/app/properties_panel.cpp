@@ -40,6 +40,7 @@
 #include <QSpinBox>
 #include <QFrame>
 #include <QGridLayout>
+#include <cmath>
 #include <map>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -81,6 +82,13 @@ bool isSequenceKey(const std::string& key) {
 	static const std::set<std::string> keys = {"defaultanim", "m_iszidle", "m_iszplay", "m_iszentry", "m_iszpostidle", "m_iszcustommove",
 	                                           "sequence", "m_iszsequence", "startanim", "idleanim"};
 	return keys.contains(toLower(key));
+}
+
+/// "128 × 96 × 32 units" (off-grid sizes keep their decimals: 4.5).
+QString sizeText(const Bounds& box) {
+	const Vec3 size = box.size();
+	const auto number = [](double v) { return QString::number(std::round(v * 1000) / 1000, 'g', 10); };
+	return QObject::tr("%1 × %2 × %3 units").arg(number(size.x), number(size.y), number(size.z));
 }
 
 QLabel* descriptionLabel(const QString& text) {
@@ -200,6 +208,13 @@ PropertiesPanel::PropertiesPanel(Editor* editor, AssetBrowser* assets, MaterialC
 		if (!keys.empty()) pasteKeys(ids, keys);
 	});
 	connect(editor, &Editor::selectionChanged, this, &PropertiesPanel::scheduleRebuild);
+	// While a brush is resized, moved or drawn only the size line changes - no rebuild.
+	connect(editor, &Editor::liveBoundsChanged, this, [this] {
+		auto* label = findChild<QLabel*>("selectionSize");
+		if (!label) return;
+		const auto& live = m_editor->liveBounds();
+		label->setText(sizeText(live ? *live : edit::selectionBounds(m_editor->doc(), m_editor->selection(), m_editor->entities())));
+	});
 	connect(editor, &Editor::documentChanged, this, &PropertiesPanel::scheduleRebuild);
 	// The sky reader uses the old game's files: it must be done before they go away (switching the
 	// mod while the skies load), and its list belongs to the old game.
@@ -2046,8 +2061,9 @@ void PropertiesPanel::buildBrushes(QVBoxLayout* layout) {
 	layout->addWidget(title);
 	const auto box = edit::selectionBounds(doc, selection, m_editor->entities());
 	if (!box.empty()) {
-		const auto size = box.size();
-		layout->addWidget(descriptionLabel(tr("%1 × %2 × %3 units").arg(size.x).arg(size.y).arg(size.z)));
+		auto* size = descriptionLabel(sizeText(m_editor->liveBounds().value_or(box)));
+		size->setObjectName("selectionSize");   // follows a drag live (liveBoundsChanged)
+		layout->addWidget(size);
 	}
 	// Its materials, most used first (like the face list of Source 2's object properties).
 	std::map<std::string, int> used;

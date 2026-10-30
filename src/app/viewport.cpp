@@ -29,6 +29,7 @@
 #include <sme/decals.h>
 #include <sme/map_tools.h>
 #include <sme/shapes.h>
+#include <sme/snapping.h>
 #include <sme/soundscape_area.h>
 #include <sme/text.h>
 
@@ -602,6 +603,7 @@ void Viewport::paintGL() {
 	drawConnectLine(lines);
 	drawDoorPreview(lines);
 	drawGizmo(lines);
+	drawSnapHit(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
 	advanceDoorTest();
 
@@ -799,6 +801,24 @@ std::vector<Vec3> Viewport::selectionCorners() const {
 		corners.push_back({(i & 1) ? box.max.x : box.min.x, (i & 2) ? box.max.y : box.min.y, (i & 4) ? box.max.z : box.min.z});
 	}
 	return corners;
+}
+
+void Viewport::drawSnapHit(std::vector<LineVertex>& lines) const {
+	// Resizing and drawing: the corner the side or block snapped onto (moving draws its own).
+	const bool resizing = scaling();
+	const bool drawing = m_drag == Drag::BlockBase || m_drag == Drag::BlockHeight;
+	if (!m_snapHit || !(resizing || drawing)) return;
+	// About 7 pixels: the axis that shows the most pixels per unit (the others are foreshortened).
+	double perPixel = 0;
+	for (int axis = 0; axis < 3; ++axis) {
+		const double u = unitsPerPixel(*m_snapHit, axis);
+		if (u > 0 && (perPixel == 0 || u < perPixel)) perPixel = u;
+	}
+	const double hs = std::max(0.5, 7 * perPixel);
+	Bounds target;
+	target.add(*m_snapHit - Vec3{hs, hs, hs});
+	target.add(*m_snapHit + Vec3{hs, hs, hs});
+	boxLines(lines, target, {0.3f, 1.0f, 0.4f, 1.0f});
 }
 
 void Viewport::drawGizmo(std::vector<LineVertex>& lines) const {
@@ -1401,8 +1421,9 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 	// The block tool, and the entity tool with a brush class armed (the box becomes that entity).
 	if (tool == Editor::Tool::Block || (tool == Editor::Tool::Entity && m_editor->armedBrushEntity())) {
 		m_blockForEntity = tool == Editor::Tool::Entity;
+		collectSnapTargets(Selection{});
 		if (m_camera.is2D()) {
-			m_blockStart = snap(viewPlanePoint(event->position()), m_editor->snapGrid());
+			m_blockStart = snapBlockPoint(event->position(), snap(viewPlanePoint(event->position()), m_editor->snapGrid()));
 			m_blockEnd = m_blockStart;
 		} else {
 			const Ray ray = rayAt(event->position());
@@ -1412,7 +1433,7 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 			if (!p) {
 				return;
 			}
-			m_blockStart = m_blockEnd = snap(*p, m_editor->snapGrid());
+			m_blockStart = m_blockEnd = snapBlockPoint(event->position(), snap(*p, m_editor->snapGrid()));
 			m_blockStart.z = m_blockEnd.z = m_blockPlane;
 		}
 		m_drag = Drag::BlockBase;
@@ -1501,12 +1522,25 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 			normal = normalize(normal);
 			if (const auto p = rayPlane(ray, center, normal)) {
 				const double minimum = std::max(m_editor->snapGrid(), 1.0);
-				const double h = snap(p->z - m_blockPlane, m_editor->snapGrid());
+				double h = snap(p->z - m_blockPlane, m_editor->snapGrid());
+				// The top meets a corner of another object in line with it (also off the grid).
+				m_snapHit.reset();
+				if (objectSnapActive()) {
+					const double raw = p->z;
+					Vec3 top = center;
+					top.z = raw;
+					const double tolerance = SNAP_PIXELS * unitsPerPixel(top, 2);
+					if (const auto plane = snapFacePlane(m_snapTargets, 2, raw, m_blockBox, tolerance, std::max(64.0, tolerance * 4)); plane && std::abs(plane->value - m_blockPlane) > 1e-6) {
+						m_snapHit = plane->corner;
+						h = plane->value - m_blockPlane;
+					}
+				}
 				m_blockHeight = std::abs(h) < minimum ? minimum : h;
 				const double z0 = m_blockPlane, z1 = m_blockPlane + m_blockHeight;
 				m_blockBox.min.z = std::min(z0, z1);
 				m_blockBox.max.z = std::max(z0, z1);
 				updateShapePreview();
+				m_editor->setLiveBounds(m_blockBox);
 			}
 			requestFrame();
 			return;
@@ -1592,6 +1626,9 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 			const Vec3 size = m_blockBox.size();
 			if (QLineF(m_pressPos, releasePos).length() < 4) {
 				m_drag = Drag::None;   // a click, not a drag
+				m_snapTargets.clear();
+				m_snapHit.reset();
+				m_editor->setLiveBounds(std::nullopt);
 				setPreviewSolids({});
 				requestFrame();
 				break;
@@ -1607,6 +1644,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 				setMouseTracking(true);
 			} else {
 				m_drag = Drag::None;
+				m_editor->setLiveBounds(std::nullopt);
 			}
 			requestFrame();
 			break;
@@ -2030,38 +2068,10 @@ void Viewport::beginGizmoDrag(Handle handle, const QPointF& pos) {
 				m_cornerStart = corner;
 			}
 		}
-		m_snapTargets.clear();
-		m_snapHit.reset();
-		const auto& doc = m_editor->doc();
-		const auto& selection = m_editor->selection();
-		const auto& hidden = m_editor->hidden();
-		const auto isSelected = [&](const SolidRef& ref) {
-			return std::find(selection.solids.begin(), selection.solids.end(), ref) != selection.solids.end() ||
-			       std::find(selection.entities.begin(), selection.entities.end(), ref.entityId) != selection.entities.end() ||
-			       std::find(hidden.solids.begin(), hidden.solids.end(), ref) != hidden.solids.end();
-		};
-		const auto addSolid = [&](const Solid& solid, int entityId) {
-			if (!isSelected({entityId, solid.id})) {
-				const auto corners = solidCorners(solid);
-				m_snapTargets.insert(m_snapTargets.end(), corners.begin(), corners.end());
-			}
-		};
-		for (const auto& solid : doc.world.solids) {
-			addSolid(solid, 0);
-		}
-		for (const auto& entity : doc.entities) {
-			for (const auto& solid : entity.solids) {
-				addSolid(solid, entity.id);
-			}
-			const bool skip = std::find(selection.entities.begin(), selection.entities.end(), entity.id) != selection.entities.end() ||
-			                  std::find(hidden.entities.begin(), hidden.entities.end(), entity.id) != hidden.entities.end();
-			if (entity.solids.empty() && !skip) {
-				const Bounds box = edit::entityBounds(entity, m_editor->entities());   // props: their model's box
-				for (int i = 0; i < 8; ++i) {
-					m_snapTargets.push_back({(i & 1) ? box.max.x : box.min.x, (i & 2) ? box.max.y : box.min.y, (i & 4) ? box.max.z : box.min.z});
-				}
-			}
-		}
+		collectSnapTargets(m_editor->selection());
+	}
+	if (handle >= Handle::ScaleMinX && handle <= Handle::ScaleMaxZ) {
+		collectSnapTargets(m_editor->selection());
 	}
 	requestFrame();
 }
@@ -2114,19 +2124,7 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		// Nearest corner of another object on screen wins; otherwise the corner follows the
 		// cursor on the grid (2D: in the view plane, 3D: on the floor plane through it, or a wall
 		// plane when looking flat across the map).
-		constexpr double SNAP_PIXELS = 14;
-		m_snapHit.reset();
-		double best = SNAP_PIXELS;
-		for (const Vec3& target : m_snapTargets) {
-			QPointF q;
-			if (m_camera.project(target, width(), height(), q)) {
-				const double d = QLineF(q, pos).length();
-				if (d < best) {
-					best = d;
-					m_snapHit = target;
-				}
-			}
-		}
+		m_snapHit = objectSnapActive() ? cornerNearCursor(pos) : std::nullopt;
 		if (m_snapHit) {
 			m_dragDelta = *m_snapHit - m_cornerStart;
 		} else if (m_camera.is2D()) {
@@ -2172,12 +2170,26 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		if (m_camera.is2D()) {
 			t = viewPlanePoint(pos)[axis] - viewPlanePoint(m_pressPos)[axis];
 		}
-		m_dragNewBounds = m_dragBounds;
-		if (isMax) {
-			m_dragNewBounds.max[axis] = std::max(m_dragBounds.min[axis] + minimumSize, snap(m_dragBounds.max[axis] + t, grid));
-		} else {
-			m_dragNewBounds.min[axis] = std::min(m_dragBounds.max[axis] - minimumSize, snap(m_dragBounds.min[axis] + t, grid));
+		// A corner of another object near the mouse, else one in line with the side, wins over the
+		// grid: the side stops exactly there, also off the grid (Alt or the toggle: grid only).
+		const double raw = (isMax ? m_dragBounds.max[axis] : m_dragBounds.min[axis]) + t;
+		double value = snap(raw, grid);
+		m_snapHit.reset();
+		if (objectSnapActive()) {
+			if (const auto corner = cornerNearCursor(pos)) {
+				m_snapHit = corner;
+				value = (*corner)[axis];
+			} else {
+				Vec3 side = m_dragBounds.center();
+				side[axis] = raw;
+				const double tolerance = SNAP_PIXELS * unitsPerPixel(side, axis);
+				if (const auto plane = snapFacePlane(m_snapTargets, axis, raw, m_dragBounds, tolerance, std::max(64.0, tolerance * 4))) {
+					m_snapHit = plane->corner;
+					value = plane->value;
+				}
+			}
 		}
+		m_dragNewBounds = resizedBounds(m_dragBounds, axis, isMax, value, minimumSize);
 		if (!(m_previewBounds.min == m_dragNewBounds.min && m_previewBounds.max == m_dragNewBounds.max)) {
 			m_previewBounds = m_dragNewBounds;
 			std::vector<Solid> solids;
@@ -2202,10 +2214,12 @@ void Viewport::updateGizmoDrag(const QPointF& pos) {
 		m_previewModel.translate(toQt(m_dragNewBounds.min));
 		m_previewModel.scale(float(to.x / std::max(from.x, 1e-6)), float(to.y / std::max(from.y, 1e-6)), float(to.z / std::max(from.z, 1e-6)));
 		m_previewModel.translate(-toQt(m_dragBounds.min));
+		m_editor->setLiveBounds(m_dragNewBounds);
 		requestFrame();
 		return;
 	}
 	m_previewModel.translate(toQt(m_dragDelta));
+	if (!m_dragBounds.empty()) m_editor->setLiveBounds(Bounds{m_dragBounds.min + m_dragDelta, m_dragBounds.max + m_dragDelta});
 	requestFrame();
 }
 
@@ -2261,6 +2275,7 @@ void Viewport::finishGizmoDrag(bool clone) {
 	const auto& selection = m_editor->selection();
 	m_snapTargets.clear();
 	m_snapHit.reset();
+	m_editor->setLiveBounds(std::nullopt);
 	if ((handle >= Handle::AxisX && handle <= Handle::PlaneYZ) || handle == Handle::Move2D || handle == Handle::Corner) {
 		if (length(m_dragDelta) > 0) {
 			if (clone) {
@@ -2309,7 +2324,7 @@ void Viewport::updateShapePreview() {
 void Viewport::updateBlockDrag(const QPointF& pos) {
 	const double grid = m_editor->snapGrid();
 	if (m_camera.is2D()) {
-		m_blockEnd = snap(viewPlanePoint(pos), grid);
+		m_blockEnd = snapBlockPoint(pos, snap(viewPlanePoint(pos), grid));
 		const int axis = viewAxis();
 		m_blockBox = {};
 		Vec3 a = m_blockStart, b = m_blockEnd;
@@ -2319,7 +2334,7 @@ void Viewport::updateBlockDrag(const QPointF& pos) {
 		m_blockBox.add(b);
 	} else {
 		if (const auto p = rayPlane(rayAt(pos), {0, 0, m_blockPlane}, {0, 0, 1})) {
-			m_blockEnd = snap(*p, grid);
+			m_blockEnd = snapBlockPoint(pos, snap(*p, grid));
 			m_blockEnd.z = m_blockPlane;
 		}
 		m_blockBox = {};
@@ -2332,11 +2347,57 @@ void Viewport::updateBlockDrag(const QPointF& pos) {
 		}
 	}
 	updateShapePreview();
+	m_editor->setLiveBounds(m_blockBox.empty() ? std::nullopt : std::optional<Bounds>(m_blockBox));
 	requestFrame();
+}
+
+Vec3 Viewport::snapBlockPoint(const QPointF& pos, const Vec3& onGrid) {
+	// The mouse near a corner of another object: the block's corner goes there (only across the
+	// floor plane in 3D, across the view in 2D - the depth stays as it is).
+	m_snapHit = objectSnapActive() ? cornerNearCursor(pos) : std::nullopt;
+	if (!m_snapHit) return onGrid;
+	Vec3 p = onGrid;
+	for (int a = 0; a < 3; ++a) {
+		if (m_camera.is2D() ? a != viewAxis() : a != 2) p[a] = (*m_snapHit)[a];
+	}
+	return p;
+}
+
+void Viewport::collectSnapTargets(const Selection& skip) {
+	m_snapHit.reset();
+	m_snapTargets.clear();
+	if (m_editor->objectSnap()) m_snapTargets = snapCorners(m_editor->doc(), skip, m_editor->hidden(), m_editor->entities());
+}
+
+bool Viewport::objectSnapActive() const {
+	return m_editor->objectSnap() && !m_snapTargets.empty() && !(QGuiApplication::keyboardModifiers() & Qt::AltModifier);
+}
+
+std::optional<Vec3> Viewport::cornerNearCursor(const QPointF& pos) const {
+	return nearestCorner(
+	    m_snapTargets,
+	    [&](const Vec3& corner) -> std::optional<double> {
+		    QPointF q;
+		    if (!m_camera.project(corner, width(), height(), q)) return std::nullopt;
+		    return QLineF(q, pos).length();
+	    },
+	    SNAP_PIXELS);
+}
+
+double Viewport::unitsPerPixel(const Vec3& at, int axis) const {
+	QPointF a, b;
+	Vec3 next = at;
+	next[axis] += 1;
+	if (!m_camera.project(at, width(), height(), a) || !m_camera.project(next, width(), height(), b)) return 0;
+	const double pixels = QLineF(a, b).length();
+	return pixels > 1e-6 ? 1 / pixels : 0;
 }
 
 void Viewport::createBlockFromDrag() {
 	m_drag = Drag::None;
+	m_snapTargets.clear();
+	m_snapHit.reset();
+	m_editor->setLiveBounds(std::nullopt);
 	const Vec3 size = m_blockBox.size();
 	if (size.x <= 0 || size.y <= 0 || size.z <= 0) {
 		requestFrame();
@@ -2486,6 +2547,9 @@ void Viewport::cancelInteraction() {
 	m_dragHandle = Handle::None;
 	m_dragDelta = {};
 	m_dragAngle = 0;
+	m_snapTargets.clear();
+	m_snapHit.reset();
+	m_editor->setLiveBounds(std::nullopt);
 	requestFrame();
 }
 

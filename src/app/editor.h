@@ -168,6 +168,14 @@ public:
 	[[nodiscard]] double snapGrid() const { return m_snapping ? m_grid : 0.0; }
 	[[nodiscard]] bool snapping() const { return m_snapping; }
 	void setSnapping(bool on);
+	/// Moving, resizing and drawing snap onto corners and sides of other objects (also off the
+	/// grid); Alt while dragging turns it off for that drag. Saved; default on.
+	[[nodiscard]] bool objectSnap() const { return m_objectSnap; }
+	void setObjectSnap(bool on);
+	/// Box of what is being dragged right now (moved, resized or drawn), for live sizes in Object
+	/// Properties and the status bar; nullopt when nothing is dragged.
+	[[nodiscard]] const std::optional<Bounds>& liveBounds() const { return m_liveBounds; }
+	void setLiveBounds(const std::optional<Bounds>& bounds);
 	/// Rotation step in degrees for the rotate gizmo and Alt+arrow keys (used while snapping is on).
 	[[nodiscard]] double rotationSnap() const { return m_rotationSnap; }
 	void setRotationSnap(double degrees);
@@ -341,6 +349,8 @@ signals:
 	void connectionFocusRequested(int entityId, int index);
 	/// The views should play this door's opening (Door box: Test open).
 	void doorTestRequested(int doorId);
+	/// liveBounds() changed (cheap to follow: only labels change, nothing is rebuilt).
+	void liveBoundsChanged();
 
 private:
 	/// lookValue() with the map's own values already read (mapLookValues).
@@ -381,6 +391,8 @@ private:
 	std::map<std::string, std::string> m_lookDefaults;   ///< From the mod's cfg/fidelity.cfg
 	double m_grid = 16;
 	bool m_snapping = true;
+	bool m_objectSnap = true;
+	std::optional<Bounds> m_liveBounds;
 	double m_rotationSnap = 15;
 	bool m_textureLock = true;
 	QString m_currentMaterial = "DEV/DEV_MEASUREGENERIC01";

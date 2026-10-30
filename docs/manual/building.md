@@ -59,6 +59,14 @@ All three tools work with a **gizmo** in the 3D view and by dragging in the 2D v
 **Snap.** Moving snaps to the grid, rotating to the rotation step. **Shift+W** turns snapping off and on. The grid goes
 down to 0.125 units for fine detail.
 
+**Snap to objects.** Moving with a corner square, dragging a side square and drawing a block also stop at the corners
+and sides of other brushes and models - a green square shows where. This works off the grid too: a wall that ends at
+x = 4.5 is met exactly, without changing the grid, so no gaps open at corners. Hold **Alt** while dragging to go past
+them this once; **Shift+O** (also *Map > Snap to objects*, *Objects* in the status bar and the check box in the tool
+panel) turns it off until you turn it on again.
+
+While you drag, the size in Object Properties and in the status bar changes with the mouse.
+
 ## The Block tool and shapes
 
 **Block tool (Shift+B)**

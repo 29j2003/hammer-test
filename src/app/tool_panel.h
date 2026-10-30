@@ -110,6 +110,7 @@ private:
 	QTableWidget* m_keys;
 	QWidget* m_edgeBox = nullptr;
 	QWidget* m_displaceBox = nullptr;   ///< Displacement tool: modes, brush, Make / Sew / Flat again
+	QCheckBox* m_objectSnap = nullptr;   ///< Select/Move/Scale: snap to objects on or off
 	QWidget* m_selectionBox = nullptr;   ///< Select tool: Hollow, Carve, Merge, Tie ... (Source 2's tool properties)   ///< Vertex tool: wedge / bevel / round the picked edges
 	EntityPicker* m_entities;
 	QWidget* m_block = nullptr;
