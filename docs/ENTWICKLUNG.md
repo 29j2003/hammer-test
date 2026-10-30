@@ -106,7 +106,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `map_tools` | Cordons (lesen/schreiben, Karte nur mit Inhalt der Cordons + Versiegelung), path_track-Ketten, Fallen lassen; `makeWater` (Oberseite Wasser, Rest nodraw, `water_lod_control` + `env_cubemap` mit `sides`, ein Undo-Schritt); Cubemap-Raum-Boxen (`roomAround` per Strahlen in 6 Richtungen, `setCubemapRoomBox` legt/ändert die `parallax_obb` und setzt `parallaxobb`); Start-Raum `edit::starterRoom` (sechs Brushes ohne Leak, Licht, info_player_start, env_cubemap; ein Undo-Schritt); Tutorial-Karte `edit::tutorialMap` (nur ein dichter Raum 512 × 512 ohne Himmel – Julius 30.10.2026: Tunnel, Außenbereich, Jeep, Combine-Nachschub und 3D-Skybox gestrichen; Lightmap-Scale 8; zwei `light`, ein `env_cubemap`, ein `env_soundscape` – eigene leise Raum-Soundscape `tutorialSoundscapes` (nur Sounds, die das Spiel hat; die App schreibt sie wie die Sounds-Seite in `scripts/soundscapes_<mod>.txt` + Manifest), sonst `pickSoundscape` nach Wörtern im Namen –; `item_suit` mit Short Logon und Waffen auf dem Startpunkt – sofort aufgenommen, sonst holen sich unbewaffnete NPCs sie –, drei `item_ammo_crate` auf dem Boden an der Ostwand (Ursprung in der Mitte: Höhe aus dem Hull des Modells über `TutorialMapOptions::modelBounds`, sonst bekannte HL2-Maße `knownModelBounds`); Bürger mit festem Modell ohne Waffe in `player_squad`, USE schaltet Folgen/Warten über `npc_citizen_auto_player_squad_allow_use 1` (`logic_auto` OnMapSpawn/OnLoadGame → `point_servercommand`), Hinweis per `trigger_once` → `env_hudhint`; Ziel `npc_combine_s` ohne Waffe/Granaten, per zwei `ai_relationship` (Neutral = 4) friedlich; Fass und Kiste als `prop_physics`, `info_node`s; nur Inhalte jeder SDK-2013-SP-Installation; Tests mit Flutfüllung auf 16er-Raster prüfen Dichtheit und den Weg vom Start zum Ziel) |
 | `recent_projects` | Liste „zuletzt bearbeitet“ für die Startseite: `rememberProject` (neueste oben, je Karte einmal, Pfad ohne Groß-/Kleinschreibung und Slash-Richtung), Text `zeit\tspiel\tpfad` je Zeile |
 | `soundscape_area` | Wo ein Soundscape-Entity zu hören ist: Kugel (`radius`, −1 = überall; `soundscapeRadius`) oder Block (`trigger_soundscape`, dessen Key `soundscape` den Namen trägt; `soundscapeTrigger`). `setSoundscapeRadius`, `makeSoundscapeBlock` (macht `env_soundscape` zu `env_soundscape_triggerable`, vergibt einen Namen, legt den Trigger an oder ändert seine Größe), `removeSoundscapeBlock` (zurück zur Kugel) – je ein Undo-Schritt |
-| `layout_checks` | Prüfungen zur Lage (von `checkMap` angehängt, Fixes über `applyFix`): Spielerstart im Brush (Hülle 32 × 32 × 72 über dem Origin gegen Welt + `func_detail`, Hint/Skip/Trigger/Wasser blockieren nicht; Fix hebt auf die Oberkante), Punkt-Entities außerhalb der Welt-Box (Leak), Lightmap-Scale < 4 / > 128 (Werkzeug-Flächen nicht; Fix 16 / 64), laufende NPCs ohne `info_node` (Fix: 3 × 3 Knoten im Abstand 96 um jedes NPC, nur auf freiem Boden, `nodeSpotsAround`). Box-gegen-Brush: Trennung über die Brush-Ebenen und die Box-Achsen |
+| `layout_checks` | Prüfungen zur Lage (von `checkMap` angehängt, Fixes über `applyFix`): Spielerstart im Brush (Hülle 32 × 32 × 72 über dem Origin gegen Welt + `func_detail`, Hint/Skip/Trigger/Wasser blockieren nicht; Fix hebt auf die Oberkante), Punkt-Entities außerhalb der Welt-Box (Leak), Props mit Ursprung im Brush (werden schwarz; `lightingorigin` gesetzt: ok), Lightmap-Scale < 4 / > 128 (Werkzeug-Flächen nicht; Fix 16 / 64), laufende NPCs ohne `info_node` (Fix: 3 × 3 Knoten im Abstand 96 um jedes NPC, nur auf freiem Boden, `nodeSpotsAround`). Box-gegen-Brush: Trennung über die Brush-Ebenen und die Box-Achsen |
+| `optimization_checks` | Prüfungen zu Engine-Limits und Kompilierzeit (von `checkMap` angehängt): ab 85 % eines Limits aus `map_budget` Warnung, darüber Fehler (Grenzen des Spiels über `CheckContext::limits`, sonst SDK 2013); Weltbrushes, die nur Detail sind (`detailCandidates`: ab 9 Seiten = runde Form, oder größte Ausdehnung ≤ 16 = kleines Teil; Tool-Brushes außer nodraw nie), Info mit Fix „Make func_detail“ (`tieToEntity`, ein Undo-Schritt) |
 | `map_helpers` | Seile: `edit::makeRope` (move_rope + keyframe_ropes, `NextKey`, FGD-Standards, Slack), `ropePointsOf` (Origins bzw. Oberkante von Brushes), `ropeCurves` + `ropeSag` (Parabel: Länge ≈ Spannweite + 8·Durchhang²/(3·Spannweite)); Leitern: `edit::makeLadder` (dünne Achse = Tiefe, Vorderseite = Seite mit Platz für den Spieler; `func_useableladder` mit `point0`/`point1` 18 Einheiten davor, `info_ladder_dismount` oben hinter der Kante und unten einen Schritt zurück) |
 | `checks` | Prüfungen mit Autofix, Leak aus `.lin`; Prop-Klasse passend zum Modell (`betterPropClass`), `ambient_generic` „Is NOT Looped“ gegen die WAV, mehrere `sky_camera`; `CheckCache` (im Problems-Panel) liest jedes Modell und jeden Sound nur einmal je Spiel; Spiegelungen: glänzende Materialien (`$envmap env_cubemap`, je Material einmal gelesen) ohne `env_cubemap` → `NoCubemap` (Autofix setzt eins über den Spielerstart), kompilierte Karte (`CheckContext::compiledMap`, nur wenn nicht älter als die `.vmf`; `readBspCubemaps` aus `compile_log`, erneut nur bei geänderter Datei) mit Samples aber ohne gebaute Cubemaps → `CubemapsNotBuilt` mit `Problem::action` „buildCubemaps“ (keine Kartenänderung: `ProblemsPanel::actionRequested` → `MainWindow::buildCubemapsInCompile` öffnet den Compile-Dialog mit Cubemaps an) |
 | `doors` | Türen: `DoorSettings` ↔ Keys (`readDoor`, `edit::setDoor`), Rahmen aus der Brush-Box (`doorFrame`: dünne Seite = vorn, rechts = rechte Hand, wenn man auf die Vorderseite schaut), Scharnier-Origin (`hingePoint`), `movedir` ↔ Richtung, Schiebeweg wie `CBaseDoor::Spawn` (Größe − 2 − Lip), Vorschau-Bewegung (`doorMotion`: Scharnier, Drehungen gegen den Uhrzeigersinn, bei „away from player“ beide; Prop-Türen: vorwärts = −distance wie `CPropDoorRotating`), `edit::makeDoor` (Brush-Türen behalten die Brushes, Doppeltür per `splitSolid` in der Mitte, gleiche `targetname`; Prop-Tür ersetzt den Block, Gierwinkel aus der Modell-Box, ohne Box HL2-Konvention Blatt entlang +Y), Tür-Sounds/-Modelle, `uniqueTargetName`, Areaportal finden/verknüpfen |
@@ -802,6 +803,46 @@ Regeln dazu:
   (wie das SDK-LICENSE) oder verlinken.
 - Neue Teile des Add-ons, die SDK-Code folgen, in `NOTICE` in `export_mod_addon.py` nennen.
 - XBLAH nur in der README.
+
+## Hammer-Schmerzpunkte
+
+Was Mapper an Valves Hammer (Source 1), Hammer++ und im Vergleich an Source 2 Hammer am häufigsten stört, und wie
+Mapsmith damit umgeht (Recherche Oktober 2026; „Häufigkeit“ grob nach Zahl der Fundstellen in Wiki-FAQ, Foren und
+Diskussionen: hoch / mittel / selten). Status: ✓ gelöst, ◐ teilweise, ✗ fehlt.
+
+| Schmerzpunkt | Häufigkeit | Mapsmith | Was noch zu tun ist |
+|---|---|---|---|
+| Abstürze, verlorene Arbeit | hoch | ✓ Autosave alle 5 Min. + Wiederherstellen nach Absturz (`autosaver`), Undo für jede Kartenänderung | – |
+| Unlesbare Kompilier-Fehler (Leak, MAX_MAP_*, t-junctions) | hoch | ✓ `compile_log` erklärt jede Zeile; Leak-Linie im 3D-View; neu: jedes MAX_MAP-Limit einzeln mit Abhilfe, Microbrush, t-junctions | weitere VRAD-Meldungen sammeln, sobald Julius welche sieht |
+| Map stößt erst nach langem Kompilieren an ein Engine-Limit | mittel | ✓ neu: Problems warnt ab 85 % eines Limits (`optimization_checks`, Zahlen aus `map_budget`); Map Budget zeigt alle | – |
+| VVIS langsam, weil Details Weltbrushes sind (func_detail vergessen) | hoch | ✓ neu: Problems listet runde Formen und kleine Teile als func_detail-Kandidaten, Fix „Make func_detail“ (ein Undo-Schritt) | Erkennung, ob ein Brush die Karte abdichtet (dann nicht vorschlagen) |
+| Props werden im Spiel schwarz (Ursprung im Brush) | mittel | ✓ neu: Problems meldet Props mit Ursprung in einem Brush (`layout_checks`), Hinweis auf info_lighting | – |
+| Ungültige Brushes, Vertices neben dem Raster, „brush is invalid“ | hoch | ✓ Prüfung mit Autofix, Snap to grid, Einrasten an Ecken anderer Objekte, Werte außerhalb des Rasters exakt | – |
+| Carve erzeugt Murks oder hängt | mittel | ✓ CSG im Kern (`csg`) mit Tests; Kanten runden ohne Lücken (`edge_round`) | – |
+| Textur-Ausrichtung mühsam (Face Edit Sheet) | hoch | ✓ Face-Modus mit Justify/Fit, Textur-Lock, ganze Wand als eine Fläche | Textur über Kanten „wickeln“ (Hammer++/Source 2) |
+| Ungewohnte, alte Bedienung; Tastenkürzel | hoch | ✓ Source-2-Bedienung, 3D-zentriert, Gizmos, Tastenkürzel-Editor | – |
+| Material-/Modell-Browser langsam, fehlende Assets | mittel | ✓ lädt im Hintergrund, Filter, Vorschaubilder; fehlende Materialien/Modelle in Problems | Filter „nur in der Karte benutzt“ |
+| Licht erst nach dem Kompilieren sehen | hoch | ◐ Licht-Vorschau nach VRAD-Formeln mit Schatten | Bounce-Licht (indirekt) fehlt |
+| I/O-Fehler finden (Outputs ins Leere) | mittel | ◐ Verbinden mit Vorschlägen, Prüfung auf fehlende Ziele und unbekannte Ein-/Ausgänge | I/O-Ablauf ansehen (wer feuert wen, Zeitleiste) |
+| Prefabs/Instances umständlich | mittel | ◐ func_instance laden/auflösen, Kopieren/Einfügen spezial | Instance im Editor bearbeiten und zurückschreiben |
+| Displacements: Feinarbeit, Nähen | mittel | ◐ Pinsel, Nähen, Vertex-Werkzeug für Brushes | Displacements im Vertex-Werkzeug (Fahrplan) |
+| VMF kaputt / Daten verloren | mittel | ✓ VMF Byte für Byte zurück, Unbekanntes bleibt (`sme-probe vmf`) | – |
+| Cubemaps bauen vergessen / falsch | mittel | ✓ Schritt „Cubemaps“ beim Kompilieren, Prüfung „nicht gebaut“, Raum-Boxen | – |
+| Optimierung (hint/skip, Areaportals) schwer zu verstehen | mittel | ◐ Areaportal-Prüfung an Türen, Handbuch | Vis-Leaves im Editor zeigen (aus der .prt) |
+| Skybox einrichten | selten | ✓ Himmel-Auswahl mit Licht passend zum Himmel | – |
+| Mehrere Bildschirme, DPI | selten | ✓ Qt 6 (DPI-fähig), Panels als eigene Fenster | – |
+| Flug-Geschwindigkeit im 3D-View | selten | ✓ Mausrad beim Fliegen | – |
+
+Quellen: [Level Design FAQ (VDC)](https://developer.valvesoftware.com/wiki/Category:Level_Design_FAQ),
+[Compile Errors (VDC)](https://developer.valvesoftware.com/wiki/Compile_Errors),
+[MAX_MAP_BRUSHSIDES (VDC)](https://developer.valvesoftware.com/wiki/MAX_MAP_BRUSHSIDES),
+[Talk: Valve Hammer Editor (VDC)](https://developer.valvesoftware.com/wiki/Talk:LORDACADAMIE),
+[Talk: Hammer Vertex Tool (VDC)](https://developer.valvesoftware.com/wiki/Talk:Hammer_Vertex_Tool),
+[Hammer++ (VDC)](https://developer.valvesoftware.com/wiki/Hammer%2B%2B),
+[Hammer++-Diskussion (MapCore)](https://www.mapcore.org/forums/thread/25765-hammer/),
+[Source SDK Forum (Steam)](https://steamcommunity.com/app/211/discussions/0/1741100729969247730),
+[sdk-2013-hammer (Hammer2K13, Carve entfernt)](https://github.com/Mix-Anik/sdk-2013-hammer).
+Die Häufigkeiten sind eine Einschätzung aus diesen Quellen, keine Zählung.
 
 ## Offene Punkte / Annahmen (noch nicht am echten Spiel geprüft)
 

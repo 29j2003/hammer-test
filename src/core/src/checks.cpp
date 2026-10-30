@@ -7,6 +7,7 @@
 #include <sme/doors.h>
 #include <sme/filesystem.h>
 #include <sme/layout_checks.h>
+#include <sme/optimization_checks.h>
 #include <sme/material.h>
 #include <sme/text.h>
 
@@ -493,6 +494,7 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 	}
 	// Where things are: player start in a brush, entities in the void, lightmap scales, NPC nodes.
 	for (auto& p : checkLayout(doc, context)) problems.push_back(std::move(p));
+	for (auto& p : checkOptimization(doc, context)) problems.push_back(std::move(p));
 	return problems;
 }
 
@@ -634,6 +636,8 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 			const auto* definition = entities ? entities->find("info_player_start") : nullptr;
 			return edit::placeEntity(doc, "info_player_start", spot, definition).first;
 		}
+		case Problem::Kind::DetailCandidates:
+			return applyOptimizationFix(doc, problem, entities);
 		default:
 			return applyLayoutFix(doc, problem, entities);
 	}

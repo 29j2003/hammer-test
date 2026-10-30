@@ -1,5 +1,6 @@
 // test_layout.cpp - Where things are (player start in a brush, entities in the void, lightmap
-// scales, NPCs without nodes), common compile errors explained, ropes and ladders in one step.
+// scales, NPCs without nodes), engine limits and func_detail candidates, common compile errors
+// explained, ropes and ladders in one step.
 
 #include <doctest/doctest.h>
 
@@ -8,6 +9,8 @@
 #include <sme/compile_log.h>
 #include <sme/layout_checks.h>
 #include <sme/map_helpers.h>
+#include <sme/optimization_checks.h>
+#include <sme/shapes.h>
 
 #include <algorithm>
 
@@ -199,4 +202,99 @@ TEST_CASE("ladders: climbing line in front, dismounts at the top and the bottom"
 	other.world.solids.push_back(makeBlock(other, box({8, -128, 0}, {64, 128, 128}), "CONCRETE/CONCRETEWALL001A"));
 	CHECK(edit::makeLadder(other, box({0, -16, 0}, {8, 16, 128}), nullptr).front.x == doctest::Approx(-1));
 	CHECK(edit::makeLadder(other, box({0, 0, 0}, {8, 8, 8}), nullptr).ladderId == 0);   // too low for a ladder
+}
+
+TEST_CASE("optimization: round shapes and small pieces are func_detail candidates, tool brushes and walls are not") {
+	MapDocument doc = floorMap();   // two big slabs: world, never candidates
+	ShapeOptions cylinder;
+	cylinder.kind = ShapeOptions::Kind::Cylinder;
+	cylinder.sides = 12;
+	for (auto& s : makeShape(doc, box({0, 0, 0}, {64, 64, 128}), cylinder, "CONCRETE/CONCRETEWALL001A")) doc.world.solids.push_back(std::move(s));
+	const int pillar = doc.world.solids.back().id;
+	doc.world.solids.push_back(makeBlock(doc, box({200, 0, 0}, {212, 8, 16}), "WOOD/WOODTRIM001A"));   // a small piece
+	const int trim = doc.world.solids.back().id;
+	doc.world.solids.push_back(makeBlock(doc, box({300, 0, 0}, {308, 8, 8}), "TOOLS/TOOLSHINT"));      // small, but a tool brush
+	doc.world.solids.push_back(makeBlock(doc, box({-512, -512, 0}, {-496, 512, 256}), "BRICK/BRICKWALL001A"));   // a wall: 16 thick, long
+
+	const auto refs = detailCandidates(doc);
+	REQUIRE(refs.size() == 2);
+	CHECK(refs[0].solidId == pillar);
+	CHECK(refs[1].solidId == trim);
+
+	auto found = problemsOf(doc, Problem::Kind::DetailCandidates);
+	REQUIRE(found.size() == 1);
+	CHECK(found[0].severity == Problem::Severity::Info);
+	CHECK(found[0].objects.solids.size() == 2);
+	CHECK(found[0].fixLabel == "Make func_detail");
+
+	// The fix ties both to one func_detail; undo brings them back to the world.
+	const std::size_t worldBefore = doc.world.solids.size();
+	auto change = applyFix(doc, found[0], nullptr);
+	CHECK(doc.world.solids.size() == worldBefore - 2);
+	const auto detail = std::find_if(doc.entities.begin(), doc.entities.end(), [](const Entity& e) { return e.classname() == "func_detail"; });
+	REQUIRE(detail != doc.entities.end());
+	CHECK(detail->solids.size() == 2);
+	CHECK(problemsOf(doc, Problem::Kind::DetailCandidates).empty());
+	History history;
+	history.push(std::move(change));
+	REQUIRE(history.undo(doc));
+	CHECK(doc.world.solids.size() == worldBefore);
+}
+
+TEST_CASE("optimization: a map close to an engine limit is reported before VBSP stops") {
+	MapDocument doc = floorMap();
+	BudgetLimits tight;
+	tight.brushes = 3;   // two brushes of three: 67 %, no report
+	CheckContext context;
+	context.limits = &tight;
+	const auto near = [&] {
+		std::vector<Problem> out;
+		for (auto& p : checkMap(doc, context)) {
+			if (p.kind == Problem::Kind::NearEngineLimit) out.push_back(p);
+		}
+		return out;
+	};
+	CHECK(near().empty());
+	doc.world.solids.push_back(makeBlock(doc, box({0, 0, 0}, {64, 64, 64}), "BRICK/BRICKWALL001A"));   // 3 of 3: 100 %
+	auto found = near();
+	REQUIRE(found.size() == 1);
+	CHECK(found[0].severity == Problem::Severity::Warning);
+	CHECK(found[0].message.find("Brushes: 3 of 3") != std::string::npos);
+	doc.world.solids.push_back(makeBlock(doc, box({100, 0, 0}, {164, 64, 64}), "BRICK/BRICKWALL001A"));   // over
+	found = near();
+	REQUIRE(found.size() == 1);
+	CHECK(found[0].severity == Problem::Severity::Error);
+	CHECK(found[0].howToFix.find("func_detail") != std::string::npos);
+}
+
+TEST_CASE("compile log: each engine limit, microbrushes and t-junctions are explained") {
+	const auto explain = [](std::string_view line) { return classifyCompileLine(line); };
+	for (const auto* line : {"ERROR: MAX_MAP_BRUSHSIDES", "ERROR: MAX_MAP_BRUSHES", "ERROR: MAX_MAP_PLANES", "ERROR: MAX_MAP_ENTITIES",
+	                         "ERROR: MAX_MAP_OVERLAYS", "ERROR: MAX_MAP_DISPINFO", "ERROR: MAX_MAP_TEXINFO", "Error: MAX_MAP_PORTALS"}) {
+		const auto message = explain(line);
+		REQUIRE(message);
+		CHECK(message->severity == CompileMessage::Severity::Error);
+		CHECK(message->explanation.find("engine limit (brushes") == std::string::npos);   // the specific text, not the generic one
+	}
+	CHECK(explain("ERROR: MAX_MAP_BRUSHSIDES")->explanation.find("65536") != std::string::npos);
+	CHECK(explain("ERROR: MAX_MAP_ENTITIES")->explanation.find("prop_static") != std::string::npos);
+	const auto micro = explain("Brush 1234: WARNING, microbrush");
+	REQUIRE(micro);
+	CHECK(micro->severity == CompileMessage::Severity::Warning);
+	CHECK(explain("Too many t-junctions to fix up! (65536 max)")->severity == CompileMessage::Severity::Warning);
+	CHECK(explain("ERROR: MAX_MAP_LEAFWATERDATA")->explanation.find("engine limit") != std::string::npos);   // others: generic
+}
+
+TEST_CASE("layout: a prop with its origin inside a brush is reported (it would be lit black)") {
+	MapDocument doc = floorMap();   // floor top at z 0
+	addEntity(doc, {{"classname", "prop_static"}, {"model", "models/props_c17/oildrum001.mdl"}, {"origin", "0 0 0"}});      // on the floor
+	const int sunk = addEntity(doc, {{"classname", "prop_physics"}, {"model", "models/props_c17/oildrum001.mdl"}, {"origin", "64 0 -8"}});
+	addEntity(doc, {{"classname", "prop_static"}, {"model", "models/props_c17/oildrum001.mdl"}, {"origin", "128 0 -8"},
+	                {"lightingorigin", "light_here"}});   // lit elsewhere: fine
+	addEntity(doc, {{"classname", "info_target"}, {"origin", "192 0 -8"}});   // not a model
+	const auto found = problemsOf(doc, Problem::Kind::PropOriginInSolid);
+	REQUIRE(found.size() == 1);
+	CHECK(found[0].entityId == sunk);
+	CHECK(found[0].severity == Problem::Severity::Warning);
+	CHECK(found[0].howToFix.find("info_lighting") != std::string::npos);
 }

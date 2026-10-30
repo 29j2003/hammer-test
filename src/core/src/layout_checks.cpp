@@ -197,6 +197,21 @@ std::vector<Problem> checkLayout(const MapDocument& doc, const CheckContext& /*c
 			problems.push_back(std::move(p));
 			continue;
 		}
+		// A model is lit at its origin (VRAD for prop_static, the game for the others): an origin
+		// inside a brush gets no light, and the prop turns black.
+		if ((iequals(classname, "prop_static") || iequals(classname, "prop_dynamic") || iequals(classname, "prop_physics")) &&
+		    entity.get("lightingorigin").empty() && !entity.get("model").empty() &&
+		    std::any_of(shapes.begin(), shapes.end(), [&](const SolidShape& shape) { return pointInBrush(origin, shape.planes); })) {
+			Problem p;
+			p.kind = Problem::Kind::PropOriginInSolid;
+			p.severity = Problem::Severity::Warning;
+			p.entityId = entity.id;
+			p.objects.entities.push_back(entity.id);
+			p.message = describe(entity) + " has its origin inside a brush - models are lit at their origin, so it turns black in the game.";
+			p.howToFix = "Raise it until its origin is in the open (sunk into the floor a little is fine as long as the origin is not), or "
+			             "give it a lighting origin: an info_lighting in the open, named in its \"Lighting Origin\" key.";
+			problems.push_back(std::move(p));
+		}
 		if (iequals(classname, "info_player_start") && boxInShapes(shapes, playerBox(origin))) {
 			Problem p;
 			p.kind = Problem::Kind::PlayerStartInSolid;
