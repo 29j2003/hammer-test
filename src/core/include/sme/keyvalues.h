@@ -20,6 +20,8 @@ struct KvNode {
 	std::string condition;             ///< Platform condition after a value, e.g. "[$WIN32]" (VMT files)
 
 	/// An empty block / a key-value pair.
+	bool operator==(const KvNode&) const = default;
+
 	[[nodiscard]] static KvNode makeBlock(std::string key) { return {std::move(key), {}, {}, true, {}}; }
 	[[nodiscard]] static KvNode makeValue(std::string key, std::string value) { return {std::move(key), std::move(value), {}, false, {}}; }
 

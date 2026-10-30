@@ -12,6 +12,32 @@ inspired by Source 2 Hammer, Hammer++ and XBLAH's Modding Tool; the code, icons 
 
 ![3D view with lighting preview, NPC selected](docs/images/npc.png)
 
+## Does it read and write VMF? (round trip)
+
+Yes. Mapsmith opens and saves plain `.vmf` files, and **opening and saving a map without changes gives the file
+back byte for byte**. That covers the same numbers with the same digits, the same order, unknown keys and blocks,
+and Windows line endings. When you edit something, only that part of the file changes. Tests check this for maps
+in the layouts of:
+
+- Valve's Hammer for Half-Life 2 / Source SDK 2013 / Mapbase: hidden objects, groups, visgroups, displacements,
+  cameras, cordons.
+- Hammer++: its extra corner data, numbers with many digits, multiple cordons.
+- Portal 2 / CS:GO Hammer: outputs separated by ESC, `func_instance`, displacement triangle tags, entity comments.
+- Blocks and keys Mapsmith does not know, as newer Hammers (Strata / Portal 2: Community Edition) may write: they
+  are kept where they were.
+
+What is not kept as it was:
+
+- `//` comments (Hammer never writes them).
+- A `"` typed inside a value, which breaks the file for Hammer. It becomes `'`.
+- A brush with a face that has no valid plane. It is left out and listed in the Log.
+- A brush or entity with a missing or duplicate id gets a new id; the Log lists these too.
+- When you move or reshape a brush in a Hammer++ map, that brush's exact corner data is dropped. Hammer++ then
+  takes the corners from the planes, as it does for maps from Valve's Hammer.
+
+To check a map yourself, run `sme-probe vmf yourmap.vmf` (in the program folder). It loads the map, saves it in
+memory and lists every key or value that would change.
+
 ## What it can do
 
 - **Start page**: continue your last map in one click, open a recent one, or start a new project - a Mapbase mod with

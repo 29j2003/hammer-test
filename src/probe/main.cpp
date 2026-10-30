@@ -355,7 +355,11 @@ int cmdVmf(const Args& args) {
 		std::cerr << "error: cannot read file\n";
 		return 1;
 	}
-	const auto doc = MapDocument::parse(*text);
+	VmfLoadReport report;
+	const auto doc = MapDocument::parse(*text, &report);
+	for (const auto& note : report.notes) {
+		std::cout << "  repaired: " << note << "\n";
+	}
 	std::size_t sides = 0, displacements = 0, invalid = 0, connections = doc.world.connections.size();
 	const auto scan = [&](const Entity& entity) {
 		for (const auto& solid : entity.solids) {
@@ -374,12 +378,25 @@ int cmdVmf(const Args& args) {
 		scan(entity);
 		connections += entity.connections.size();
 	}
+	// Saving without an edit must give the file back: byte for byte, or at least every key and value.
 	const auto written = doc.serialize();
-	const bool stable = MapDocument::parse(written).serialize() == written;
+	const bool identical = written == *text;
+	std::vector<std::string> differences;
+	try {
+		differences = keyValueDifferences(*text, written);
+	} catch (const std::exception&) {
+		differences.push_back("the file itself does not read as KeyValues (repaired while loading, see above)");
+	}
+	const bool stable = differences.empty() && MapDocument::parse(written).serialize() == written;
 	std::cout << doc.solidCount() << " brushes, " << sides << " faces, " << displacements << " displacements, "
 	          << doc.entities.size() << " entities, " << connections << " outputs\n"
 	          << invalid << " invalid brushes\n"
-	          << "save/load round trip: " << (stable ? "stable" : "CHANGES DATA") << "\n";
+	          << "save/load round trip: "
+	          << (identical ? "stable (identical, byte for byte)" : stable ? "stable (same keys and values; spacing differs)" : "CHANGES DATA")
+	          << "\n";
+	for (const auto& line : differences) {
+		std::cout << "  " << line << "\n";
+	}
 	return stable ? 0 : 1;
 }
 
