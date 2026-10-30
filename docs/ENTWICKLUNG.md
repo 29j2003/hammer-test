@@ -95,6 +95,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `cubemaps` | env_cubemap-Sonden für die Reflexions-Vorschau: alle Cubemaps mit Raum-Box (`collectCubemaps`, Box aus dem parallax_obb), welche Sonde eine Fläche spiegelt wie VBSP (`probeForFace`: erst `sides`, sonst die nächste), Box-Projektion (`boxProjectedDirection`), Lage der sechs Würfelseiten (`cubeFaceForward`/`cubeFaceUp`/`cubeFaceCoordinates`, der Shader nutzt dieselbe) |
 | `decals` | Infodecals und info_overlay auf den Brushes: Flächen der Karte (`collectSurfaceFaces`), Decal-Achsen wie die Engine (Boden: S entlang +X, Wand: S waagerecht, T nach unten; aufrecht, nicht gespiegelt), Decal auf der nächsten Fläche und Flächen derselben Ebene (`decalPatches`, Größe = Textur × `$decalscale`, `decalSize` liest VMT + VTF-Kopf), Overlay aus Basis + uv0..uv3 mit VBSPs Eckreihenfolge der Texturkoordinaten, entlang der Normalen auf jede Fläche in `sides` projiziert und an ihr beschnitten (`overlayPatches`, `clipToPolygon`), Keys für ein neues Overlay auf einer Fläche (`overlayKeysOnFace`) |
 | `csg` | konvexe Hülle (Punkte → Brush), Teilen an einer Ebene, Abziehen (Carve), Hollow, Merge (mit „exakt?“), Kante abrunden/abschrägen, Keil/Fase an einer Kante (`cutEdge`), Vertex verschieben (bleibt konvex) |
+| `snapping` | Einrasten an anderen Objekten: Ecken von allem, was nicht gezogen wird (`snapCorners`), Ecke nächst der Maus (`nearestCorner`), Seite beim Größe-Ändern an Ecke/Seite eines Nachbarn auch abseits des Rasters (`snapFacePlane`), Box mit Mindestgröße (`resizedBounds`) |
 | `shapes` | Formen des Block-Werkzeugs: Block, Keil, Zylinder, Spitze, Kugel, Bogen (Ring/Spirale), Treppe |
 | `editing`, `history` | Operationen als Undo-Schritte (`Transaction` merkt sich nur berührte Objekte) |
 | `clipboard` | Kartenobjekte kopieren/einfügen als VMF-Text (`PasteOptions`: Anzahl, Versatz, Drehung, eindeutige Namen) |
@@ -243,8 +244,20 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 - Sprites im 3D-View: Entities mit Sprite liegen am Ende der Entity-Boxen; im 3D werden statt dieser Boxen instanzierte
   Billboards gezeichnet (`drawSprites`, ein Batch pro Material). `parallax_obb`-Flächen haben `FLAG_VOLUME` (nur sichtbar,
   wenn ausgewählt).
-- Verschieben: Ecken-Quadrate (`Handle::Corner`) rasten auf Ecken anderer Brushes/Entity-Boxen ein (14 px am Bildschirm),
-  sonst Raster. Cubemap-Raum-Box: Quadrate auf den Seiten (`Handle::RoomMin…`) bei genau einer ausgewählten
+- Einrasten an Objekten (Kern `snapping`, Schalter `Editor::objectSnap`, gespeichert als `editor/objectSnap`, Standard an;
+  Shift+O, Map › Snap to objects, Werkzeugleiste, Link „Objects“ in der Statusleiste, Häkchen `objectSnapCheck` im Tool-Panel
+  bei Select/Move/Scale; Alt beim Ziehen: nur dieses Mal nicht). Beim Ziehen-Start sammelt `Viewport::collectSnapTargets`
+  einmal die Ecken aller nicht gezogenen, nicht versteckten Brushes und Entity-Boxen (`snapCorners`). Verschieben:
+  Ecken-Quadrate (`Handle::Corner`) rasten auf die Ecke nächst der Maus ein (`nearestCorner`, `SNAP_PIXELS` = 14 px),
+  sonst Raster. Größe ändern (`Handle::Scale…`): Ecke nahe der Maus, sonst `snapFacePlane` – eine Ecke, deren
+  Koordinate auf der Achse höchstens 14 px (in Einheiten an der Seite, `unitsPerPixel`) entfernt ist und die höchstens
+  `max(64, 4 × Toleranz)` neben der Seite liegt –, sonst Raster; `resizedBounds` hält die Mindestgröße, `scaleSolid`
+  setzt die Seiten der Box exakt auf den neuen Wert (4,5 bleibt 4,5, keine neue Lücke). Block-Werkzeug: Start- und
+  Endpunkt der Grundfläche rasten auf Ecken nahe der Maus ein (`snapBlockPoint`, nur quer zur Blickrichtung bzw. auf der
+  Bodenebene), die Höhe per `snapFacePlane` auf Achse Z. Getroffene Ecke grünes Quadrat (`drawSnapHit`).
+- Größen live: `Editor::setLiveBounds` (nur bei Änderung, Signal `liveBoundsChanged`) aus Verschieben, Größe ändern und
+  Block-Ziehen; Object Properties setzt nur den Text von `selectionSize`, die Statusleiste die Größe – kein Neuaufbau
+  pro Mausbewegung. Nach dem Ziehen/Abbrechen wieder `nullopt`. Cubemap-Raum-Box: Quadrate auf den Seiten (`Handle::RoomMin…`) bei genau einer ausgewählten
   `env_cubemap` mit Box. Soundscape-Kugel: `Viewport::selectedSoundscapeSphere` (genau ein Soundscape-Entity, Radius > 0,
   kein Trigger), drei Kreise + Quadrate (`Handle::RadiusMin…`); beim Ziehen nur Vorschau (`m_dragRadius`, Text im
   Overlay), beim Loslassen ein Commit. Eigenschaften: Kasten „soundscapeArea“ (`PropertiesPanel::buildSoundscapeArea`,

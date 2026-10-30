@@ -81,6 +81,7 @@ The Tool tab's key tables follow your own shortcuts.
 | [ / ] | grid smaller / bigger |
 | Ctrl+[ / Ctrl+] | rotation step smaller / bigger |
 | Shift+W | snapping on/off |
+| Shift+O | snap to objects on/off (Alt while dragging: not this time) |
 | Arrow keys | nudge by one grid step |
 | Page Up / Page Down | nudge up / down |
 | Alt + arrow keys | rotate by one rotation step |

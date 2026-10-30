@@ -122,6 +122,7 @@ From left to right:
 - **Grid** (the grid icon and the number): the grid size, from 0.125 to 1024 units. **[** and **]** make it smaller or
   bigger.
 - **Snap** (the magnet, Shift+W): snapping to the grid and to the rotation step, on or off.
+- **Snap to objects** (Shift+O): dragged corners and sides stop at corners and sides of other objects, on or off.
 - **Rotation step** (the circular arrow and the angle): what the rotate tool and Alt+arrows turn by, from 1° to 90°.
   **Ctrl+[** and **Ctrl+]** change it.
 - **Texture lock** (the padlock): textures stay glued to faces while you move and rotate.
@@ -283,7 +284,8 @@ At the bottom, from left to right:
 - what is selected (*Brush (6 faces)*, *npc_citizen "citizen_01"*, *3 brushes, 2 entities*);
 - its size (width, length, height) and center;
 - where the mouse points in the 3D view and how far away that is;
-- grid, snap, angle and texture lock, with **on** in green and **off** in grey;
+- grid, snap, snap to objects (*Objects*), angle and texture lock, with **on** in green and **off** in grey - click
+  *Snap* or *Objects* to switch them;
 - how long a frame takes and the frame rate limit. Hover over it for triangles, draw calls, lights and how many
   frames were really drawn;
 - the version. When an update is out, it turns into an **Update to …** button.

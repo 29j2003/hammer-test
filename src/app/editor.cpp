@@ -50,6 +50,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_textureLock = settings.value("editor/textureLock", true).toBool();
 	m_currentMaterial = settings.value("editor/material", m_currentMaterial).toString();
 	m_snapping = settings.value("editor/snapping", true).toBool();
+	m_objectSnap = settings.value("editor/objectSnap", true).toBool();
 	m_shadows = settings.value("editor/shadows", true).toBool();
 	m_reflections = settings.value("editor/reflections", true).toBool();
 	m_showGrid3D = settings.value("view/grid3D", true).toBool();
@@ -742,6 +743,24 @@ void Editor::setSnapping(bool on) {
 	QSettings().setValue("editor/snapping", on);
 	emit settingsChanged();
 	emit message(on ? tr("Snapping on (grid %1, rotation %2°)").arg(m_grid).arg(m_rotationSnap) : tr("Snapping off - free moving and rotating"));
+}
+
+void Editor::setObjectSnap(bool on) {
+	if (on == m_objectSnap) return;
+	m_objectSnap = on;
+	QSettings().setValue("editor/objectSnap", on);
+	emit settingsChanged();
+	emit message(on ? tr("Snap to objects on: dragged corners and sides stop at other objects") : tr("Snap to objects off - only the grid"));
+}
+
+void Editor::setLiveBounds(const std::optional<Bounds>& bounds) {
+	const auto same = [](const std::optional<Bounds>& a, const std::optional<Bounds>& b) {
+		if (a.has_value() != b.has_value()) return false;
+		return !a || (a->min == b->min && a->max == b->max);
+	};
+	if (same(bounds, m_liveBounds)) return;
+	m_liveBounds = bounds;
+	emit liveBoundsChanged();
 }
 
 void Editor::setRotationSnap(double degrees) {

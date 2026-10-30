@@ -934,6 +934,19 @@ ToolPanel::ToolPanel(Editor* editor, QWidget* parent) : QWidget(parent), m_edito
 	hintLayout->addWidget(m_displaceBox);
 	m_selectionBox = makeSelectionBox(editor);
 	hintLayout->addWidget(m_selectionBox);
+	// Snap to objects (the same switch as Map > Snap to objects, Shift+O, and the status bar).
+	m_objectSnap = new QCheckBox(tr("Snap to objects (Shift+O)"));
+	m_objectSnap->setObjectName("objectSnapCheck");
+	m_objectSnap->setToolTip(tr("Moving and resizing stop at corners and sides of other objects, also off the grid. Hold Alt while dragging to "
+	                            "go past them."));
+	m_objectSnap->setChecked(editor->objectSnap());
+	m_objectSnap->setContentsMargins(8, 0, 8, 0);
+	connect(m_objectSnap, &QCheckBox::toggled, editor, &Editor::setObjectSnap);
+	connect(editor, &Editor::settingsChanged, m_objectSnap, [this] {
+		const QSignalBlocker block(m_objectSnap);
+		m_objectSnap->setChecked(m_editor->objectSnap());
+	});
+	hintLayout->addWidget(m_objectSnap);
 	m_keys = new QTableWidget(0, 2);
 	m_keys->setObjectName("toolKeys");
 	m_keys->setHorizontalHeaderLabels({tr("Key"), tr("Operation")});
@@ -991,6 +1004,9 @@ void ToolPanel::showKeys(const std::vector<std::pair<QString, QString>>& rows) {
 }
 
 void ToolPanel::refresh() {
+	const auto tool = m_editor->tool();
+	m_objectSnap->setVisible((tool == Editor::Tool::Select || tool == Editor::Tool::Move || tool == Editor::Tool::Scale) &&
+	                         m_editor->selectMode() != Editor::SelectMode::Face);
 	m_edgeBox->setVisible(m_editor->tool() == Editor::Tool::Vertex && m_editor->selectMode() != Editor::SelectMode::Face);
 	m_displaceBox->setVisible(m_editor->tool() == Editor::Tool::Displace && m_editor->selectMode() != Editor::SelectMode::Face);
 	if (m_editor->selectMode() == Editor::SelectMode::Face) {

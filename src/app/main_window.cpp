@@ -255,7 +255,7 @@ const char* SHORTCUT_HELP = R"(<h3>Camera</h3>
 <tr><td><b>Ctrl+right mouse drag</b></td><td>Paint the current material on faces</td><td><b>Double-click (faces)</b></td><td>Select the whole wall</td></tr>
 <tr><td><b>[ / ]</b></td><td>Grid smaller / bigger</td><td><b>Arrows, PgUp/PgDn</b></td><td>Nudge by the grid</td></tr>
 <tr><td><b>Ctrl+[ / Ctrl+]</b></td><td>Rotation snap smaller / bigger</td><td><b>Alt+arrows</b></td><td>Rotate by the rotation snap</td></tr>
-<tr><td><b>Shift+W</b></td><td>Snapping on/off (grid and rotation)</td><td></td><td></td></tr>
+<tr><td><b>Shift+W</b></td><td>Snapping on/off (grid and rotation)</td><td><b>Shift+O</b></td><td>Snap to objects on/off (Alt while dragging: not now)</td></tr>
 <tr><td><b>H</b></td><td>Hide selection</td><td><b>Ctrl+H / U</b></td><td>Hide others / show all</td></tr>
 <tr><td><b>Ctrl+T</b></td><td>Tie brushes to entity</td><td><b>Ctrl+Shift+W</b></td><td>Move to world</td></tr>
 <tr><td><b>Ctrl+D</b></td><td>Duplicate</td><td><b>Del</b></td><td>Delete</td></tr>
@@ -310,6 +310,13 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	m_sizeLabel->setToolTip(tr("Size of the selection (width, length, height) and its center"));
 	m_cursorLabel = new QLabel;
 	m_gridLabel = new QLabel;
+	m_gridLabel->setObjectName("statusGrid");
+	m_gridLabel->setToolTip(tr("Click \"Snap\" (grid, Shift+W) or \"Objects\" (corners of other objects, Shift+O) to switch them"));
+	m_gridLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+	connect(m_gridLabel, &QLabel::linkActivated, this, [this](const QString& key) {
+		if (key == "snap") m_editor->setSnapping(!m_editor->snapping());
+		if (key == "objects") m_editor->setObjectSnap(!m_editor->objectSnap());
+	});
 	m_statsLabel = new QLabel;
 	for (auto* label : {m_selectionLabel, m_sizeLabel, m_cursorLabel, m_gridLabel, m_statsLabel}) {
 		label->setContentsMargins(6, 0, 6, 0);
@@ -363,6 +370,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	connect(editor, &Editor::selectionChanged, this, &MainWindow::updateStatusInfo);
 	connect(editor, &Editor::documentChanged, this, &MainWindow::updateStatusInfo);
 	connect(editor, &Editor::settingsChanged, this, &MainWindow::updateStatusInfo);
+	connect(editor, &Editor::liveBoundsChanged, this, &MainWindow::updateStatusInfo);
 	updateStatusInfo();
 
 	createDocks();
@@ -1294,6 +1302,13 @@ void MainWindow::createActions() {
 	snapAction->setShortcut(QKeySequence("Shift+W"));
 	snapAction->setToolTip(tr("Snap to the grid and to the rotation step (Shift+W)"));
 	connect(snapAction, &QAction::toggled, m_editor, &Editor::setSnapping);
+	// Snap to objects: dragged corners and sides stop at corners of other objects (Alt: not now).
+	auto* objectSnapAction = action(tr("Snap to objects"), QKeySequence("Shift+O"), [this] { m_editor->setObjectSnap(!m_editor->objectSnap()); });
+	objectSnapAction->setCheckable(true);
+	objectSnapAction->setChecked(m_editor->objectSnap());
+	objectSnapAction->setToolTip(tr("Moving, resizing and drawing stop at corners and sides of other objects, also off the grid (Shift+O; hold Alt to "
+	                                "drag past them)"));
+	top->addAction(objectSnapAction);
 	auto* rotateIcon = new QLabel;
 	rotateIcon->setPixmap(icon("tool:rotate").pixmap(16, 16));
 	top->addWidget(rotateIcon);
@@ -1306,10 +1321,11 @@ void MainWindow::createActions() {
 	rotateCombo->setCurrentIndex(std::max(0, rotateCombo->findData(m_editor->rotationSnap())));
 	top->addWidget(rotateCombo);
 	connect(rotateCombo, &QComboBox::activated, this, [this, rotateCombo](int index) { m_editor->setRotationSnap(rotateCombo->itemData(index).toDouble()); });
-	connect(m_editor, &Editor::settingsChanged, this, [this, rotateCombo, snapAction] {
+	connect(m_editor, &Editor::settingsChanged, this, [this, rotateCombo, snapAction, objectSnapAction] {
 		const int index = rotateCombo->findData(m_editor->rotationSnap());
 		if (index >= 0) rotateCombo->setCurrentIndex(index);
 		snapAction->setChecked(m_editor->snapping());
+		objectSnapAction->setChecked(m_editor->objectSnap());
 	});
 	const auto stepRotation = [this](int direction) {
 		return [this, direction] {
@@ -1518,6 +1534,8 @@ void MainWindow::createActions() {
 		m_editor->clearSelection();
 		raiseDock("Object Properties");
 	}));
+	map->addAction(objectSnapAction);
+	map->addSeparator();
 	map->addAction(check);
 	map->addAction(run);
 	// After testing the map in the game: something looked wrong there -> a report to send.
@@ -2214,7 +2232,9 @@ void MainWindow::updateStatusInfo() {
 		what = tr("no selection");
 	}
 	m_selectionLabel->setText(what);
-	const auto box = selection.empty() ? Bounds{} : edit::selectionBounds(doc, selection, m_editor->entities());
+	// While dragging: the box as it is under the mouse (Editor::liveBounds).
+	const auto box = m_editor->liveBounds() ? *m_editor->liveBounds()
+	                                        : (selection.empty() ? Bounds{} : edit::selectionBounds(doc, selection, m_editor->entities()));
 	if (box.empty()) {
 		m_sizeLabel->clear();
 	} else {
@@ -2227,9 +2247,12 @@ void MainWindow::updateStatusInfo() {
 	const auto onOff = [this](bool on) {
 		return on ? QStringLiteral("<span style='color:#5ccf7a'>%1</span>").arg(tr("on")) : QStringLiteral("<span style='color:#7a7a7a'>%1</span>").arg(tr("off"));
 	};
-	m_gridLabel->setText(tr("Grid %1  ·  Snap %2  ·  Angle %3°  ·  Texture lock %4")
+	// "Snap" and "Objects" are links: a click switches them.
+	const auto link = [](const QString& key, const QString& text) { return QStringLiteral("<a href='%1' style='text-decoration:none'>%2</a>").arg(key, text); };
+	m_gridLabel->setText(tr("Grid %1  ·  %2 %3  ·  %4 %5  ·  Angle %6°  ·  Texture lock %7")
 	                         .arg(m_editor->grid())
-	                         .arg(onOff(m_editor->snapping()))
+	                         .arg(link("snap", tr("Snap")), onOff(m_editor->snapping()))
+	                         .arg(link("objects", tr("Objects")), onOff(m_editor->objectSnap()))
 	                         .arg(m_editor->rotationSnap())
 	                         .arg(onOff(m_editor->textureLock())));
 }

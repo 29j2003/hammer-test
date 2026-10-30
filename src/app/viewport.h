@@ -158,6 +158,20 @@ private:
 	/// Live preview brushes (scaled brushes with their real texture coordinates); empty clears.
 	void setPreviewSolids(const std::vector<Solid>& solids);
 	void updateBlockDrag(const QPointF& pos);
+	/// Block drawing: `onGrid`, or the corner of another object near the mouse (across the floor in
+	/// 3D, across the view in 2D) when object snapping is on.
+	[[nodiscard]] Vec3 snapBlockPoint(const QPointF& pos, const Vec3& onGrid);
+	/// Corners a drag can snap onto (everything but `skip`), unless object snapping is off.
+	void collectSnapTargets(const Selection& skip);
+	/// Object snapping applies right now (on, something to snap to, Alt not held).
+	[[nodiscard]] bool objectSnapActive() const;
+	/// The snap target within SNAP_PIXELS of the mouse, nearest first.
+	[[nodiscard]] std::optional<Vec3> cornerNearCursor(const QPointF& pos) const;
+	/// World units one pixel covers at `at` along `axis` (0: not visible).
+	[[nodiscard]] double unitsPerPixel(const Vec3& at, int axis) const;
+	/// The green square on the corner a resize or a new block snapped onto.
+	void drawSnapHit(std::vector<LineVertex>& lines) const;
+	static constexpr double SNAP_PIXELS = 14;   ///< How close (on screen) a corner pulls
 	void createBlockFromDrag();
 	void updateShapePreview();
 	void cancelInteraction();
@@ -308,7 +322,7 @@ private:
 	Vec3 m_dragStartPoint;
 	// Corner snapping (move tool): drag a corner square onto a corner of another object.
 	Vec3 m_cornerStart;
-	std::vector<Vec3> m_snapTargets;      ///< Corners of everything not selected (taken at drag start)
+	std::vector<Vec3> m_snapTargets;      ///< Corners of everything not dragged (taken at drag start; empty: object snap off)
 	std::optional<Vec3> m_snapHit;        ///< Target the dragged corner sits on now
 	double m_dragStartParam = 0;
 	Vec3 m_dragDelta;             ///< Move
