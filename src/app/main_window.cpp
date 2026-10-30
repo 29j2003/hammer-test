@@ -1826,10 +1826,10 @@ bool MainWindow::startNewProject() {
 		QMessageBox::warning(this, tr("New project"), error);
 		return false;
 	}
-	return makeStarterMap(QString::fromStdString(dialog.modTemplate().folder), dialog.tutorialMap(), dialog.skybox3d());
+	return makeStarterMap(QString::fromStdString(dialog.modTemplate().folder), dialog.tutorialMap());
 }
 
-bool MainWindow::makeStarterMap(const QString& name, bool tutorial, bool skybox3d) {
+bool MainWindow::makeStarterMap(const QString& name, bool tutorial) {
 	// 2. A first map: the tutorial map or a closed room, in the mod's map folder.
 	m_editor->newMap();
 	const auto* game = m_editor->game();
@@ -1843,53 +1843,27 @@ bool MainWindow::makeStarterMap(const QString& name, bool tutorial, bool skybox3
 	};
 	if (tutorial) {
 		edit::TutorialMapOptions options;
-		options.skybox3d = skybox3d;
 		auto& m = options.materials;
 		m.floor = pick({"concrete/concretefloor001a", "dev/dev_measuregeneric01b"}, m.floor);
 		m.walls = pick({"plaster/plasterwall003a", "brick/brickwall001a", "concrete/concretewall001a"}, m.walls);
 		m.ceiling = pick({"concrete/concreteceiling001a", "dev/dev_measuregeneric01"}, m.ceiling);
-		m.tunnel = pick({"concrete/concretewall008a", "concrete/concretewall001a", "brick/brickwall001a"}, m.tunnel);
-		m.ground = pick({"nature/grassfloor002a", "nature/blendgrassgrass001a", "nature/dirtfloor003a", "concrete/concretefloor001a"}, m.ground);
-		m.path = pick({"nature/gravelfloor002a", "nature/dirtfloor003a", "concrete/concretefloor001a"}, m.path);
-		m.outerWalls = pick({"brick/brickwall001a", "concrete/concretewall001a"}, m.outerWalls);
-		m.platform = pick({"concrete/concretefloor001a", "metal/metalfloor001a"}, m.platform);
-		m.rock = pick({"nature/rockwall021a", "nature/rockwall015a", "nature/dirtfloor003a"}, m.rock);
 		if (game) {
-			// Soundscapes the game really has, picked by their names.
+			// A soundscape the game really has, picked by its name; else the template's own when
+			// the game has it; else none.
 			std::vector<std::string> names;
 			for (const auto& soundscape : soundscapes(game->files)) names.push_back(soundscape.name);
-			if (!names.empty()) {
-				// By name; else the template's own when the game has it; else one of the others.
-				const auto has = [&names](const std::string& name) { return std::find(names.begin(), names.end(), name) != names.end(); };
-				std::string* areas[] = {&options.indoorSoundscape, &options.tunnelSoundscape, &options.outdoorSoundscape};
-				const edit::SoundscapeArea kinds[] = {edit::SoundscapeArea::Indoor, edit::SoundscapeArea::Tunnel, edit::SoundscapeArea::Outdoor};
-				std::string picked[3];
-				for (int i = 0; i < 3; ++i) {
-					picked[i] = edit::pickSoundscape(names, kinds[i]);
-					if (picked[i].empty() && has(*areas[i])) picked[i] = *areas[i];
-				}
-				for (int i = 0; i < 3; ++i) {
-					for (int other = 0; picked[i].empty() && other < 3; ++other) picked[i] = picked[other];
-					*areas[i] = picked[i];
-				}
-			}
+			const std::string picked = edit::pickSoundscape(names, edit::SoundscapeArea::Indoor);
+			if (!picked.empty()) options.soundscape = picked;
+			else if (std::find(names.begin(), names.end(), options.soundscape) == names.end()) options.soundscape.clear();
 		}
-		// Mapbase's sun shadow where the game code has it.
 		const auto* entry = m_editor->gameEntry();
-		options.globalLight = entry && entry->usesMapbase;
 		if (game && entry) {
-			// The map's own quiet soundscapes in the mod's soundscape file (the one the Sounds page
-			// edits), from the game's sounds; an area without fitting sounds keeps the one picked above.
+			// The map's own quiet room tone in the mod's soundscape file (the one the Sounds page
+			// edits), from the game's sounds; without fitting sounds it keeps the one picked above.
 			const std::string prefix = toLower(entry->folder());
 			const auto scapes = edit::tutorialSoundscapes(prefix, [game](const std::string& wave) { return game->files.exists("sound/" + wave); });
-			if (!scapes.empty() && writeTutorialSoundscapes(scapes)) {
-				for (const auto& scape : scapes) {
-					if (scape.name.ends_with(".tutorial_indoor")) options.indoorSoundscape = scape.name;
-					if (scape.name.ends_with(".tutorial_tunnel")) options.tunnelSoundscape = scape.name;
-					if (scape.name.ends_with(".tutorial_outdoor")) options.outdoorSoundscape = scape.name;
-				}
-			}
-			// Models' boxes from the game: ammo crates and the jeep stand on the floor.
+			if (!scapes.empty() && writeTutorialSoundscapes(scapes)) options.soundscape = scapes.front().name;
+			// Models' boxes from the game: ammo crates and props stand on the floor.
 			options.modelBounds = [game](const std::string& model) -> std::optional<Bounds> {
 				const auto data = game->files.read(model);
 				if (!data) return std::nullopt;
@@ -1918,7 +1892,7 @@ bool MainWindow::makeStarterMap(const QString& name, bool tutorial, bool skybox3
 	showPage(Page::Map);
 	for (auto* view : m_views) view->frameSelection();
 	rememberRecentProject(m_editor->gameKey(), path);
-	emit m_editor->message(tutorial ? tr("Your project is ready: %1, a tutorial map with a room, a tunnel and an outside area. Look around, "
+	emit m_editor->message(tutorial ? tr("Your project is ready: %1, a tutorial room with a citizen, weapons and ammo. Look around, "
 	                                     "change it, then Run map (F9) to play it.").arg(QFileInfo(path).fileName())
 	                                : tr("Your project is ready: %1 with a first room. Build on it, then Run map (F9) to walk around in it.")
 	                                      .arg(QFileInfo(path).fileName()));

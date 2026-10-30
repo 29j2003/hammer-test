@@ -95,18 +95,12 @@ struct StarterRoomMaterials {
 
 /// Materials of the tutorial map (the game's own when it has them, see the app's pick).
 struct TutorialMapMaterials {
-	std::string floor = "DEV/DEV_MEASUREGENERIC01B";     ///< Inside: floor
-	std::string walls = "DEV/DEV_MEASUREWALL01A";        ///< Inside: walls
-	std::string ceiling = "DEV/DEV_MEASUREGENERIC01";    ///< Inside and tunnel: ceiling
-	std::string tunnel = "DEV/DEV_MEASUREWALL01A";       ///< Tunnel: walls and floor
-	std::string ground = "DEV/DEV_MEASUREGENERIC01B";    ///< Outside: the ground (grass)
-	std::string path = "DEV/DEV_MEASUREGENERIC01";       ///< Outside: the path from the tunnel
-	std::string outerWalls = "DEV/DEV_MEASUREWALL01A";   ///< Outside: the walls around (below the sky)
-	std::string platform = "DEV/DEV_MEASUREGENERIC01";   ///< Outside: platform and steps
-	std::string rock = "DEV/DEV_MEASUREWALL01A";         ///< 3D skybox: hills
+	std::string floor = "DEV/DEV_MEASUREGENERIC01B";     ///< Floor
+	std::string walls = "DEV/DEV_MEASUREWALL01A";        ///< Walls
+	std::string ceiling = "DEV/DEV_MEASUREGENERIC01";    ///< Ceiling
 };
 
-/// Where a soundscape plays in the tutorial map.
+/// Where a soundscape plays (a kind of place).
 enum class SoundscapeArea { Indoor, Tunnel, Outdoor };
 
 /// The best fitting soundscape of `names` for an area (by words in the name: "indoor",
@@ -116,66 +110,35 @@ enum class SoundscapeArea { Indoor, Tunnel, Outdoor };
 /// What the tutorial map has (all of it in every Source SDK Base 2013 Singleplayer install).
 struct TutorialMapOptions {
 	TutorialMapMaterials materials;
-	std::string skyName = "sky_day01_01";
-	/// A 3D skybox: a small room below the map with sky_camera (scale 16) and hills around the
-	/// outside area, drawn behind the 2D sky.
-	bool skybox3d = false;
-	/// env_global_light: Mapbase's sun shadow (a projected texture from the sun over the whole
-	/// map; dynamic shadows of props and NPCs outside). Only Mapbase's game code has it - other
-	/// games print an error for the unknown entity.
-	bool globalLight = false;
-	std::string indoorSoundscape = "d1_trainstation.util_city";
-	std::string tunnelSoundscape = "d1_canals.util_drips";
-	std::string outdoorSoundscape = "d1_trainstation.util_city";
+	std::string soundscape = "d1_trainstation.util_city";
 	/// The box of a model around its origin (the .mdl's hull), when the game has the model: things
-	/// whose origin is not at their bottom (ammo crates, the jeep) are set onto the floor with it.
-	/// Without it (or for an unknown model) the known Half-Life 2 sizes are used.
+	/// whose origin is not at their bottom (ammo crates) are set onto the floor with it. Without
+	/// it (or for an unknown model) the known Half-Life 2 sizes are used.
 	std::function<std::optional<Bounds>(const std::string& model)> modelBounds;
 };
 
-/// Where the areas of the tutorial map are: the rooms' interiors (walkable air), for tests and
-/// for placing things. The tunnel bends twice (north, east, north): straight pieces and corners.
+/// Where the tutorial map's room is: its interior (walkable air), for tests and for placing things.
 struct TutorialMapLayout {
-	Bounds indoor{{-256, -256, 0}, {256, 256, 192}};
-	std::vector<Bounds> tunnel{
-		{{-80, 272, 0}, {80, 784, 144}},     // north from the room
-		{{-80, 784, 0}, {80, 944, 144}},     // first corner
-		{{80, 784, 0}, {592, 944, 144}},     // east
-		{{592, 784, 0}, {752, 944, 144}},    // second corner
-		{{592, 944, 0}, {752, 1360, 144}},   // north to the outside
-	};
-	Bounds outdoor{{-1024, 1376, 0}, {2048, 4448, 1024}};
-	/// The raised ground in the north-west where the Combine soldiers come from.
-	Bounds plateau{{-896, 3712, 0}, {-128, 4352, 96}};
-	/// The platform with steps in the north-east.
-	Bounds platform{{1280, 3328, 0}, {1792, 3840, 64}};
-	/// True when `p` is in the air of one of the areas (on top of the plateau and platform too).
+	Bounds room{{-256, -256, 0}, {256, 256, 192}};
+	/// True when `p` is in the air of the room.
 	[[nodiscard]] bool contains(const Vec3& p) const;
 };
 
-/// The tutorial map's own soundscapes, quiet and made for its three areas (a room tone, a tunnel
-/// with drips and a draught, wind and birds outside), named `<prefix>.tutorial_indoor`,
-/// `.tutorial_tunnel` and `.tutorial_outdoor`. Only sounds for which `exists` ("ambient/...wav",
-/// below sound/) says yes are used; a soundscape without any is left out.
+/// The tutorial map's own quiet room tone, named `<prefix>.tutorial_indoor`. Only sounds for
+/// which `exists` ("ambient/...wav", below sound/) says yes are used; none: no soundscape.
 [[nodiscard]] std::vector<SoundscapeScript> tutorialSoundscapes(const std::string& prefix, const std::function<bool(const std::string&)>& exists);
 
-/// A first map that teaches by example (replaces the starter room): a small room, a tunnel that
-/// bends twice and a large outside area under the sky, sealed by walls, ceiling and sky brushes.
-/// - Sky: worldspawn's skyname, tools/toolsskybox above the outside walls, optional 3D skybox;
-///   light_environment, env_sun, shadow_control (values that fit the sky), env_global_light
-///   optional (shadow area 2048 units around the player); lights inside and in the tunnel;
-///   lightmap scale 8 inside and in the tunnel, 16 outside.
-/// - env_soundscape in each area, env_cubemap in each area.
-/// - info_player_start inside with item_suit (short logon: the HEV suit from the first moment),
+/// A first map that teaches by example (replaces the starter room): one small closed room
+/// (512 x 512, sealed: no sky needed) with everything a mod starts with, in plain view.
+/// - Two lights under the ceiling, lightmap scale 8, an env_cubemap, the quiet indoor soundscape.
+/// - info_player_start with item_suit (short logon: the HEV suit from the first moment),
 ///   crowbar, pistol, SMG and shotgun on the same spot (taken at once, so no NPC takes them);
-///   item_ammo_crate for pistol, SMG and shotgun ammo, standing on the floor.
-/// - A friendly npc_citizen (fixed model, unarmed) inside, in the player's squad: it follows,
-///   and USE makes it wait or follow again (npc_citizen_auto_player_squad_allow_use, set on map
-///   start by point_servercommand); a hint tells the player. A target outside: an unarmed
+///   item_ammo_crate for pistol, SMG and shotgun ammo, standing on the floor at the east wall.
+/// - A friendly npc_citizen (fixed model, unarmed) in the player's squad: it follows, and USE
+///   makes it wait or follow again (npc_citizen_auto_player_squad_allow_use, set on map start by
+///   point_servercommand); a hint tells the player. A target at the north wall: an unarmed
 ///   Combine soldier that ai_relationship keeps neutral - it never shoots back.
-/// - Outside: a path, a platform with steps, a ramp, a plateau with a ramp, low walls for cover,
-///   props, a jeep (prop_vehicle_jeep) and an npc_maker on the plateau that sends one Combine
-///   soldier with an SMG at a time, again and again.
+/// - Two physics props to push and shoot, nodes for the NPCs.
 /// One undo step "Tutorial map".
 [[nodiscard]] Change tutorialMap(MapDocument& doc, const TutorialMapOptions& options = {});
 

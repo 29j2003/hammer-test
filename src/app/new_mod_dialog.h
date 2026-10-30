@@ -17,7 +17,6 @@
 #include <sme/mod_template.h>
 
 class QButtonGroup;
-class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -60,8 +59,6 @@ public:
 	void showFirstMapChoice();
 	/// The tutorial map is chosen (the default), not the empty room.
 	[[nodiscard]] bool tutorialMap() const;
-	/// The tutorial map gets a 3D skybox.
-	[[nodiscard]] bool skybox3d() const;
 	/// The features left unticked.
 	[[nodiscard]] std::set<std::string> featuresOff() const;
 	[[nodiscard]] FeatureChecklist* features() const { return m_features; }
@@ -76,7 +73,6 @@ private:
 	QListWidget* m_maps;
 	QWidget* m_firstMap;           ///< Tutorial map / empty room (New project only)
 	QRadioButton* m_tutorial;
-	QCheckBox* m_skybox3d;
 	FeatureChecklist* m_features;
 	QLabel* m_where;
 	QLabel* m_problem;

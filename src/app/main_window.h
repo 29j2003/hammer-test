@@ -96,9 +96,9 @@ public:
 	/// The guided new project: a new mod (Mapbase, features installed), then a first map.
 	bool startNewProject();
 	/// A first map in the current mod, saved as <name>.vmf in the mod's map folder and opened:
-	/// the tutorial map (inside, tunnel, outside with sky, NPCs, weapons; edit::tutorialMap), or
+	/// the tutorial map (one small room with NPCs, weapons and ammo; edit::tutorialMap), or
 	/// with `tutorial` false a closed room with light, player start and cubemap.
-	bool makeStarterMap(const QString& name, bool tutorial = true, bool skybox3d = false);
+	bool makeStarterMap(const QString& name, bool tutorial = true);
 	/// Writes the tutorial map's soundscapes into the mod's soundscape file and manifest (as the
 	/// Sounds page saves); false when that could not be written.
 	bool writeTutorialSoundscapes(const std::vector<SoundscapeScript>& scapes);

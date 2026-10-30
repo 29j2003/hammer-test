@@ -6,7 +6,6 @@
 #include "features_panel.h"
 
 #include <QButtonGroup>
-#include <QCheckBox>
 #include <QFrame>
 #include <QRadioButton>
 #include <QDialogButtonBox>
@@ -293,20 +292,13 @@ NewModDialog::NewModDialog(Editor* editor, QWidget* parent) : QDialog(parent), m
 	auto* firstMapTitle = new QLabel(tr("First map"));
 	firstMapTitle->setProperty("role", "heading");
 	fm->addWidget(firstMapTitle);
-	m_tutorial = new QRadioButton(tr("Tutorial map: a room, a tunnel and an outside area under the sky, with a friendly citizen, a "
-	                                 "target that never shoots back, weapons, ammo crates and the HEV suit"));
+	m_tutorial = new QRadioButton(tr("Tutorial map: a small room with a friendly citizen, a target that never shoots back, "
+	                                 "weapons, ammo crates and the HEV suit"));
 	m_tutorial->setObjectName("newModTutorial");
 	m_tutorial->setChecked(true);
 	auto* empty = new QRadioButton(tr("Empty room: a closed room with a light and the player start"));
 	empty->setObjectName("newModEmptyRoom");
-	m_skybox3d = new QCheckBox(tr("3D skybox (hills around the outside area, seen behind the sky)"));
-	m_skybox3d->setObjectName("newModSkybox3d");
 	for (QWidget* w : {static_cast<QWidget*>(m_tutorial), static_cast<QWidget*>(empty)}) fm->addWidget(w);
-	auto* skyRow = new QHBoxLayout;
-	skyRow->setContentsMargins(24, 0, 0, 0);
-	skyRow->addWidget(m_skybox3d);
-	fm->addLayout(skyRow);
-	connect(m_tutorial, &QRadioButton::toggled, m_skybox3d, &QWidget::setEnabled);
 	m_firstMap->setVisible(false);
 	v->addWidget(m_firstMap);
 
@@ -378,10 +370,6 @@ void NewModDialog::showFirstMapChoice() {
 
 bool NewModDialog::tutorialMap() const {
 	return m_tutorial->isChecked();
-}
-
-bool NewModDialog::skybox3d() const {
-	return m_tutorial->isChecked() && m_skybox3d->isChecked();
 }
 
 std::set<std::string> NewModDialog::featuresOff() const {

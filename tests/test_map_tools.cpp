@@ -328,50 +328,46 @@ const Entity* firstOfClass(const MapDocument& doc, std::string_view classname) {
 
 } // namespace
 
-TEST_CASE("tutorial map: inside, tunnel and outside under the sky, sealed, everything to play with") {
+TEST_CASE("tutorial map: one small closed room with everything to play with") {
 	MapDocument doc;
-	edit::TutorialMapOptions options;
-	options.materials.ground = "NATURE/GRASS";
 	History history;
-	history.push(edit::tutorialMap(doc, options));
+	history.push(edit::tutorialMap(doc));
 	const edit::TutorialMapLayout layout;
 
-	// Sealed: no way from any entity out of the map, also through the doorways.
+	// Sealed: no way from any entity out of the map; a hole in a wall is found.
 	CHECK_FALSE(leaks(doc));
-	// The flood fill sees a leak when one is there: a hole in the outside wall's sky part.
 	{
 		MapDocument holed = doc;
-		const auto skyWall = std::find_if(holed.world.solids.begin(), holed.world.solids.end(), [&](const Solid& solid) {
+		const auto wall = std::find_if(holed.world.solids.begin(), holed.world.solids.end(), [&](const Solid& solid) {
 			Bounds box;
 			for (const auto& corner : solidCorners(solid)) box.add(corner);
-			return solid.sides.front().material == "TOOLS/TOOLSSKYBOX" && box.min.x < layout.outdoor.min.x && box.max.z > 512;
+			return box.max.x <= layout.room.min.x;   // the west wall
 		});
-		REQUIRE(skyWall != holed.world.solids.end());
-		holed.world.solids.erase(skyWall);
+		REQUIRE(wall != holed.world.solids.end());
+		holed.world.solids.erase(wall);
 		CHECK(leaks(holed));
 	}
-
-	// Sky: the 2D sky, sky brushes above the outside, the light that fits the sky.
-	CHECK(doc.world.get("skyname") == "sky_day01_01");
-	int skyBrushes = 0, grass = 0;
+	// Only the room (Julius 30.10.2026): six brushes, 512 x 512, no sky, no tunnel, no outside.
+	CHECK(doc.world.solids.size() == 6);
+	CHECK(layout.room.max.x - layout.room.min.x == 512);
+	CHECK(layout.room.max.y - layout.room.min.y == 512);
 	for (const auto& solid : doc.world.solids) {
-		skyBrushes += solid.sides.front().material == "TOOLS/TOOLSSKYBOX";
-		grass += solid.sides.front().material == "NATURE/GRASS";
+		CHECK(solid.sides.front().material != "TOOLS/TOOLSSKYBOX");
+		for (const auto& side : solid.sides) CHECK(side.lightmapScale == 8);   // sharper light where the player is
 	}
-	CHECK(skyBrushes >= 5);
-	CHECK(grass >= 2);
-	const auto* sun = firstOfClass(doc, "light_environment");
-	REQUIRE(sun);
-	CHECK(sun->get("_light") == "237 218 143 800");
-	CHECK(firstOfClass(doc, "env_sun"));
-	CHECK(firstOfClass(doc, "shadow_control"));
-	CHECK_FALSE(firstOfClass(doc, "env_global_light"));   // only for Mapbase
-	CHECK_FALSE(firstOfClass(doc, "sky_camera"));         // 3D skybox only when chosen
+	for (const char* none : {"light_environment", "env_sun", "shadow_control", "env_global_light", "sky_camera", "prop_vehicle_jeep", "npc_maker"}) {
+		INFO(none);
+		CHECK_FALSE(firstOfClass(doc, none));
+	}
+	// Indoor light, a cubemap, the room's soundscape.
+	CHECK(countClass(doc, "light") == 2);
+	CHECK(countClass(doc, "env_cubemap") == 1);
+	const auto* soundscape = firstOfClass(doc, "env_soundscape");
+	REQUIRE(soundscape);
+	CHECK(countClass(doc, "env_soundscape") == 1);
+	CHECK(soundscape->get("soundscape") == "d1_trainstation.util_city");
 
-	// Each area with soundscapes and cubemaps (the tunnel and the large outside several); the
-	// player with suit, weapons, ammo.
-	CHECK(countClass(doc, "env_soundscape") == 6);
-	CHECK(countClass(doc, "env_cubemap") == 7);
+	// The player with suit, weapons, ammo.
 	CHECK(countClass(doc, "info_player_start") == 1);
 	const auto* suit = firstOfClass(doc, "item_suit");
 	REQUIRE(suit);
@@ -389,7 +385,7 @@ TEST_CASE("tutorial map: inside, tunnel and outside under the sky, sealed, every
 	for (const auto& entity : doc.entities) {
 		if (entity.classname() != "item_ammo_crate") continue;
 		CHECK(entity.origin().z == doctest::Approx(16));
-		CHECK(entity.origin().x + 16 < layout.indoor.max.x);   // not in the wall
+		CHECK(entity.origin().x + 16 < layout.room.max.x);   // not in the wall
 	}
 	// The citizen is a fixed model in the player's squad; USE makes it wait or follow: the map
 	// switches Mapbase's npc_citizen_auto_player_squad_allow_use on at its start (and after
@@ -415,25 +411,10 @@ TEST_CASE("tutorial map: inside, tunnel and outside under the sky, sealed, every
 	REQUIRE(hintTrigger);
 	REQUIRE(hintTrigger->solids.size() == 1);
 	CHECK(hintTrigger->connections.front().target == hint->get("targetname"));
-	// Combine soldiers that fight come from the plateau, one at a time, without end.
-	const auto* maker = firstOfClass(doc, "npc_maker");
-	REQUIRE(maker);
-	CHECK(maker->get("NPCType") == "npc_combine_s");
-	CHECK(maker->get("additionalequipment") == "weapon_smg1");
-	CHECK(maker->get("MaxLiveChildren") == "1");
-	CHECK((std::stoi(maker->get("spawnflags")) & 32) != 0);   // infinite children
-	CHECK(std::stod(maker->get("SpawnFrequency")) <= 10);
-	CHECK(length(maker->origin() - firstOfClass(doc, "info_player_start")->origin()) > 3000);
-	CHECK(maker->origin().z > layout.plateau.max.z);
-	// A jeep to drive outside.
-	const auto* jeep = firstOfClass(doc, "prop_vehicle_jeep");
-	REQUIRE(jeep);
-	CHECK(jeep->get("model") == "models/buggy.mdl");
-	CHECK(jeep->get("vehiclescript") == "scripts/vehicles/jeep_test.txt");
-	CHECK(layout.contains(jeep->origin()));
-	CHECK(jeep->origin().y > layout.outdoor.min.y);
-	const auto* target = firstOfClass(doc, "npc_combine_s");   // the only one placed: the others come from the maker
+	// A target that never shoots back: unarmed, neutral to player and citizen.
+	const auto* target = firstOfClass(doc, "npc_combine_s");
 	REQUIRE(target);
+	CHECK(countClass(doc, "npc_combine_s") == 1);
 	CHECK(target->get("additionalequipment") == "0");
 	CHECK(target->get("NumGrenades") == "0");
 	int peace = 0;
@@ -441,41 +422,23 @@ TEST_CASE("tutorial map: inside, tunnel and outside under the sky, sealed, every
 		if (entity.classname() == "ai_relationship" && entity.get("subject") == target->get("targetname") && entity.get("disposition") == "4") ++peace;
 	}
 	CHECK(peace == 2);
-	CHECK(countClass(doc, "info_node") >= 10);
-	CHECK(countClass(doc, "prop_physics") >= 3);
+	CHECK(countClass(doc, "info_node") >= 4);
+	CHECK(countClass(doc, "prop_physics") == 2);
 
-	// Where things are: the player inside, the target outside, nothing stuck in a brush.
-	const auto inside = [](const Bounds& box, const Vec3& p) {
-		return p.x > box.min.x && p.x < box.max.x && p.y > box.min.y && p.y < box.max.y && p.z >= box.min.z && p.z < box.max.z;
-	};
-	CHECK(inside(layout.indoor, start));
-	CHECK(inside(layout.outdoor, target->origin()));
+	// Everything inside the room, nothing stuck in a brush or in another, walkable to the target.
 	for (const auto& entity : doc.entities) {
 		INFO(entity.classname());
 		CHECK(layout.contains(entity.origin()));
 	}
-	// The room is half the size it was (512 x 512), the tunnel bends and is longer, the outside larger.
-	CHECK(layout.indoor.max.x - layout.indoor.min.x == 512);
-	double tunnelLength = 0;
-	for (const auto& piece : layout.tunnel) tunnelLength += std::max(piece.max.x - piece.min.x, piece.max.y - piece.min.y);
-	CHECK(tunnelLength > 1000);
-	CHECK((layout.outdoor.max.x - layout.outdoor.min.x) * (layout.outdoor.max.y - layout.outdoor.min.y) > 2048.0 * 2048 * 2);
-	// One can walk from the start through the bending tunnel to the outside.
-	CHECK(reachable(doc, start + Vec3{0, 0, 32}, target->origin() + Vec3{0, 0, 32}));
-	// Sharper light where the player is: lightmap scale 8 inside and in the tunnel, 16 outside.
-	int fine = 0;
-	for (const auto& solid : doc.world.solids) {
-		Bounds box;
-		for (const auto& corner : solidCorners(solid)) box.add(corner);
-		if (box.max.y <= layout.indoor.max.y + 16 && box.max.z <= layout.indoor.max.z + 16) fine += solid.sides.front().lightmapScale == 8;
+	for (const auto* npc : {firstOfClass(doc, "info_player_start"), citizen, target}) {
+		CHECK_FALSE(boxInSolid(doc, {npc->origin() + Vec3{-16, -16, 1}, npc->origin() + Vec3{16, 16, 72}}));
 	}
-	CHECK(fine >= 8);
-	CHECK_FALSE(boxInSolid(doc, {start + Vec3{-16, -16, 1}, start + Vec3{16, 16, 72}}));
-	CHECK_FALSE(boxInSolid(doc, {target->origin() + Vec3{-16, -16, 1}, target->origin() + Vec3{16, 16, 72}}));
+	CHECK(length(citizen->origin() - start) > 96);
+	CHECK(length(target->origin() - start) > 192);
+	CHECK(length(target->origin() - citizen->origin()) > 128);
+	CHECK(reachable(doc, start + Vec3{0, 0, 32}, target->origin() + Vec3{0, 0, 32}));
 	// The layout checks find nothing to complain about (player start, void, lightmaps, nodes).
 	CHECK(checkLayout(doc, {}).empty());
-	// Small: far below the engine's limits.
-	CHECK(doc.world.solids.size() < 160);
 	for (const auto& item : mapBudget(doc, BudgetLimits{})) {
 		INFO(item.name);
 		CHECK_FALSE(item.over());
@@ -486,23 +449,12 @@ TEST_CASE("tutorial map: inside, tunnel and outside under the sky, sealed, every
 	CHECK(doc.entities.empty());
 }
 
-TEST_CASE("tutorial map: 3D skybox, Mapbase's global light, soundscapes from the game's list") {
+TEST_CASE("tutorial map: soundscape left out when none is given, soundscapes from the game's list") {
 	MapDocument doc;
 	edit::TutorialMapOptions options;
-	options.skybox3d = true;
-	options.globalLight = true;
+	options.soundscape.clear();
 	(void)edit::tutorialMap(doc, options);
-	const auto* camera = firstOfClass(doc, "sky_camera");
-	REQUIRE(camera);
-	CHECK(camera->get("scale") == "16");
-	const auto* global = firstOfClass(doc, "env_global_light");
-	REQUIRE(global);
-	// Its shadows reach across the outside area (Julius: "increase the shadow FOV").
-	CHECK(std::stod(global->get("orthosize")) >= 2048);
-	CHECK(global->get("enableshadows") == "1");
-	CHECK_FALSE(leaks(doc));   // the skybox room is sealed too
-	// The camera's room lies below the map, apart from it.
-	CHECK(camera->origin().z < -1024);
+	CHECK(countClass(doc, "env_soundscape") == 0);
 
 	const std::vector<std::string> names = {"d1_canals.util_drips", "d1_trainstation.util_city", "d1_town.Indoor_house", "ep2_caves.util_tunnel",
 	                                        "coast.wind_canyon"};
@@ -519,51 +471,39 @@ TEST_CASE("tutorial map: things stand on the floor by the game's model boxes") {
 	options.modelBounds = [&asked](const std::string& model) -> std::optional<Bounds> {
 		asked.push_back(model);
 		if (model.starts_with("models/items/ammocrate_")) return Bounds{{-20, -30, -12}, {20, 30, 12}};
-		if (model == "models/buggy.mdl") return Bounds{{-40, -80, -20}, {40, 80, 60}};
+		if (model == "models/props_c17/oildrum001.mdl") return Bounds{{-15, -15, -2}, {15, 15, 44}};
 		return std::nullopt;   // not in the game: Half-Life 2's known size
 	};
 	(void)edit::tutorialMap(doc, options);
 	CHECK(std::find(asked.begin(), asked.end(), "models/items/ammocrate_smg1.mdl") != asked.end());
 	for (const auto& entity : doc.entities) {
 		if (entity.classname() == "item_ammo_crate") {
-			CHECK(entity.origin().z == doctest::Approx(12));                                          // bottom on the floor
-			CHECK(entity.origin().x + 20 == doctest::Approx(edit::TutorialMapLayout{}.indoor.max.x - 4));   // back to the wall (turned 180)
+			CHECK(entity.origin().z == doctest::Approx(12));                                         // bottom on the floor
+			CHECK(entity.origin().x + 20 == doctest::Approx(edit::TutorialMapLayout{}.room.max.x - 4));   // back to the wall (turned 180)
 		}
-		if (entity.classname() == "prop_vehicle_jeep") CHECK(entity.origin().z == doctest::Approx(24));   // 20 + a little air
+		if (entity.classname() == "prop_physics" && entity.get("model") == "models/props_c17/oildrum001.mdl") {
+			CHECK(entity.origin().z == doctest::Approx(3));   // 2 below the origin + a little air
+		}
+		if (entity.classname() == "prop_physics" && entity.get("model") == "models/props_junk/wood_crate001a.mdl") {
+			CHECK(entity.origin().z == doctest::Approx(21));   // Half-Life 2's box: 20 below the origin
+		}
 	}
 }
 
-TEST_CASE("tutorial map: its own quiet soundscapes from the sounds the game has") {
-	// Every listed sound there: three soundscapes, all quiet, each with its room effect.
+TEST_CASE("tutorial map: its own quiet room tone from the sounds the game has") {
 	const auto scapes = edit::tutorialSoundscapes("mymod", [](const std::string&) { return true; });
-	REQUIRE(scapes.size() == 3);
+	REQUIRE(scapes.size() == 1);
 	CHECK(scapes[0].name == "mymod.tutorial_indoor");
-	CHECK(scapes[1].name == "mymod.tutorial_tunnel");
-	CHECK(scapes[2].name == "mymod.tutorial_outdoor");
-	CHECK(scapes[1].dsp == "6");   // a tunnel's echo
-	for (const auto& scape : scapes) {
-		INFO(scape.name);
-		REQUIRE_FALSE(scape.rules.empty());
-		for (const auto& rule : scape.rules) {
-			for (const auto& part : splitTrimmed(rule.volume, ',')) CHECK(std::stod(std::string(part)) <= 0.35);
-			CHECK((rule.wave.starts_with("ambient/") || !rule.waves.empty()));
-		}
-	}
-	// The tunnel drips now and then.
-	CHECK(std::any_of(scapes[1].rules.begin(), scapes[1].rules.end(), [](const SoundscapeRule& rule) {
-		return rule.kind == SoundscapeRule::Kind::Random && rule.waves.front().find("drip") != std::string::npos;
-	}));
-	// Only sounds the game has: none - no soundscape; only drips - only the tunnel.
+	REQUIRE(scapes[0].rules.size() == 1);
+	CHECK(scapes[0].rules[0].wave == "ambient/atmosphere/indoor1.wav");
+	for (const auto& part : splitTrimmed(scapes[0].rules[0].volume, ',')) CHECK(std::stod(std::string(part)) <= 0.35);
+	// Only sounds the game has: none - no soundscape; another one of the list - that one.
 	CHECK(edit::tutorialSoundscapes("m", [](const std::string&) { return false; }).empty());
-	const auto drips = edit::tutorialSoundscapes("m", [](const std::string& wave) { return wave == "ambient/water/drip2.wav"; });
-	REQUIRE(drips.size() == 1);
-	CHECK(drips[0].name == "m.tutorial_tunnel");
-	CHECK(drips[0].rules.size() == 1);
-	CHECK(drips[0].rules[0].waves == std::vector<std::string>{"ambient/water/drip2.wav"});
+	const auto tone = edit::tutorialSoundscapes("m", [](const std::string& wave) { return wave == "ambient/atmosphere/tone_quiet.wav"; });
+	REQUIRE(tone.size() == 1);
+	CHECK(tone[0].rules[0].wave == "ambient/atmosphere/tone_quiet.wav");
 	// What the file gets: the engine reads it back the same.
-	std::string text;
-	for (const auto& scape : scapes) text = upsertSoundscape(text, scape);
-	CHECK(parseSoundscapes(text).size() == 3);
+	CHECK(parseSoundscapes(upsertSoundscape("", scapes[0])).size() == 1);
 }
 
 TEST_CASE("recent projects: newest first, one entry per map, kept as text") {

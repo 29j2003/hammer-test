@@ -2852,39 +2852,40 @@ TEST_CASE("ux: whole tiles in a low dock, recent popup, the Materials page follo
 
 	// 9. The start page: a first map - the tutorial map by default, or an empty room - then
 	// Continue opens it again.
-	// A sound the game has: the tutorial map's own tunnel soundscape uses it (in the mod's file).
+	// A sound the game has: the tutorial map's own room tone uses it (in the mod's file).
 	{
-		const QString drip = fromPath(editor.gameEntry()->gameDir) + "/sound/ambient/water/drip1.wav";
-		QDir().mkpath(QFileInfo(drip).absolutePath());
-		QFile file(drip);
+		const QString tone = fromPath(editor.gameEntry()->gameDir) + "/sound/ambient/atmosphere/indoor1.wav";
+		QDir().mkpath(QFileInfo(tone).absolutePath());
+		QFile file(tone);
 		REQUIRE(file.open(QIODevice::WriteOnly));
 		file.write("RIFF");
 		file.close();
-		editor.game()->files.noteWrittenFile(toPath(drip));
+		editor.game()->files.noteWrittenFile(toPath(tone));
 	}
 	REQUIRE(window.makeStarterMap("ux_tutorial"));
 	CHECK(QFileInfo(editor.filePath()).fileName() == "ux_tutorial.vmf");
-	CHECK(editor.doc().world.solids.size() > 30);
+	CHECK(editor.doc().world.solids.size() == 6);   // only the small room (Julius 30.10.2026)
 	const auto classCount = [&editor](const char* classname) {
 		return std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [classname](const Entity& e) { return e.classname() == classname; });
 	};
-	CHECK(classCount("env_soundscape") == 6);
+	CHECK(classCount("env_soundscape") == 1);
 	{
 		const QString prefix = QString::fromStdString(toLower(editor.gameEntry()->folder()));
 		QFile scapes(fromPath(editor.gameEntry()->gameDir) + "/scripts/soundscapes_" + prefix + ".txt");
 		REQUIRE(scapes.open(QIODevice::ReadOnly));
 		const QString text = QString::fromUtf8(scapes.readAll());
-		CHECK(text.contains(prefix + ".tutorial_tunnel"));
-		CHECK(text.contains("ambient/water/drip1.wav"));
+		CHECK(text.contains(prefix + ".tutorial_indoor"));
+		CHECK(text.contains("ambient/atmosphere/indoor1.wav"));
 		QFile manifest(fromPath(editor.gameEntry()->gameDir) + "/scripts/soundscapes_manifest.txt");
 		REQUIRE(manifest.open(QIODevice::ReadOnly));
 		CHECK(QString::fromUtf8(manifest.readAll()).contains("scripts/soundscapes_" + prefix + ".txt"));
-		const auto tunnelScapes = std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [&prefix](const Entity& e) {
-			return e.classname() == "env_soundscape" && QString::fromStdString(e.get("soundscape")) == prefix + ".tutorial_tunnel";
+		const auto own = std::count_if(editor.doc().entities.begin(), editor.doc().entities.end(), [&prefix](const Entity& e) {
+			return e.classname() == "env_soundscape" && QString::fromStdString(e.get("soundscape")) == prefix + ".tutorial_indoor";
 		});
-		CHECK(tunnelScapes == 3);
+		CHECK(own == 1);
 	}
 	CHECK(classCount("item_suit") == 1);
+	CHECK(classCount("npc_citizen") == 1);
 	CHECK(classCount("sky_camera") == 0);
 	REQUIRE(window.makeStarterMap("ux_room", false));
 	const QString room = editor.filePath();
