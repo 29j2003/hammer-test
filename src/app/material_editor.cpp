@@ -446,7 +446,9 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 	connect(m_liveTimer, &QTimer::timeout, this, &MaterialEditor::emitLive);
 	connect(&m_textureWatcher, &QFutureWatcherBase::finished, this, [this] {
 		if (m_textureWatcher.future().resultCount() == 0) return;
-		const auto images = m_textureWatcher.result();
+		const auto loaded = m_textureWatcher.result();
+		const auto& images = loaded.images;
+		m_preview->setBaseTextureSize(loaded.baseSize);
 		const QString keys[4] = {"$basetexture", "$bumpmap", "$envmapmask", "$detail"};
 		for (int slot = 0; slot < 4; ++slot) {
 			const auto it = images.find(keys[slot]);
@@ -1534,11 +1536,16 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 	}
 	const GameFileSystem* fs = &game->files;
 	m_textureWatcher.setFuture(track(QtConcurrent::run([fs, wanted] {
-		std::map<QString, QImage> images;
+		PreviewTextures loaded;
 		for (const auto& [key, name] : wanted) {
-			if (auto image = loadTexture(*fs, name, 512)) images[key] = toQImage(*image);
+			const auto data = fs->read("materials/" + normalizeMaterialName(name) + ".vtf");
+			if (!data) continue;
+			if (auto image = decodeTexture(*data, 512)) loaded.images[key] = toQImage(*image);
+			if (key == "$basetexture") {
+				if (const auto info = readTextureInfo(*data)) loaded.baseSize = QSize(info->width, info->height);
+			}
 		}
-		return images;
+		return loaded;
 	})));
 }
 

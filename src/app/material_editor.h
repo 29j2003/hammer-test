@@ -257,7 +257,12 @@ private:
 	QPushButton* m_save;
 	QPushButton* m_saveAs;
 	QLabel* m_status;
-	QFutureWatcher<std::map<QString, QImage>> m_textureWatcher;
+	/// Textures loaded for the preview (at most 512 big) and the base texture's full size.
+	struct PreviewTextures {
+		std::map<QString, QImage> images;
+		QSize baseSize;
+	};
+	QFutureWatcher<PreviewTextures> m_textureWatcher;
 	/// Background jobs reading the game's files (texture names, height maps): they are waited for
 	/// before the game is replaced (its file system goes away with it).
 	QList<QFuture<void>> m_jobs;
