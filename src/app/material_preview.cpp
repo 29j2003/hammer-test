@@ -251,6 +251,26 @@ void MaterialPreview::setTexture(Slot slot, const QImage& image) {
 	update();
 }
 
+void MaterialPreview::setBaseTextureSize(QSize size) {
+	if (size == m_baseSize) return;
+	m_baseSize = size;
+	update();
+}
+
+float MaterialPreview::reliefMaxShift(int pixels) {
+	// The game holds the shift to r_fidelity_parallax_maxshift (4 world units); a texture covers its
+	// size x 0.25 units (Hammer's default scale).
+	return 4.0f / std::max(float(std::max(pixels, 1)) * 0.25f, 1.0f);
+}
+
+float MaterialPreview::maxShift() const {
+	// The full size: the images are loaded at most 512 big, a 1024 texture's shift would be twice
+	// the game's (Julius: relief broke apart in the preview).
+	if (m_baseSize.isValid() && !m_baseSize.isEmpty()) return reliefMaxShift(std::max(m_baseSize.width(), m_baseSize.height()));
+	const QImage& sized = !m_images[Base].isNull() ? m_images[Base] : m_images[Height];
+	return reliefMaxShift(sized.isNull() ? 512 : std::max(sized.width(), sized.height()));
+}
+
 void MaterialPreview::setSettings(const Settings& settings) {
 	if (settings.mode != m_settings.mode) {
 		m_meshDirty = true;
@@ -452,11 +472,7 @@ void MaterialPreview::paintGL() {
 	m_program->setUniformValue("u_alphaRef", s.alphaRef);
 	m_program->setUniformValue("u_mode", static_cast<int>(s.mode));
 	m_program->setUniformValue("u_depth", s.parallaxDepth);
-	// The game holds the shift to r_fidelity_parallax_maxshift (4 world units); a texture covers its
-	// size x 0.25 units (Hammer's default scale) - the base texture's size as loaded, else 512.
-	const QImage& sized = !m_images[Base].isNull() ? m_images[Base] : m_images[Height];
-	const float textureUnits = float(sized.isNull() ? 512 : std::max(sized.width(), sized.height())) * 0.25f;
-	m_program->setUniformValue("u_maxShift", 4.0f / std::max(textureUnits, 1.0f));
+	m_program->setUniformValue("u_maxShift", maxShift());
 	m_program->setUniformValue("u_plane", 0.5f);   // r_fidelity_parallax_plane (walls)
 	m_program->setUniformValue("u_ao", s.parallaxAO);
 	m_program->setUniformValue("u_glint", s.waterGlint);

@@ -308,7 +308,9 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   **Gleiche Rechnung wie das Spiel:** Material-Vorschau (`material_preview`) und 3D-View (`renderer`) laufen wie
   `FidelityParallaxShift`/`FidelityParallaxHeightNormal` aus `fidelity_parallax_common.h`: 8–32 Schritte je nach Winkel,
   Verschiebung bei flachem Blick höchstens 2,5 × Tiefe und höchstens 4 Welteinheiten (`r_fidelity_parallax_maxshift`;
-  Vorschau: Texturgröße × 0,25 Einheiten), Bezugsebene Wände 0,5 / Böden 0,2, Ausblenden unter etwa 17°
+  Vorschau: volle Größe der Basistextur × 0,25 Einheiten – die Bilder kommen höchstens 512 groß, die volle Größe liest
+  der Editor aus dem VTF-Kopf, `MaterialPreview::setBaseTextureSize`/`maxShift`; sonst verschob eine 1024er Textur
+  doppelt so weit wie das Spiel), Bezugsebene Wände 0,5 / Böden 0,2, Ausblenden unter etwa 17°
   (`smoothstep(0.08, 0.3, N·V)`), Normale aus der Höhe 1,5 Texel auseinander mit Steigung höchstens 1. Vorher: 5 × Tiefe
   ohne Grenze und ungebremste Normalen – ab 0,02 wurden Ziegel zu langen Platten verschmiert, schon 0,006 sah tiefer aus
   als im Spiel (Julius, 29.10.2026). `parallaxReach` (Kern, `heightmap`) rechnet dieselbe Reichweite für die Tests.
@@ -648,7 +650,13 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   steht in `try`/`catch`, Datenbereiche vor dem Lesen prüfen (vtfpp prüft `getImageDataRaw` nicht).
 - `test_performance.cpp` (Kern) und „performance: a big map …“ in `test_app.cpp` – grobe Zeitgrenzen (Game enhancements
   bei 5500 Materialien, Karte mit 20 000 Brushes lesen/schreiben, 6000 Brushes + 1500 Entities öffnen/bearbeiten/
-  auswählen/zeichnen); die Grenzen sind großzügig und fangen nur Verschlechterungen um ein Vielfaches.
+  auswählen/zeichnen; dieselbe Karte so geschrieben wie Hammer++ – jede Seite behält ihr Layout, der schlimmste Fall des
+  VMF-Roundtrips –; Einrast-Ecken und eine Kanten-Rundung in 20 000 Brushes); die Grenzen sind großzügig und fangen nur
+  Verschlechterungen um ein Vielfaches. Messwerte (Oktober 2026, Release-Bau, belastete Maschine): 20 000 Brushes lesen
+  0,7 s / schreiben 0,5 s, als Hammer++-Datei lesen 0,6–0,75 s / schreiben 0,65–0,7 s (Datei Byte für Byte gleich);
+  Speicher der gelesenen Karte etwa 48 MB, als Hammer++-Datei etwa 104 MB (das Layout jeder Seite, etwa 470 Byte);
+  Einrast-Ecken einer Karte sammeln (einmal je Ziehen) 35–39 ms; eine Kanten-Rundung planen (je Änderung im Dialog,
+  60 ms verzögert) 29–31 ms; im Leerlauf 0 ms Rechenzeit in 10 s.
 - Startzeit: `SME_STARTUP_TRACE=quit build/src/app/Mapsmith --steam demo/Steam --game sourcemods/mymod` schreibt die
   Meilensteine (Qt bereit, Spiele gefunden, Fenster gebaut, erstes Bild, Spiel gelesen) und beendet sich. Demo unter
   xvfb (Software-OpenGL), Startseite an, Oktober 2026: erstes nutzbares Bild vorher etwa 860–995 ms (Spiel vor dem

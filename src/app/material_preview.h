@@ -63,6 +63,14 @@ public:
 	~MaterialPreview() override;
 
 	void setTexture(Slot slot, const QImage& image);   ///< Null image: slot unused
+	/// The base texture's full size in pixels (the images come smaller: at most 512); the relief's
+	/// largest shift depends on it. An invalid size: the loaded image's size is taken.
+	void setBaseTextureSize(QSize size);
+	/// The relief's largest shift in texture units: the game's r_fidelity_parallax_maxshift (4 world
+	/// units) on a texture of `pixels` (its longer side) at Hammer's default scale 0.25.
+	[[nodiscard]] static float reliefMaxShift(int pixels);
+	/// reliefMaxShift() of the texture shown now (full size, else the loaded image, else 512).
+	[[nodiscard]] float maxShift() const;
 	/// What to draw: material parameters, shape and light.
 	void setSettings(const Settings& settings);
 	void setShape(Shape shape);
@@ -86,6 +94,7 @@ private:
 	GLsizei m_vertexCount = 0;
 	std::array<GLuint, SlotCount> m_textures{};
 	std::array<QImage, SlotCount> m_images;
+	QSize m_baseSize;   ///< Full size of the base texture (setBaseTextureSize)
 	std::array<bool, SlotCount> m_dirty{};
 	Settings m_settings;
 	Shape m_shape = Shape::Plane;

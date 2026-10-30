@@ -2266,6 +2266,22 @@ TEST_CASE("displacement tool: make, sculpt with the mouse, undo, create by click
 	CHECK_FALSE(topSide()->dispInfo());
 }
 
+TEST_CASE("material preview: the relief's largest shift follows the base texture's full size") {
+	// The preview loads textures at most 512 big; the shift limit must come from the real size, or
+	// a 1024 texture's relief shifts twice as far as in the game (it broke apart at 0.02).
+	MaterialPreview preview;
+	CHECK(MaterialPreview::reliefMaxShift(512) == doctest::Approx(4.0 / 128));
+	CHECK(MaterialPreview::reliefMaxShift(1024) == doctest::Approx(4.0 / 256));
+	QImage loaded(512, 512, QImage::Format_RGBA8888);
+	loaded.fill(Qt::gray);
+	preview.setTexture(MaterialPreview::Base, loaded);
+	CHECK(preview.maxShift() == doctest::Approx(4.0 / 128));   // no full size known: the image's
+	preview.setBaseTextureSize(QSize(1024, 1024));
+	CHECK(preview.maxShift() == doctest::Approx(4.0 / 256));
+	preview.setBaseTextureSize(QSize());
+	CHECK(preview.maxShift() == doctest::Approx(4.0 / 128));
+}
+
 TEST_CASE("performance: a big map opens, edits and selects quickly") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());

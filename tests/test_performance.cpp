@@ -6,14 +6,17 @@
 
 #include <sme/assets.h>
 #include <sme/brush.h>
+#include <sme/edge_round.h>
 #include <sme/fidelity_effects.h>
 #include <sme/filesystem.h>
 #include <sme/map.h>
 #include <sme/material.h>
+#include <sme/snapping.h>
 
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <string>
 
@@ -111,4 +114,95 @@ TEST_CASE("performance: a big map is read and written quickly") {
 	CHECK(read.entities.size() == 4000);
 	CHECK(write < 20.0);
 	CHECK(parse < 30.0);
+}
+
+namespace {
+
+/// The big map of the read/write test: 20 000 blocks in a grid.
+MapDocument bigBlockMap() {
+	MapDocument doc;
+	for (int i = 0; i < 20000; ++i) {
+		const double x = (i % 200) * 80.0, y = (i / 200) * 80.0;
+		Bounds b;
+		b.add({x, y, 0});
+		b.add({x + 64, y + 64, 64});
+		doc.world.solids.push_back(makeBlock(doc, b, i % 2 ? "brick/brickwall001a" : "concrete/concretefloor001a"));
+	}
+	return doc;
+}
+
+/// A side's face pointing along `normal` (the face picked for the edge tools).
+int sideFacing(const Solid& solid, const Vec3& normal) {
+	for (const auto& side : solid.sides) {
+		if (dot(side.plane().normal, normal) > 0.99) return side.id;
+	}
+	return 0;
+}
+
+} // namespace
+
+TEST_CASE("performance: a big map written the way Hammer++ writes it is read, kept and written quickly") {
+	// Hammer++ writes plane points with many digits: every side differs from Mapsmith's own
+	// writing and keeps its layout (the round trip's worst case for time and memory).
+	const MapDocument doc = bigBlockMap();
+	std::string text = doc.serialize();
+	// "(0 0 64)" -> "(0.000000 0.000000 64.000000)", lines ending in CR LF (Hammer on Windows).
+	std::string hammer;
+	hammer.reserve(text.size() * 2);
+	std::size_t at = 0;
+	while (at < text.size()) {
+		const auto end = std::min(text.find('\n', at), text.size());
+		const std::string_view row(text.data() + at, end - at);
+		const bool plane = row.find("\"plane\"") != std::string_view::npos;
+		std::string number;
+		const auto flush = [&] {
+			if (plane && !number.empty() && number.find('.') == std::string::npos) number += ".000000";
+			hammer += number;
+			number.clear();
+		};
+		for (const char c : row) {
+			if (plane && ((c >= '0' && c <= '9') || c == '-' || c == '.')) {
+				number += c;
+				continue;
+			}
+			flush();
+			hammer += c;
+		}
+		flush();
+		hammer += "\r\n";
+		at = end + 1;
+	}
+	auto start = std::chrono::steady_clock::now();
+	const MapDocument read = MapDocument::parse(hammer);
+	const double parse = secondsSince(start);
+	start = std::chrono::steady_clock::now();
+	const std::string again = read.serialize();
+	const double write = secondsSince(start);
+	MESSAGE("20000 brushes as Hammer++ writes them (" << hammer.size() / 1024 / 1024 << " MB): read " << parse << " s, write " << write << " s");
+	REQUIRE(read.world.solids.size() == 20000);
+	CHECK(read.world.solids.front().sides.front().source != nullptr);   // the layout was kept
+	CHECK(again == hammer);
+	CHECK(parse < 30.0);
+	CHECK(write < 20.0);
+}
+
+TEST_CASE("performance: snapping targets and edge rounding in a big map") {
+	MapDocument doc = bigBlockMap();
+	auto start = std::chrono::steady_clock::now();
+	const auto corners = snapCorners(doc, Selection{}, Selection{}, nullptr);
+	const double collect = secondsSince(start);
+	CHECK(corners.size() == 20000u * 8);
+	// Rounding an upright edge of a block in the middle of the map (the preview plans it again
+	// after every change of radius or segments).
+	const Solid& block = doc.world.solids[10100];
+	const FaceRef a{{0, block.id}, sideFacing(block, {1, 0, 0})};
+	const FaceRef b{{0, block.id}, sideFacing(block, {0, 1, 0})};
+	MapDocument scratch;
+	start = std::chrono::steady_clock::now();
+	const auto plan = planEdgeRound(doc, scratch, a, b, 8, 4);
+	const double rounding = secondsSince(start);
+	MESSAGE("20000 brushes: snapping corners collected in " << collect << " s, an edge rounding planned in " << rounding << " s");
+	CHECK(plan.ok());
+	CHECK(collect < 10.0);
+	CHECK(rounding < 10.0);
 }
