@@ -278,10 +278,11 @@ bool Editor::openMap(const QString& path, QString* error) {
 	emit selectionChanged();
 	emit message(tr("Opened %1: %2 brushes, %3 entities").arg(QFileInfo(path).fileName()).arg(m_doc.solidCount()).arg(m_doc.entities.size()));
 	if (!report.clean()) {
-		// The file was damaged (Hammer would refuse it); say what was repaired, saving writes it clean.
-		emit message(tr("The file was damaged: repaired %1 lines with stray quotes, skipped %2 broken brushes. Saving writes a clean file.")
+		// The file was damaged (Hammer would refuse it) or had ids twice; say what was repaired.
+		emit message(tr("The file needed repairs: %1 lines with stray quotes, %2 broken brushes left out, %3 missing or doubled ids renumbered. Saving writes a clean file.")
 		                 .arg(report.repairedLines)
-		                 .arg(report.skippedSolids));
+		                 .arg(report.skippedSolids)
+		                 .arg(report.renumbered));
 		for (const auto& note : report.notes) {
 			emit message(QStringLiteral("  ") + QString::fromStdString(note));
 		}

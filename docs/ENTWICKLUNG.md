@@ -89,7 +89,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `entity_catalog` | FGDs laden (toolpp), Basisklassen auflösen, Helfer (`studio`, `size`, `color`, `iconsprite`); Editor-Sprite einer Klasse/Entity: `edit::classSprite`, `edit::entitySprite` (`sprite()` → eigenes `model`) |
 | `asset_refs` | `modelUsage` (Modelle der Karte mit Anzahl: „Used in this map“ und `crate01 · 3×` in Asset Browser und Models-Seite, `ModelListModel::UsageRole`); welche Assets (Material, Modell, Sound, Partikelsystem, Soundscape) die Auswahl nennt (`selectionAssets`) und was ein Asset benutzt (`objectsUsing`, „Find in map“); Grundlage der „Show in …“-Menüs (`MainWindow::fillAssetMenu`, `AssetMenuFiller` in `app/asset_menu.h`) |
 | `entity_search` | Entities finden: Klasse, Name, `key=value` (Platzhalter `*`/`?`, `wildcardMatch`), Ausgangsziel, Modell, Sound; Abfrage-Syntax mit `class:`/`name:`/`target:`/`model:`/`sound:`, alle Begriffe müssen passen |
-| `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei); beschädigte VMF: `"` im Wert wird zu `'`, Brushes ohne gültige Ebene fallen weg, `VmfLoadReport` (Log beim Öffnen); `"` wird nie geschrieben (`appendQuoted`, `edit::withoutQuotes`) |
+| `keyvalues`, `map` | VMF lesen/schreiben; Unbekanntes bleibt in `extra` (verlustfrei); Laden + Speichern ohne Änderung gibt die Datei Byte für Byte zurück (siehe „VMF-Roundtrip“); beschädigte VMF: `"` im Wert wird zu `'`, Brushes ohne gültige Ebene fallen weg, fehlende/doppelte Ids von Brushes und Entities werden neu vergeben, `VmfLoadReport` (Log beim Öffnen); `"` wird nie geschrieben (`appendQuoted`, `edit::withoutQuotes`); `keyValueDifferences` listet Unterschiede zweier VMF-Texte (Pfad, alt → neu) |
 | `brush` | Flächen aus Ebenen, UV wie die Engine, Picking, Block, Verschieben/Drehen (Texture Lock), Skalieren, Displacements |
 | `displacement` | Displacements: `dispinfo` lesen/schreiben wie Hammer (normals, distances, offsets, offset_normals, alphas, triangle_tags, allowed_verts), anlegen (`makeDisplacement`, Power 2–4, Elevation in den Distanzen), Formen (`sculpt`: Raise/Smooth/Flatten/Noise/Alpha mit Kosinus-Abfall in der Flächenebene), Nähen (`sewDisplacements`), Undo-Schritte in `edit::` |
 | `cubemaps` | env_cubemap-Sonden für die Reflexions-Vorschau: alle Cubemaps mit Raum-Box (`collectCubemaps`, Box aus dem parallax_obb), welche Sonde eine Fläche spiegelt wie VBSP (`probeForFace`: erst `sides`, sonst die nächste), Box-Projektion (`boxProjectedDirection`), Lage der sechs Würfelseiten (`cubeFaceForward`/`cubeFaceUp`/`cubeFaceCoordinates`, der Shader nutzt dieselbe) |
@@ -657,6 +657,43 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   --toggle-collect='sme::app::MainWindow::MainWindow*'` mit `SME_STARTUP_TRACE=quit`.
 - Testdaten erzeugt `tests/fixture.cpp` (HL2 in zwei Bibliotheken, SDK Base 2013, Mapbase-artige Mod, VPKs, Hammer++)
   und `tests/demo.cpp` (prozedurale Texturen, Modell mit Animationen, Sounds, Demo-Karte mit absichtlichen Fehlern).
+
+### VMF-Roundtrip
+
+Ziel: Öffnen und Speichern ohne Änderung gibt die Datei Byte für Byte zurück; eine Änderung ändert nur ihre Stelle
+(Rückmeldung eines Hammer-Nutzers: „open an existing P2:CE map, save it, reopen it in Hammer, and see if anything is lost“).
+
+- **Text der Zahlen:** Werte, die der Editor typisiert (Ebene, `uaxis`/`vaxis`, `rotation`, `lightmapscale`,
+  `smoothing_groups`, Ids, Ausgänge), werden beim Schreiben wieder mit dem gelesenen Text geschrieben, solange dieser
+  Text noch denselben Wert ergibt (`sideValue`, `connectionValue`: neu einlesen und exakt vergleichen). So bleiben
+  `64.000`, `-0`, `1e-005`, `0.00` als Verzögerung, Ausgänge mit weniger oder mehr Feldern und Hammer++' viele
+  Nachkommastellen erhalten; geänderte Werte schreibt `formatNumber` (kürzeste exakte Form). Laden rechnet nichts um
+  (keine Ebenen aus Ecken, keine Texturachsen neu) – nur bearbeitete Objekte ändern sich.
+- **Reihenfolge:** `Side::source`, `Solid::source`, `Entity::source` (`Layout`: Einträge in Dateireihenfolge, Wert mit
+  gelesenem Text, typisierter Unterblock oder „nächster Eintrag aus `extra`“) und `MapDocument::m_layout` (Welt,
+  Entities, Footer-Blöcke wie `hidden { entity }` zwischen Entities). Nur Objekte, deren Datei-Reihenfolge von der
+  Standard-Schreibweise abweicht, behalten ein Layout (Speicher; `standardLayout`, bei Seiten Vergleich mit `sideNode`).
+  Neue Keys kommen hinter den letzten Key der Datei, neue Ausgänge hinter die Keys, neue Brushes hinter den letzten
+  Brush, neue Entities hinter die letzte Entity, neue Extras ans Ende; Keys, die die Datei nicht hatte und die noch den
+  Vorgabewert haben, werden nicht hinzugefügt. Ein unlesbarer typisierter Wert (`"uaxis" "kaputt"`) bleibt als Extra an
+  seiner Stelle und wird erst durch einen echten Wert ersetzt, nie doppelt geschrieben; ein zweites Vorkommen eines
+  typisierten Keys bleibt als Extra erhalten.
+- **Datei:** Zeilenende (`MapDocument::lineEnding`, Hammer unter Windows: CRLF), UTF-8-BOM, letzter Zeilenumbruch.
+- **Hammer++ `vertices_plus`** (exakte Ecken einer Fläche): bleibt, solange die Ebene der Seite die gelesene ist
+  (`keepsCorners`); eine verschobene/geschnittene/neue Fläche verliert ihn, Hammer++ nimmt dann die Ecken aus der Ebene
+  (wie bei VMFs aus Valves Hammer). Das Format des Blocks ist nicht öffentlich beschrieben, deshalb kein Nachrechnen.
+- **Ids:** fehlende oder doppelte Ids von Brushes/Entities (von Werkzeugen, nicht von Hammer) bekommen beim Laden neue
+  (`VmfLoadReport::renumbered`), sonst würde das Bearbeiten des einen den anderen treffen. Seiten-Ids nie (Overlays und
+  `env_cubemap` verweisen auf sie).
+- **Strata / P2:CE:** Eine öffentliche Beschreibung eines geänderten VMF-Formats für Strata Hammer habe ich nicht gefunden
+  (Suche 30.10.2026; developer.valvesoftware.com war aus der Cloud nicht erreichbar, die Wiki-Seiten „Strata Hammer“ und
+  „VMF (Valve Map Format)“ sind die nächsten Quellen). Mapsmith behandelt solche Dateien wie jede VMF: unbekannte Blöcke
+  und Keys bleiben an ihrer Stelle (Test „unknown keys and blocks anywhere“); erfunden wird kein Formatdetail.
+- **Tests:** `tests/test_vmf_roundtrip.cpp` – handgeschriebene Karten im Layout von SDK-2013-Hammer (CRLF, hidden,
+  group, Displacement), Hammer++ (`vertices_plus`, viele Stellen, `cordons`), Portal 2/CS:GO (ESC-Ausgänge,
+  `func_instance`, `triangle_tags`, `-0`) und mit unbekannten Teilen; je Laden/Speichern = Byte-gleich und Bearbeiten
+  eines Objekts = Unterschiede nur dort; dazu 200 zufällige VMF-Bäume. `sme-probe vmf <datei>` vergleicht Datei und
+  Speicherung (`keyValueDifferences`) und listet jede Abweichung.
 
 ## Rezepte
 
