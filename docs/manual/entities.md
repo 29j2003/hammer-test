@@ -46,10 +46,12 @@ Press **Shift+E**. The **Tool** tab lists every entity class of the game, with i
 The class at the top of *Object Properties* is a search list: click it, type a few letters (several words narrow
 it down, e.g. `prop phys`), move with the **arrow keys** and press **Enter**. With an empty search the classes
 related to the current one come first (for `prop_static`: `prop_dynamic`, `prop_physics` …). The keys stay.
-The mouse wheel scrolls the panel; it only changes a drop-down or number field you clicked into first, and it
-never switches between *Keyvalues*, *Outputs* and *Inputs*. The sky list is the exception: rest the mouse on it for a
-moment (without scrolling), then the wheel goes through the skies. Picking another object keeps the panel where you
-had scrolled to.
+The mouse wheel scrolls the panel and never switches between *Keyvalues*, *Outputs* and *Inputs*. Number fields
+(Scale, Shift, Rotation, Lightmap scale …) and sliders change with the wheel when you rest the mouse on them for a
+moment without scrolling, or after clicking into them - tick after tick. Scrolling down the panel past them never
+changes them. Drop-downs change only after a click, so a class or key never changes while you scroll; the sky list is
+the exception: rest the mouse on it, then the wheel goes through the skies. Picking another object keeps the panel
+where you had scrolled to.
 
 Fields that name another entity (a scripted_sequence's *Target NPC*, a *Target*) list every named entity and also the
 ones without a name (NPCs first for an NPC field): pick one and it gets a name in the same step (one undo). You can

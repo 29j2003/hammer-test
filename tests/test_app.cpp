@@ -27,6 +27,7 @@
 #include <QGroupBox>
 #include <QComboBox>
 #include <QStyle>
+#include <QStyleFactory>
 #include <QPalette>
 #include <QListWidget>
 #include <QDialogButtonBox>
@@ -2740,7 +2741,7 @@ TEST_CASE("panels: the wheel scrolls instead of switching, low docks show whole 
 		wheelOn(bar, -120);
 		CHECK(bar->currentIndex() == before);
 	}
-	// A number box without focus does not change either (no wheel focus).
+	// The wheel never gives a number box the keyboard focus (it turns it only when rested on).
 	if (auto* spin = window.properties()->findChild<QAbstractSpinBox*>()) {
 		CHECK(spin->focusPolicy() == Qt::StrongFocus);
 	}
@@ -2787,6 +2788,156 @@ TEST_CASE("panels: the wheel scrolls instead of switching, low docks show whole 
 	window.resizeDocks({dock}, {420}, Qt::Vertical);
 	settle();
 	CHECK(list->iconSize().height() > low);
+}
+
+TEST_CASE("number fields: the wheel turns them when focused or rested on, never while the panel scrolls; arrows are visible") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	// The app's dark theme (main.cpp applies it; the other tests run on Qt's plain style).
+	const QString oldSheet = qApp->styleSheet();
+	const QPalette oldPalette = qApp->palette();
+	const QString oldStyle = qApp->style()->name();
+	applyDarkStyle(*qApp);
+	struct RestoreStyle {
+		QString sheet, style;
+		QPalette palette;
+		~RestoreStyle() {
+			qApp->setStyleSheet(sheet);
+			qApp->setStyle(style);
+			qApp->setPalette(palette);
+		}
+	} restoreStyle{oldSheet, oldStyle, oldPalette};
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	settle();
+
+	// A face of the brick wall: the face panel with Scale, Shift, Rotation, Lightmap scale.
+	FaceRef brick;
+	for (const auto& solid : editor.doc().world.solids) {
+		for (const auto& side : solid.sides) {
+			if (normalizedMaterial(side.material) == "demo/brickwall001" && brick.sideId == 0) brick = {{0, solid.id}, side.id};
+		}
+	}
+	REQUIRE(brick.sideId != 0);
+	editor.setSelectMode(Editor::SelectMode::Face);
+	Selection faces;
+	faces.faces.push_back(brick);
+	editor.setSelection(faces);
+	settle();
+	const auto scaleU = [&] {
+		const Solid* solid = editor.doc().findSolid(brick.solid);
+		for (const auto& side : solid->sides) {
+			if (side.id == brick.sideId) return side.u.scale;
+		}
+		return 0.0;
+	};
+	const auto field = [&] { return window.properties()->findChild<QDoubleSpinBox*>("faceScaleU"); };
+	REQUIRE(field());
+	window.properties()->grab().save(qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath()) + "/face_numbers.png");
+
+	// The up and down arrows show light on the dark field (they were black on black).
+	{
+		const QImage image = field()->grab().toImage();
+		int light = 0;
+		for (int y = 2; y < image.height() - 2; ++y) {
+			for (int x = std::max(0, image.width() - 18); x < image.width() - 2; ++x) {
+				if (qGray(image.pixel(x, y)) > 140) ++light;
+			}
+		}
+		CHECK(light >= 4);
+	}
+
+	const auto wheelAt = [](QWidget* target, QPoint global, int delta) {
+		QWheelEvent wheel(target->mapFromGlobal(QPointF(global)), QPointF(global), {}, {0, delta}, Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+		QApplication::sendEvent(target, &wheel);
+	};
+	const auto restOn = [](QWidget* target, QPoint global) {
+		QEnterEvent enter(target->mapFromGlobal(QPointF(global)), target->mapFromGlobal(QPointF(global)), QPointF(global));
+		QApplication::sendEvent(target, &enter);
+	};
+
+	// Focused (a click into its text): every tick (0.05) turns it, also after the panel rebuilt itself.
+	window.activateWindow();
+	REQUIRE(QTest::qWaitForWindowActive(&window));
+	const double start = scaleU();
+	QTest::mouseClick(field()->findChild<QLineEdit*>(), Qt::LeftButton);
+	settle();
+	REQUIRE(field()->hasFocus());   // the focus sits in its own line edit
+	for (int i = 0; i < 2; ++i) {
+		// (Sent to the number box: Qt hands only real wheel events on from the line edit.)
+		wheelAt(field(), field()->mapToGlobal(QPoint(5, 5)), 120);
+		settle();
+	}
+	CHECK(scaleU() == doctest::Approx(start + 0.1));
+	CHECK(field()->hasFocus());   // the rebuilt panel gave the focus back
+
+	// Without focus: just arrived, the wheel scrolls the panel; rested, it turns the number - tick
+	// after tick, though each change rebuilds the panel.
+	window.view3D()->setFocus();
+	settle();
+	REQUIRE_FALSE(field()->hasFocus());
+	const QPoint over = field()->mapToGlobal(QPoint(field()->width() / 3, field()->height() / 2));
+	restOn(field(), over);
+	wheelAt(field(), over, 120);
+	settle();
+	CHECK(scaleU() == doctest::Approx(start + 0.1));
+	QTest::qWait(700);
+	for (int i = 0; i < 2; ++i) {
+		CHECK(field()->mapToGlobal(QPoint(field()->width() / 3, field()->height() / 2)) == over);
+		wheelAt(field(), over, 120);
+		settle();
+	}
+	CHECK(scaleU() == doctest::Approx(start + 0.2));
+
+	// While the panel is being scrolled, a field under the mouse does not change.
+	auto* scroll = window.properties()->findChild<QScrollArea*>();
+	REQUIRE(scroll);
+	wheelAt(scroll->viewport(), over, -120);
+	wheelAt(field(), over, 120);
+	settle();
+	CHECK(scaleU() == doctest::Approx(start + 0.2));
+
+	// A field the scrolling slid under the resting mouse: not rested on, the panel scrolls.
+	QTest::qWait(700);
+	auto* rotation = window.properties()->findChild<QDoubleSpinBox*>("faceRotation");
+	REQUIRE(rotation);
+	const double turned = rotation->value();
+	restOn(field(), over);   // the mouse came to rest on Scale U ...
+	QTest::qWait(400);
+	wheelAt(rotation, over, 120);   // ... and Rotation is what lies there now
+	settle();
+	CHECK(window.properties()->findChild<QDoubleSpinBox*>("faceRotation")->value() == doctest::Approx(turned));
+
+	// Drop-downs keep their protection: no focus, no change, however long the mouse rests.
+	editor.setSelectMode(Editor::SelectMode::Object);
+	editor.clearSelection();
+	settle();
+	for (auto* combo : window.properties()->findChildren<QComboBox*>()) {
+		if (combo->objectName() == "skyPicker" || !combo->isVisible() || combo->count() < 2 || combo->hasFocus()) continue;
+		const int index = combo->currentIndex();
+		const QPoint at = combo->mapToGlobal(QPoint(5, 5));
+		restOn(combo, at);
+		QTest::qWait(700);
+		wheelAt(combo, at, -120);
+		CHECK(combo->currentIndex() == index);
+		break;
+	}
 }
 
 TEST_CASE("ux: whole tiles in a low dock, recent popup, the Materials page follows, targets, mod chooser, copying, start page") {
