@@ -47,6 +47,7 @@ struct Selection {
 	void toggle(const FaceRef& ref);
 	/// Drops references to objects that no longer exist (after undo, delete, ...).
 	void prune(const MapDocument& doc);
+	bool operator==(const Selection&) const = default;
 };
 
 namespace edit {

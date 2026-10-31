@@ -53,6 +53,7 @@ struct PickResult {
 	SolidRef solid;          ///< solidId != 0 for brushes
 	int entityId = 0;        ///< Point entity or brush entity owning the solid
 	int sideId = 0;          ///< Face that was hit (brushes)
+	int ties = 1;            ///< Brushes hit on the same surface (overlapping, flush or pasted in place)
 };
 
 /// Draws the map in one view (see the file comment); every Viewport owns one.
@@ -135,7 +136,10 @@ public:
 	/// their triangles (a hit in their box only counts as at its back side), and a point entity's
 	/// box wins over a model up to 16 units in front of it - the helper at an NPC's feet stays
 	/// clickable; a helper's see-through stand-in loses ties to the NPC it stands for.
-	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false) const;
+	/// Brushes hit on the same surface (a copy pasted in place, a brush flush with a floor it lies
+	/// in) tie: the smaller one comes first, then the newer one; `cycle` takes the next of them
+	/// (a second click on the same spot), so every one of them can be reached.
+	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false, int cycle = 0) const;
 
 	/// Numbers about the scene and the last frame (status bar and its tooltip).
 	[[nodiscard]] Bounds sceneBounds() const { return m_sceneBounds; }

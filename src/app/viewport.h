@@ -274,6 +274,11 @@ private:
 	// Input state
 	Drag m_drag = Drag::None;
 	QPointF m_pressPos, m_lastPos;
+	// The last click that selected something: a click on the same spot takes the next brush on that
+	// surface (SceneRenderer::pick, `cycle`).
+	std::optional<QPointF> m_cyclePos;
+	int m_cycle = 0;
+	Selection m_cycleSelection;
 	/// Entity tool: the armed point entity where a click would place it (box, model).
 	struct Ghost {
 		Bounds box;

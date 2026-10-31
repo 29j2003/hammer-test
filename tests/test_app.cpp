@@ -57,6 +57,7 @@
 #include <QtConcurrent>
 #include <QTemporaryDir>
 #include <QTest>
+#include <set>
 #include <QTabWidget>
 #include <QMessageBox>
 #include <QTimer>
@@ -7067,6 +7068,165 @@ TEST_CASE("resizing: the side stops at another brush's corner off the grid, the 
 	emit status->linkActivated("objects");
 	CHECK(editor.objectSnap());
 	CHECK(check->isChecked());
+}
+
+TEST_CASE("picking: brushes stay clickable after resizing, pasting and tying them to an entity") {
+	// Julius (31.10.2026): after stretching a brush with a side square (also after pasting it or
+	// tying it to an entity) it could not be clicked any more, from above or below.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	editor.setGrid(16);
+	editor.setShapeOptions(ShapeOptions{});
+	Viewport* view = window.view3D();
+	const auto lookFrom = [&](const QVector3D& at, float pitch) {
+		view->camera().position = at;
+		view->camera().yaw = 90;
+		view->camera().pitch = pitch;
+		view->update();
+		settle();
+	};
+	lookFrom(QVector3D(150, -480, 330), -32);
+	editor.setTool(Editor::Tool::Select);
+
+	// Clicks the world point; true if `ref` (or its entity) is what got selected.
+	const auto clicks = [&](const Vec3& at, const SolidRef& ref) {
+		editor.setSelection({});
+		settle();
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, at));
+		settle();
+		const auto& sel = editor.selection();
+		if (ref.entityId != 0) return sel.entities.size() == 1 && sel.entities.front() == ref.entityId;
+		return sel.solids.size() == 1 && sel.solids.front() == ref;
+	};
+	// Drags the +X side square of the selected brush from x = `from` to x = `to`.
+	const auto stretch = [&](double from, double to, double y, double z) {
+		const Vec3 side{from, y, z};
+		QTest::mouseMove(view, screen(view, side));
+		settle();   // the cursor's own move event arrives late under xvfb: not in the middle of the drag
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, side));
+		QTest::mouseMove(view, screen(view, side + Vec3{8, 0, 0}));
+		QTest::mouseMove(view, screen(view, Vec3{to, y, z}));
+		settle();
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, Vec3{to, y, z}));
+		settle();
+	};
+
+	// (a) Resized with a side square, snap on and off: clickable on its old and its new part.
+	for (const bool snap : {true, false}) {
+		editor.newMap();
+		editor.setObjectSnap(snap);
+		editor.createShape(box({0, 0, 0}, {128, 96, 32}));
+		settle();
+		const SolidRef ref = editor.selection().solids.front();
+		stretch(128, 208, 48, 16);
+		REQUIRE(boundsOf(editor, editor.selection().solids.front()).max.x == doctest::Approx(208));
+		const SolidRef now = editor.selection().solids.front();
+		CHECK(now == ref);
+		CHECK(clicks({40, 48, 32}, now));
+		CHECK(clicks({180, 48, 32}, now));
+	}
+	editor.setObjectSnap(true);
+
+	// (b) Pasted, then resized.
+	editor.newMap();
+	editor.createShape(box({0, 0, 0}, {128, 96, 32}));
+	settle();
+	editor.copySelection();
+	PasteOptions paste;
+	paste.offset = {0, 128, 0};
+	REQUIRE(editor.paste(paste));
+	settle();
+	const SolidRef pasted = editor.selection().solids.front();
+	// (c) Pasted and not resized: clickable.
+	CHECK(clicks({40, 176, 32}, pasted));
+	editor.setSelection(Selection{{pasted}});
+	settle();
+	stretch(128, 208, 176, 16);
+	REQUIRE(boundsOf(editor, pasted).max.x == doctest::Approx(208));
+	CHECK(clicks({40, 176, 32}, pasted));
+	CHECK(clicks({180, 176, 32}, pasted));
+
+	// (d) Tied to an entity, then resized.
+	editor.newMap();
+	editor.createShape(box({0, 0, 0}, {128, 96, 32}));
+	editor.tieSelectionToEntity("func_detail");
+	settle();
+	REQUIRE(editor.selection().entities.size() == 1);
+	const int detail = editor.selection().entities.front();
+	const auto* entity = editor.doc().findEntity(detail);
+	REQUIRE(entity);
+	REQUIRE(entity->solids.size() == 1);
+	const SolidRef tied{detail, entity->solids.front().id};
+	stretch(128, 208, 48, 16);
+	CHECK(boundsOf(editor, tied).max.x == doctest::Approx(208));
+	CHECK(clicks({40, 48, 32}, tied));
+	CHECK(clicks({180, 48, 32}, tied));
+
+	// (e) Snapped off the grid next to another brush, then clicked; also from below.
+	editor.newMap();
+	editor.createShape(box({180.5, 0, 0}, {244.5, 96, 32}));
+	editor.createShape(box({0, 0, 0}, {128, 96, 32}));
+	settle();
+	const SolidRef first = editor.selection().solids.front();
+	stretch(128, 178, 48, 16);
+	CHECK(boundsOf(editor, first).max.x == 180.5);
+	CHECK(clicks({100, 48, 32}, first));
+	lookFrom(QVector3D(150, -480, -300), 32);
+	CHECK(clicks({100, 48, 0}, first));
+	// Undo and redo keep it clickable.
+	editor.undo();
+	editor.redo();
+	settle();
+	lookFrom(QVector3D(150, -480, 330), -32);
+	CHECK(clicks({100, 48, 32}, first));
+
+	// (f) Pasted in place: the copy lies exactly on the original. A second click on the same spot
+	// takes the other one (both can be reached).
+	editor.newMap();
+	editor.createShape(box({0, 0, 0}, {128, 96, 32}));
+	settle();
+	const SolidRef original = editor.selection().solids.front();
+	editor.copySelection();
+	REQUIRE(editor.paste(PasteOptions{}));
+	settle();
+	const SolidRef copy = editor.selection().solids.front();
+	REQUIRE_FALSE(copy == original);
+	editor.setSelection({});
+	settle();
+	std::set<int> reached;
+	for (int i = 0; i < 2; ++i) {
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{40, 48, 32}));
+		settle();
+		REQUIRE(editor.selection().solids.size() == 1);
+		reached.insert(editor.selection().solids.front().solidId);
+	}
+	CHECK(reached.size() == 2);
+
+	// (g) Stretched flush into a floor (its top on the floor's top): the smaller brush wins the
+	// tie on the shared surface, from above and from below.
+	editor.newMap();
+	editor.createShape(box({-256, -256, -64}, {512, 512, 0}));
+	editor.createShape(box({0, 0, -32}, {128, 96, 0}));
+	settle();
+	const SolidRef flush = editor.selection().solids.front();
+	stretch(128, 208, 48, -16);
+	CHECK(boundsOf(editor, flush).max.x == doctest::Approx(208));
+	CHECK(clicks({40, 48, 0}, flush));
+	CHECK(clicks({180, 48, 0}, flush));
 }
 
 namespace {

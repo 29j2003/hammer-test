@@ -1786,7 +1786,11 @@ void Viewport::clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers) 
 	const bool faceMode = m_editor->selectMode() == Editor::SelectMode::Face;
 	const bool add = modifiers & Qt::ControlModifier;
 	Selection selection = add ? m_editor->selection() : Selection{};
-	const auto hit = m_renderer.pick(rayAt(pos), faceMode);
+	// The same spot again, with what that click selected still selected: the next brush on the
+	// surface it hit (a copy pasted in place, a brush flush with the floor it lies in).
+	const bool again = !add && m_cyclePos && QLineF(*m_cyclePos, pos).length() < 4 && m_editor->selection() == m_cycleSelection;
+	m_cycle = again ? m_cycle + 1 : 0;
+	const auto hit = m_renderer.pick(rayAt(pos), faceMode, m_cycle);
 
 	if (hit && faceMode && (modifiers & Qt::AltModifier)) {
 		// Alt+click in face mode: pick the material of the face (eyedropper).
@@ -1822,6 +1826,8 @@ void Viewport::clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers) 
 			}
 		}
 	}
+	m_cyclePos = hit && hit->ties > 1 ? std::optional<QPointF>(pos) : std::nullopt;
+	m_cycleSelection = selection;
 	m_editor->setSelection(std::move(selection));
 }
 

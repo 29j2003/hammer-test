@@ -82,6 +82,44 @@ TEST_CASE("rotate and resize keep brushes valid") {
 	CHECK(isConvexValid(*doc.findSolid(ref)));
 }
 
+TEST_CASE("paste in place, resize, tie to an entity and undo: ids stay unique, every brush stays whole") {
+	// Julius (31.10.2026): a brush could not be clicked after it was pasted and stretched. The map
+	// side of it: after each of these edits every brush has its own id and a closed shape.
+	MapDocument doc;
+	History history;
+	const auto sound = [&doc] {
+		std::set<int> solids, sides;
+		const auto check = [&](const Solid& solid) {
+			CHECK(solids.insert(solid.id).second);
+			for (const auto& side : solid.sides) CHECK(sides.insert(side.id).second);
+			CHECK(isConvexValid(solid));
+		};
+		for (const auto& solid : doc.world.solids) check(solid);
+		for (const auto& entity : doc.entities) {
+			for (const auto& solid : entity.solids) check(solid);
+		}
+	};
+	auto [create, ref] = edit::createBlock(doc, box({0, 0, 0}, {128, 96, 32}), "X");
+	history.push(std::move(create));
+	Selection sel{{ref}};
+	const std::string text = edit::copyObjects(doc, sel);
+	auto pasted = edit::pasteObjects(doc, text, PasteOptions{}, nullptr);
+	REQUIRE(pasted);
+	history.push(std::move(pasted->first));
+	REQUIRE(pasted->second.solids.size() == 1);
+	sound();
+	const Selection copy = pasted->second;
+	history.push(edit::scale(doc, copy, box({0, 0, 0}, {128, 96, 32}), box({0, 0, 0}, {208.5, 96, 32})));
+	sound();
+	CHECK(buildBrushGeometry(*doc.findSolid(copy.solids.front())).bounds.max.x == 208.5);
+	auto tied = edit::tieToEntity(doc, copy, "func_detail", nullptr);
+	history.push(std::move(tied.first));
+	sound();
+	while (history.undo(doc)) sound();
+	CHECK(doc.world.solids.empty());
+	while (history.redo(doc)) sound();
+}
+
 TEST_CASE("entities: place with FGD defaults, rotate, keys, outputs") {
 	EntityClass light;
 	light.name = "light";

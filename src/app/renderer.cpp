@@ -2301,7 +2301,7 @@ Bounds SceneRenderer::instanceBounds(int entityId) const {
 	return it == m_instanceBounds.end() ? Bounds{} : it->second;
 }
 
-std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) const {
+std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, int cycle) const {
 	if (!m_doc) {
 		return std::nullopt;
 	}
@@ -2309,6 +2309,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 	// model's box without a triangle hit counts at its back side. Point entity boxes win over
 	// models up to SMALL_BONUS units in front of them (not over brushes).
 	constexpr double SMALL_BONUS = 16;
+	constexpr double SAME_SURFACE = 0.05;   // brush hits this close count as on the same surface
 	enum class Kind { Brush, Box, Model, StandIn };
 	std::optional<PickResult> best;
 	double bestRank = 0;
@@ -2320,9 +2321,23 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 		Kind kind;
 	};
 	std::vector<Candidate> entityHits;
+	// Every brush hit (one per brush, its nearest face) with the size of its box: on a surface two
+	// brushes share, the nearest one by a hair would always win and the other could never be clicked.
+	struct BrushHit {
+		PickResult result;
+		double volume;
+	};
+	std::vector<BrushHit> brushHits;
+	double volume = 0;   // of the item being tested
 	const auto offer = [&](const PickResult& r, double rank, Kind kind) {
 		if (kind == Kind::Brush) {
 			nearestBrush = std::min(nearestBrush, rank);
+			const auto same = std::find_if(brushHits.begin(), brushHits.end(), [&r](const BrushHit& h) { return h.result.solid == r.solid; });
+			if (same == brushHits.end()) {
+				brushHits.push_back({r, volume});
+			} else if (r.distance < same->result.distance) {
+				same->result = r;
+			}
 			if (!best || rank < bestRank) {
 				best = r;
 				bestRank = rank;
@@ -2339,6 +2354,10 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 		const double boxHit = intersect(ray, item.bounds);
 		if (boxHit < 0 || (best && bestKind == Kind::Brush && boxHit > bestRank + SMALL_BONUS)) {
 			continue;
+		}
+		{
+			const Vec3 size = item.bounds.size();
+			volume = std::max(size.x, 0.0) * std::max(size.y, 0.0) * std::max(size.z, 0.0);
 		}
 		if (item.solid.solidId == 0) {
 			if (facesOnly) {
@@ -2416,7 +2435,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 			// Displacements: pick the triangles; other faces of the brush still use the planes.
 			for (std::size_t t = 0; t + 2 < item.triangles.size(); t += 3) {
 				double dist;
-				if (intersectTriangle(ray, item.triangles[t], item.triangles[t + 1], item.triangles[t + 2], dist) && (!best || dist < bestRank)) {
+				if (intersectTriangle(ray, item.triangles[t], item.triangles[t + 1], item.triangles[t + 2], dist) && (!best || dist < bestRank + SAME_SURFACE)) {
 					PickResult r;
 					r.distance = dist;
 					r.point = ray.origin + ray.direction * dist;
@@ -2429,7 +2448,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 			}
 			continue;
 		}
-		if (const auto hit = intersect(ray, *solid); hit && (!best || hit->distance < bestRank)) {
+		if (const auto hit = intersect(ray, *solid); hit && (!best || hit->distance < bestRank + SAME_SURFACE)) {
 			PickResult r;
 			r.distance = hit->distance;
 			r.point = ray.origin + ray.direction * hit->distance;
@@ -2438,6 +2457,25 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly) co
 			r.entityId = item.entityId;
 			r.sideId = solid->sides[static_cast<std::size_t>(hit->sideIndex)].id;
 			offer(r, hit->distance, Kind::Brush);
+		}
+	}
+	// Brushes on the same surface: the smaller first (a brush lying in a floor, flush with it), then
+	// the newer (a copy pasted in place); `cycle` steps through them.
+	if (best && bestKind == Kind::Brush) {
+		std::vector<BrushHit> ties;
+		for (const auto& hit : brushHits) {
+			if (hit.result.distance <= nearestBrush + SAME_SURFACE) ties.push_back(hit);
+		}
+		std::stable_sort(ties.begin(), ties.end(), [](const BrushHit& a, const BrushHit& b) {
+			if (std::abs(a.volume - b.volume) > 1e-6 * std::max(a.volume, b.volume)) return a.volume < b.volume;
+			if (a.result.entityId != b.result.entityId) return a.result.entityId > b.result.entityId;
+			return a.result.solid.solidId > b.result.solid.solidId;
+		});
+		if (!ties.empty()) {
+			const int n = static_cast<int>(ties.size());
+			best = ties[static_cast<std::size_t>(((cycle % n) + n) % n)].result;
+			best->ties = n;
+			bestRank = best->distance;
 		}
 	}
 	// Point entities and models against the nearest brush and each other.
