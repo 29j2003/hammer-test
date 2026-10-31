@@ -1629,7 +1629,7 @@ void SceneRenderer::bindSky(QOpenGLShaderProgram& program, const Params& params)
 	}
 }
 
-void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass) {
+void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass, const std::vector<std::pair<int, int>>* only) {
 	for (const auto& batch : m_batches) {
 		auto& tex = texture(batch.material);
 		const bool translucent = tex.kind == MaterialInfo::Kind::Translucent || tex.kind == MaterialInfo::Kind::Additive || batch.decal;
@@ -1665,7 +1665,13 @@ void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& par
 		} else {
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		}
-		glDrawArrays(GL_TRIANGLES, batch.first, batch.count);
+		if (only) {
+			for (const auto& [first, count] : *only) {
+				if (first >= batch.first && first < batch.first + batch.count) glDrawArrays(GL_TRIANGLES, first, count);
+			}
+		} else {
+			glDrawArrays(GL_TRIANGLES, batch.first, batch.count);
+		}
 		++m_drawCalls;
 	}
 	program.setUniformValue("u_skyFace", 0);
@@ -1817,6 +1823,16 @@ void SceneRenderer::drawSurfaces(const Params& params, bool probePass) {
 	m_program->setUniformValue("u_faceOverride", -1);
 	m_program->setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
 	drawBatches(*m_program, params, false);
+	// A brush the camera is inside (stretched around the view): its faces from inside, else it would
+	// vanish (back faces are culled) while the outline still shows - and picking finds it from
+	// inside as well (intersectSeen).
+	if (!probePass && params.mode != Mode::Flat2D) {
+		if (const auto around = rangesAround(Vec3{params.cameraPosition.x(), params.cameraPosition.y(), params.cameraPosition.z()}); !around.empty()) {
+			glCullFace(GL_FRONT);
+			drawBatches(*m_program, params, false, &around);
+			glCullFace(GL_BACK);
+		}
+	}
 	drawModels(*m_program, false, nullptr);
 	glBindVertexArray(m_vao);
 	glEnable(GL_CULL_FACE);
@@ -2301,7 +2317,27 @@ Bounds SceneRenderer::instanceBounds(int entityId) const {
 	return it == m_instanceBounds.end() ? Bounds{} : it->second;
 }
 
-std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, int cycle) const {
+std::vector<std::pair<int, int>> SceneRenderer::rangesAround(const Vec3& point) const {
+	std::vector<std::pair<int, int>> ranges;
+	if (!m_doc) return ranges;
+	for (const auto& item : m_pickItems) {
+		if (item.solid.solidId == 0 || item.detached || !item.triangles.empty()) continue;
+		if (point.x < item.bounds.min.x || point.y < item.bounds.min.y || point.z < item.bounds.min.z || point.x > item.bounds.max.x ||
+		    point.y > item.bounds.max.y || point.z > item.bounds.max.z) continue;
+		const auto* solid = m_doc->findSolid(item.solid);
+		if (!solid || !containsPoint(*solid, point)) continue;
+		if (const auto it = m_solidFaces.find(solidKey(item.solid)); it != m_solidFaces.end()) {
+			for (const int face : it->second) {
+				if (face >= 0 && static_cast<std::size_t>(face) < m_rangesByFace.size() && m_rangesByFace[static_cast<std::size_t>(face)].second > 0) {
+					ranges.push_back(m_rangesByFace[static_cast<std::size_t>(face)]);
+				}
+			}
+		}
+	}
+	return ranges;
+}
+
+std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, int cycle, const Selection* preferred) const {
 	if (!m_doc) {
 		return std::nullopt;
 	}
@@ -2448,7 +2484,8 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			}
 			continue;
 		}
-		if (const auto hit = intersect(ray, *solid); hit && (!best || hit->distance < bestRank + SAME_SURFACE)) {
+		// From inside too: a brush stretched around the camera is drawn from inside (drawSurfaces).
+		if (const auto hit = intersectSeen(ray, *solid); hit && (!best || hit->distance < bestRank + SAME_SURFACE)) {
 			PickResult r;
 			r.distance = hit->distance;
 			r.point = ray.origin + ray.direction * hit->distance;
@@ -2466,7 +2503,12 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 		for (const auto& hit : brushHits) {
 			if (hit.result.distance <= nearestBrush + SAME_SURFACE) ties.push_back(hit);
 		}
-		std::stable_sort(ties.begin(), ties.end(), [](const BrushHit& a, const BrushHit& b) {
+		const auto isPreferred = [preferred](const BrushHit& h) {
+			if (!preferred) return false;
+			return h.result.entityId != 0 ? preferred->containsEntity(h.result.entityId) : preferred->contains(h.result.solid);
+		};
+		std::stable_sort(ties.begin(), ties.end(), [&isPreferred](const BrushHit& a, const BrushHit& b) {
+			if (isPreferred(a) != isPreferred(b)) return isPreferred(a);
 			if (std::abs(a.volume - b.volume) > 1e-6 * std::max(a.volume, b.volume)) return a.volume < b.volume;
 			if (a.result.entityId != b.result.entityId) return a.result.entityId > b.result.entityId;
 			return a.result.solid.solidId > b.result.solid.solidId;

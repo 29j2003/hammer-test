@@ -279,6 +279,7 @@ private:
 	std::optional<QPointF> m_cyclePos;
 	int m_cycle = 0;
 	Selection m_cycleSelection;
+	Selection m_cyclePreferred;   ///< Selected when the clicking on one spot began: first among brushes on one surface
 	/// Entity tool: the armed point entity where a click would place it (box, model).
 	struct Ghost {
 		Bounds box;

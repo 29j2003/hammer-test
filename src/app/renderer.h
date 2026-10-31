@@ -139,7 +139,9 @@ public:
 	/// Brushes hit on the same surface (a copy pasted in place, a brush flush with a floor it lies
 	/// in) tie: the smaller one comes first, then the newer one; `cycle` takes the next of them
 	/// (a second click on the same spot), so every one of them can be reached.
-	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false, int cycle = 0) const;
+	/// `preferred`: on a surface several brushes share, a selected one comes first (a click on the
+	/// selected brush's own resize square keeps it); the next click with `cycle` takes the others.
+	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false, int cycle = 0, const Selection* preferred = nullptr) const;
 
 	/// Numbers about the scene and the last frame (status bar and its tooltip).
 	[[nodiscard]] Bounds sceneBounds() const { return m_sceneBounds; }
@@ -246,7 +248,10 @@ private:
 	void drawProbeSpheres(const Params& params);
 	GpuTexture& texture(const QString& material);
 	void uploadTexture(GpuTexture& tex, const MaterialInfo& info);
-	void drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass);
+	/// The faces of the batches; with `only`, just those vertex ranges (first, count).
+	void drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass, const std::vector<std::pair<int, int>>* only = nullptr);
+	/// Vertex ranges of the faces of the brushes the camera is inside: they are drawn from inside.
+	[[nodiscard]] std::vector<std::pair<int, int>> rangesAround(const Vec3& point) const;
 	/// The map's skybox faces on units 5..10 and the cloud settings.
 	void bindSky(QOpenGLShaderProgram& program, const Params& params);
 	void setCommonUniforms(QOpenGLShaderProgram& program, const Params& params, const QMatrix4x4& model);

@@ -189,6 +189,36 @@ std::optional<BrushHit> intersect(const Ray& ray, const Solid& solid) {
 	return BrushHit{tEnter, enterSide};
 }
 
+std::optional<BrushHit> intersectSeen(const Ray& ray, const Solid& solid, bool* inside) {
+	if (inside) *inside = false;
+	if (auto hit = intersect(ray, solid)) return hit;
+	if (!containsPoint(solid, ray.origin)) return std::nullopt;
+	// From inside: the nearest face plane the ray goes out through.
+	double tExit = std::numeric_limits<double>::max();
+	int exitSide = -1;
+	for (std::size_t i = 0; i < solid.sides.size(); ++i) {
+		const auto plane = solid.sides[i].plane();
+		const double denom = dot(plane.normal, ray.direction);
+		if (denom <= 1e-12) continue;
+		const double t = -plane.distanceTo(ray.origin) / denom;
+		if (t >= 0 && t < tExit) {
+			tExit = t;
+			exitSide = static_cast<int>(i);
+		}
+	}
+	if (exitSide < 0) return std::nullopt;
+	if (inside) *inside = true;
+	return BrushHit{tExit, exitSide};
+}
+
+bool containsPoint(const Solid& solid, const Vec3& point, double margin) {
+	if (solid.sides.empty()) return false;
+	for (const auto& side : solid.sides) {
+		if (side.plane().distanceTo(point) > -margin) return false;
+	}
+	return true;
+}
+
 void alignToWorld(Side& side, double scale) {
 	const auto n = side.plane().normal;
 	const double ax = std::abs(n.x), ay = std::abs(n.y), az = std::abs(n.z);

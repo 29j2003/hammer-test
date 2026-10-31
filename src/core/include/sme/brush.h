@@ -46,6 +46,12 @@ struct BrushHit {
 };
 /// Nearest hit of the ray with the brush, or nullopt.
 [[nodiscard]] std::optional<BrushHit> intersect(const Ray& ray, const Solid& solid);
+/// Like intersect, but a ray that starts inside the brush hits the face it leaves through (seen
+/// from inside: a brush stretched around the camera is drawn from inside and must be clickable).
+/// `inside` (optional) tells which case it was.
+[[nodiscard]] std::optional<BrushHit> intersectSeen(const Ray& ray, const Solid& solid, bool* inside = nullptr);
+/// True if the point lies inside the brush (behind every face plane by more than `margin`).
+[[nodiscard]] bool containsPoint(const Solid& solid, const Vec3& point, double margin = 0.01);
 
 /// Hammer's default world-aligned texture axes for a face with this normal.
 void alignToWorld(Side& side, double scale = 0.25);

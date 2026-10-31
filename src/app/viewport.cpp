@@ -1790,7 +1790,10 @@ void Viewport::clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers) 
 	// surface it hit (a copy pasted in place, a brush flush with the floor it lies in).
 	const bool again = !add && m_cyclePos && QLineF(*m_cyclePos, pos).length() < 4 && m_editor->selection() == m_cycleSelection;
 	m_cycle = again ? m_cycle + 1 : 0;
-	const auto hit = m_renderer.pick(rayAt(pos), faceMode, m_cycle);
+	// On a shared surface a selected brush comes first; the clicks after it go on in the order the
+	// first click saw (so they reach the others).
+	if (!again) m_cyclePreferred = m_editor->selection();
+	const auto hit = m_renderer.pick(rayAt(pos), faceMode, m_cycle, faceMode ? nullptr : &m_cyclePreferred);
 
 	if (hit && faceMode && (modifiers & Qt::AltModifier)) {
 		// Alt+click in face mode: pick the material of the face (eyedropper).
