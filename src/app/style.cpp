@@ -101,6 +101,18 @@ QPushButton[role="groupHeader"]:hover { color: #ffffff; background: #2c2c2c; }
 
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { padding: 4px 6px; border: 1px solid #3b3b3b; border-radius: 5px; background: #1e1e1e; selection-background-color: #f5a524; selection-color: #1b1b1b; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #b8801f; }
+QSpinBox, QDoubleSpinBox { padding-right: 20px; }
+QAbstractSpinBox QLineEdit { border: none; border-radius: 0; background: transparent; padding: 0; }
+QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-origin: padding; subcontrol-position: top right; width: 18px; border: none; border-left: 1px solid #333333; border-top-right-radius: 5px; background: #262626; }
+QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-origin: padding; subcontrol-position: bottom right; width: 18px; border: none; border-left: 1px solid #333333; border-top: 1px solid #2e2e2e; border-bottom-right-radius: 5px; background: #262626; }
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: #343434; }
+QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed, QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed { background: #3e3e3e; }
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(:/ui/chevron-up.png); width: 9px; height: 5px; }
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(:/ui/chevron-down.png); width: 9px; height: 5px; }
+QSpinBox::up-arrow:hover, QDoubleSpinBox::up-arrow:hover { image: url(:/ui/chevron-up-hover.png); }
+QSpinBox::down-arrow:hover, QDoubleSpinBox::down-arrow:hover { image: url(:/ui/chevron-down-hover.png); }
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off, QDoubleSpinBox::up-arrow:off { image: url(:/ui/chevron-up-disabled.png); }
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off, QDoubleSpinBox::down-arrow:off { image: url(:/ui/chevron-down-disabled.png); }
 QComboBox::drop-down { border: none; border-left: 1px solid #333333; width: 20px; }
 QComboBox::down-arrow { image: url(:/ui/chevron-down.png); width: 10px; height: 6px; }
 QComboBox::down-arrow:hover, QComboBox::down-arrow:on { image: url(:/ui/chevron-down-hover.png); }

@@ -402,8 +402,23 @@ void PropertiesPanel::rebuild() {
 			}
 		}
 	}
+	// The field being edited keeps the keyboard focus: each change rebuilds the panel (a number
+	// box turned with the wheel or typed into must stay the one being edited).
+	QString focusName;
+	if (m_content) {
+		for (QWidget* w = QApplication::focusWidget(); w && w != m_content; w = w->parentWidget()) {
+			if (!m_content->isAncestorOf(w)) break;
+			if (!w->objectName().isEmpty() && !w->objectName().startsWith(QLatin1String("qt_"))) {
+				focusName = w->objectName();
+				break;
+			}
+		}
+	}
 	m_scroll->setWidget(content);   // deletes the previous content
 	m_content = content;
+	if (!focusName.isEmpty()) {
+		if (auto* field = content->findChild<QWidget*>(focusName); field && field->focusPolicy() != Qt::NoFocus) field->setFocus(Qt::OtherFocusReason);
+	}
 	if (oldScroll > 0 && m_focusConnection < 0) {
 		const auto restore = [this, content, oldScroll, anchorName, anchorOffset] {
 			if (m_content != content) return;
@@ -1929,7 +1944,13 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 	auto* shiftU = spin(first->u.shift, -16384, 16384, 1, 2);
 	auto* shiftV = spin(first->v.shift, -16384, 16384, 1, 2);
 	auto* rotation = spin(first->rotation, -360, 360, 15, 2);
+	scaleU->setObjectName("faceScaleU");
+	scaleV->setObjectName("faceScaleV");
+	shiftU->setObjectName("faceShiftU");
+	shiftV->setObjectName("faceShiftV");
+	rotation->setObjectName("faceRotation");
 	auto* lightmap = new QSpinBox;
+	lightmap->setObjectName("faceLightmapScale");
 	lightmap->setRange(1, 128);
 	lightmap->setValue(first->lightmapScale);
 	lightmap->setKeyboardTracking(false);
