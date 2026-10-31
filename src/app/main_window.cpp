@@ -32,6 +32,7 @@
 #include "panels.h"
 #include "particle_browser.h"
 #include "properties_panel.h"
+#include "road_dialog.h"
 #include "round_edge_dialog.h"
 #include "shortcut_dialog.h"
 #include "sound_browser.h"
@@ -699,6 +700,7 @@ void MainWindow::createDocks() {
 	m_assets->setAssetMenuFiller(filler);
 	m_properties->setAssetMenuFiller(filler);
 	m_modelsPage->setAssetMenuFiller(filler);
+	connect(m_properties, &PropertiesPanel::roadRequested, this, [this] { roadDialog(); });
 	connect(m_properties, &PropertiesPanel::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
@@ -1062,6 +1064,10 @@ void MainWindow::createActions() {
 	brushes->addAction(carve);
 	brushes->addAction(mergeAction);
 	brushes->addAction(round);
+	auto* road = action(tr("Road ..."), QKeySequence(), [this] { roadDialog(); });
+	road->setObjectName("brushesRoad");
+	road->setToolTip(tr("Lays a road material along the selected floor brushes: along the road, across its width, on through curves and ramps"));
+	brushes->addAction(road);
 	auto* water = action(tr("Make water"), QKeySequence(), [this] { m_editor->makeWaterFromSelection(m_assets->materialNames()); });
 	water->setToolTip(tr("Top face water, the other faces nodraw; adds a water_lod_control and a cubemap above the water if missing"));
 	brushes->addAction(water);
@@ -2104,6 +2110,9 @@ void MainWindow::fillAssetMenu(QMenu* menu, const AssetRef& asset, AssetPlace fr
 	case AssetKind::Material:
 		if (from != AssetPlace::AssetBrowser) add(tr("Show in Asset Browser"), "showInAssetBrowser", [this, asset] { revealAsset(asset, RevealIn::AssetBrowser); });
 		if (from != AssetPlace::MaterialsPage) add(tr("Edit in Materials page"), "showInPage", [this, asset] { revealAsset(asset, RevealIn::Page); });
+		if (from == AssetPlace::AssetBrowser && !m_editor->selection().empty()) {
+			add(tr("Apply as road to selection ..."), "applyAsRoad", [this, asset] { roadDialog(QString::fromStdString(asset.name).toUpper()); });
+		}
 		break;
 	case AssetKind::Model:
 		if (from != AssetPlace::AssetBrowser) add(tr("Show in Asset Browser"), "showInAssetBrowser", [this, asset] { revealAsset(asset, RevealIn::AssetBrowser); });
@@ -2143,6 +2152,10 @@ QMenu* MainWindow::buildContextMenu() {
 		if (!selection.solids.empty() && selection.entities.empty() && selection.faces.empty()) {
 			menu.addSeparator();
 			menu.addMenu(m_doorMenu);
+		}
+		// Brushes or faces: the road tool lays a road material along them.
+		if (!selection.solids.empty() || !selection.faces.empty()) {
+			menu.addAction(tr("Road ..."), this, [this] { roadDialog(); })->setObjectName("contextRoad");
 		}
 		if (selection.entities.size() == 1 && selection.solids.empty() && selection.entities.front() != 0) {
 			menu.addSeparator();
@@ -2402,6 +2415,27 @@ void MainWindow::roundEdgeDialog() {
 		const QPoint corner = m_active->mapToGlobal(QPoint(16, 16));
 		m_roundDialog->move(corner);
 	}
+}
+
+void MainWindow::roadDialog(const QString& material) {
+	const auto& selection = m_editor->selection();
+	if (selection.solids.empty() && selection.faces.empty() && selection.entities.empty()) {
+		QMessageBox::information(this, tr("Road"),
+		                         tr("Select the road's floor brushes first (or their top faces in Faces mode).\n"
+		                            "Pieces that touch become one road; the texture runs along it, through curves and up ramps."));
+		return;
+	}
+	if (m_roadDialog) {
+		if (!material.isEmpty()) m_roadDialog->findChild<QLineEdit*>("roadMaterial")->setText(material);
+		m_roadDialog->raise();
+		m_roadDialog->activateWindow();
+		return;
+	}
+	// Beside the map, not in front of it: the views show the result while the values change.
+	m_roadDialog = new RoadDialog(m_editor, material, this);
+	m_roadDialog->setAttribute(Qt::WA_DeleteOnClose);
+	m_roadDialog->show();
+	if (m_active) m_roadDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
 }
 
 void MainWindow::checkForUpdates(bool manual) {

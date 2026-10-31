@@ -55,6 +55,7 @@ add_library(smecore STATIC
 	src/hammer_config.cpp
 	src/heightmap.cpp
 	src/relief_pattern.cpp
+	src/road_texture.cpp
 	src/history.cpp
 	src/keyvalues.cpp
 	src/map.cpp
