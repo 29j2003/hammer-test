@@ -4,6 +4,7 @@
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/edge_round.h>
 
 #include <algorithm>
 #include <cmath>
@@ -261,6 +262,24 @@ ShapePlan planShape(const MapDocument& doc, MapDocument& ids, const Bounds& box,
 			}
 		}
 		plan.carved.push_back({n.ref, std::move(pieces)});
+	}
+	// Nothing broken goes in: a fill or carved piece that is a sliver (or overlaps) makes the
+	// shape go in alone, as without fitting, and says so.
+	bool sound = true;
+	for (const auto* list : {&plan.fill}) {
+		for (const auto& solid : *list) sound = sound && brushProblem(solid).empty();
+	}
+	for (const auto& replacement : plan.carved) {
+		for (const auto& solid : replacement.pieces) sound = sound && brushProblem(solid).empty();
+	}
+	for (std::size_t i = 0; sound && i < plan.fill.size(); ++i) {
+		for (const auto& shape : plan.shape) sound = sound && sharedVolume(plan.fill[i], shape) < 0.5;
+	}
+	if (!sound) {
+		plan.fill.clear();
+		plan.carved.clear();
+		plan.fitted = false;
+		plan.limits.notes.push_back("not fitted to the surroundings here (it would leave a sliver brush)");
 	}
 	return plan;
 }

@@ -7187,7 +7187,7 @@ TEST_CASE("round edge: the dialog shows the result live, across two brushes, a t
 	QTest::qWait(150);
 	CHECK(editor.brushPreview().size() == 2);
 	CHECK(editor.hidden().solids.size() == 2);
-	CHECK(dialog->note().contains("both brushes"));
+	CHECK(dialog->note().contains("2 brushes in one curve"));
 	CHECK(editor.doc().serialize() == before);   // nothing changed yet
 	// Too big: shown limited, still allowed.
 	radius->setValue(300);
@@ -7498,4 +7498,249 @@ TEST_CASE("ux review: problem rows show their buttons, counts read naturally, sh
 	auto* continueButton = window.startPage()->findChild<QPushButton*>("startContinue");
 	REQUIRE(continueButton);
 	CHECK(continueButton->isVisible() != startNew->property("accent").toBool());
+}
+
+TEST_CASE("round edge: every face of a rounded curb can be clicked, a stacked corner in one go, merging only when asked") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	Editor editor;
+	MainWindow window(&editor);
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	const auto block = [&](Vec3 lo, Vec3 hi, const char* material) {
+		Bounds b;
+		b.add(lo);
+		b.add(hi);
+		auto [change, ref] = edit::createBlock(editor.doc(), b, material);
+		editor.commit(std::move(change));
+		return ref;
+	};
+	const auto facing = [&](const SolidRef& ref, Vec3 normal) {
+		for (const auto& side : editor.doc().findSolid(ref)->sides) {
+			if (dot(side.plane().normal, normal) > 0.999) return FaceRef{ref, side.id};
+		}
+		return FaceRef{};
+	};
+	const auto roundSelected = [&](double radius, bool merge = false) {
+		for (auto* a : window.findChildren<QAction*>()) {
+			if (a->text() == "Round or bevel edge ...") a->trigger();
+		}
+		settle();
+		auto* dialog = window.findChild<RoundEdgeDialog*>("roundEdgeDialog");
+		REQUIRE(dialog);
+		dialog->findChild<QDoubleSpinBox*>("roundRadius")->setValue(radius);
+		dialog->findChild<QSpinBox*>("roundSegments")->setValue(0);   // Auto
+		QTest::qWait(150);
+		QString note = dialog->note();
+		auto* mergeButton = dialog->findChild<QPushButton*>("roundMerge");
+		REQUIRE(mergeButton);
+		if (merge) {
+			CHECK(mergeButton->isVisible());
+			CHECK_FALSE(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->isEnabled());
+			mergeButton->click();
+		} else {
+			CHECK_FALSE(mergeButton->isVisible());
+			dialog->accept();
+		}
+		settle();
+		return note;
+	};
+	Viewport* view = window.view3D();
+	const auto look = [&](QVector3D at, float yaw, float pitch) {
+		view->camera().position = at;
+		view->camera().yaw = yaw;
+		view->camera().pitch = pitch;
+		view->update();
+		settle();
+	};
+	// Clicks every face of every brush that faces the camera and shows at its middle; in face
+	// mode the face must be picked, in object mode its brush - and nothing may be resized.
+	const auto clickEverything = [&](Editor::SelectMode mode, const std::optional<SolidRef>& preselect) {
+		int tried = 0, wrong = 0;
+		const std::string before = editor.doc().serialize();
+		const auto solids = editor.doc().world.solids;
+		for (const auto& solid : solids) {
+			for (const auto& face : buildBrushGeometry(solid).faces) {
+				Vec3 c{};
+				for (const auto& v : face.vertices) c = c + v;
+				c = c / double(face.vertices.size());
+				const QVector3D toCamera = view->camera().position - QVector3D(c.x, c.y, c.z);
+				if (QVector3D::dotProduct(toCamera, QVector3D(face.normal.x, face.normal.y, face.normal.z)) <= 1) continue;
+				// Seen at its middle: nothing in between.
+				const Vec3 eye{view->camera().position.x(), view->camera().position.y(), view->camera().position.z()};
+				const Ray ray{eye, normalize(c - eye)};
+				const auto mine = intersect(ray, solid);
+				if (!mine || std::any_of(solids.begin(), solids.end(), [&](const Solid& o) {
+					    const auto hit = intersect(ray, o);
+					    return o.id != solid.id && hit && hit->distance < mine->distance - 0.05;
+				    })) {
+					continue;
+				}
+				QPointF at;
+				if (!view->camera().project(c, view->width(), view->height(), at) || !view->rect().adjusted(4, 4, -4, -4).contains(at.toPoint())) continue;
+				editor.setTool(Editor::Tool::Select);
+				editor.setSelectMode(mode);
+				Selection start;
+				if (preselect) start.solids = {*preselect};
+				editor.setSelection(start);
+				settle();
+				QTest::mouseClick(view, Qt::LeftButton, {}, at.toPoint());
+				settle();
+				++tried;
+				const int sideId = solid.sides[std::size_t(face.sideIndex)].id;
+				const auto& selection = editor.selection();
+				const bool ok = mode == Editor::SelectMode::Face ? selection.faces.size() == 1 && selection.faces[0].sideId == sideId
+				                                                 : selection.solids.size() == 1 && selection.solids[0].solidId == solid.id;
+				if (!ok) {
+					++wrong;
+					MESSAGE("not picked: face " << sideId << " of brush " << solid.id << " at " << c.x << " " << c.y << " " << c.z);
+				}
+			}
+		}
+		CHECK(editor.doc().serialize() == before);   // a click never resizes
+		return std::pair{tried, wrong};
+	};
+
+	// A curb on a floor next to a wall, its end rounded (Julius: its lower faces could not be clicked).
+	const SolidRef floor = block({-256, -256, -16}, {512, 512, 0}, "FLOOR");
+	block({-256, 512, -16}, {512, 528, 128}, "WALL");
+	const SolidRef curb = block({0, 480, 0}, {256, 512, 16}, "CURB");
+	editor.setSelectMode(Editor::SelectMode::Face);
+	Selection faces;
+	faces.faces = {facing(curb, {1, 0, 0}), facing(curb, {0, -1, 0})};
+	editor.setSelection(faces);
+	roundSelected(24);
+	CHECK(editor.doc().world.solids.size() == 3);
+	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+	look(QVector3D(420, 300, 70), 125, -18);
+	view->grabFramebuffer().save(shotDir + "/curb_rounded.png");
+	{
+		const auto [tried, wrong] = clickEverything(Editor::SelectMode::Face, std::nullopt);
+		CHECK(tried >= 4);
+		CHECK(wrong == 0);
+	}
+	{
+		// With the curb selected its resize squares sit on its small faces: a click still picks.
+		const auto [tried, wrong] = clickEverything(Editor::SelectMode::Object, curb);
+		CHECK(tried >= 4);
+		CHECK(wrong == 0);
+	}
+	{
+		// A selected brush's resize squares (also hidden ones) lie over other brushes: a click on
+		// such a spot picks what is seen there instead of doing nothing.
+		const Vec3 eye{view->camera().position.x(), view->camera().position.y(), view->camera().position.z()};
+		int tried = 0;
+		const auto solids = editor.doc().world.solids;
+		for (const auto& selected : solids) {
+			const Bounds b = buildBrushGeometry(selected).bounds;
+			for (int axis = 0; axis < 3; ++axis) {
+				for (const double end : {b.min[axis], b.max[axis]}) {
+					Vec3 square = b.center();
+					square[axis] = end;
+					QPointF at;
+					if (!view->camera().project(square, view->width(), view->height(), at) || !view->rect().adjusted(8, 8, -8, -8).contains(at.toPoint())) continue;
+					const Ray ray{eye, normalize(square - eye)};
+					const Solid* seen = nullptr;
+					double nearest = 1e30;
+					for (const auto& o : solids) {
+						if (const auto hit = intersect(ray, o); hit && hit->distance < nearest) {
+							nearest = hit->distance;
+							seen = &o;
+						}
+					}
+					if (!seen || seen->id == selected.id) continue;
+					editor.setSelectMode(Editor::SelectMode::Object);
+					Selection start;
+					start.solids = {{0, selected.id}};
+					editor.setSelection(start);
+					settle();
+					QTest::mouseClick(view, Qt::LeftButton, {}, at.toPoint());
+					settle();
+					++tried;
+					REQUIRE(editor.selection().solids.size() == 1);
+					CHECK(editor.selection().solids[0].solidId == seen->id);
+				}
+			}
+		}
+		CHECK(tried >= 1);
+	}
+
+	// An inner corner (a cove between the floor and the curb's side): a few strips, shown selected.
+	editor.setSelectMode(Editor::SelectMode::Face);
+	faces.faces = {facing(floor, {0, 0, 1}), facing(curb, {0, -1, 0})};
+	editor.setSelection(faces);
+	const std::size_t beforeCove = editor.doc().world.solids.size();
+	roundSelected(16);
+	CHECK(editor.doc().world.solids.size() > beforeCove);
+	CHECK(editor.doc().world.solids.size() <= beforeCove + 4);   // not a fan of slivers
+	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+	{
+		Selection fills;
+		for (std::size_t i = beforeCove; i < editor.doc().world.solids.size(); ++i) fills.solids.push_back({0, editor.doc().world.solids[i].id});
+		editor.setSelectMode(Editor::SelectMode::Object);
+		editor.setSelection(fills);
+		look(QVector3D(330, 400, 40), 150, -20);
+		view->grabFramebuffer().save(shotDir + "/cove_strips.png");
+		editor.setSelection({});
+	}
+
+	// A platform sunk into a carved floor, seen from inside after rounding: no floor in it.
+	editor.newMap();
+	const SolidRef platform = block({0, 0, -32}, {128, 128, 16}, "PLATFORM");
+	for (const auto& [lo, hi] : std::vector<std::pair<Vec3, Vec3>>{{{-256, -256, -32}, {0, 384, 0}}, {{128, -256, -32}, {384, 384, 0}}, {{0, -256, -32}, {128, 0, 0}}, {{0, 128, -32}, {128, 384, 0}}}) {
+		block(lo, hi, "FLOOR");
+	}
+	editor.setSelectMode(Editor::SelectMode::Face);
+	faces.faces = {facing(platform, {-1, 0, 0}), facing(platform, {0, -1, 0})};
+	editor.setSelection(faces);
+	roundSelected(40);
+	CHECK(editor.doc().world.solids.size() > 5);   // the platform stays one brush, small fills beside it
+	CHECK(editor.doc().findSolid(platform));
+	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+	look(QVector3D(-120, -120, 60), 45, -20);
+	view->grabFramebuffer().save(shotDir + "/platform_outside.png");
+	look(QVector3D(64, 64, 4), 225, -30);
+	view->grabFramebuffer().save(shotDir + "/platform_inside.png");
+
+	// A wall corner stacked from three bands per side, every face of both sides selected.
+	editor.newMap();
+	std::vector<SolidRef> along, across;
+	for (int band = 0; band < 3; ++band) {
+		const double lo = band * 64, hi = lo + 64;
+		along.push_back(block({0, 0, lo}, {256, 16, hi}, "WALL"));
+		across.push_back(block({0, 16, lo}, {16, 256, hi}, "WALL"));
+	}
+	editor.setSelectMode(Editor::SelectMode::Face);
+	faces.faces.clear();
+	for (const auto& ref : along) faces.faces.push_back(facing(ref, {0, -1, 0}));
+	for (const auto& ref : across) faces.faces.push_back(facing(ref, {-1, 0, 0}));
+	editor.setSelection(faces);
+	const QString note = roundSelected(32);
+	CHECK(note.contains("6 brushes in one curve"));
+	CHECK(editor.doc().world.solids.size() == 6);
+	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+	look(QVector3D(-180, -180, 120), 45, -12);
+	view->grabFramebuffer().save(shotDir + "/stacked_corner.png");
+	editor.undo();
+	CHECK(editor.doc().world.solids.size() == 6);
+
+	// A skin thinner than half a unit on the face: rounding apart would leave slivers - only
+	// merging helps, and that waits for the button.
+	editor.newMap();
+	const SolidRef main = block({0, 0, 0}, {128, 128, 64}, "BLOCK");
+	const SolidRef skin = block({128, 0, 0}, {128.375, 128, 64}, "BLOCK");
+	editor.setSelectMode(Editor::SelectMode::Face);
+	faces.faces = {facing(skin, {1, 0, 0}), facing(main, {0, -1, 0}), facing(skin, {0, -1, 0})};
+	editor.setSelection(faces);
+	const QString offer = roundSelected(24, true);
+	CHECK(offer.contains("Merge and round"));
+	CHECK(editor.doc().world.solids.size() == 1);
+	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
 }

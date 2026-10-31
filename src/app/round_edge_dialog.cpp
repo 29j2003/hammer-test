@@ -29,8 +29,10 @@ RoundEdgeDialog::RoundEdgeDialog(Editor* editor, QWidget* parent) : QDialog(pare
 	m_radius->setSuffix(tr(" units"));
 	m_segments = new QSpinBox(this);
 	m_segments->setObjectName("roundSegments");
-	m_segments->setRange(1, 32);
-	m_segments->setValue(QSettings().value("brushes/roundSegments", 4).toInt());
+	m_segments->setRange(0, 32);
+	m_segments->setSpecialValueText(tr("Auto"));   // 0: from the radius (about one per 12 units of curve)
+	m_segments->setToolTip(tr("Auto picks a number that suits the radius; 1 makes a flat bevel."));
+	m_segments->setValue(QSettings().value("brushes/roundSegments", 0).toInt());
 	form->addRow(tr("Radius"), m_radius);
 	form->addRow(tr("Segments (1 = bevel)"), m_segments);
 	m_note = noteLabel(QString());
@@ -41,6 +43,16 @@ RoundEdgeDialog::RoundEdgeDialog(Editor* editor, QWidget* parent) : QDialog(pare
 	m_note->setAlignment(Qt::AlignLeft | Qt::AlignTop);
 	form->addRow(m_note);
 	m_buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+	m_merge = m_buttons->addButton(tr("Merge and round"), QDialogButtonBox::ActionRole);
+	m_merge->setObjectName("roundMerge");
+	m_merge->setToolTip(tr("Merges the pieces of this corner into one brush, then rounds it (one undo step)."));
+	m_merge->hide();
+	connect(m_merge, &QPushButton::clicked, this, [this] {
+		m_soon.stop();
+		m_finished = true;
+		m_editor->roundSelectedEdge(m_radius->value(), m_segments->value(), true);
+		QDialog::accept();
+	});
 	form->addRow(m_buttons);
 	connect(m_buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
 	connect(m_buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -67,8 +79,19 @@ QString RoundEdgeDialog::note() const {
 
 void RoundEdgeDialog::refresh() {
 	if (m_finished) return;
-	const auto plan = m_editor->planSelectedEdgeRound(m_radius->value(), m_segments->value());
+	auto plan = m_editor->planSelectedEdgeRound(m_radius->value(), m_segments->value());
 	auto* ok = m_buttons->button(QDialogButtonBox::Ok);
+	if (!plan.ok() && plan.needsMerge) {
+		// Only as one brush: show what merging would give, but do it only when asked.
+		const auto merged = m_editor->planSelectedEdgeRound(m_radius->value(), m_segments->value(), true);
+		if (merged.ok()) m_editor->setBrushPreview(merged.resultSolids(), merged.replacedRefs());
+		else m_editor->clearBrushPreview();
+		m_note->setText(tr("These pieces can only be rounded together after merging them into one brush - Merge and round?"));
+		ok->setEnabled(false);
+		m_merge->setVisible(merged.ok());
+		return;
+	}
+	m_merge->hide();
 	if (!plan.ok()) {
 		m_editor->clearBrushPreview();
 		m_note->setText(QString::fromStdString(plan.problem));
@@ -77,11 +100,16 @@ void RoundEdgeDialog::refresh() {
 	}
 	m_editor->setBrushPreview(plan.resultSolids(), plan.replacedRefs());
 	QStringList lines;
+	if (plan.corners > 1) lines << tr("%n corners, all with the same rounding.", nullptr, plan.corners);
 	if (plan.clamped) lines << tr("Limited to %1 units - the largest radius that fits here.").arg(plan.radius);
-	if (plan.segments < m_segments->value()) lines << tr("%n segment(s) - more would get shorter than 2 units.", nullptr, plan.segments);
-	if (plan.inner) lines << tr("Inner corner: filled up to the curve with %n brush(es).", nullptr, int(plan.added.size()));
-	if (plan.keptSquare > 0) lines << tr("Stays square where the brushes around cover it (no hole next to them).");
-	if (plan.replacements.size() > 1) lines << tr("Rounded across both brushes.");
+	if (m_segments->value() == 0) lines << tr("%n segment(s) (Auto).", nullptr, plan.segments);
+	else if (plan.segments < m_segments->value()) lines << tr("%n segment(s) - more would leave pieces too thin or too short.", nullptr, plan.segments);
+	if (plan.innerFills > 0) lines << tr("Inner corner: filled up to the curve with %n brush(es).", nullptr, plan.innerFills);
+	if (plan.gapFills > 0) lines << tr("%n small brush(es) fill the space next to the brushes around it (no hole).", nullptr, plan.gapFills);
+	int pieces = 0;
+	for (const auto& replacement : plan.replacements) pieces += replacement.pieces.empty() ? 0 : 1;
+	if (pieces > 1) lines << tr("Rounded across %n brushes in one curve.", nullptr, pieces);
+	if (plan.ignoredFaces > 0) lines << tr("%n face(s) don't touch the corner and were left out.", nullptr, plan.ignoredFaces);
 	m_note->setText(lines.isEmpty() ? tr("The views show the result.") : lines.join('\n'));
 	ok->setEnabled(true);
 }

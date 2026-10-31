@@ -2383,10 +2383,10 @@ void MainWindow::pasteSpecialDialog() {
 }
 
 void MainWindow::roundEdgeDialog() {
-	if (m_editor->selection().faces.size() != 2) {
+	if (m_editor->selection().faces.size() < 2) {
 		QMessageBox::information(this, tr("Round edge"),
-		                         tr("Select the two faces next to the edge first:\nFaces mode (3), click one face, Ctrl+click the other.\n"
-		                            "They may belong to two brushes (the outer corner of an L of two walls)."));
+		                         tr("Select the faces on both sides of the edge first:\nFaces mode (3), click a face, Ctrl+click the others.\n"
+		                            "Each side may be made of several brushes; several corners can be rounded at once."));
 		return;
 	}
 	if (m_roundDialog) {

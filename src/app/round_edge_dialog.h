@@ -1,8 +1,10 @@
-// round_edge_dialog.h - "Round or bevel edge": radius and segments for the corner between the two
-// selected faces, with a live preview in the views. It stays open beside the map (not modal):
-// every change of a value shows the result at once (Editor::setBrushPreview); OK applies it as
-// one undo step, Cancel or closing leaves the map as it was. A radius that does not fit is shown
-// as made smaller ("limited to N units"), never refused (see sme/edge_round.h).
+// round_edge_dialog.h - "Round or bevel edge": radius and segments for every corner the selected
+// faces form (several brushes per side and several corners at once), with a live preview in the
+// views. It stays open beside the map (not modal): every change of a value shows the result at
+// once (Editor::setBrushPreview); OK applies it as one undo step, Cancel or closing leaves the map
+// as it was. A radius that does not fit is shown as made smaller ("limited to N units"), never
+// refused; segments default to Auto (from the radius). Pieces that can only be rounded as one
+// brush get a "Merge and round" button - never done without asking (see sme/edge_round.h).
 
 #pragma once
 
@@ -12,6 +14,7 @@
 class QDialogButtonBox;
 class QDoubleSpinBox;
 class QLabel;
+class QPushButton;
 class QSpinBox;
 
 namespace sme::app {
@@ -41,6 +44,7 @@ private:
 	QSpinBox* m_segments;
 	QLabel* m_note;
 	QDialogButtonBox* m_buttons;
+	QPushButton* m_merge;      ///< "Merge and round" (shown only when merging is the only way)
 	QTimer m_soon;
 	bool m_finished = false;
 };

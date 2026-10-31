@@ -288,6 +288,7 @@ TEST_CASE("round edge: across two brushes of an L, with the preview, clamped rad
 	CHECK_FALSE(preview.inner);
 	CHECK_FALSE(preview.clamped);
 	CHECK(preview.replacements.size() == 2);
+	CHECK(preview.corners == 1);
 	CHECK(doc.serialize() == before);
 
 	History history;
@@ -320,7 +321,8 @@ TEST_CASE("round edge: across two brushes of an L, with the preview, clamped rad
 TEST_CASE("round edge: a platform sunk into a carved floor leaves no hole") {
 	// Julius (30.10.2026, screenshot): rounding the corner of a raised platform showed a dark hole
 	// next to it. The platform reached down into a floor carved around it; cutting its corner all
-	// the way down opened the space the floor had left for it.
+	// the way down opened the space the floor had left for it. (31.10.: the platform must stay one
+	// brush - a split at the floor showed a floor inside it - and the space gets a fill.)
 	MapDocument doc;
 	auto [cp, platform] = edit::createBlock(doc, box({0, 0, -32}, {128, 128, 16}), "PLATFORM");
 	for (const auto& [lo, hi] : std::vector<std::pair<Vec3, Vec3>>{{{-256, -256, -32}, {0, 384, 0}},
@@ -334,24 +336,32 @@ TEST_CASE("round edge: a platform sunk into a carved floor leaves no hole") {
 	MapDocument scratch;
 	const auto plan = planEdgeRound(doc, scratch, west, south, 40, 8);
 	REQUIRE(plan.ok());
-	CHECK(plan.keptSquare == 1);
+	CHECK(plan.gapFills > 0);
+	REQUIRE(plan.replacements.size() == 1);
+	CHECK(plan.replacements[0].pieces.size() == 1);   // the platform stays one brush
 	REQUIRE(edit::roundEdge(doc, west, south, 40, 8));
 	CHECK(allValid(doc));
-	CHECK(doc.world.solids.size() == 6);   // the platform in two: square in the floor, round above
+	CHECK(doc.world.solids.size() == std::size_t(5 + plan.gapFills));
 	CHECK(filled(doc, {1, 1, -16}));        // below the floor: still filled, no hole
 	CHECK_FALSE(filled(doc, {1, 1, 8}));    // above: rounded
 	CHECK(filled(doc, {64, 64, 8}));
-	// The square part's top shows the floor's texture where the rounding left it uncovered.
+	// The platform is rounded all the way down; the fills show the floor's texture on top.
+	CHECK_FALSE(solidContains(*doc.findSolid(platform), {1, 1, -16}));
 	bool floorOnTop = false;
 	for (const auto& solid : doc.world.solids) {
-		const auto* top = sideFacing(solid, {0, 0, 1});
+		if (solid.id == platform.solidId) continue;
 		const auto bounds = buildBrushGeometry(solid).bounds;
-		if (top && bounds.min.x >= -0.01 && bounds.max.x <= 128.01 && bounds.max.z == doctest::Approx(0)) floorOnTop = top->material == "FLOOR";
+		const auto* top = sideFacing(solid, {0, 0, 1});
+		if (top && bounds.min.x >= -0.01 && bounds.max.x <= 40.01 && bounds.max.z == doctest::Approx(0)) floorOnTop = top->material == "FLOOR";
 	}
 	CHECK(floorOnTop);
+	// No brush overlaps another.
+	for (std::size_t i = 0; i < doc.world.solids.size(); ++i) {
+		for (std::size_t j = i + 1; j < doc.world.solids.size(); ++j) CHECK(sharedVolume(doc.world.solids[i], doc.world.solids[j]) < 0.5);
+	}
 }
 
-TEST_CASE("round edge: an inner corner is filled up to the arc") {
+TEST_CASE("round edge: an inner corner is filled up to the arc with few strips") {
 	MapDocument doc;
 	auto [cf, floor] = edit::createBlock(doc, box({0, 0, -16}, {256, 256, 0}), "FLOOR");
 	auto [cw, wall] = edit::createBlock(doc, box({256, 0, -16}, {272, 256, 128}), "WALL");
@@ -361,15 +371,28 @@ TEST_CASE("round edge: an inner corner is filled up to the arc") {
 	const auto plan = planEdgeRound(doc, scratch, top, face, 32, 4);
 	REQUIRE(plan.ok());
 	CHECK(plan.inner);
-	CHECK(plan.added.size() == 4);
+	CHECK(plan.segments == 4);
+	CHECK(plan.added.size() == 4);   // strips against each face and one block in the corner (not a fan of slivers)
 	REQUIRE(edit::roundEdge(doc, top, face, 32, 4));
 	CHECK(doc.world.solids.size() == 6);
 	CHECK(allValid(doc));
+	for (const auto& solid : doc.world.solids) CHECK(brushProblem(solid).empty());
 	CHECK(filled(doc, {254, 128, 2}));            // in the corner
+	CHECK(filled(doc, {230, 128, 0.3}));          // along the floor, under the curve
 	CHECK_FALSE(filled(doc, {256 - 31, 128, 31}));  // outside the arc
+	// No two of them meet in a point only: each touches the face it lies on or the block.
+	for (std::size_t i = 0; i < doc.world.solids.size(); ++i) {
+		for (std::size_t j = i + 1; j < doc.world.solids.size(); ++j) CHECK(sharedVolume(doc.world.solids[i], doc.world.solids[j]) < 0.5);
+	}
 	// Parallel faces cannot make a corner: a reason, no change.
 	const FaceRef bottom{floor, sideFacing(*doc.findSolid(floor), {0, 0, -1})->id};
 	CHECK_FALSE(planEdgeRound(doc, scratch, top, bottom, 16, 4).ok());
+	// A small radius: fewer segments, no strip thinner than two units.
+	const auto small = planEdgeRound(doc, scratch, FaceRef{floor, top.sideId}, face, 8, 8);
+	if (small.ok()) {
+		CHECK(small.segments < 8);
+		for (const auto& solid : small.added) CHECK(brushProblem(solid).empty());
+	}
 }
 
 TEST_CASE("textures across several faces (treat as one)") {

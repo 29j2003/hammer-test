@@ -1202,32 +1202,32 @@ void Editor::mergeSelection() {
 	                            : tr("Merged into one brush - it also fills the space between them (Source brushes are always convex; Ctrl+Z undoes)"));
 }
 
-void Editor::roundSelectedEdge(double radius, int segments) {
-	if (m_selection.faces.size() != 2) {
-		emit message(tr("Select the two faces next to the edge (face mode, Ctrl+click)"));
-		return;
-	}
+void Editor::roundSelectedEdge(double radius, int segments, bool allowMerge) {
 	clearBrushPreview();
-	const auto plan = planEdgeRound(m_doc, m_doc, m_selection.faces[0], m_selection.faces[1], radius, segments);
-	auto change = applyEdgeRound(m_doc, plan, segments > 1 ? "Round edge" : "Bevel edge");
+	const auto plan = planEdgeRounds(m_doc, m_doc, m_selection.faces, radius, segments, EdgeRoundOptions{allowMerge});
+	auto change = applyEdgeRound(m_doc, plan, plan.segments > 1 ? "Round edge" : "Bevel edge");
 	if (!change) {
 		emit message(tr("Not rounded: %1").arg(QString::fromStdString(plan.problem)));
 		return;
 	}
 	commit(std::move(*change));
+	// The faces picked for the corner are gone or cut: select the brushes that came out of it
+	// instead (face mode keeps an empty face selection).
+	Selection selection;
+	if (m_selectMode == SelectMode::Object) {
+		for (const auto& replacement : plan.replacements) {
+			for (const auto& piece : replacement.pieces) selection.solids.push_back({replacement.ref.entityId, piece.id});
+		}
+	}
+	setSelection(std::move(selection));
 	if (plan.clamped) {
 		emit message(tr("Rounded with %1 units - the largest radius that fits here").arg(plan.radius));
 	}
 }
 
-EdgeRoundPlan Editor::planSelectedEdgeRound(double radius, int segments) const {
-	if (m_selection.faces.size() != 2) {
-		EdgeRoundPlan plan;
-		plan.problem = "Select the two faces next to the edge (face mode, Ctrl+click)";
-		return plan;
-	}
+EdgeRoundPlan Editor::planSelectedEdgeRound(double radius, int segments, bool allowMerge) const {
 	MapDocument scratch;   // ids for the preview only; applying plans again with the map's own
-	return planEdgeRound(m_doc, scratch, m_selection.faces[0], m_selection.faces[1], radius, segments);
+	return planEdgeRounds(m_doc, scratch, m_selection.faces, radius, segments, EdgeRoundOptions{allowMerge});
 }
 
 void Editor::setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced) {

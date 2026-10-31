@@ -5,6 +5,7 @@
 #include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/doors.h>
+#include <sme/edge_round.h>
 #include <sme/filesystem.h>
 #include <sme/layout_checks.h>
 #include <sme/optimization_checks.h>
@@ -12,6 +13,7 @@
 #include <sme/text.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -136,7 +138,51 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 	Problem badScale;
 	badScale.kind = Problem::Kind::BadTextureScale;
 	badScale.severity = Problem::Severity::Error;
+	// Brushes exactly on top of each other: the same planes in the same entity.
+	std::map<std::pair<int, std::vector<long long>>, int> seen;
+	const auto deleteFix = [](Problem& p, const SolidRef& ref) {
+		if (ref.entityId == 0) {
+			p.objects.solids.push_back(ref);
+		} else {
+			p.objects.entities.push_back(ref.entityId);
+		}
+		p.from = std::to_string(ref.entityId) + ":" + std::to_string(ref.solidId);
+	};
 	forEachSolid(doc, [&](const SolidRef& ref, const Solid& solid) {
+		if (isConvexValid(solid)) {
+			if (const std::string why = brushProblem(solid); !why.empty()) {
+				Problem p;
+				p.kind = Problem::Kind::BrokenBrush;
+				p.message = "Brush " + std::to_string(solid.id) + " has " + (why.rfind("thinner", 0) == 0 ? "a part " : "") + why + " - VBSP may drop it or leave a hole.";
+				p.howToFix = "Delete it and build it again, or move its corners onto the grid.";
+				deleteFix(p, ref);
+				p.fixLabel = "Delete brush";
+				problems.push_back(std::move(p));
+			}
+			std::vector<long long> signature;
+			for (const auto& side : solid.sides) {
+				const Plane plane = side.plane();
+				for (const double v : {plane.normal.x, plane.normal.y, plane.normal.z}) signature.push_back(std::llround(v * 10000));
+				signature.push_back(std::llround(plane.dist * 100));
+			}
+			// Order-free: sort the planes (four numbers each).
+			std::vector<std::array<long long, 4>> planes;
+			for (std::size_t i = 0; i + 3 < signature.size(); i += 4) planes.push_back({signature[i], signature[i + 1], signature[i + 2], signature[i + 3]});
+			std::sort(planes.begin(), planes.end());
+			signature.clear();
+			for (const auto& plane : planes) signature.insert(signature.end(), plane.begin(), plane.end());
+			const auto [it, fresh] = seen.emplace(std::pair{ref.entityId, signature}, solid.id);
+			if (!fresh) {
+				Problem p;
+				p.kind = Problem::Kind::DuplicateBrush;
+				p.message = "Brush " + std::to_string(solid.id) + " lies exactly on brush " + std::to_string(it->second) +
+				            " (the same brush twice: its faces flicker and a click picks either).";
+				p.howToFix = "Delete one of them.";
+				deleteFix(p, ref);
+				p.fixLabel = "Delete duplicate";
+				problems.push_back(std::move(p));
+			}
+		}
 		if (!isConvexValid(solid)) {
 			Problem p;
 			p.kind = Problem::Kind::InvalidBrush;
@@ -500,7 +546,9 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 
 Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* entities) {
 	switch (problem.kind) {
-		case Problem::Kind::InvalidBrush: {
+		case Problem::Kind::InvalidBrush:
+		case Problem::Kind::BrokenBrush:
+		case Problem::Kind::DuplicateBrush: {
 			const auto colon = problem.from.find(':');
 			if (colon == std::string::npos) {
 				return {};
@@ -508,7 +556,7 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 			const SolidRef ref{std::atoi(problem.from.substr(0, colon).c_str()), std::atoi(problem.from.substr(colon + 1).c_str())};
 			Selection sel;
 			sel.solids.push_back(ref);
-			Transaction t(doc, "Delete invalid brush");
+			Transaction t(doc, problem.kind == Problem::Kind::DuplicateBrush ? "Delete duplicate brush" : "Delete invalid brush");
 			t.touchSolid(ref);
 			if (auto* entity = doc.findEntity(ref.entityId)) {
 				std::erase_if(entity->solids, [&](const Solid& s) { return s.id == ref.solidId; });

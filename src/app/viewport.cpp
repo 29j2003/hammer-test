@@ -1625,6 +1625,15 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 	}
 	switch (drag) {
 		case Drag::Gizmo:
+			// A click (no drag) on a resize square of the Select tool selects what lies under it:
+			// on small faces the square would otherwise cover the whole face, and it could not be
+			// clicked at all.
+			if (m_editor->tool() == Editor::Tool::Select && m_dragHandle >= Handle::ScaleMinX && m_dragHandle <= Handle::ScaleMaxZ &&
+			    QLineF(m_pressPos, releasePos).length() < 4) {
+				cancelInteraction();
+				clickSelect(releasePos, m_pressModifiers);
+				break;
+			}
 			finishGizmoDrag(m_pressModifiers & Qt::ShiftModifier);
 			break;
 		case Drag::BlockBase: {

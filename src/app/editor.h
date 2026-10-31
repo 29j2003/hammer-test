@@ -253,14 +253,14 @@ public:
 	void applyMaterialToSelection(const QString& material);
 	void tieSelectionToEntity(const QString& classname);
 	void moveSelectionToWorld();
-	// Brush tools (Hammer: carve, hollow, merge; rounding edges between two selected faces).
+	// Brush tools (Hammer: carve, hollow, merge; rounding the corners the selected faces form).
 	void hollowSelection(double thickness);
 	void carveWithSelection();
 	void mergeSelection();
-	void roundSelectedEdge(double radius, int segments);
-	/// What rounding the corner between the two selected faces would do (nothing changes; see
-	/// edge_round.h). Not ok() without two selected faces.
-	[[nodiscard]] EdgeRoundPlan planSelectedEdgeRound(double radius, int segments) const;
+	void roundSelectedEdge(double radius, int segments, bool allowMerge = false);
+	/// What rounding every corner the selected faces form would do (nothing changes; see
+	/// edge_round.h). Not ok() without faces on both sides of a corner.
+	[[nodiscard]] EdgeRoundPlan planSelectedEdgeRound(double radius, int segments, bool allowMerge = false) const;
 	/// Brushes shown as they would become (a live preview); `replaced` are hidden meanwhile.
 	void setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced);
 	void clearBrushPreview() { setBrushPreview({}, {}); }

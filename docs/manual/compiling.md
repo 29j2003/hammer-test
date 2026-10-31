@@ -113,6 +113,8 @@ selects the objects in the map, and often a button that fixes it right away. The
 | Problem | Fix button |
 |---|---|
 | A brush is not a valid convex solid (VBSP drops it or fails) | **Delete brush** |
+| A brush with an edge shorter than a quarter unit, or thinner than half a unit somewhere (VBSP may drop it or leave a hole) | **Delete brush** |
+| Two brushes exactly in the same place (their faces flicker and a click picks either one) | **Delete duplicate** |
 | A material does not exist in the game | **Use …** when it looks like a typo |
 | Faces with a texture scale of 0 (the compile fails) | **Reset scale** |
 | An entity class is not in the loaded FGDs | **Rename to …** when it looks like a typo |

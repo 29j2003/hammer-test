@@ -59,6 +59,8 @@ struct Problem {
 		ModBinIncomplete,       ///< A Mapbase mod's bin lacks (or has old) client/server/shader DLLs (action installFeatures)
 		NearEngineLimit,        ///< optimization_checks: 85 % or more of a MAX_MAP_* limit (map_budget)
 		DetailCandidates,       ///< optimization_checks: world brushes that are only details (fix: tie to func_detail)
+		BrokenBrush,            ///< A brush VBSP may drop or leave a hole for: a tiny edge, paper thin (fix: delete)
+		DuplicateBrush,         ///< Two brushes exactly in one place (faces flicker, clicks pick either; fix: delete one)
 	};
 
 	Severity severity = Severity::Warning;
