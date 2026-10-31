@@ -2020,6 +2020,11 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 		++index;
 	}
 	jv->addLayout(jg);
+	auto* road = new QPushButton(tr("Road ..."));
+	road->setObjectName("faceRoad");
+	road->setToolTip(tr("Lay a road material along the selected faces: along the road, across its width, on through curves and ramps"));
+	connect(road, &QPushButton::clicked, this, &PropertiesPanel::roadRequested);
+	jv->addWidget(road);
 	layout->addWidget(justifyBox);
 
 	if (faces.size() == 2 && faces[0].solid == faces[1].solid) {

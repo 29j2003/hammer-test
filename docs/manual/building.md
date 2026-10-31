@@ -254,6 +254,23 @@ Example: a spiral of 12 pillars. Copy one pillar, *Number of copies* 11, *Offset
   center, as one undo step.
 - **Drop to floor** (Ctrl+Shift+F) lets the selected objects fall straight down onto what is below them.
 
+## Roads
+
+Select the floor brushes of a road (or their top faces in Faces mode), right-click and pick
+**Road ...** (also in the **Brushes** menu, under **Justify** in the face panel, and as **Apply as
+road to selection ...** on a material in the Asset Browser). Pick the road material and press OK.
+
+- Pieces that touch become one road: the texture runs **along** it, spans **exactly the road's
+  width** (or *Fit width* times), and carries on from piece to piece, so the lane line has no jumps.
+- **Curves** made with *Round or bevel edge* or arch strips: every strip turns with the curve and
+  the lane stays in the middle.
+- **Ramps**: the texture is measured along the slope, so it is not stretched.
+- **Texture runs along**: *Auto* takes the texture's longer side (V for square textures); choose U
+  or V if your texture runs the other way. **Flip direction** turns it around.
+- **Side material**: optional, for the road's standing sides (kerbs). Bottoms and walls stay as
+  they are.
+- The views show the result while you change the settings; OK applies it as one undo step.
+
 ## Make water
 
 Build a block where the water should be (its top is the surface), select it and choose **Brushes > Make water**

@@ -122,6 +122,7 @@
 #include "compile.h"
 #include "compile_window.h"
 #include "properties_panel.h"
+#include "road_dialog.h"
 #include "round_edge_dialog.h"
 #include "ship_panel.h"
 #include "toggle_switch.h"
@@ -7227,6 +7228,152 @@ TEST_CASE("picking: brushes stay clickable after resizing, pasting and tying the
 	CHECK(boundsOf(editor, flush).max.x == doctest::Approx(208));
 	CHECK(clicks({40, 48, 0}, flush));
 	CHECK(clicks({180, 48, 0}, flush));
+}
+
+TEST_CASE("road: select an L-shaped road with a curve, Road ..., OK - the texture runs along it; undo") {
+	// Julius (31.10.2026): "There should be a road tool ... select all these, and right-click Road."
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	// A generated road texture (256 x 512, tall: V runs along the road): dirt, a dark lane
+	// in the middle, light kerb stripes at both sides, dashes along it.
+	{
+		ImageRgba image;
+		image.width = 256;
+		image.height = 512;
+		image.pixels.resize(std::size_t(image.width) * image.height * 4);
+		for (int y = 0; y < image.height; ++y) {
+			for (int x = 0; x < image.width; ++x) {
+				int r = 150 + (x * 7 + y * 13) % 23, g = 110 + (x * 5 + y * 3) % 17, b = 70;
+				if (x < 10 || x >= 246) r = g = b = 210;                                  // kerb lines
+				if (std::abs(x - 128) < 6 && (y / 64) % 2 == 0) r = g = 235, b = 60;      // dashed lane, yellow
+				auto* px = &image.pixels[(std::size_t(y) * image.width + x) * 4];
+				px[0] = std::byte(r);
+				px[1] = std::byte(g);
+				px[2] = std::byte(b);
+				px[3] = std::byte(255);
+			}
+		}
+		const auto vtf = encodeVtf(image, false, false, 512);
+		REQUIRE(vtf);
+		std::filesystem::create_directories(f.mod / "materials/road");
+		std::ofstream out(f.mod / "materials/road/demo_road.vtf", std::ios::binary);
+		out.write(reinterpret_cast<const char*>(vtf->data()), std::streamsize(vtf->size()));
+		out.close();
+		test::writeText(f.mod / "materials/road/demo_road.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"road/demo_road\"\n}\n");
+	}
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+
+	// The road as Julius builds it: a straight piece, a curve of strips, a straight piece - all
+	// with the road material, world aligned (the texture's direction wrong on part of it).
+	std::vector<SolidRef> pieces;
+	const auto add = [&](std::vector<Vec3> points) {
+		auto solid = solidFromPoints(editor.doc(), points, "ROAD/DEMO_ROAD");
+		REQUIRE(solid);
+		for (auto& side : solid->sides) alignToWorld(side, 0.5);
+		const SolidRef ref{0, solid->id};
+		Transaction t(editor.doc(), "Road piece");
+		t.touchSolid(ref);
+		editor.doc().world.solids.push_back(*solid);
+		editor.commit(t.finish());
+		pieces.push_back(ref);
+	};
+	const auto box = [](double x0, double y0, double x1, double y1) {
+		return std::vector<Vec3>{{x0, y0, 0}, {x1, y0, 0}, {x0, y1, 0}, {x1, y1, 0}, {x0, y0, 16}, {x1, y0, 16}, {x0, y1, 16}, {x1, y1, 16}};
+	};
+	add(box(-512, 0, 512, 256));
+	const auto at = [](double r, double degrees, double z) {
+		const double a = degrees * std::numbers::pi / 180.0;
+		return Vec3{512 + r * std::cos(a), 512 + r * std::sin(a), z};
+	};
+	for (int k = 0; k < 6; ++k) {
+		const double s = -90 + 15.0 * k, e = s + 15;
+		add({at(256, s, 0), at(512, s, 0), at(256, e, 0), at(512, e, 0), at(256, s, 16), at(512, s, 16), at(256, e, 16), at(512, e, 16)});
+	}
+	add(box(768, 512, 1024, 1536));
+	const std::string before = editor.doc().serialize();
+
+	Viewport* view = window.view3D();
+	const auto shoot = [&](const QString& name) {
+		view->camera().position = QVector3D(300, -500, 1300);
+		view->camera().yaw = 70;
+		view->camera().pitch = -58;
+		view->update();
+		settle();
+		QTest::qWait(300);   // the road texture loads in the background
+		settle();
+		view->grabFramebuffer().save(shotDir + "/" + name);
+	};
+	shoot("road_before.png");
+
+	Selection selection;
+	selection.solids = pieces;
+	editor.setSelection(selection);
+	// The right-click menu offers it for brushes ...
+	std::unique_ptr<QMenu> menu(window.buildContextMenu());
+	CHECK(menu->findChild<QAction*>("contextRoad") != nullptr);
+	menu.reset();
+	// ... and the Brushes menu.
+	auto* action = window.findChild<QAction*>("brushesRoad");
+	REQUIRE(action);
+	action->trigger();
+	settle();
+	auto* dialog = window.findChild<RoadDialog*>("roadDialog");
+	REQUIRE(dialog);
+	dialog->findChild<QLineEdit*>("roadMaterial")->setText("ROAD/DEMO_ROAD");
+	QTest::qWait(150);
+	settle();
+	INFO("note: " << dialog->note().toStdString());
+	auto* ok = dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok);
+	REQUIRE(ok->isEnabled());
+	CHECK(dialog->note().contains("8 faces"));
+	CHECK(dialog->note().contains("1 road"));
+	CHECK(dialog->note().contains("V (down the picture)"));   // the tall texture runs along
+	CHECK(editor.brushPreview().size() == 8);                 // the live preview
+	CHECK(editor.doc().serialize() == before);                // the map itself untouched yet
+	dialog->accept();
+	settle();
+	CHECK(editor.brushPreview().empty());
+
+	// The top faces carry the road along the curve: at the centre line of the first common
+	// edge both pieces have the same texel, and the lane (the texture's middle) runs there.
+	const auto top = [&](const SolidRef& ref) -> const Side& {
+		const Solid* solid = editor.doc().findSolid(ref);
+		for (const auto& side : solid->sides) {
+			if (side.plane().normal.z > 0.9) return side;
+		}
+		FAIL("no top face");
+		return solid->sides.front();
+	};
+	const Vec3 seam{512, 128, 16};
+	const auto texel = [](const Side& side, const Vec3& p) { return textureCoordinate(side, p); };
+	const double dv = std::fmod(std::abs(texel(top(pieces[0]), seam).v - texel(top(pieces[1]), seam).v), 512);
+	CHECK((dv < 0.5 || dv > 511.5));
+	const double lane = std::fmod(texel(top(pieces[0]), seam).u + 2560, 256);
+	CHECK(std::abs(lane - 128) < 0.5);
+	editor.setSelection({});
+	shoot("road_after.png");
+
+	// One undo step gives the road back as it was.
+	editor.undo();
+	settle();
+	CHECK(editor.doc().serialize() == before);
 }
 
 namespace {

@@ -1227,6 +1227,25 @@ void Editor::roundSelectedEdge(double radius, int segments, bool allowMerge) {
 	}
 }
 
+RoadPlan Editor::planSelectedRoad(const RoadOptions& options) const {
+	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
+	const auto size = [files](const std::string& material) {
+		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
+	};
+	return planRoad(m_doc, roadFaces(m_doc, m_selection), options, size);
+}
+
+void Editor::applySelectedRoad(const RoadOptions& options) {
+	clearBrushPreview();
+	const auto plan = planSelectedRoad(options);
+	if (plan.empty()) {
+		emit message(tr("No road: select the road's brushes (or their top faces) first"));
+		return;
+	}
+	commit(edit::applyRoad(m_doc, plan));
+	emit message(tr("Road laid over %n face(s)", nullptr, int(plan.faces.size())));
+}
+
 EdgeRoundPlan Editor::planSelectedEdgeRound(double radius, int segments, bool allowMerge) const {
 	MapDocument scratch;   // ids for the preview only; applying plans again with the map's own
 	return planEdgeRounds(m_doc, scratch, m_selection.faces, radius, segments, EdgeRoundOptions{allowMerge});

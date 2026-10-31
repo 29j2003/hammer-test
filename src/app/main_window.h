@@ -36,6 +36,7 @@ class QContextMenuEvent;
 namespace sme::app {
 
 class RoundEdgeDialog;
+class RoadDialog;
 class AssetBrowser;
 class DockLayout;
 class CompileWindow;
@@ -168,6 +169,8 @@ private:
 	void buildCubemapsInCompile();
 	void showContextMenu(const QPoint& globalPos);
 	void roundEdgeDialog();
+	/// "Road ...": the road tool over the selection (`material`: the road material to start with).
+	void roadDialog(const QString& material = {});
 	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).
 	void pasteHere();
 	/// Brushes > Transform: exact move, rotation and scale.
@@ -210,6 +213,7 @@ private:
 	bool m_mapHidden = false;
 	QByteArray m_mapDockState;                  ///< The docks' layout before another tab put them away
 	QPointer<ImportDialog> m_importDialog;     ///< The open import dialog
+	QPointer<RoadDialog> m_roadDialog;          ///< The open "Road" dialog
 	QPointer<RoundEdgeDialog> m_roundDialog;   ///< The open "Round or bevel edge" dialog
 	bool m_reloadPending = false;               ///< The game is read again soon (the mod's files changed)
 	bool m_quad = false;

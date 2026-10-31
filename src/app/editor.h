@@ -18,6 +18,7 @@
 #include <sme/clipboard.h>
 #include <sme/doors.h>
 #include <sme/edge_round.h>
+#include <sme/road_texture.h>
 #include <sme/editing.h>
 #include <sme/fidelity_look.h>
 #include <sme/visibility.h>
@@ -261,6 +262,11 @@ public:
 	/// What rounding every corner the selected faces form would do (nothing changes; see
 	/// edge_round.h). Not ok() without faces on both sides of a corner.
 	[[nodiscard]] EdgeRoundPlan planSelectedEdgeRound(double radius, int segments, bool allowMerge = false) const;
+	/// Road tool: the road over the selected brushes' top faces (or the selected faces), not yet
+	/// applied (for the live preview); the texture size comes from the game's VTF.
+	[[nodiscard]] RoadPlan planSelectedRoad(const RoadOptions& options) const;
+	/// Applies the road (one undo step, "Road"); clears the preview.
+	void applySelectedRoad(const RoadOptions& options);
 	/// Brushes shown as they would become (a live preview); `replaced` are hidden meanwhile.
 	void setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced);
 	void clearBrushPreview() { setBrushPreview({}, {}); }
