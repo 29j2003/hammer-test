@@ -394,6 +394,31 @@ TEST_CASE("ray picking hits the nearest face") {
 	CHECK_FALSE(intersect(Ray{{0, 0, 500}, {0, 0, 1}}, solid));
 }
 
+TEST_CASE("ray picking from inside a brush hits the face it leaves through") {
+	// Julius (31.10.2026): a brush stretched around the camera could not be clicked any more.
+	MapDocument doc;
+	Bounds box;
+	box.add({0, 0, 0});
+	box.add({576, 832, 336});
+	const Solid solid = makeBlock(doc, box, "dev/dev_blendmeasure2");
+	CHECK(containsPoint(solid, {288, 200, 300}));
+	CHECK_FALSE(containsPoint(solid, {288, 200, 400}));
+	CHECK_FALSE(containsPoint(solid, {0, 200, 100}));   // on a face: not inside
+	CHECK_FALSE(intersect(Ray{{288, 200, 300}, {0, 1, 0}}, solid));   // the plain test: nothing from inside
+	bool inside = false;
+	const auto out = intersectSeen(Ray{{288, 200, 300}, {0, 1, 0}}, solid, &inside);
+	REQUIRE(out);
+	CHECK(inside);
+	CHECK(out->distance == doctest::Approx(632));
+	CHECK(solid.sides[std::size_t(out->sideIndex)].plane().normal.y == doctest::Approx(1));
+	// From outside it is the same as intersect.
+	const auto from = intersectSeen(Ray{{288, 200, 500}, {0, 0, -1}}, solid, &inside);
+	REQUIRE(from);
+	CHECK_FALSE(inside);
+	CHECK(from->distance == doctest::Approx(164));
+	CHECK_FALSE(intersectSeen(Ray{{288, 200, 500}, {0, 0, 1}}, solid));
+}
+
 TEST_CASE("new blocks, transforms, texture lock") {
 	MapDocument doc;
 	Bounds box;

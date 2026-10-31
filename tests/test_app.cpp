@@ -7,6 +7,8 @@
 
 #include "fixture.h"
 
+#include <random>
+
 #include <QApplication>
 #include <QCursor>
 #include <QAction>
@@ -7676,6 +7678,366 @@ TEST_CASE("road: a T junction, a corner and a road of two widths - one scale per
 	dialog->reject();
 	settle();
 	CHECK(editor.brushPreview().empty());
+}
+
+TEST_CASE("picking: a copy pasted in place and stretched far stays clickable everywhere") {
+	// Julius (31.10.2026, video): a thin wall (576 x 16 x 336), Paste special with the defaults
+	// (offset 0, next to the copied objects = in place), its side square dragged far (576 x 832 x
+	// 336), released: clicking the big brush gave nothing (worldspawn), near its foot the brushes
+	// under it.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.setGrid(16);
+	editor.setShapeOptions(ShapeOptions{});
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(288, -1100, 1250);
+	view->camera().yaw = 90;
+	view->camera().pitch = -42;
+	editor.setTool(Editor::Tool::Select);
+
+	const auto clicks = [&](const Vec3& at, const SolidRef& ref) {
+		editor.setSelection({});
+		settle();
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, at));
+		settle();
+		const auto& sel = editor.selection();
+		return sel.solids.size() == 1 && sel.solids.front() == ref;
+	};
+	// Drags the selection's +Y side square from y = `from` to y = `to` (at x, z).
+	const auto stretch = [&](double from, double to, double x, double z) {
+		const Vec3 side{x, from, z};
+		QTest::mouseMove(view, screen(view, side));
+		settle();
+		QTest::mousePress(view, Qt::LeftButton, {}, screen(view, side));
+		QTest::mouseMove(view, screen(view, side + Vec3{0, 8, 0}));
+		QTest::mouseMove(view, screen(view, Vec3{x, to, z}));
+		settle();
+		QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, Vec3{x, to, z}));
+		settle();
+	};
+
+	struct Case {
+		const char* name;
+		bool special;   // Paste special (unique names) instead of Ctrl+V
+		int copies;
+		bool snap;
+		bool move;      // moved instead of stretched
+	};
+	for (const Case& c : {Case{"paste special", true, 1, true, false}, Case{"paste special, no object snap", true, 1, false, false},
+	                      Case{"ctrl+v", false, 1, true, false}, Case{"paste special, two copies", true, 2, true, false},
+	                      Case{"ctrl+v, moved", false, 1, true, true}}) {
+		INFO(c.name);
+		editor.newMap();
+		editor.setObjectSnap(c.snap);
+		// Ground and two smaller brushes where the stretched copy will reach.
+		editor.createShape(box({-128, -256, -24}, {704, 1024, 0}));
+		editor.createShape(box({64, 300, 0}, {768, 780, 24}));
+		editor.createShape(box({100, 500, 24}, {788, 596, 56}));
+		editor.createShape(box({0, 0, 0}, {576, 16, 336}));
+		settle();
+		const SolidRef wall = editor.selection().solids.front();
+		editor.copySelection();
+		PasteOptions options;
+		options.copies = c.copies;
+		options.uniqueNames = c.special;
+		REQUIRE(editor.paste(options));
+		settle();
+		REQUIRE(editor.selection().solids.size() == std::size_t(c.copies));
+		const SolidRef copy = editor.selection().solids.back();
+		REQUIRE_FALSE(copy == wall);
+		editor.setSelection(Selection{{copy}});
+		settle();
+		// As in the video: a click on its side square first (selects what lies under it: the copy
+		// and the original share that surface).
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{288, 16, 168}));
+		settle();
+		REQUIRE(editor.selection().solids.size() == 1);
+		editor.setSelection(Selection{{copy}});
+		settle();
+		if (c.move) {
+			editor.nudgeSelection({0, 400, 0});
+			settle();
+			CHECK(clicks({288, 408, 336}, copy));
+			continue;
+		}
+		stretch(16, 832, 288, 168);
+		const Bounds b = boundsOf(editor, copy);
+		REQUIRE(b.max.y > 700);   // 832, or a corner of a brush near it (object snap)
+		CHECK(b.min.y == doctest::Approx(0));
+		// Ids stay unique.
+		std::set<int> ids;
+		for (const auto& solid : editor.doc().world.solids) CHECK(ids.insert(solid.id).second);
+		// A click (no drag) on one of its own resize squares, as in the video: selects what lies
+		// under the square - the brush itself.
+		{
+			const Bounds now = boundsOf(editor, copy);
+			for (const Vec3& square : {Vec3{now.center().x, now.max.y, now.center().z}, Vec3{now.center().x, now.center().y, now.max.z},
+			                           Vec3{now.max.x, now.center().y, now.center().z}, Vec3{now.min.x, now.center().y, now.center().z}}) {
+				editor.setSelection(Selection{{copy}});
+				settle();
+				QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, square));
+				settle();
+				INFO("square at " << square.x << " " << square.y << " " << square.z);
+				CHECK((editor.selection().solids.size() == 1 && editor.selection().solids.front() == copy));
+			}
+		}
+		// On the surface the copy shares with the original: selected, a click keeps the copy; the
+		// next click on the same spot takes the original.
+		{
+			editor.setSelection(Selection{{copy}});
+			settle();
+			const QPoint shared = screen(view, Vec3{288, 0, 168});
+			QTest::mouseClick(view, Qt::LeftButton, {}, shared);
+			settle();
+			CHECK((editor.selection().solids.size() == 1 && editor.selection().solids.front() == copy));
+			QTest::mouseClick(view, Qt::LeftButton, {}, shared);
+			settle();
+			REQUIRE(editor.selection().solids.size() == 1);
+			CHECK_FALSE(editor.selection().solids.front() == copy);   // the original (or the other copy)
+		}
+		// Far from the original wall: the top and the front side.
+		CHECK(clicks({288, 600, 336}, copy));
+		CHECK(clicks({100, 300, 336}, copy));
+		CHECK(clicks({500, 750, 336}, copy));
+		// On the part where the original lies inside it (same top surface: the copy or the wall,
+		// both are fine, never nothing).
+		editor.setSelection({});
+		settle();
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{288, 8, 336}));
+		settle();
+		CHECK(editor.selection().solids.size() == 1);
+	}
+	editor.setObjectSnap(true);
+
+	// The case in the video: the copy stretched so far that the camera ends up inside it. Seen from
+	// inside it vanished (back faces are not drawn) and no click could reach it - the clicks went
+	// to the brushes inside it, or to nothing. Now it is drawn from inside and clickable there.
+	{
+		editor.newMap();
+		editor.createShape(box({-128, -256, -24}, {704, 1024, 0}));
+		editor.createShape(box({64, 300, 0}, {768, 780, 24}));
+		editor.createShape(box({0, 0, 0}, {576, 16, 336}));
+		settle();
+		const SolidRef ground{0, editor.doc().world.solids.front().id};
+		editor.copySelection();
+		REQUIRE(editor.paste(PasteOptions{}));
+		settle();
+		const SolidRef copy = editor.selection().solids.back();
+		stretch(16, 832, 288, 168);
+		REQUIRE(boundsOf(editor, copy).max.y > 700);
+		const auto savedPos = view->camera().position;
+		const float savedPitch = view->camera().pitch;
+		view->camera().position = QVector3D(288, 200, 300);   // inside the copy
+		view->camera().pitch = 10;                            // looking along it, up a little: only its far side ahead
+		editor.setSelection({});
+		view->update();
+		settle();
+		// Drawn from inside: the middle of the view shows its far side, not the empty background.
+		const QImage shot = view->grabFramebuffer();
+		const QColor middle = shot.pixelColor(shot.width() / 2, shot.height() / 2);
+		CHECK_FALSE((middle.red() == 54 && middle.green() == 58 && middle.blue() == 66));
+		QTest::mouseClick(view, Qt::LeftButton, {}, QPoint(view->width() / 2, view->height() / 2));
+		settle();
+		CHECK((editor.selection().solids.size() == 1 && editor.selection().solids.front() == copy));
+		// Down at the ground inside it: the ground is nearer than the copy's bottom - the ground.
+		view->camera().pitch = -60;
+		view->update();
+		settle();
+		editor.setSelection({});
+		QTest::mouseClick(view, Qt::LeftButton, {}, QPoint(view->width() / 2, view->height() / 2));
+		settle();
+		REQUIRE(editor.selection().solids.size() == 1);
+		CHECK_FALSE(editor.selection().solids.front() == copy);
+		view->camera().position = savedPos;
+		view->camera().pitch = savedPitch;
+	}
+
+	// The same with the Road dialog left open in the background (it follows the selection with a
+	// live preview).
+	editor.newMap();
+	editor.createShape(box({-128, -256, -24}, {704, 1024, 0}));
+	editor.createShape(box({0, 0, 0}, {576, 16, 336}));
+	settle();
+	auto* roadAction = window.findChild<QAction*>("brushesRoad");
+	REQUIRE(roadAction);
+	roadAction->trigger();
+	settle();
+	REQUIRE(window.findChild<RoadDialog*>());
+	window.activateWindow();
+	const SolidRef wall = editor.selection().solids.front();
+	editor.copySelection();
+	REQUIRE(editor.paste(PasteOptions{}));
+	settle();
+	const SolidRef copy = editor.selection().solids.back();
+	REQUIRE_FALSE(copy == wall);
+	stretch(16, 832, 288, 168);
+	REQUIRE(boundsOf(editor, copy).max.y > 700);
+	CHECK(clicks({288, 600, 336}, copy));
+	CHECK(clicks({100, 300, 336}, copy));
+	// Selected: still clickable (the preview's stand-in must not hide it from the mouse).
+	editor.setSelection(Selection{{copy}});
+	settle();
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{288, 600, 336}));
+	settle();
+	CHECK(editor.selection().solids.size() == 1);
+	CHECK((editor.selection().solids.size() == 1 && editor.selection().solids.front() == copy));
+}
+
+TEST_CASE("picking: after every kind of edit each visible brush can be clicked through each of its faces") {
+	// The rule behind Julius' unclickable brushes (31.10.2026): whatever was done to the map, a ray
+	// from outside through the middle of any face of a visible brush hits that brush, or something
+	// in front of it. Random edits (paste, paste special, resize, move, rotate, clip, hollow, tie,
+	// delete, hide, undo, redo) with the check after each.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1200, 800);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	editor.setGrid(16);
+	editor.setShapeOptions(ShapeOptions{});
+	Viewport* view = window.view3D();
+	editor.setTool(Editor::Tool::Select);
+
+	std::mt19937 rng(20261031);
+	const auto pick = [&](int n) { return std::uniform_int_distribution<int>(0, n - 1)(rng); };
+	const auto coord = [&](int lo, int hi) { return double(16 * std::uniform_int_distribution<int>(lo / 16, hi / 16)(rng)); };
+	editor.createShape(box({-512, -512, -32}, {512, 512, 0}));
+	for (int i = 0; i < 5; ++i) {
+		const Vec3 a{coord(-448, 256), coord(-448, 256), coord(0, 64)};
+		editor.createShape(box(a, a + Vec3{coord(16, 192), coord(16, 192), coord(16, 160)}));
+	}
+	settle();
+
+	// Every brush (world and brush entities) with its reference.
+	const auto allSolids = [&] {
+		std::vector<std::pair<SolidRef, const Solid*>> out;
+		for (const auto& solid : editor.doc().world.solids) out.push_back({{0, solid.id}, &solid});
+		for (const auto& entity : editor.doc().entities) {
+			for (const auto& solid : entity.solids) out.push_back({{entity.id, solid.id}, &solid});
+		}
+		return out;
+	};
+	const auto check = [&](int step, const char* what) {
+		view->update();
+		settle();
+		const Selection& hidden = editor.hidden();
+		for (const auto& [ref, solid] : allSolids()) {
+			if ((ref.entityId == 0 && hidden.contains(ref)) || (ref.entityId != 0 && hidden.containsEntity(ref.entityId))) continue;
+			const auto geometry = buildBrushGeometry(*solid);
+			if (!geometry.valid) continue;
+			for (const auto& face : geometry.faces) {
+				Vec3 center;
+				for (const auto& v : face.vertices) center += v;
+				center = center / double(face.vertices.size());
+				const Vec3 n = normalize(face.normal);
+				const double away = 2000;
+				const auto hit = view->renderer().pick(Ray{center + n * away, -n});
+				const bool ok = hit && (hit->solid == ref || (ref.entityId != 0 && hit->entityId == ref.entityId) || hit->distance < away - 0.05 || hit->ties > 1);
+				if (!ok) {
+					INFO("step " << step << " (" << what << "): brush " << ref.entityId << "/" << ref.solidId << " face toward " << n.x << " " << n.y << " "
+					              << n.z << (hit ? " hit another one at the same distance or behind" : " hit nothing"));
+					CHECK(ok);
+					return false;
+				}
+			}
+		}
+		return true;
+	};
+	REQUIRE(check(0, "start"));
+
+	const auto randomSolid = [&]() -> std::optional<SolidRef> {
+		const auto solids = allSolids();
+		if (solids.size() < 2) return std::nullopt;
+		return solids[std::size_t(1 + pick(int(solids.size()) - 1))].first;   // never the ground
+	};
+	int failures = 0;
+	for (int step = 1; step <= 160 && failures < 3; ++step) {
+		const auto target = randomSolid();
+		if (target) editor.setSelection(target->entityId != 0 ? Selection{{}, {target->entityId}} : Selection{{*target}});
+		const Selection selection = editor.selection();
+		const char* what = "";
+		switch (pick(13)) {
+			case 0: {
+				what = "paste in place";
+				editor.copySelection();
+				editor.paste(PasteOptions{});
+				break;
+			}
+			case 1: {
+				what = "paste special, 2 copies";
+				editor.copySelection();
+				PasteOptions options;
+				options.copies = 2;
+				options.offset = {coord(-128, 128), coord(-128, 128), 0};
+				options.uniqueNames = true;
+				editor.paste(options);
+				break;
+			}
+			case 2:
+			case 3: {
+				what = "resize far";
+				if (!selection.hasObjects()) break;
+				const Bounds from = edit::selectionBounds(editor.doc(), selection, editor.entities());
+				Bounds to = from;
+				const int axis = pick(3);
+				if (pick(2)) to.max[axis] += coord(16, 900);
+				else to.min[axis] -= coord(16, 900);
+				editor.commit(edit::scale(editor.doc(), selection, from, to));
+				break;
+			}
+			case 4: what = "move"; editor.nudgeSelection({coord(-256, 256), coord(-256, 256), coord(0, 64)}); break;
+			case 5: what = "rotate"; editor.rotateSelection(pick(3), 90); break;
+			case 6: {
+				what = "clip";
+				if (!selection.hasObjects()) break;
+				const Bounds b = edit::selectionBounds(editor.doc(), selection, editor.entities());
+				const int axis = pick(3);
+				Plane plane;
+				plane.normal[axis] = 1;
+				plane.dist = b.center()[axis];
+				editor.clipSelection(plane, edit::ClipKeep::Both);
+				break;
+			}
+			case 7: what = "hollow"; editor.hollowSelection(16); break;
+			case 8: what = "tie to func_detail"; editor.tieSelectionToEntity("func_detail"); break;
+			case 9: what = "delete"; if (allSolids().size() > 4) editor.deleteSelection(); break;
+			case 10: what = "undo"; editor.undo(); break;
+			case 11: what = "redo"; editor.redo(); break;
+			default: {
+				what = "hide and show";
+				editor.hideSelection();
+				check(step, "hidden");
+				editor.unhideAll();
+				break;
+			}
+		}
+		if (!check(step, what)) ++failures;
+	}
+	CHECK(failures == 0);
 }
 
 namespace {
