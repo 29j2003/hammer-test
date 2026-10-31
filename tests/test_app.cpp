@@ -69,6 +69,7 @@
 #include <QToolButton>
 #include <QWheelEvent>
 
+#include <sme/csg.h>
 #include <sme/studio_anim.h>
 #include <sme/animation_use.h>
 #include <sme/npc_scripts.h>
@@ -100,6 +101,7 @@
 #include <chrono>
 #include <fstream>
 #include <memory>
+#include <numbers>
 #include <cstdio>
 #include <functional>
 
@@ -7498,6 +7500,120 @@ TEST_CASE("ux review: problem rows show their buttons, counts read naturally, sh
 	auto* continueButton = window.startPage()->findChild<QPushButton*>("startContinue");
 	REQUIRE(continueButton);
 	CHECK(continueButton->isVisible() != startNew->property("accent").toBool());
+}
+
+TEST_CASE("round edge: the inner side of a curb bend is rounded again (regression 31.10.2026)") {
+	// Julius (31.10.2026): the two side faces on the inside of a curb bend could not be rounded any
+	// more ("There is no room for a rounding at this corner"); his old version could.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	Editor editor;
+	MainWindow window(&editor);
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	{
+		Bounds b;
+		b.add({-512, -512, -16});
+		b.add({512, 512, 0});
+		editor.commit(edit::createBlock(editor.doc(), b, "FLOOR").first);
+	}
+	// Two curb pieces, 16 wide and 8 high, meeting mitred at a bend of 160 degrees (turned 20).
+	const double turn = 20 * std::numbers::pi / 180, h = 8;
+	const Vec3 u{std::cos(turn), std::sin(turn), 0}, nA{0, 1, 0}, nB{-std::sin(turn), std::cos(turn), 0};
+	const auto meet = [&](double off) { return u * ((off - off * nB.y) / u.y) + nB * off; };
+	const Vec3 in = meet(h), out = meet(-h);
+	const auto piece = [&](const std::vector<Vec3>& base) {
+		std::vector<Vec3> points;
+		for (const auto& p : base) {
+			points.push_back({p.x, p.y, 0});
+			points.push_back({p.x, p.y, 8});
+		}
+		auto solid = solidFromPoints(editor.doc(), points, "CURB");
+		REQUIRE(solid);
+		const SolidRef ref{0, solid->id};
+		Transaction t(editor.doc(), "Curb");
+		t.touchSolid(ref);
+		editor.doc().world.solids.push_back(*solid);
+		editor.commit(t.finish());
+		return ref;
+	};
+	const SolidRef a = piece({{-192, -h, 0}, out, in, {-192, h, 0}});
+	const SolidRef b = piece({out, out + u * 192, in + u * 192, in});
+	const auto facing = [&](const SolidRef& ref, Vec3 normal) {
+		for (const auto& side : editor.doc().findSolid(ref)->sides) {
+			if (dot(side.plane().normal, normal) > 0.999) return FaceRef{ref, side.id};
+		}
+		return FaceRef{};
+	};
+	editor.setSelectMode(Editor::SelectMode::Face);
+	Selection faces;
+	faces.faces = {facing(a, nA), facing(b, nB)};
+	editor.setSelection(faces);
+	for (auto* action : window.findChildren<QAction*>()) {
+		if (action->text() == "Round or bevel edge ...") action->trigger();
+	}
+	settle();
+	auto* dialog = window.findChild<RoundEdgeDialog*>("roundEdgeDialog");
+	REQUIRE(dialog);
+	dialog->findChild<QDoubleSpinBox*>("roundRadius")->setValue(32);
+	dialog->findChild<QSpinBox*>("roundSegments")->setValue(0);
+	QTest::qWait(150);
+	auto* ok = dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok);
+	INFO("note: " << dialog->note().toStdString());
+	REQUIRE(ok->isEnabled());
+	CHECK(dialog->note().contains("Inner corner"));
+	const std::size_t before = editor.doc().world.solids.size();
+	dialog->accept();
+	settle();
+	CHECK(editor.doc().world.solids.size() > before);              // filled up to the curve
+	CHECK(editor.doc().world.solids.size() <= before + 4);         // with a few strips
+	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+	// The bend's inner corner is filled now; well beyond the curve the curb's side is open.
+	const Vec3 bisector = normalize(nA + nB);
+	CHECK(std::any_of(editor.doc().world.solids.begin(), editor.doc().world.solids.end(), [&](const Solid& s) { return solidContains(s, in + bisector * 0.2 + Vec3{0, 0, 4}, 0.01); }));
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(float(in.x), float(in.y + 90), 70);
+	view->camera().yaw = -90;
+	view->camera().pitch = -35;
+	view->update();
+	settle();
+	view->grabFramebuffer().save(shotDir + "/curb_bend_inner.png");
+	// Undo gives both pieces back unchanged.
+	editor.undo();
+	settle();
+	CHECK(editor.doc().world.solids.size() == before);
+
+	// The outer side of the bend: its corner cut round, no brush added.
+	faces.faces = {facing(a, -nA), facing(b, -nB)};
+	editor.setSelection(faces);
+	for (auto* action : window.findChildren<QAction*>()) {
+		if (action->text() == "Round or bevel edge ...") action->trigger();
+	}
+	settle();
+	dialog = window.findChild<RoundEdgeDialog*>("roundEdgeDialog");
+	REQUIRE(dialog);
+	dialog->findChild<QDoubleSpinBox*>("roundRadius")->setValue(32);
+	QTest::qWait(150);
+	REQUIRE(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->isEnabled());
+	dialog->accept();
+	settle();
+	CHECK(editor.doc().world.solids.size() == before);
+	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+	CHECK_FALSE(std::any_of(editor.doc().world.solids.begin(), editor.doc().world.solids.end(), [&](const Solid& s) { return solidContains(s, out + bisector * 0.2 + Vec3{0, 0, 4}, 0.01); }));
+	editor.setSelection({});
+	view->camera().position = QVector3D(float(out.x), float(out.y - 90), 70);
+	view->camera().yaw = 90;
+	view->camera().pitch = -35;
+	view->update();
+	settle();
+	view->grabFramebuffer().save(shotDir + "/curb_bend_outer.png");
 }
 
 TEST_CASE("round edge: every face of a rounded curb can be clicked, a stacked corner in one go, merging only when asked") {

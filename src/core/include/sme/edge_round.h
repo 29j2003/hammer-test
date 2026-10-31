@@ -16,7 +16,9 @@
 //
 // Nothing is applied that is not sound: every brush of a plan is checked (convex, closed, no
 // paper-thin parts or tiny edges, no overlap with other brushes); a radius or a number of
-// segments that does not fit is reduced instead of failing, and the plan says so. Corners of
+// segments that does not fit is reduced instead of failing, and the plan says so; at a flat
+// inner bend (a curb turning by a few degrees), where every small fill would be thinner than
+// half a unit, the radius is raised to the smallest that fits instead. Corners of
 // several brushes that cannot be rounded apart can be merged into one brush first, but only when
 // asked for (EdgeRoundOptions::allowMerge). Plans are computed without changing the map, so the
 // editor can show them live before applying.
@@ -50,6 +52,7 @@ struct EdgeRoundPlan {
 	int segments = 0;                ///< Segments used (fewer when pieces would get too thin)
 	int requestedSegments = 0;       ///< Segments asked for
 	bool clamped = false;            ///< The radius was reduced
+	bool raised = false;             ///< The radius was raised (a flat inner bend: a smaller fill would be thinner than half a unit)
 	bool inner = false;              ///< An inner corner was filled
 	int corners = 0;                 ///< Corner lines rounded
 	int ignoredFaces = 0;            ///< Selected faces that touch no corner (left out)

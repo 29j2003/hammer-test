@@ -6,9 +6,11 @@
 #include <sme/csg.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <type_traits>
 
 namespace sme {
@@ -294,15 +296,40 @@ std::vector<double> coverChanges(const Corner& corner, double from, double to) {
 	return changes;
 }
 
-/// The planes of the rounding for radius `r` with `n` segments (outer corner: keep behind them).
-std::vector<Plane> arcPlanes(const Corner& corner, double r, int n) {
-	const Vec3 center = corner.origin - (corner.planeA.normal + corner.planeB.normal) * (r / (1 + corner.c));
-	const double step = corner.angle / n;
-	std::vector<Plane> planes;
+/// A plane of the rounding with the plane points every brush gets for it: the same points for
+/// all brushes along the corner, so where brushes overlap at the corner (a curb laid into the
+/// next one) their curved faces lie in exactly one plane (no fighting faces, nothing hidden by a
+/// hair's breadth when picking).
+struct ArcPlane {
+	Plane plane;
+	std::optional<std::array<Vec3, 3>> points;   ///< nullopt: the side's own points from the plane
+};
+
+/// The planes of the rounding for radius `r` with `n` segments (outer corner: keep behind them),
+/// each through the arc's corner points at both ends of its segment (the arc's chords), taken
+/// from points rounded the way the map writes them.
+std::vector<ArcPlane> arcPlanes(const Corner& corner, double r, int n) {
+	const auto arc = corner.arc(r, n, false);
+	// Rounded as tidyPlanePoints rounds corners (whole units where close, else thousandths).
+	const auto written = [](double v) {
+		const double whole = std::round(v);
+		return std::abs(v - whole) < 1e-3 ? whole : std::round(v * 1000) / 1000;
+	};
+	const auto snapped = [&](const Vec3& v) { return Vec3{written(v.x), written(v.y), written(v.z)}; };
+	std::vector<ArcPlane> planes;
 	for (int i = 0; i < n; ++i) {
 		const Vec3 normal = slerp(corner.planeA.normal, corner.planeB.normal, corner.angle, (i + 0.5) / n);
-		// Through the arc points at both ends of the segment (the arc's chords).
-		planes.push_back(Plane{normal, dot(normal, center) + r * std::cos(step / 2)});
+		Side side;
+		side.planePoints = {snapped(arc[std::size_t(i)]), snapped(arc[std::size_t(i) + 1]), snapped(arc[std::size_t(i)] + corner.d * 256)};
+		if (dot(side.plane().normal, normal) < 0) std::swap(side.planePoints[0], side.planePoints[1]);
+		const Plane plane = side.plane();
+		// Points too close for a plane (a tiny radius): the exact plane, points from it.
+		if (!(dot(plane.normal, normal) > 0.999)) {
+			const Plane exact{normal, dot(normal, arc[std::size_t(i)])};
+			planes.push_back({exact, std::nullopt});
+			continue;
+		}
+		planes.push_back({plane, side.planePoints});
 	}
 	return planes;
 }
@@ -312,24 +339,35 @@ enum class Cut { Kept, Removed, Broken };
 
 /// The piece cut by the arc planes: kept (into `out`), removed entirely (it lay in the corner
 /// the rounding takes away), or broken (a sliver would be left).
-Cut cutPiece(const Corner& corner, const Solid& piece, const std::vector<Plane>& planes, Solid& out) {
+Cut cutPiece(const Corner& corner, const Solid& piece, const std::vector<ArcPlane>& planes, Solid& out) {
 	out = piece;
 	// Beyond the curve's reach (behind every arc plane): kept just as it is.
 	const auto before = buildBrushGeometry(piece);
 	const bool untouched = std::all_of(before.faces.begin(), before.faces.end(), [&](const FaceGeometry& face) {
 		return std::all_of(face.vertices.begin(), face.vertices.end(), [&](const Vec3& v) {
-			return std::all_of(planes.begin(), planes.end(), [&](const Plane& p) { return dot(p.normal, v) - p.dist <= 0.01; });
+			return std::all_of(planes.begin(), planes.end(), [&](const ArcPlane& p) { return dot(p.plane.normal, v) - p.plane.dist <= 0.01; });
 		});
 	});
 	if (untouched) return Cut::Kept;
 	for (std::size_t i = 0; i < planes.size(); ++i) {
 		const Side* from = (i + 0.5) / planes.size() < 0.5 ? corner.sideA : corner.sideB;
-		out.sides.push_back(makeSide(*corner.ids, planes[i], from->material, from));
+		Side side = makeSide(*corner.ids, planes[i].plane, from->material, from);
+		if (planes[i].points) side.planePoints = *planes[i].points;
+		out.sides.push_back(std::move(side));
 	}
 	const auto geometry = buildBrushGeometry(out);
 	if (!geometry.valid || geometry.faces.empty()) return Cut::Removed;
 	removeUnusedSides(out);
 	tidyPlanePoints(out);
+	// Back to the shared points (tidying chose points of this brush's own corners). Matched by
+	// plane: side ids may repeat between the map and a preview's scratch ids.
+	for (auto& side : out.sides) {
+		const Plane plane = side.plane();
+		for (const auto& arcPlane : planes) {
+			if (arcPlane.points && samePlaneAs(plane, arcPlane.plane)) side.planePoints = *arcPlane.points;
+		}
+	}
+	removeUnusedSides(out);   // a side that only touched at an edge with the tidied points
 	if (!usable(out) || !brushProblem(out).empty()) return solidVolume(out) < 1.0 ? Cut::Removed : Cut::Broken;
 	return Cut::Kept;
 }
@@ -414,7 +452,7 @@ struct CornerResult {
 	int addedEntity = 0;
 	double radius = 0, largest = 0;
 	int segments = 0;
-	bool clamped = false, inner = false, merged = false, needsMerge = false;
+	bool clamped = false, raised = false, inner = false, merged = false, needsMerge = false;
 	int gapFills = 0, innerFills = 0;
 	std::string problem;
 
@@ -428,20 +466,69 @@ int fillSegments(const Corner& corner, double r, int n) {
 	return n;
 }
 
-/// The first radius from `start` down for which `attempt` works (`start` itself, else the
-/// largest found by halving, to half units), with its result; nullopt below half a unit.
+/// The largest radius from `start` down for which `attempt` works (`start` itself, else found by
+/// stepping down and narrowing in, to half units), with its result; nullopt below half a unit.
+/// What works is not one stretch of radii (the number of segments changes with the radius, a
+/// cut may touch a brush's corner at one radius and not the next), so plain halving could miss
+/// every radius that works: it steps down until one does, then narrows in toward the last miss.
 template <typename Attempt>
 auto searchRadius(double start, Attempt&& attempt) -> std::optional<std::pair<double, typename std::invoke_result_t<Attempt&, double>::value_type>> {
 	if (start < 0.5) return std::nullopt;
 	if (auto result = attempt(start)) return std::pair{start, std::move(*result)};
-	double lo = 0, hi = start;
-	for (int i = 0; i < 20; ++i) {
-		const double mid = (lo + hi) / 2;
-		(attempt(mid) ? lo : hi) = mid;
+	double missed = start;
+	for (double r = start * 0.9; r >= 0.5; r *= 0.9) {
+		auto result = attempt(r);
+		if (!result) {
+			missed = r;
+			continue;
+		}
+		// Narrow in between this radius and the last one that missed, keeping the best that works.
+		double best = r, lo = r, hi = missed;
+		auto bestResult = std::move(*result);
+		for (int i = 0; i < 12; ++i) {
+			const double mid = (lo + hi) / 2;
+			if (auto found = attempt(mid)) {
+				best = lo = mid;
+				bestResult = std::move(*found);
+			} else {
+				hi = mid;
+			}
+		}
+		// Half units where that still works (tidier numbers in the dialog and the map).
+		const double tidy = std::floor(best * 2) / 2;
+		if (tidy >= 0.5 && tidy < best) {
+			if (auto found = attempt(tidy)) return std::pair{tidy, std::move(*found)};
+		}
+		return std::pair{best, std::move(bestResult)};
 	}
-	const double r = std::floor(lo * 2) / 2;
-	if (r < 0.5) return std::nullopt;
-	if (auto result = attempt(r)) return std::pair{r, std::move(*result)};
+	return std::nullopt;
+}
+
+/// The smallest radius above `start` up to `most` for which `attempt` works (to half units), with
+/// its result: at a flat inner bend a small rounding is thinner than half a unit everywhere, a
+/// larger one fits; nullopt if none up to `most` does.
+template <typename Attempt>
+auto searchRadiusUp(double start, double most, Attempt&& attempt) -> std::optional<std::pair<double, typename std::invoke_result_t<Attempt&, double>::value_type>> {
+	double failed = std::max(start, 0.5);
+	for (double r = failed * 1.25; r <= most * 1.25; r *= 1.25) {
+		const double hi = std::min(r, most);
+		if (!attempt(hi)) {
+			failed = hi;
+			if (hi >= most) break;
+			continue;
+		}
+		// The smallest that works between the last failure and `hi`.
+		double lo = failed, top = hi;
+		for (int i = 0; i < 20; ++i) {
+			const double mid = (lo + top) / 2;
+			(attempt(mid) ? top : lo) = mid;
+		}
+		for (double up = std::ceil(top * 2) / 2; up <= hi + 1e-9; up += 0.5) {
+			if (auto result = attempt(up)) return std::pair{up, std::move(*result)};
+		}
+		if (auto result = attempt(hi)) return std::pair{hi, std::move(*result)};
+		return std::nullopt;
+	}
 	return std::nullopt;
 }
 
@@ -596,12 +683,16 @@ CornerResult planCorner(const MapDocument& doc, MapDocument& ids, const CornerFa
 			return pieces;
 		};
 		auto found = searchRadius(start, fill);
+		// A flat bend: the fill of a small radius is thinner than half a unit everywhere (nothing
+		// Source could build); the smallest larger radius that gives a sound fill is taken instead.
+		if (!found) found = searchRadiusUp(start, result.largest, fill);
 		if (!found) {
 			result.problem = "There is no room for a rounding at this corner";
 			return result;
 		}
 		result.radius = found->first;
 		result.clamped = result.radius < radius - 1e-6;
+		result.raised = result.radius > radius + 1e-6;
 		result.segments = fillSegments(corner, result.radius, segmentsFor(result.radius, segments));
 		result.innerFills = int(found->second.size());
 		result.added = std::move(found->second);
@@ -917,6 +1008,7 @@ EdgeRoundPlan planEdgeRounds(const MapDocument& doc, MapDocument& ids, const std
 		++plan.corners;
 		plan.inner = plan.inner || result.inner;
 		plan.clamped = plan.clamped || result.clamped;
+		plan.raised = plan.raised || result.raised;
 		plan.merged = plan.merged || result.merged;
 		plan.gapFills += result.gapFills;
 		plan.innerFills += result.innerFills;

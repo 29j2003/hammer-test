@@ -1222,6 +1222,8 @@ void Editor::roundSelectedEdge(double radius, int segments, bool allowMerge) {
 	setSelection(std::move(selection));
 	if (plan.clamped) {
 		emit message(tr("Rounded with %1 units - the largest radius that fits here").arg(plan.radius));
+	} else if (plan.raised) {
+		emit message(tr("Rounded with %1 units - at this flat bend a smaller rounding would be thinner than half a unit").arg(plan.radius));
 	}
 }
 

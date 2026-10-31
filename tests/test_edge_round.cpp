@@ -307,17 +307,94 @@ TEST_CASE("problems: broken and doubled brushes are found and can be deleted") {
 	CHECK(doc.findSolid(thin) == nullptr);
 }
 
+namespace {
+
+/// How the two pieces of a curb bend meet.
+enum class Joint { Mitred, Overlapping, Butting };
+
+/// A curb bend: piece A along -x ending at the bend, piece B leaving it turned toward +y (the
+/// concave side), `width` wide and `height` high, standing on z = 0.
+struct Bend {
+	SolidRef a, b;
+	Vec3 inner, outer;     ///< Where the inner and outer side lines meet (z = 0)
+	Vec3 nA, nB;           ///< Outward normals of the inner side faces (the outer ones point the other way)
+	double turn = 0;       ///< Angle between nA and nB
+};
+
+Bend curbBend(MapDocument& doc, double interior, Joint joint, double width = 16, double height = 8, double length = 192) {
+	Bend bend;
+	bend.turn = (180 - interior) * 3.14159265358979 / 180;
+	const Vec3 u{std::cos(bend.turn), std::sin(bend.turn), 0};
+	bend.nA = {0, 1, 0};
+	bend.nB = {-std::sin(bend.turn), std::cos(bend.turn), 0};
+	const double h = width / 2;
+	// Where a side line of A (y = off) meets the one of B at the same offset.
+	const auto meet = [&](double off) { return u * ((off - off * bend.nB.y) / u.y) + bend.nB * off; };
+	bend.inner = meet(h);
+	bend.outer = meet(-h);
+	const auto prism = [&](const std::vector<Vec3>& base) {
+		std::vector<Vec3> points;
+		for (const auto& p : base) {
+			points.push_back({p.x, p.y, 0});
+			points.push_back({p.x, p.y, height});
+		}
+		auto solid = solidFromPoints(doc, points, "CURB");
+		REQUIRE(solid);
+		doc.world.solids.push_back(*solid);
+		return SolidRef{0, solid->id};
+	};
+	const Vec3 in = bend.inner, out = bend.outer, nB = bend.nB;
+	if (joint == Joint::Mitred) {
+		bend.a = prism({{-length, -h, 0}, out, in, {-length, h, 0}});
+		bend.b = prism({out, out + u * length, in + u * length, in});
+	} else if (joint == Joint::Overlapping) {
+		// A runs to the outer corner; B reaches back into A, up to A's outer side (y = -h): the
+		// two share the joint.
+		bend.a = prism({{-length, -h, 0}, {out.x, -h, 0}, {out.x, h, 0}, {-length, h, 0}});
+		const Vec3 o = nB * -h, i = nB * h;
+		const auto onY = [&](const Vec3& p, double y) { return p + u * ((y - p.y) / u.y); };
+		bend.b = prism({onY(o, -h), o + u * length, i + u * length, onY(i, -h)});
+	} else {
+		// A runs to the outer corner; B ends against A's inner side (y = h).
+		bend.a = prism({{-length, -h, 0}, {out.x, -h, 0}, {out.x, h, 0}, {-length, h, 0}});
+		const Vec3 o = nB * -h, i = nB * h;
+		const auto onY = [&](const Vec3& p) { return p + u * ((h - p.y) / u.y); };
+		bend.b = prism({onY(o), o + u * length, i + u * length, onY(i)});
+	}
+	return bend;
+}
+
+/// Brushes sound; new brushes (not in `before`) overlap nothing; the original pieces overlap
+/// nothing else unless they overlapped already (`overlapping`).
+void checkBendSound(const MapDocument& doc, const std::vector<int>& before, bool overlapping) {
+	const auto& all = doc.world.solids;
+	const auto old = [&](const Solid& s) { return std::find(before.begin(), before.end(), s.id) != before.end(); };
+	for (const auto& solid : all) {
+		INFO("brush " << solid.id << ": " << brushProblem(solid));
+		CHECK(brushProblem(solid).empty());
+	}
+	for (std::size_t i = 0; i < all.size(); ++i) {
+		for (std::size_t j = i + 1; j < all.size(); ++j) {
+			if (overlapping && old(all[i]) && old(all[j])) continue;
+			INFO("brushes " << all[i].id << " and " << all[j].id);
+			CHECK(sharedVolume(all[i], all[j]) < 0.5);
+		}
+	}
+}
+
+} // namespace
+
 TEST_CASE("round edge fuzz: random boxes, rooms and corners - always sound, clickable, undone exactly, saved stably") {
 	std::mt19937 random(20261031);
 	const auto pick = [&](double lo, double hi) { return std::uniform_real_distribution<double>(lo, hi)(random); };
 	const auto grid = [&](double lo, double hi) { return std::round(pick(lo, hi) / 8) * 8; };
 	int planned = 0;
-	for (int round = 0; round < 60; ++round) {
+	for (int round = 0; round < 75; ++round) {
 		MapDocument doc;
 		const Vec3 lo{grid(-64, 64), grid(-64, 64), grid(-32, 32)};
 		const Vec3 hi = lo + Vec3{grid(16, 256), grid(16, 256), grid(16, 192)};
 		const SolidRef main = block(doc, lo, hi, "BLOCK");
-		const int scene = round % 4;
+		const int scene = round % 5;
 		std::vector<FaceRef> faces;
 		const Vec3 axes[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 		const int a = int(pick(0, 6)) % 6;
@@ -340,6 +417,13 @@ TEST_CASE("round edge fuzz: random boxes, rooms and corners - always sound, clic
 			// Inner corner: a wall standing on the block's top.
 			const SolidRef wall = block(doc, {hi.x - 16, lo.y, hi.z}, {hi.x, hi.y, hi.z + grid(32, 128)});
 			faces = {facing(doc, main, {0, 0, 1}), facing(doc, wall, {-1, 0, 0})};
+		} else if (scene == 4) {
+			// A curb bend at a random angle, its inner or outer sides (the block becomes the floor).
+			doc.world.solids.clear();
+			block(doc, {-512, -512, -16}, {512, 512, 0}, "FLOOR");
+			const Bend bend = curbBend(doc, pick(95, 176), int(pick(0, 2)) % 2 ? Joint::Mitred : Joint::Butting, grid(8, 32), grid(8, 24));
+			const bool inner = pick(0, 1) < 0.5;
+			faces = {facing(doc, bend.a, inner ? bend.nA : -bend.nA), facing(doc, bend.b, inner ? bend.nB : -bend.nB)};
 		} else {
 			// A stack: a second band on top, both sides selected.
 			const SolidRef top = block(doc, {lo.x, lo.y, hi.z}, {hi.x, hi.y, hi.z + grid(16, 96)}, "BLOCK");
@@ -368,4 +452,78 @@ TEST_CASE("round edge fuzz: random boxes, rooms and corners - always sound, clic
 		CHECK(doc.serialize() == before);
 	}
 	CHECK(planned > 30);
+}
+
+TEST_CASE("round edge: the inner and outer sides of a curb bend, at many angles and joints (regression 31.10.2026)") {
+	// Julius (31.10.2026): the two inner side faces of a curb bend could not be rounded any more.
+	// A flat bend with the default radius gave a fill thinner than half a unit everywhere, and the
+	// check of every brush refused it; now the smallest radius that fits is taken (and said so).
+	for (const double width : {8.0, 16.0})
+	for (const double radius : {8.0, 16.0, 40.0})
+	for (const double interior : {90.0, 120.0, 135.0, 150.0, 165.0, 172.0}) {
+		for (const Joint joint : {Joint::Mitred, Joint::Overlapping, Joint::Butting}) {
+			for (const bool inner : {true, false}) {
+				MapDocument doc;
+				block(doc, {-512, -512, -16}, {512, 512, 0}, "FLOOR");
+				const Bend bend = curbBend(doc, interior, joint, width);
+				const FaceRef fa = facing(doc, bend.a, inner ? bend.nA : -bend.nA);
+				const FaceRef fb = facing(doc, bend.b, inner ? bend.nB : -bend.nB);
+				// (A butted piece at a very flat bend begins as a long sliver lying along the other one.)
+				if (joint == Joint::Butting && interior > 166) continue;
+				INFO("width " << width << " radius " << radius << " angle " << interior << " joint " << int(joint) << (inner ? " inner" : " outer"));
+				REQUIRE(fa.sideId != 0);
+				REQUIRE(fb.sideId != 0);
+				std::vector<int> ids;
+				for (const auto& s : doc.world.solids) ids.push_back(s.id);
+				const std::string before = doc.serialize();
+				const int unpickableBefore = unpickableFaces(doc);
+				REQUIRE(unpickableBefore == 0);
+				REQUIRE(brushProblem(*doc.findSolid(bend.a)).empty());
+				REQUIRE(brushProblem(*doc.findSolid(bend.b)).empty());
+				MapDocument scratch;
+				const auto preview = planEdgeRound(doc, scratch, fa, fb, radius, 0);
+				INFO("problem: " << preview.problem);
+				REQUIRE(preview.ok());
+				CHECK(doc.serialize() == before);
+				const auto plan = planEdgeRound(doc, doc, fa, fb, radius, 0);
+				REQUIRE(plan.ok());
+				if (plan.raised) CHECK(plan.radius > radius);
+				const double r = plan.radius;
+				auto change = applyEdgeRound(doc, plan, "Round edge");
+				REQUIRE(change);
+				checkBendSound(doc, ids, joint == Joint::Overlapping);
+				// (Where the pieces overlap, a face may lie under a hair-thin layer of the other piece:
+				// clicking there rightly picks the piece in front.)
+				if (joint != Joint::Overlapping) CHECK(unpickableFaces(doc) == 0);
+				// Tangent to both faces: filled (inner) or cut (outer) at the corner, untouched along
+				// the faces beyond where the curve meets them.
+				const Vec3 bisector = normalize(bend.nA + bend.nB);
+				const double depth = r / std::cos(bend.turn / 2) - r;            // corner to curve
+				const double reach = r * std::tan(bend.turn / 2);                // corner to where it meets a face
+				const Vec3 corner = (inner ? bend.inner : bend.outer) + Vec3{0, 0, 4};
+				if (depth > 1) {
+					if (inner) {
+						CHECK(filled(doc, corner + bisector * (depth / 2)));
+					} else if (joint == Joint::Mitred) {
+						CHECK_FALSE(filled(doc, corner + bisector * (depth / 2)));
+					}
+				}
+				const double along = reach * 1.2 + 2;
+				if (along < 150) {
+					// Just in front of A's side beyond the curve: open; just behind it: the curb.
+					const Vec3 onA = corner + Vec3{-along, 0, 0};
+					const Vec3 nA = inner ? bend.nA : -bend.nA;
+					CHECK_FALSE(filled(doc, onA + nA * 0.25));
+					CHECK(filled(doc, onA - nA * 0.25));
+				}
+				// Saved and read again: the same text; undone: the map as before.
+				const std::string saved = doc.serialize();
+				CHECK(MapDocument::parse(saved).serialize() == saved);
+				History history;
+				history.push(std::move(*change));
+				history.undo(doc);
+				CHECK(doc.serialize() == before);
+			}
+		}
+	}
 }

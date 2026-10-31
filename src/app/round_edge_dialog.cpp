@@ -102,6 +102,7 @@ void RoundEdgeDialog::refresh() {
 	QStringList lines;
 	if (plan.corners > 1) lines << tr("%n corners, all with the same rounding.", nullptr, plan.corners);
 	if (plan.clamped) lines << tr("Limited to %1 units - the largest radius that fits here.").arg(plan.radius);
+	if (plan.raised) lines << tr("Raised to %1 units - at this flat bend a smaller rounding would be thinner than half a unit.").arg(plan.radius);
 	if (m_segments->value() == 0) lines << tr("%n segment(s) (Auto).", nullptr, plan.segments);
 	else if (plan.segments < m_segments->value()) lines << tr("%n segment(s) - more would leave pieces too thin or too short.", nullptr, plan.segments);
 	if (plan.innerFills > 0) lines << tr("Inner corner: filled up to the curve with %n brush(es).", nullptr, plan.innerFills);
