@@ -1,12 +1,20 @@
 // road_texture.h - Road tool: lays a road material along a chain of floor faces.
 //
-// The top faces of the selected brushes (or the selected faces) are put into chains: two faces
-// belong together when they share an edge. Along each chain the texture runs with the road -
-// across exactly the road's width (n repeats), along it with square pixels and the shift
-// carried on from piece to piece, so the lane line runs on without jumps. Pieces of a curve
-// (round-edge strips, arch strips) get their axis along the curve's centre line; slopes are
-// measured along the slope, so ramps are not stretched. Walls and bottoms are left alone, the
-// brushes' sides optionally get a kerb material. Everything is one undo step.
+// The top faces of the selected brushes (or the selected faces) are put into roads. Two faces
+// belong together when they share an edge. One road gets ONE mapping: one scale for all of it
+// (from the road's width - the typical piece width, or a width given in units), the texture's
+// middle on the road's centre line (carried from piece to piece, so a wider piece just shows
+// more of the texture's edge) and the shift along the road carried on across every common
+// edge, so the lane line runs on without jumps. Pieces of a curve (round-edge strips, arch
+// strips) get their axis along the curve. Slopes are measured along the slope.
+// Square corner pieces never run diagonally: a corner continues the longer road, the other
+// road starts at its edge. At a junction (a piece with three or more neighbours) the main
+// road - the straightest pair of opposite neighbours, the widest of them - runs straight
+// through, every branch starts at the junction's edge. Tops beside the road at another height
+// (kerbs, sidewalks) are left out, small pieces at road height that hang on one road piece
+// (fills of a rounded kerb corner, end caps) take that piece's mapping. Walls and bottoms are
+// left alone; a kerb material can go onto the kerb tops and the brushes' sides. Everything is
+// one undo step.
 
 #pragma once
 
@@ -32,7 +40,8 @@ struct RoadOptions {
 	RoadAlong along = RoadAlong::Auto;
 	bool flip = false;          ///< Turn the texture around (runs from the other end)
 	int repeatsAcross = 1;      ///< How often the texture repeats across the road's width
-	std::string sideMaterial;   ///< Optional material for the brushes' sides (kerbs); empty = leave them
+	std::string sideMaterial;   ///< Optional kerb material: the brushes' sides and the kerb tops beside the road; empty = leave them
+	double roadWidth = 0;       ///< The road's width in units (the texture spans it); 0 = Auto (the typical piece width)
 };
 
 /// What the road tool would do (planRoad): new texture values per face.
@@ -48,6 +57,9 @@ struct RoadPlan {
 	std::string sideMaterial;
 	int chains = 0;
 	int ignored = 0;                  ///< Faces left out (walls, bottoms, broken brushes)
+	int kerbs = 0;                    ///< Tops left out: kerbs and sidewalks beside the road at another height
+	int edgePieces = 0;               ///< Small pieces at road height that took their neighbour's mapping
+	std::vector<double> widths;       ///< The width (units) each chain's texture spans
 	bool alongV = true;               ///< The texture's V axis runs along the road
 
 	[[nodiscard]] bool empty() const { return faces.empty(); }
@@ -65,7 +77,7 @@ using TextureSizeFn = std::function<std::pair<int, int>(const std::string& mater
 [[nodiscard]] std::vector<FaceRef> roadFaces(const MapDocument& doc, const Selection& selection);
 
 /// Plans the road over `faces` (see the file comment). Faces that do not face up are counted
-/// in `ignored`. The result does not depend on the order of `faces`.
+/// in `ignored`, kerb tops in `kerbs`. The result does not depend on the order of `faces`.
 [[nodiscard]] RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, const RoadOptions& options,
                                 const TextureSizeFn& textureSize);
 

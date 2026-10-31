@@ -13,6 +13,7 @@
 class QCheckBox;
 class QComboBox;
 class QDialogButtonBox;
+class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QSpinBox;
@@ -48,6 +49,7 @@ private:
 	QComboBox* m_along;
 	QCheckBox* m_flip;
 	QSpinBox* m_repeats;
+	QDoubleSpinBox* m_width;
 	QLineEdit* m_side;
 	QLabel* m_note;
 	QDialogButtonBox* m_buttons;

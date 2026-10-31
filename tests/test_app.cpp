@@ -7381,15 +7381,11 @@ TEST_CASE("picking: brushes stay clickable after resizing, pasting and tying the
 	CHECK(clicks({180, 48, 0}, flush));
 }
 
-TEST_CASE("road: select an L-shaped road with a curve, Road ..., OK - the texture runs along it; undo") {
-	// Julius (31.10.2026): "There should be a road tool ... select all these, and right-click Road."
-	QTemporaryDir home;
-	qputenv("HOME", home.path().toUtf8());
-	QSettings::setDefaultFormat(QSettings::IniFormat);
-	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
-	QSettings().clear();
-	test::Fixture f;
-	test::createFixture(f);
+namespace {
+
+/// A generated road texture for the road tests (256 x 512, tall: V runs along the road): dirt,
+/// a dashed yellow lane in the middle, light kerb stripes at both sides; material ROAD/DEMO_ROAD.
+void writeDemoRoadTexture(const test::Fixture& f) {
 	// A generated road texture (256 x 512, tall: V runs along the road): dirt, a dark lane
 	// in the middle, light kerb stripes at both sides, dashes along it.
 	{
@@ -7417,6 +7413,20 @@ TEST_CASE("road: select an L-shaped road with a curve, Road ..., OK - the textur
 		out.close();
 		test::writeText(f.mod / "materials/road/demo_road.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"road/demo_road\"\n}\n");
 	}
+}
+
+} // namespace
+
+TEST_CASE("road: select an L-shaped road with a curve, Road ..., OK - the texture runs along it; undo") {
+	// Julius (31.10.2026): "There should be a road tool ... select all these, and right-click Road."
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
 	Editor editor;
 	editor.discover(fromPath(f.steam));
 	MainWindow window(&editor);
@@ -7525,6 +7535,147 @@ TEST_CASE("road: select an L-shaped road with a curve, Road ..., OK - the textur
 	editor.undo();
 	settle();
 	CHECK(editor.doc().serialize() == before);
+}
+
+TEST_CASE("road: a T junction, a corner and a road of two widths - one scale per road, the branch starts at the junction, the kerb is left out") {
+	// Julius (31.10.2026, pictures 53-55): "road tool not working that well" - lanes jumped where
+	// the width changed, a square corner ran diagonally, a junction's branches ran anywhere.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+
+	const auto add = [&](double x0, double y0, double x1, double y1, double top) {
+		auto solid = solidFromPoints(editor.doc(), {{x0, y0, 0}, {x1, y0, 0}, {x0, y1, 0}, {x1, y1, 0}, {x0, y0, top}, {x1, y0, top}, {x0, y1, top}, {x1, y1, top}},
+		                             "ROAD/DEMO_ROAD");
+		REQUIRE(solid);
+		for (auto& side : solid->sides) alignToWorld(side, 0.5);
+		const SolidRef ref{0, solid->id};
+		Transaction t(editor.doc(), "Road piece");
+		t.touchSolid(ref);
+		editor.doc().world.solids.push_back(*solid);
+		editor.commit(t.finish());
+		return ref;
+	};
+	// Three places: a road whose second piece is wider (55), an L with a square corner (54), a T
+	// junction with a sidewalk beside it (53).
+	const std::vector<SolidRef> widths{add(0, 0, 512, 256, 16), add(512, -64, 1024, 256, 16)};
+	const std::vector<SolidRef> corner{add(0, 1024, 512, 1280, 16), add(512, 1024, 768, 1280, 16), add(512, 1280, 768, 2048, 16)};
+	const SolidRef west = add(1536, 0, 2048, 256, 16), junction = add(2048, 0, 2304, 256, 16), east = add(2304, 0, 2816, 256, 16);
+	const SolidRef branch = add(2048, 256, 2304, 768, 16), sidewalk = add(1536, 256, 2048, 512, 24);
+	const std::vector<SolidRef> tee{west, junction, east, branch, sidewalk};
+
+	Viewport* view = window.view3D();
+	const auto shoot = [&](const QString& name, QVector3D target) {
+		view->camera().position = target + QVector3D(0, -700, 900);
+		view->camera().yaw = 90;
+		view->camera().pitch = -52;
+		view->update();
+		settle();
+		QTest::qWait(300);   // the road texture loads in the background
+		settle();
+		view->grabFramebuffer().save(shotDir + "/" + name);
+	};
+	const auto top = [&](const SolidRef& ref) -> const Side& {
+		const Solid* solid = editor.doc().findSolid(ref);
+		for (const auto& side : solid->sides) {
+			if (side.plane().normal.z > 0.9) return side;
+		}
+		FAIL("no top face");
+		return solid->sides.front();
+	};
+	const auto same = [](double a, double b, double size) {
+		const double d = std::fmod(std::abs(a - b), size);
+		return d < 0.5 || size - d < 0.5;
+	};
+	// Selects the pieces, opens Road ..., checks the note, presses OK.
+	const auto road = [&](const std::vector<SolidRef>& pieces, const QStringList& expect) {
+		Selection selection;
+		selection.solids = pieces;
+		editor.setSelection(selection);
+		auto* action = window.findChild<QAction*>("brushesRoad");
+		REQUIRE(action);
+		action->trigger();
+		settle();
+		auto* dialog = window.findChild<RoadDialog*>("roadDialog");
+		REQUIRE(dialog);
+		dialog->findChild<QLineEdit*>("roadMaterial")->setText("ROAD/DEMO_ROAD");
+		QTest::qWait(150);
+		settle();
+		INFO("note: " << dialog->note().toStdString());
+		for (const auto& text : expect) CHECK(dialog->note().contains(text));
+		dialog->accept();
+		settle();
+		editor.setSelection({});
+	};
+
+	shoot("road2_widths_before.png", QVector3D(512, 128, 0));
+	road(widths, {"2 faces", "1 road", "256 units wide"});
+	shoot("road2_widths_after.png", QVector3D(512, 128, 0));
+	// One scale; the lane line (the texture's middle at y = 128) is the same on both sides of the seam.
+	CHECK(std::abs(top(widths[0]).u.scale - top(widths[1]).u.scale) < 1e-9);
+	for (const double y : {0.0, 128.0, 200.0}) {
+		CHECK(same(textureCoordinate(top(widths[0]), {512, y, 16}).u, textureCoordinate(top(widths[1]), {512, y, 16}).u, 256));
+		CHECK(same(textureCoordinate(top(widths[0]), {512, y, 16}).v, textureCoordinate(top(widths[1]), {512, y, 16}).v, 512));
+	}
+
+	shoot("road2_corner_before.png", QVector3D(512, 1400, 0));
+	road(corner, {"3 faces", "2 roads"});
+	shoot("road2_corner_after.png", QVector3D(512, 1400, 0));
+	// No diagonal: every top runs along x or y.
+	for (const auto& ref : corner) {
+		const Vec3 v = top(ref).v.axis;
+		CHECK((std::abs(std::abs(v.x) - 1) < 1e-9 || std::abs(std::abs(v.y) - 1) < 1e-9));
+	}
+
+	shoot("road2_junction_before.png", QVector3D(2176, 256, 0));
+	road(tee, {"4 faces", "2 roads", "Left out: 1 kerb or side face"});
+	shoot("road2_junction_after.png", QVector3D(2176, 256, 0));
+	// The main road runs straight through the junction, the branch starts at its edge.
+	for (const double y : {0.0, 128.0, 256.0}) {
+		CHECK(same(textureCoordinate(top(west), {2048, y, 16}).v, textureCoordinate(top(junction), {2048, y, 16}).v, 512));
+		CHECK(same(textureCoordinate(top(junction), {2304, y, 16}).v, textureCoordinate(top(east), {2304, y, 16}).v, 512));
+	}
+	CHECK(std::abs(std::abs(top(branch).v.axis.y) - 1) < 1e-9);
+	CHECK(same(textureCoordinate(top(branch), {2176, 256, 16}).v, 0, 512));
+	const Side& walk = top(sidewalk);
+	CHECK(std::abs(std::abs(walk.u.axis.x) - 1) < 1e-9);   // left out: still world aligned
+	CHECK(std::abs(walk.u.scale - 0.5) < 1e-9);
+
+	// The width field: a road width in units changes the scale (and Auto goes back).
+	Selection selection;
+	selection.solids = widths;
+	editor.setSelection(selection);
+	window.findChild<QAction*>("brushesRoad")->trigger();
+	settle();
+	auto* dialog = window.findChild<RoadDialog*>("roadDialog");
+	REQUIRE(dialog);
+	dialog->findChild<QLineEdit*>("roadMaterial")->setText("ROAD/DEMO_ROAD");
+	dialog->findChild<QDoubleSpinBox*>("roadWidth")->setValue(320);
+	QTest::qWait(150);
+	settle();
+	CHECK(dialog->note().contains("320 units wide"));
+	CHECK(dialog->options().roadWidth == 320);
+	dialog->reject();
+	settle();
+	CHECK(editor.brushPreview().empty());
 }
 
 namespace {

@@ -8,6 +8,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -74,16 +75,27 @@ RoadDialog::RoadDialog(Editor* editor, const QString& material, QWidget* parent)
 	m_repeats->setToolTip(tr("How often the texture fits across the road's width (1: once, kerb to kerb)"));
 	form->addRow(tr("Fit width (repeats across)"), m_repeats);
 
+	m_width = new QDoubleSpinBox(this);
+	m_width->setObjectName("roadWidth");
+	m_width->setRange(0, 4096);
+	m_width->setDecimals(0);
+	m_width->setSingleStep(8);
+	m_width->setSuffix(tr(" units"));
+	m_width->setSpecialValueText(tr("Auto"));
+	m_width->setValue(0);
+	m_width->setToolTip(tr("The road's width the texture spans, kerb to kerb. Auto: the typical width of the road's pieces - a wider piece shows more of the texture's edge"));
+	form->addRow(tr("Road width"), m_width);
+
 	m_side = new QLineEdit(this);
 	m_side->setObjectName("roadSideMaterial");
-	m_side->setPlaceholderText(tr("leave the sides as they are"));
+	m_side->setPlaceholderText(tr("leave kerbs and sides as they are"));
 	m_side->setText(QSettings().value("road/sideMaterial").toString());
-	form->addRow(tr("Side material (kerbs)"), materialRow(m_side, tr("The material picked in the browser, for the road's standing sides")));
+	form->addRow(tr("Kerb material"), materialRow(m_side, tr("The material picked in the browser, for the kerb tops beside the road and the standing sides")));
 
 	m_note = noteLabel(QString());
 	m_note->setObjectName("roadNote");
 	m_note->setMinimumWidth(380);
-	m_note->setMinimumHeight(m_note->fontMetrics().lineSpacing() * 3 + 4);
+	m_note->setMinimumHeight(m_note->fontMetrics().lineSpacing() * 4 + 4);
 	m_note->setAlignment(Qt::AlignLeft | Qt::AlignTop);
 	form->addRow(m_note);
 
@@ -101,6 +113,7 @@ RoadDialog::RoadDialog(Editor* editor, const QString& material, QWidget* parent)
 	connect(m_along, &QComboBox::currentIndexChanged, this, later);
 	connect(m_flip, &QCheckBox::toggled, this, later);
 	connect(m_repeats, &QSpinBox::valueChanged, this, later);
+	connect(m_width, &QDoubleSpinBox::valueChanged, this, later);
 	// Another brush picked or the map changed meanwhile: the preview follows.
 	connect(editor, &Editor::selectionChanged, this, later);
 	connect(editor, &Editor::documentChanged, this, later);
@@ -118,6 +131,7 @@ RoadOptions RoadDialog::options() const {
 	options.flip = m_flip->isChecked();
 	options.repeatsAcross = m_repeats->value();
 	options.sideMaterial = m_side->text().trimmed().toStdString();
+	options.roadWidth = m_width->value();
 	return options;
 }
 
@@ -140,9 +154,18 @@ void RoadDialog::refresh() {
 	QStringList lines;
 	lines << tr("%n face(s) with %1,", nullptr, int(plan.faces.size())).arg(qs(plan.material));
 	lines.last() += ' ' + tr("in %n road(s) - pieces that touch run on into each other.", nullptr, plan.chains);
-	lines << (plan.alongV ? tr("The texture's V (down the picture) runs along the road.") : tr("The texture's U (across the picture) runs along the road."));
-	if (plan.ignored > 0) lines << tr("%n face(s) don't face up (walls, bottoms) and were left out.", nullptr, plan.ignored);
-	if (!plan.sideFaces.empty()) lines << tr("%n side(s) get %1.", nullptr, int(plan.sideFaces.size())).arg(qs(plan.sideMaterial));
+	QStringList widths;
+	for (const double w : plan.widths) {
+		if (!widths.contains(QString::number(w, 'g', 4))) widths << QString::number(w, 'g', 4);
+	}
+	lines << (plan.alongV ? tr("The texture's V (down the picture) runs along the road, %1 units wide.") : tr("The texture's U (across the picture) runs along the road, %1 units wide."))
+	             .arg(widths.join(" / "));
+	QStringList left;
+	if (plan.kerbs > 0) left << tr("%n kerb or side face(s)", nullptr, plan.kerbs);
+	if (plan.ignored > 0) left << tr("%n wall or bottom face(s)", nullptr, plan.ignored);
+	if (!left.isEmpty()) lines << tr("Left out: %1.").arg(left.join(", "));
+	if (plan.edgePieces > 0) lines << tr("%n small piece(s) at the road's edge continue the road next to them.", nullptr, plan.edgePieces);
+	if (!plan.sideFaces.empty()) lines << tr("%n kerb face(s) get %1.", nullptr, int(plan.sideFaces.size())).arg(qs(plan.sideMaterial));
 	m_note->setText(lines.join('\n'));
 	ok->setEnabled(true);
 }

@@ -21,7 +21,12 @@ constexpr double UP = 0.5;            ///< A road face's normal is at most 60° 
 constexpr double ON_LINE = 0.1;       ///< Units: an edge lies on another face's edge
 constexpr double MIN_SHARED = 1.0;    ///< Units: shorter common pieces of edges do not link faces
 constexpr double ELONGATED = 1.25;    ///< A piece this much longer than wide has a long axis
+constexpr double KERB_HEIGHT = 2.0;   ///< Units: a top this much above or below the road beside it is a kerb
+constexpr double BESIDE = 2.0;        ///< Units: pieces this close seen from above lie beside each other
+constexpr double SMALL_NARROW = 0.25; ///< A piece this much narrower than the one it hangs on is an edge piece
+constexpr double SMALL_AREA = 0.15;   ///< ... or this much smaller
 const double COS30 = std::cos(30.0 * 3.14159265358979323846 / 180.0);
+const double COS45 = std::cos(45.0 * 3.14159265358979323846 / 180.0);
 
 /// One road face: its corners (in its plane) and where it is.
 struct Piece {
@@ -98,28 +103,6 @@ LongAxis longAxis(const Piece& piece) {
 			best.axis = a >= b ? e : perp;
 			best.aspect = std::max(a, b) / std::max(1e-6, std::min(a, b));
 			best.length = std::max(a, b);
-		}
-	}
-	return best;
-}
-
-/// Middle of the piece's edge across from the common edge `link` (its free end: about as long
-/// and running about the same way), or nothing. For a strip of a curve this is the next radial
-/// edge, so the road runs along the strip's middle, not across the common edge.
-std::optional<Vec3> oppositeEdgeMiddle(const Piece& piece, const Link& link) {
-	const Vec3 perp = normalize(cross(piece.normal, link.dir));
-	std::optional<Vec3> best;
-	double farthest = 1.0;
-	for (std::size_t i = 0; i < piece.poly.size(); ++i) {
-		const Vec3 a = piece.poly[i];
-		const Vec3 b = piece.poly[(i + 1) % piece.poly.size()];
-		const double len = length(b - a);
-		if (len < 0.5 * link.length || std::abs(dot((b - a) / len, link.dir)) < std::cos(45.0 * 3.14159265358979323846 / 180.0)) continue;
-		const Vec3 mid = (a + b) * 0.5;
-		const double away = std::abs(dot(mid - link.mid, perp));
-		if (away > farthest) {
-			farthest = away;
-			best = mid;
 		}
 	}
 	return best;
@@ -210,56 +193,6 @@ const Link* findLink(const std::vector<std::vector<Link>>& links, int from, int 
 	return nullptr;
 }
 
-/// Puts the pieces into chains, end to end. A chain starts at a piece with at most one free
-/// neighbour; at a fork it goes on where the road runs straightest, the other branch becomes
-/// a chain of its own.
-std::vector<std::vector<int>> buildChains(const std::vector<Piece>& pieces, const std::vector<std::vector<Link>>& links) {
-	std::vector<std::vector<int>> chains;
-	std::vector<bool> used(pieces.size(), false);
-	const auto freeNeighbours = [&](int index) {
-		int count = 0;
-		for (const auto& link : links[static_cast<std::size_t>(index)]) count += used[static_cast<std::size_t>(link.other)] ? 0 : 1;
-		return count;
-	};
-	for (;;) {
-		int start = -1;
-		for (std::size_t i = 0; i < pieces.size() && start < 0; ++i) {
-			if (!used[i] && freeNeighbours(static_cast<int>(i)) <= 1) start = static_cast<int>(i);
-		}
-		for (std::size_t i = 0; i < pieces.size() && start < 0; ++i) {
-			if (!used[i]) start = static_cast<int>(i);   // a closed ring
-		}
-		if (start < 0) break;
-		std::vector<int> chain;
-		int current = start;
-		int previous = -1;
-		while (current >= 0) {
-			used[static_cast<std::size_t>(current)] = true;
-			chain.push_back(current);
-			const Piece& piece = pieces[static_cast<std::size_t>(current)];
-			// Where the road came from: the common edge with the piece before (else the piece's middle).
-			const Link* back = previous >= 0 ? findLink(links, current, previous) : nullptr;
-			const Vec3 from = back ? back->mid : piece.centroid;
-			int next = -1;
-			double straightest = std::numeric_limits<double>::lowest();
-			for (const auto& link : links[static_cast<std::size_t>(current)]) {
-				if (used[static_cast<std::size_t>(link.other)]) continue;
-				const Vec3 heading = normalize(link.mid - from);
-				const Vec3 came = back ? normalize(piece.centroid - back->mid) : heading;
-				const double score = dot(heading, came);
-				if (score > straightest + 1e-9) {
-					straightest = score;
-					next = link.other;
-				}
-			}
-			previous = current;
-			current = next;
-		}
-		chains.push_back(std::move(chain));
-	}
-	return chains;
-}
-
 /// `v` in the plane with normal `n`, unit length (zero if it stands on the plane).
 Vec3 inPlane(const Vec3& v, const Vec3& n) {
 	return normalize(v - n * dot(v, n));
@@ -271,6 +204,93 @@ double wrapShift(double shift, double size) {
 	double wrapped = std::fmod(shift, size);
 	if (wrapped < 0) wrapped += size;
 	return std::abs(wrapped - size) < 1e-6 ? 0 : wrapped;
+}
+
+
+/// Area of a flat polygon.
+double polygonArea(const std::vector<Vec3>& poly) {
+	Vec3 sum;
+	for (std::size_t i = 0; i < poly.size(); ++i) sum += cross(poly[i], poly[(i + 1) % poly.size()]);
+	return 0.5 * length(sum);
+}
+
+/// The height of the piece's plane straight above or below `p` (its own centroid's height when
+/// the piece stands upright).
+double heightAt(const Piece& piece, const Vec3& p) {
+	if (std::abs(piece.normal.z) < 1e-6) return piece.centroid.z;
+	const Vec3& o = piece.poly.front();
+	return o.z - (piece.normal.x * (p.x - o.x) + piece.normal.y * (p.y - o.y)) / piece.normal.z;
+}
+
+/// The two pieces lie side by side seen from above (their boxes touch within `gap` units).
+bool besideFromAbove(const Piece& a, const Piece& b, double gap) {
+	return a.box.min.x <= b.box.max.x + gap && b.box.min.x <= a.box.max.x + gap && a.box.min.y <= b.box.max.y + gap &&
+	       b.box.min.y <= a.box.max.y + gap;
+}
+
+/// Two pieces lie in one plane.
+bool coplanar(const Piece& a, const Piece& b) {
+	return dot(a.normal, b.normal) > 0.9999 && std::abs(dot(b.centroid - a.centroid, a.normal)) < ON_LINE;
+}
+
+/// Across a common edge, into the piece: perpendicular to the edge, in the piece's plane.
+Vec3 acrossEdge(const Piece& piece, const Link& link) {
+	Vec3 d = normalize(cross(piece.normal, link.dir));
+	if (dot(d, piece.centroid - link.mid) < 0) d = -d;
+	return d;
+}
+
+/// Across the piece from the common edge `link` to the edge on its other end (about as long,
+/// running about the same way, farthest away): the bisector of both edges' perpendiculars - a
+/// strip of a curve runs along its middle, a rectangle straight across, even when the common
+/// edge covers only part of its side.
+Vec3 throughFrom(const Piece& piece, const Link& link) {
+	const Vec3 in = acrossEdge(piece, link);
+	const Vec3 perp = normalize(cross(piece.normal, link.dir));
+	std::optional<Vec3> other;
+	double farthest = 1.0;
+	for (std::size_t i = 0; i < piece.poly.size(); ++i) {
+		const Vec3 a = piece.poly[i];
+		const Vec3 b = piece.poly[(i + 1) % piece.poly.size()];
+		const double len = length(b - a);
+		if (len < 0.5 * link.length || std::abs(dot((b - a) / len, link.dir)) < COS45) continue;
+		const double away = std::abs(dot((a + b) * 0.5 - link.mid, perp));
+		if (away > farthest) {
+			farthest = away;
+			other = (b - a) / len;
+		}
+	}
+	if (!other) return in;
+	Vec3 out = normalize(cross(piece.normal, *other));
+	if (dot(out, in) < 0) out = -out;
+	return inPlane(in + out, piece.normal);
+}
+
+/// The piece's extent along `d` (its length when `d` runs along it).
+double extent(const Piece& piece, const Vec3& d) {
+	double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
+	for (const auto& v : piece.poly) {
+		lo = std::min(lo, dot(v, d));
+		hi = std::max(hi, dot(v, d));
+	}
+	return hi - lo;
+}
+
+/// Where the line through `q` along `dir` (in the plane with normal `normal`) meets the line of
+/// the common edge `link`; the edge's middle when the line runs along the edge.
+Vec3 meetEdge(const Vec3& q, const Vec3& dir, const Link& link, const Vec3& normal) {
+	const Vec3 n = normalize(cross(normal, link.dir));
+	const double den = dot(dir, n);
+	if (std::abs(den) < 0.2) return link.mid;
+	return q + dir * (dot(link.mid - q, n) / den);
+}
+
+/// The lower median (of an even count the smaller middle value: a road with one bulge keeps
+/// the narrow width).
+double lowerMedian(std::vector<double> values) {
+	if (values.empty()) return 0;
+	std::sort(values.begin(), values.end());
+	return values[(values.size() - 1) / 2];
 }
 
 } // namespace
@@ -311,16 +331,265 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 	RoadPlan plan;
 	std::vector<Piece> pieces = collectPieces(doc, faces, plan.ignored);
 	if (pieces.empty()) return plan;
+	const int count = static_cast<int>(pieces.size());
+	const auto at = [&](int i) -> const Piece& { return pieces[static_cast<std::size_t>(i)]; };
+	const auto links = linkPieces(pieces);
 
-	// The material: as asked, else the one most of the faces have.
+	// --- Which tops are road: kerbs and sidewalks beside it at another height are not. ---
+	// Pieces that touch form a surface; the largest surface is road, and so is every other
+	// surface unless it lies beside a road piece more than KERB_HEIGHT above or below it.
+	std::vector<int> surface(static_cast<std::size_t>(count), -1);
+	std::vector<double> surfaceArea;
+	for (int i = 0; i < count; ++i) {
+		if (surface[static_cast<std::size_t>(i)] >= 0) continue;
+		const int id = static_cast<int>(surfaceArea.size());
+		surfaceArea.push_back(0);
+		std::vector<int> stack{i};
+		surface[static_cast<std::size_t>(i)] = id;
+		while (!stack.empty()) {
+			const int p = stack.back();
+			stack.pop_back();
+			surfaceArea.back() += polygonArea(at(p).poly);
+			for (const auto& link : links[static_cast<std::size_t>(p)]) {
+				if (surface[static_cast<std::size_t>(link.other)] < 0) {
+					surface[static_cast<std::size_t>(link.other)] = id;
+					stack.push_back(link.other);
+				}
+			}
+		}
+	}
+	std::vector<int> bySize(surfaceArea.size());
+	for (std::size_t k = 0; k < bySize.size(); ++k) bySize[k] = static_cast<int>(k);
+	std::stable_sort(bySize.begin(), bySize.end(), [&](int a, int b) { return surfaceArea[static_cast<std::size_t>(a)] > surfaceArea[static_cast<std::size_t>(b)] + 1e-6; });
+	std::vector<char> roadSurface(surfaceArea.size(), 0);
+	std::vector<bool> kerb(static_cast<std::size_t>(count), false);
+	for (std::size_t k = 0; k < bySize.size(); ++k) {
+		const int s = bySize[k];
+		bool isKerb = false;
+		for (int i = 0; i < count && !isKerb && k > 0; ++i) {
+			if (surface[static_cast<std::size_t>(i)] != s) continue;
+			for (int j = 0; j < count && !isKerb; ++j) {
+				if (!roadSurface[static_cast<std::size_t>(surface[static_cast<std::size_t>(j)])] || !besideFromAbove(at(i), at(j), BESIDE)) continue;
+				isKerb = std::abs(at(i).centroid.z - heightAt(at(j), at(i).centroid)) > KERB_HEIGHT;
+			}
+		}
+		roadSurface[static_cast<std::size_t>(s)] = isKerb ? 0 : 1;
+		for (int i = 0; i < count; ++i) {
+			if (surface[static_cast<std::size_t>(i)] == s && isKerb) kerb[static_cast<std::size_t>(i)] = true;
+		}
+	}
+
+	// --- Small pieces at road height hanging on one road piece take its mapping. ---
+	std::vector<int> parent(static_cast<std::size_t>(count), -1);
+	const auto active = [&](int i) { return !kerb[static_cast<std::size_t>(i)] && parent[static_cast<std::size_t>(i)] < 0; };
+	const auto activeLinks = [&](int i) {
+		std::vector<const Link*> result;
+		for (const auto& link : links[static_cast<std::size_t>(i)]) {
+			if (active(link.other)) result.push_back(&link);
+		}
+		return result;
+	};
+	const auto narrow = [&](int i) {
+		const LongAxis shape = longAxis(at(i));
+		return shape.length / std::max(1.0, shape.aspect);
+	};
+	for (int pass = 0; pass < 8; ++pass) {
+		bool changed = false;
+		for (int i = 0; i < count; ++i) {
+			if (!active(i)) continue;
+			// It hangs on the neighbour it shares the longest edge with; any other neighbour may
+			// only touch its short ends (a strip along the road's edge, not a piece across it).
+			const auto near = activeLinks(i);
+			if (near.empty()) continue;
+			const Link* hang = near.front();
+			for (const auto* link : near) {
+				if (link->length > hang->length + 1e-6 || (std::abs(link->length - hang->length) <= 1e-6 && link->other < hang->other)) hang = link;
+			}
+			const int j = hang->other;
+			if (!coplanar(at(i), at(j))) continue;
+			bool endsOnly = true;
+			for (const auto* link : near) endsOnly = endsOnly && (link == hang || link->length <= 1.5 * narrow(i));
+			if (!endsOnly) continue;
+			if (narrow(i) < SMALL_NARROW * narrow(j) || polygonArea(at(i).poly) < SMALL_AREA * polygonArea(at(j).poly)) {
+				parent[static_cast<std::size_t>(i)] = j;
+				changed = true;
+			}
+		}
+		if (!changed) break;
+	}
+
+	// --- How the road runs on each piece, from the pieces around it. ---
+	// A piece between two neighbours on opposite edges runs from one to the other (a strip of a
+	// curve along its middle); a piece with neighbours on two edges at an angle is a corner, one
+	// with three or more a junction. Every piece "uses" the common edges the road crosses on it.
+	std::vector<Vec3> dir(static_cast<std::size_t>(count));
+	std::vector<std::vector<int>> uses(static_cast<std::size_t>(count));   // the neighbours the road crosses to
+	std::vector<char> node(static_cast<std::size_t>(count), 0);           // corner or junction
+	for (int i = 0; i < count; ++i) {
+		if (!active(i)) continue;
+		const auto near = activeLinks(i);
+		const Piece& piece = at(i);
+		if (near.size() >= 3) {
+			node[static_cast<std::size_t>(i)] = 1;
+		} else if (near.size() == 2) {
+			if (std::abs(dot(near[0]->dir, near[1]->dir)) < COS45) {
+				node[static_cast<std::size_t>(i)] = 1;
+			} else {
+				const Vec3 in = acrossEdge(piece, *near[0]);
+				const Vec3 out = -acrossEdge(piece, *near[1]);
+				dir[static_cast<std::size_t>(i)] = inPlane(in + out, piece.normal);
+				uses[static_cast<std::size_t>(i)] = {near[0]->other, near[1]->other};
+			}
+		} else if (near.size() == 1) {
+			// An end piece: across its common edge - unless it is long and the road turns off
+			// part of its long side (an L of two straight pieces), then along its length.
+			const Link& link = *near.front();
+			const LongAxis shape = longAxis(piece);
+			if (shape.aspect > ELONGATED && std::abs(dot(shape.axis, link.dir)) > COS30 && link.length < 0.75 * shape.length) {
+				dir[static_cast<std::size_t>(i)] = shape.axis;
+			} else {
+				dir[static_cast<std::size_t>(i)] = throughFrom(piece, link);
+				uses[static_cast<std::size_t>(i)] = {link.other};
+			}
+		} else {
+			dir[static_cast<std::size_t>(i)] = longAxis(piece).axis;
+		}
+	}
+	// Stretches of road between corners and junctions, and how long each is.
+	std::vector<int> stretch(static_cast<std::size_t>(count), -1);
+	std::vector<double> stretchLength;
+	for (int i = 0; i < count; ++i) {
+		if (!active(i) || node[static_cast<std::size_t>(i)] || stretch[static_cast<std::size_t>(i)] >= 0) continue;
+		const int id = static_cast<int>(stretchLength.size());
+		stretchLength.push_back(0);
+		std::vector<int> stack{i};
+		stretch[static_cast<std::size_t>(i)] = id;
+		while (!stack.empty()) {
+			const int p = stack.back();
+			stack.pop_back();
+			stretchLength.back() += extent(at(p), dir[static_cast<std::size_t>(p)]);
+			for (const int q : uses[static_cast<std::size_t>(p)]) {
+				if (!node[static_cast<std::size_t>(q)] && stretch[static_cast<std::size_t>(q)] < 0) {
+					stretch[static_cast<std::size_t>(q)] = id;
+					stack.push_back(q);
+				}
+			}
+		}
+	}
+	const auto lengthBehind = [&](int neighbour) {
+		const int s = stretch[static_cast<std::size_t>(neighbour)];
+		return s >= 0 ? stretchLength[static_cast<std::size_t>(s)] : 0.0;
+	};
+	for (int i = 0; i < count; ++i) {
+		if (!active(i) || !node[static_cast<std::size_t>(i)]) continue;
+		const auto near = activeLinks(i);
+		const Piece& piece = at(i);
+		if (near.size() == 2) {
+			// A corner continues the longer road (then the wider common edge); the other road
+			// starts at its edge. Never diagonal.
+			const auto better = [&](const Link* a, const Link* b) {
+				const double la = lengthBehind(a->other), lb = lengthBehind(b->other);
+				if (std::abs(la - lb) > 1e-6) return la > lb;
+				if (std::abs(a->length - b->length) > 1e-6) return a->length > b->length;
+				return a->other < b->other;
+			};
+			const Link* keep = better(near[0], near[1]) ? near[0] : near[1];
+			dir[static_cast<std::size_t>(i)] = -acrossEdge(piece, *keep);
+			uses[static_cast<std::size_t>(i)] = {keep->other};
+			continue;
+		}
+		// A junction: the main road is the straightest pair of opposite neighbours, of those the
+		// widest, then the longest; it runs straight through.
+		std::size_t bestA = 0, bestB = 1;
+		std::tuple<int, double, double, double> best{-1, 0, 0, 0};
+		for (std::size_t a = 0; a < near.size(); ++a) {
+			for (std::size_t b = a + 1; b < near.size(); ++b) {
+				const double straight = -dot(normalize(near[a]->mid - piece.centroid), normalize(near[b]->mid - piece.centroid));
+				const bool opposite = straight > 0.7 && std::abs(dot(near[a]->dir, near[b]->dir)) > COS45;
+				const std::tuple<int, double, double, double> score{opposite ? 1 : 0, std::min(near[a]->length, near[b]->length),
+				                                                    lengthBehind(near[a]->other) + lengthBehind(near[b]->other), straight};
+				if (score > best) {
+					best = score;
+					bestA = a;
+					bestB = b;
+				}
+			}
+		}
+		const Vec3 in = acrossEdge(piece, *near[bestA]);
+		const Vec3 out = -acrossEdge(piece, *near[bestB]);
+		dir[static_cast<std::size_t>(i)] = inPlane(in + out, piece.normal);
+		uses[static_cast<std::size_t>(i)] = {near[bestA]->other, near[bestB]->other};
+	}
+
+	// --- Roads: pieces linked where both use the common edge and run the same way. ---
+	const auto usesEdge = [&](int i, int j) {
+		const auto& u = uses[static_cast<std::size_t>(i)];
+		return std::find(u.begin(), u.end(), j) != u.end();
+	};
+	const auto joined = [&](int i, int j) {
+		return usesEdge(i, j) && usesEdge(j, i) && std::abs(dot(dir[static_cast<std::size_t>(i)], dir[static_cast<std::size_t>(j)])) > COS45;
+	};
+	const auto joinedNeighbours = [&](int i) {
+		std::vector<int> result;
+		for (const auto* link : activeLinks(i)) {
+			if (joined(i, link->other)) result.push_back(link->other);
+		}
+		return result;
+	};
+	// A road starting at a junction or a corner: the common edge it starts at (the widest).
+	const auto startEdge = [&](int i) -> const Link* {
+		const Link* found = nullptr;
+		for (const auto* link : activeLinks(i)) {
+			if (joined(i, link->other)) continue;
+			if (std::abs(dot(dir[static_cast<std::size_t>(i)], normalize(cross(at(i).normal, link->dir)))) < 0.5) continue;   // runs along that edge
+			if (!found || link->length > found->length) found = link;
+		}
+		return found;
+	};
+	std::vector<std::vector<int>> chains;
+	std::vector<bool> placed(static_cast<std::size_t>(count), false);
+	const auto walk = [&](int start) {
+		std::vector<int> chain;
+		int current = start, previous = -1;
+		while (current >= 0) {
+			placed[static_cast<std::size_t>(current)] = true;
+			chain.push_back(current);
+			int next = -1;
+			for (const int j : joinedNeighbours(current)) {
+				if (j != previous && !placed[static_cast<std::size_t>(j)]) {
+					next = j;
+					break;
+				}
+			}
+			previous = current;
+			current = next;
+		}
+		return chain;
+	};
+	for (int round = 0; round < 2; ++round) {
+		for (int i = 0; i < count; ++i) {
+			if (!active(i) || placed[static_cast<std::size_t>(i)]) continue;
+			if (round == 0 && joinedNeighbours(i).size() > 1) continue;   // first the roads with ends, then rings
+			auto chain = walk(i);
+			// Start where the road leaves a junction or a corner, if one end does.
+			if (!startEdge(chain.front()) && startEdge(chain.back())) std::reverse(chain.begin(), chain.end());
+			if (options.flip) std::reverse(chain.begin(), chain.end());
+			chains.push_back(std::move(chain));
+		}
+	}
+	plan.chains = static_cast<int>(chains.size());
+
+	// --- The material and the texture's size. ---
 	plan.material = options.material;
 	if (plan.material.empty()) {
 		std::map<std::string, int> counts;
-		for (const auto& piece : pieces) ++counts[piece.material];
+		for (int i = 0; i < count; ++i) {
+			if (!kerb[static_cast<std::size_t>(i)]) ++counts[at(i).material];
+		}
 		int most = -1;
-		for (const auto& [material, count] : counts) {
-			if (count > most) {
-				most = count;
+		for (const auto& [material, n] : counts) {
+			if (n > most) {
+				most = n;
 				plan.material = material;
 			}
 		}
@@ -334,113 +603,147 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 	const double texAlong = plan.alongV ? texHeight : texWidth;
 	const double repeats = std::max(1, options.repeatsAcross);
 
-	const auto links = linkPieces(pieces);
-	auto chains = buildChains(pieces, links);
-	if (options.flip) {
-		for (auto& chain : chains) std::reverse(chain.begin(), chain.end());
-	}
-	plan.chains = static_cast<int>(chains.size());
-
+	std::map<int, RoadPlan::FaceChange> mapped;   // by piece
 	for (std::size_t c = 0; c < chains.size(); ++c) {
 		const auto& chain = chains[c];
-		// Direction of the road on each piece.
-		std::vector<Vec3> along(chain.size());
-		for (std::size_t k = 0; k < chain.size(); ++k) {
-			const Piece& piece = pieces[static_cast<std::size_t>(chain[k])];
-			const Link* in = k > 0 ? findLink(links, chain[k], chain[k - 1]) : nullptr;
-			const Link* out = k + 1 < chain.size() ? findLink(links, chain[k], chain[k + 1]) : nullptr;
-			Vec3 d;
-			if (in && out) {
-				d = inPlane(out->mid - in->mid, piece.normal);   // through the piece, from edge to edge
-			} else if (in || out) {
-				// An end piece: across its common edge - unless it is long and the road turns
-				// off part of its long side (an L of two straight pieces), then along its length.
-				// (A strip of a curve shares its whole long side: across it.)
-				const Link* link = in ? in : out;
-				const LongAxis shape = longAxis(piece);
-				if (shape.aspect > ELONGATED && std::abs(dot(shape.axis, link->dir)) > COS30 && link->length < 0.75 * shape.length) {
-					d = shape.axis;
-				} else if (const auto far = oppositeEdgeMiddle(piece, *link)) {
-					d = inPlane(link->mid - *far, piece.normal);   // from the free end to the common edge
-				} else {
-					d = inPlane(cross(piece.normal, link->dir), piece.normal);
-				}
-				// Towards the next piece, or away from the one before.
-				const Vec3 towards = out ? out->mid - piece.centroid : piece.centroid - in->mid;
-				if (dot(d, towards) < 0) d = -d;
-			}
-			if (length(d) < 0.5) {
-				// A piece on its own (or no clear direction): along its length.
-				d = longAxis(piece).axis;
-				const Vec3 tieBreak{1, 0.001, 0.000001};
-				if (!(in || out) && dot(d, tieBreak) < 0) d = -d;
-				if (in && dot(d, piece.centroid - in->mid) < 0) d = -d;
-				if (out && dot(d, out->mid - piece.centroid) < 0) d = -d;
+		const std::size_t n = chain.size();
+		const auto piece = [&](std::size_t k) -> const Piece& { return at(chain[k]); };
+		const auto linkTo = [&](std::size_t k, std::size_t other) { return findLink(links, chain[k], chain[other]); };
+		const Link* start = startEdge(chain.front());
+
+		// Directions, pointing on along the chain.
+		std::vector<Vec3> along(n);
+		for (std::size_t k = 0; k < n; ++k) {
+			Vec3 d = dir[static_cast<std::size_t>(chain[k])];
+			if (k > 0) {
+				if (dot(d, piece(k).centroid - linkTo(k, k - 1)->mid) < 0) d = -d;
+			} else if (n > 1) {
+				if (dot(d, linkTo(0, 1)->mid - piece(0).centroid) < 0) d = -d;
+			} else {
+				const Vec3 away = start ? piece(0).centroid - start->mid : Vec3{1, 0.001, 0.000001};
+				if (dot(d, away) < 0) d = -d;
+				if (options.flip) d = -d;
 			}
 			along[k] = d;
 		}
 
-		// Width of each piece across the road, and the chain's mean width for the scale along it.
-		std::vector<Vec3> across(chain.size());
-		std::vector<double> minAcross(chain.size()), width(chain.size());
-		double widthSum = 0;
-		for (std::size_t k = 0; k < chain.size(); ++k) {
-			const Piece& piece = pieces[static_cast<std::size_t>(chain[k])];
-			across[k] = normalize(cross(piece.normal, along[k]));
-			double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
-			for (const auto& v : piece.poly) {
-				lo = std::min(lo, dot(v, across[k]));
-				hi = std::max(hi, dot(v, across[k]));
-			}
-			minAcross[k] = lo;
-			width[k] = std::max(1.0, hi - lo);
-			widthSum += width[k];
+		// One scale for the whole road: from its width (the lower median of the pieces' widths).
+		std::vector<Vec3> across(n);
+		std::vector<double> width(n);
+		for (std::size_t k = 0; k < n; ++k) {
+			across[k] = normalize(cross(piece(k).normal, along[k]));
+			width[k] = std::max(1.0, extent(piece(k), across[k]));
 		}
-		const double texelsAlong = texAcross * repeats / (widthSum / static_cast<double>(chain.size()));   // square pixels
+		const double typical = lowerMedian(width);
+		const double roadWidth = options.roadWidth > 0 ? options.roadWidth : typical;
+		plan.widths.push_back(roadWidth);
+		const double texels = texAcross * repeats / roadWidth;   // per unit, across and along (square pixels)
 
-		// Along the road: the distance from the chain's start, carried on across every common edge.
-		double offset = 0;
-		for (std::size_t k = 0; k < chain.size(); ++k) {
-			const Piece& piece = pieces[static_cast<std::size_t>(chain[k])];
-			if (k == 0) {
-				double lo = std::numeric_limits<double>::max();
-				for (const auto& v : piece.poly) lo = std::min(lo, dot(v, along[0]));
-				offset = -lo;
-			} else {
-				const Link* in = findLink(links, chain[k], chain[k - 1]);
-				offset = dot(in->mid, along[k - 1]) + offset - dot(in->mid, along[k]);
+		// The centre line: through the middle of the piece of typical width, carried on from piece
+		// to piece where it meets the common edges.
+		std::size_t reference = 0;
+		for (std::size_t k = 0; k < n; ++k) {
+			if (std::abs(width[k] - typical) < std::abs(width[reference] - typical) - 1e-6) reference = k;
+		}
+		std::vector<Vec3> centre(n);   // a point of the centre line on each piece
+		std::vector<Vec3> crossing(n); // where it crosses the common edge to the piece before (k >= 1)
+		{
+			const Piece& p = piece(reference);
+			double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
+			for (const auto& v : p.poly) {
+				lo = std::min(lo, dot(v, across[reference]));
+				hi = std::max(hi, dot(v, across[reference]));
 			}
-			const double texelsAcross = texAcross * repeats / width[k];   // exactly the width, n times
+			centre[reference] = p.centroid + across[reference] * ((lo + hi) * 0.5 - dot(p.centroid, across[reference]));
+		}
+		for (std::size_t k = reference + 1; k < n; ++k) {
+			crossing[k] = meetEdge(centre[k - 1], along[k - 1], *linkTo(k - 1, k), piece(k - 1).normal);
+			centre[k] = crossing[k];
+		}
+		for (std::size_t k = reference; k-- > 0;) {
+			crossing[k + 1] = meetEdge(centre[k + 1], along[k + 1], *linkTo(k + 1, k), piece(k + 1).normal);
+			centre[k] = crossing[k + 1];
+		}
 
-			const Solid* solid = doc.findSolid(piece.ref.solid);
+		// Along: 0 where the road starts (the junction's or corner's edge, else the free end),
+		// carried on across every common edge at the centre line.
+		std::vector<double> shift(n);
+		if (start) {
+			shift[0] = -dot(meetEdge(centre[0], along[0], *start, piece(0).normal), along[0]) * texels;
+		} else {
+			double lo = std::numeric_limits<double>::max();
+			for (const auto& v : piece(0).poly) lo = std::min(lo, dot(v, along[0]));
+			shift[0] = -lo * texels;
+		}
+		for (std::size_t k = 1; k < n; ++k) {
+			const double before = dot(crossing[k], along[k - 1]) * texels + shift[k - 1];
+			shift[k] = before - dot(crossing[k], along[k]) * texels;
+		}
+
+		for (std::size_t k = 0; k < n; ++k) {
+			const Piece& p = piece(k);
+			const Solid* solid = doc.findSolid(p.ref.solid);
 			RoadPlan::FaceChange change;
-			change.face = piece.ref;
+			change.face = p.ref;
 			change.chain = static_cast<int>(c);
 			for (const auto& side : solid->sides) {
-				if (side.id == piece.ref.sideId) change.side = side;
+				if (side.id == p.ref.sideId) change.side = side;
 			}
 			change.side.material = plan.material;
 			change.side.rotation = 0;
-			const TextureAxis alongAxis{along[k], wrapShift(offset * texelsAlong, texAlong), 1.0 / texelsAlong};
+			const double middle = texAcross * repeats * 0.5;   // the texture's middle sits on the centre line
+			const TextureAxis alongAxis{along[k], wrapShift(shift[k], texAlong), 1.0 / texels};
 			if (plan.alongV) {
 				// U across (cross(normal, along): the picture is not mirrored), V along the road.
-				change.side.u = {across[k], wrapShift(-minAcross[k] * texelsAcross, texAcross), 1.0 / texelsAcross};
+				change.side.u = {across[k], wrapShift(middle - dot(centre[k], across[k]) * texels, texAcross), 1.0 / texels};
 				change.side.v = alongAxis;
 			} else {
 				// U along, V across the other way round (keeps the picture unmirrored).
-				const double maxAcross = minAcross[k] + width[k];
 				change.side.u = alongAxis;
-				change.side.v = {-across[k], wrapShift(maxAcross * texelsAcross, texAcross), 1.0 / texelsAcross};
+				change.side.v = {-across[k], wrapShift(middle + dot(centre[k], across[k]) * texels, texAcross), 1.0 / texels};
 			}
-			plan.faces.push_back(std::move(change));
+			mapped.emplace(chain[k], std::move(change));
 		}
 	}
 
-	// Kerbs: the standing sides of the road's brushes.
+	// Small pieces take the mapping of the piece they hang on (in one plane: seamless).
+	for (int i = 0; i < count; ++i) {
+		if (kerb[static_cast<std::size_t>(i)] || parent[static_cast<std::size_t>(i)] < 0) continue;
+		int root = parent[static_cast<std::size_t>(i)];
+		for (int guard = 0; guard < count && parent[static_cast<std::size_t>(root)] >= 0; ++guard) root = parent[static_cast<std::size_t>(root)];
+		const auto found = mapped.find(root);
+		if (found == mapped.end()) continue;
+		const Solid* solid = doc.findSolid(at(i).ref.solid);
+		RoadPlan::FaceChange change;
+		change.face = at(i).ref;
+		change.chain = found->second.chain;
+		for (const auto& side : solid->sides) {
+			if (side.id == at(i).ref.sideId) change.side = side;
+		}
+		change.side.material = found->second.side.material;
+		change.side.u = found->second.side.u;
+		change.side.v = found->second.side.v;
+		change.side.rotation = 0;
+		mapped.emplace(i, std::move(change));
+		++plan.edgePieces;
+	}
+	for (auto& [index, change] : mapped) plan.faces.push_back(std::move(change));
+
+	// Kerbs: the tops left out beside the road, and the standing sides of all these brushes.
+	std::vector<SolidRef> kerbSolids;
+	for (int i = 0; i < count; ++i) {
+		if (!kerb[static_cast<std::size_t>(i)]) continue;
+		++plan.kerbs;
+		if (!options.sideMaterial.empty()) plan.sideFaces.push_back(at(i).ref);
+		if (std::find(kerbSolids.begin(), kerbSolids.end(), at(i).ref.solid) == kerbSolids.end()) kerbSolids.push_back(at(i).ref.solid);
+	}
 	if (!options.sideMaterial.empty()) {
 		std::vector<SolidRef> solids;
 		for (const auto& change : plan.faces) {
 			if (std::find(solids.begin(), solids.end(), change.face.solid) == solids.end()) solids.push_back(change.face.solid);
+		}
+		for (const auto& ref : kerbSolids) {
+			if (std::find(solids.begin(), solids.end(), ref) == solids.end()) solids.push_back(ref);
 		}
 		for (const auto& ref : solids) {
 			const Solid* solid = doc.findSolid(ref);

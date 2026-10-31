@@ -1,5 +1,6 @@
 // test_road_texture.cpp - Road tool: chains of floor faces, the texture along the road and
-// fitted across it, continuous over straight pieces, curves (round-edge strips), S-bends and ramps.
+// fitted across it, continuous over straight pieces, curves (round-edge strips), S-bends and ramps;
+// one scale per road (pieces of other widths), square corners, junctions, kerbs and edge pieces.
 
 #include <doctest/doctest.h>
 
@@ -307,4 +308,177 @@ TEST_CASE("road: without a material the one most faces have is used; nothing to 
 	CHECK(plan.material == "ROAD/OLD");
 	CHECK(plan.faces.size() == 2);
 	CHECK(planRoad(doc, {}, RoadOptions{}, size(512, 512)).empty());
+}
+
+namespace {
+
+/// The texture coordinate of `p` on the planned face of brush `ref`.
+TexCoord at(const RoadPlan& plan, const SolidRef& ref, const Vec3& p) {
+	const auto* change = planned(plan, ref);
+	REQUIRE(change);
+	return textureCoordinate(change->side, p);
+}
+
+/// The planned face of `ref` runs along `axis` (or against it).
+bool runsAlong(const RoadPlan& plan, const SolidRef& ref, const Vec3& axis) {
+	const auto* change = planned(plan, ref);
+	return change && std::abs(std::abs(dot(change->side.v.axis, axis)) - 1) < 1e-9;
+}
+
+} // namespace
+
+TEST_CASE("road: pieces of different widths share one scale; the lane runs straight on (Julius' 55)") {
+	// Julius (31.10.2026): two pieces, the near one wider - each got its own scale, the lane
+	// lines jumped at the seam. Now: one scale, the texture's middle on the road's centre line.
+	MapDocument doc;
+	const auto a = addBox(doc, 0, 0, 512, 256);        // 256 wide
+	const auto b = addBox(doc, 512, -64, 1024, 256);   // 320 wide, wider to one side
+	const auto plan = planRoad(doc, tops(doc, {b, a}), RoadOptions{"ROAD/DIRT01"}, size(512, 512));
+	REQUIRE(plan.faces.size() == 2);
+	CHECK(plan.chains == 1);
+	REQUIRE(plan.widths.size() == 1);
+	CHECK(std::abs(plan.widths[0] - 256) < 1e-9);   // the narrow piece's width (lower median)
+	const auto* first = planned(plan, a);
+	const auto* second = planned(plan, b);
+	CHECK(std::abs(first->side.u.scale - second->side.u.scale) < 1e-12);   // one scale
+	CHECK(std::abs(first->side.v.scale - second->side.v.scale) < 1e-12);
+	// The texture's middle stays on the narrow piece's middle (y = 128) in both pieces; the
+	// wider piece just shows 64 units more of the texture's edge.
+	CHECK(sameTexel(at(plan, a, {300, 128, 16}).u, 256, 512));
+	CHECK(sameTexel(at(plan, b, {800, 128, 16}).u, 256, 512));
+	// Across the seam: the same texel at the centre line and at every lane position.
+	for (const double y : {0.0, 32.0, 64.0, 128.0, 192.0, 256.0}) {
+		const Vec3 p{512, y, 16};
+		CHECK(sameTexel(at(plan, a, p).u, at(plan, b, p).u, 512));
+		CHECK(sameTexel(at(plan, a, p).v, at(plan, b, p).v, 512));
+	}
+	// A width given in units: the texture spans it.
+	RoadOptions wide{"ROAD/DIRT01"};
+	wide.roadWidth = 320;
+	const auto plan2 = planRoad(doc, tops(doc, {a, b}), wide, size(512, 512));
+	REQUIRE(plan2.widths.size() == 1);
+	CHECK(std::abs(plan2.widths[0] - 320) < 1e-9);
+	CHECK(std::abs(1.0 / planned(plan2, a)->side.u.scale - 512.0 / 320.0) < 1e-9);
+}
+
+TEST_CASE("road: an L of straight pieces with a square corner - never diagonal; the other road starts at the corner (Julius' 54)") {
+	MapDocument doc;
+	const auto a = addBox(doc, 0, 0, 512, 256);           // along x, 512 long
+	const auto corner = addBox(doc, 512, 0, 768, 256);    // the square corner
+	const auto b = addBox(doc, 512, 256, 768, 1024);      // along y, 768 long (the longer road)
+	const auto plan = planRoad(doc, tops(doc, {a, corner, b}), RoadOptions{"ROAD/DIRT01"}, size(512, 512));
+	REQUIRE(plan.faces.size() == 3);
+	CHECK(plan.chains == 2);
+	// Nothing runs diagonally: the corner continues the longer road (along y).
+	CHECK(runsAlong(plan, corner, {0, 1, 0}));
+	CHECK(runsAlong(plan, b, {0, 1, 0}));
+	CHECK(runsAlong(plan, a, {1, 0, 0}));
+	for (const auto& change : plan.faces) {
+		const Vec3 v = change.side.v.axis;
+		CHECK((std::abs(std::abs(v.x) - 1) < 1e-9 || std::abs(std::abs(v.y) - 1) < 1e-9));
+	}
+	// The corner and the long road are one road: seamless where they meet.
+	for (const double x : {512.0, 600.0, 640.0, 768.0}) {
+		const Vec3 p{x, 256, 16};
+		CHECK(sameTexel(at(plan, corner, p).u, at(plan, b, p).u, 512));
+		CHECK(sameTexel(at(plan, corner, p).v, at(plan, b, p).v, 512));
+	}
+	// The short road starts at the corner's edge (0 there), its lane on its own middle (y = 128).
+	CHECK(sameTexel(at(plan, a, {512, 128, 16}).v, 0, 512));
+	CHECK(sameTexel(at(plan, a, {256, 128, 16}).u, 256, 512));
+	CHECK(planned(plan, a)->side.v.axis.x < 0);   // runs away from the corner
+}
+
+TEST_CASE("road: a T junction - the main road runs straight through, the branch starts at its edge; kerbs and edge pieces (Julius' 53)") {
+	MapDocument doc;
+	const auto w = addBox(doc, 0, 0, 512, 256);
+	const auto j = addBox(doc, 512, 0, 768, 256);          // the junction
+	const auto e = addBox(doc, 768, 0, 1280, 256);
+	const auto branch = addBox(doc, 512, 256, 768, 768);   // the branch, north
+	const auto kerb = addBox(doc, 0, 256, 512, 512, 24);   // a sidewalk beside the road, 8 higher
+	const auto strip = addBox(doc, 768, 256, 1280, 264);   // a thin strip at road height along e
+	std::vector<SolidRef> all{w, j, e, branch, kerb, strip};
+	RoadOptions options{"ROAD/DIRT01"};
+	options.sideMaterial = "CONCRETE/KERB01";
+	const auto plan = planRoad(doc, tops(doc, all), options, size(512, 512));
+	CHECK(plan.kerbs == 1);
+	CHECK(plan.edgePieces == 1);
+	CHECK(plan.chains == 2);
+	CHECK(planned(plan, kerb) == nullptr);   // the sidewalk keeps its top
+	// The kerb's top goes onto the kerb material with the sides.
+	const Solid* kerbSolid = doc.findSolid(kerb);
+	int kerbTop = 0;
+	for (const auto& face : plan.sideFaces) {
+		if (face.solid == kerb) {
+			for (const auto& side : kerbSolid->sides) kerbTop += side.id == face.sideId && side.plane().normal.z > 0.5;
+		}
+	}
+	CHECK(kerbTop == 1);
+	// Main road: west - junction - east, all along x, seamless.
+	for (const auto& ref : {w, j, e}) CHECK(runsAlong(plan, ref, {1, 0, 0}));
+	CHECK(planned(plan, w)->chain == planned(plan, j)->chain);
+	CHECK(planned(plan, j)->chain == planned(plan, e)->chain);
+	for (const double x : {512.0, 768.0}) {
+		for (const double y : {0.0, 64.0, 128.0, 256.0}) {
+			const Vec3 p{x, y, 16};
+			const SolidRef left = x == 512 ? w : j;
+			const SolidRef right = x == 512 ? j : e;
+			CHECK(sameTexel(at(plan, left, p).u, at(plan, right, p).u, 512));
+			CHECK(sameTexel(at(plan, left, p).v, at(plan, right, p).v, 512));
+		}
+	}
+	// The branch: its own road, along y, starting (0) at the junction's edge, lane in its middle.
+	CHECK(runsAlong(plan, branch, {0, 1, 0}));
+	CHECK(planned(plan, branch)->chain != planned(plan, j)->chain);
+	CHECK(sameTexel(at(plan, branch, {640, 256, 16}).v, 0, 512));
+	CHECK(sameTexel(at(plan, branch, {640, 500, 16}).u, 256, 512));
+	CHECK(planned(plan, branch)->side.v.axis.y > 0);   // away from the junction
+	// The thin strip takes the east piece's mapping: seamless along their common edge.
+	for (const double x : {800.0, 1000.0}) {
+		const Vec3 p{x, 256, 16};
+		CHECK(sameTexel(at(plan, strip, p).u, at(plan, e, p).u, 512));
+		CHECK(sameTexel(at(plan, strip, p).v, at(plan, e, p).v, 512));
+	}
+
+	// The same plan for any order of the faces.
+	auto faces = tops(doc, all);
+	std::mt19937 random(11);
+	for (int round = 0; round < 5; ++round) {
+		std::shuffle(faces.begin(), faces.end(), random);
+		const auto again = planRoad(doc, faces, options, size(512, 512));
+		REQUIRE(again.faces.size() == plan.faces.size());
+		for (const auto& change : plan.faces) {
+			const auto* same = planned(again, change.face.solid);
+			REQUIRE(same);
+			CHECK((same->side.u == change.side.u));
+			CHECK((same->side.v == change.side.v));
+		}
+	}
+
+	// One undo step gives the map back exactly.
+	const std::string before = doc.serialize();
+	History history;
+	history.push(edit::applyRoad(doc, plan));
+	REQUIRE(history.undo(doc));
+	CHECK(doc.serialize() == before);
+}
+
+TEST_CASE("road: a crossing - the wider road runs through, both halves of the other start at the crossing") {
+	MapDocument doc;
+	const auto w = addBox(doc, 0, 0, 512, 320);             // the wide road (320) along x
+	const auto x = addBox(doc, 512, 0, 768, 320);           // the crossing (256 x 320)
+	const auto e = addBox(doc, 768, 0, 1280, 320);
+	const auto north = addBox(doc, 512, 320, 768, 832);     // the narrow road (256) along y
+	const auto south = addBox(doc, 512, -512, 768, 0);
+	const auto plan = planRoad(doc, tops(doc, {w, x, e, north, south}), RoadOptions{"ROAD/DIRT01"}, size(512, 512));
+	REQUIRE(plan.faces.size() == 5);
+	CHECK(plan.chains == 3);
+	for (const auto& ref : {w, x, e}) CHECK(runsAlong(plan, ref, {1, 0, 0}));
+	CHECK(planned(plan, w)->chain == planned(plan, e)->chain);
+	CHECK(runsAlong(plan, north, {0, 1, 0}));
+	CHECK(runsAlong(plan, south, {0, 1, 0}));
+	CHECK(planned(plan, north)->side.v.axis.y > 0);   // both run away from the crossing
+	CHECK(planned(plan, south)->side.v.axis.y < 0);
+	CHECK(sameTexel(at(plan, north, {640, 320, 16}).v, 0, 512));
+	CHECK(sameTexel(at(plan, south, {640, 0, 16}).v, 0, 512));
 }
