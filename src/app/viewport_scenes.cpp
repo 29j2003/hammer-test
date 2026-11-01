@@ -8,6 +8,10 @@
 // actor at the playing time. Nothing is drawn while no scene is selected, so normal frames pay
 // nothing.
 //
+// What starts the scenes shown is drawn too: the trigger boxes of their starts (also while
+// triggers are hidden), a dotted line from each box or entity that starts a scene to its NPC, and
+// a label such as "enter → alyx_greet (if 2)".
+//
 // Clicks: while the panel asks for a point (Add walk, Place again) the next left click puts it
 // on the floor under the mouse; otherwise a click on a marker shows that step in the panel, and
 // for a Move/Face step selects its info_target so the gizmo moves it (with snapping and undo).
@@ -20,7 +24,9 @@
 
 #include <cmath>
 
+#include <sme/brush.h>
 #include <sme/choreography.h>
+#include <sme/text.h>
 
 namespace sme::app {
 
@@ -76,6 +82,7 @@ QString stepText(const ChoreoStep& step, std::size_t index, bool manyActors) {
 			break;
 		case ChoreoStep::Kind::Wait: text = Viewport::tr("Wait %1 s").arg(step.seconds); break;
 		case ChoreoStep::Kind::Face: text = Viewport::tr("Face"); break;
+		case ChoreoStep::Kind::SetVariable: text = Viewport::tr("Set %1").arg(shortened(step.variable, 22)); break;
 	}
 	QString prefix = QString::number(index + 1);
 	if (step.withPrevious) prefix += QStringLiteral("+");
@@ -83,7 +90,84 @@ QString stepText(const ChoreoStep& step, std::size_t index, bool manyActors) {
 	return prefix + QStringLiteral("  ") + text;
 }
 
+const QVector4D START_COLOR{1.0f, 0.82f, 0.3f, 1};
+
+/// One way a shown scene starts, where it is in the map.
+struct StartLink {
+	int sceneId = 0;
+	Vec3 from, to;           ///< The box or entity that starts it, and the scene's NPC (or marker)
+	Bounds box;              ///< The trigger box (empty for entities)
+	QString text;
+};
+
+std::vector<StartLink> startLinks(const MapDocument& doc, const std::vector<int>& scenes) {
+	std::vector<StartLink> links;
+	for (const int id : scenes) {
+		const Entity* entity = doc.findEntity(id);
+		if (!entity) continue;
+		const ChoreoScene scene = readChoreoScene(doc, *entity);
+		const auto actors = choreoActors(scene);
+		const Entity* npc = actors.empty() ? nullptr : findNamedEntity(doc, actors.front());
+		const Vec3 to = npc ? npc->origin() + Vec3{0, 0, 48} : entity->origin();
+		const QString suffix = scene.conditions.empty() ? QString() : Viewport::tr(" (if %1)").arg(scene.conditions.size());
+		for (std::size_t i = 0; i < scene.starts.size(); ++i) {
+			const auto& start = scene.starts[i];
+			const std::string number = std::to_string(i + 1);
+			std::string source;
+			QString word;
+			switch (start.kind) {
+				case ChoreoStart::Kind::Area: source = scene.name + "_area" + number; word = Viewport::tr("enter"); break;
+				case ChoreoStart::Kind::LookAt: source = scene.name + "_look" + number; word = Viewport::tr("look"); break;
+				case ChoreoStart::Kind::Near: source = scene.name + "_near" + number; word = Viewport::tr("near"); break;
+				case ChoreoStart::Kind::Use: source = trim(start.target).empty() && !actors.empty() ? actors.front() : start.target; word = Viewport::tr("use"); break;
+				case ChoreoStart::Kind::Output:
+					source = trim(start.target).empty() && !actors.empty() ? actors.front() : start.target;
+					word = QString::fromStdString(start.output);
+					break;
+				case ChoreoStart::Kind::AfterScene: source = start.target; word = Viewport::tr("after"); break;
+				case ChoreoStart::Kind::MapStart:
+				case ChoreoStart::Kind::Timer:
+				case ChoreoStart::Kind::Input: continue;   // nowhere in particular
+			}
+			const Entity* from = findNamedEntity(doc, source);
+			if (!from) continue;
+			StartLink link;
+			link.sceneId = id;
+			link.to = to;
+			for (const auto& solid : from->solids) link.box.add(buildBrushGeometry(solid).bounds);
+			link.from = link.box.empty() ? from->origin() + Vec3{0, 0, 16} : link.box.center();
+			link.text = word + QStringLiteral(" → ") + QString::fromStdString(scene.name) + suffix;
+			links.push_back(std::move(link));
+		}
+	}
+	return links;
+}
+
 } // namespace
+
+std::vector<Viewport::SceneMarker> Viewport::sceneStartMarkers() const {
+	std::vector<SceneMarker> markers;
+	std::vector<std::pair<Vec3, int>> stacks;
+	for (const auto& link : startLinks(m_editor->doc(), m_editor->visibleScenes())) {
+		SceneMarker marker;
+		marker.sceneId = link.sceneId;
+		marker.anchor = link.from;
+		if (!m_camera.project(link.from, width(), height(), marker.at)) continue;
+		int row = 0;
+		for (auto& [where, count] : stacks) {
+			if (length(where - link.from) < 8) {
+				row = count++;
+				break;
+			}
+		}
+		if (row == 0) stacks.emplace_back(link.from, 1);
+		marker.text = link.text;
+		marker.color = toColor(START_COLOR);
+		marker.label = QRectF(marker.at.x() + 8, marker.at.y() - 8 + row * 16, 260, 16);
+		markers.push_back(std::move(marker));
+	}
+	return markers;
+}
 
 std::vector<Viewport::SceneMarker> Viewport::sceneMarkers() const {
 	std::vector<SceneMarker> markers;
@@ -100,6 +184,7 @@ std::vector<Viewport::SceneMarker> Viewport::sceneMarkers() const {
 		std::vector<std::pair<Vec3, int>> stacks;
 		for (std::size_t i = 0; i < scene.steps.size() && i < timeline.size(); ++i) {
 			const auto& step = scene.steps[i];
+			if (step.kind == ChoreoStep::Kind::SetVariable) continue;   // happens nowhere
 			SceneMarker marker;
 			marker.sceneId = id;
 			marker.step = int(i);
@@ -133,6 +218,7 @@ void Viewport::drawSceneLines(std::vector<LineVertex>& lines) const {
 		const auto timeline = choreoTimeline(doc, scene);
 		for (std::size_t i = 0; i < scene.steps.size() && i < timeline.size(); ++i) {
 			const auto& step = scene.steps[i];
+			if (step.kind == ChoreoStep::Kind::SetVariable) continue;
 			const auto& timing = timeline[i];
 			const bool focused = focus.sceneId == id && focus.step == int(i);
 			const QVector4D color = focused ? FOCUS_COLOR : actorColor(scene, step.actor);
@@ -170,11 +256,32 @@ void Viewport::drawSceneLines(std::vector<LineVertex>& lines) const {
 	}
 }
 
+void Viewport::drawSceneStartLines(std::vector<LineVertex>& lines) const {
+	for (const auto& link : startLinks(m_editor->doc(), m_editor->visibleScenes())) {
+		if (!link.box.empty()) {
+			// The box's twelve edges, slightly outside the brush so they show on top of it.
+			const Vec3 a = link.box.min - Vec3{1, 1, 1}, b = link.box.max + Vec3{1, 1, 1};
+			const Vec3 c[8] = {{a.x, a.y, a.z}, {b.x, a.y, a.z}, {b.x, b.y, a.z}, {a.x, b.y, a.z}, {a.x, a.y, b.z}, {b.x, a.y, b.z}, {b.x, b.y, b.z}, {a.x, b.y, b.z}};
+			for (int k = 0; k < 4; ++k) {
+				addLine(lines, c[k], c[(k + 1) % 4], START_COLOR);
+				addLine(lines, c[k + 4], c[(k + 1) % 4 + 4], START_COLOR);
+				addLine(lines, c[k], c[k + 4], START_COLOR);
+			}
+		}
+		// Dashes from what starts it to the NPC.
+		const double total = length(link.to - link.from);
+		for (double t = 0; t < total; t += 20) addLine(lines, link.from + (link.to - link.from) * (t / total), link.from + (link.to - link.from) * (std::min(total, t + 10) / total), START_COLOR);
+	}
+}
+
 void Viewport::drawSceneLabels(OverlayRecorder& p) const {
 	if (m_editor->scenePointPending()) {
 		p.drawText(QRectF(8, height() - 26, width() - 16, 20), tr("Scene: click where the step should happen - Esc cancels"), QColor(150, 230, 255));
 	}
 	for (const auto& marker : sceneMarkers()) {
+		p.drawText(marker.label, marker.text, marker.color);
+	}
+	for (const auto& marker : sceneStartMarkers()) {
 		p.drawText(marker.label, marker.text, marker.color);
 	}
 }

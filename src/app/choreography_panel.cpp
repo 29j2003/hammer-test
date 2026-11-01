@@ -23,6 +23,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -48,6 +49,7 @@ const char* kindIcon(ChoreoStep::Kind kind) {
 		case ChoreoStep::Kind::Say: return "step:say";
 		case ChoreoStep::Kind::Wait: return "step:wait";
 		case ChoreoStep::Kind::Face: return "step:face";
+		case ChoreoStep::Kind::SetVariable: return "step:setvar";
 	}
 	return "step:wait";
 }
@@ -68,9 +70,16 @@ QString cardText(const ChoreoStep& step, std::size_t index, double length, bool 
 			break;
 		case ChoreoStep::Kind::Wait: text = ChoreographyPanel::tr("Wait"); break;
 		case ChoreoStep::Kind::Face: text = ChoreographyPanel::tr("Face %1 %2").arg(std::lround(step.point.x)).arg(std::lround(step.point.y)); break;
+		case ChoreoStep::Kind::SetVariable: {
+			const QString name = step.variable.empty() ? ChoreographyPanel::tr("(choose a variable)") : qs(step.variable);
+			text = step.op == ChoreoStep::VariableOp::Toggle ? ChoreographyPanel::tr("Toggle %1").arg(name)
+			       : step.op == ChoreoStep::VariableOp::Add  ? ChoreographyPanel::tr("Add %2 to %1").arg(name, qs(formatNumber(step.value)))
+			                                                 : ChoreographyPanel::tr("Set %1 = %2").arg(name, qs(formatNumber(step.value)));
+			break;
+		}
 	}
 	QString who;
-	if (manyActors) who = qs(step.actor) + QStringLiteral(": ");
+	if (manyActors && step.kind != ChoreoStep::Kind::SetVariable) who = qs(step.actor) + QStringLiteral(": ");
 	return QStringLiteral("%1%2  %3%4   (%5 s)")
 	    .arg(index + 1)
 	    .arg(step.withPrevious ? QStringLiteral("+") : QString())
@@ -101,43 +110,30 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 	layout->setContentsMargins(8, 8, 8, 8);
 	layout->setSpacing(6);
 
-	// Scene: which one, its name and what starts it.
-	m_scenes = new QComboBox;
-	m_scenes->setObjectName("choreoScene");
-	m_scenes->setToolTip(tr("The scenes of this map (logic_choreographed_scene made here)"));
-	m_newScene = new QPushButton(tr("New"));
-	m_newScene->setObjectName("choreoNewScene");
-	m_newScene->setToolTip(tr("A new scene for the selected NPC"));
-	m_deleteScene = new QPushButton(tr("Delete"));
-	m_deleteScene->setObjectName("choreoDeleteScene");
-	m_deleteScene->setToolTip(tr("Removes the scene with its points and trigger (Undo brings it back)"));
-	auto* sceneRow = new QHBoxLayout;
-	sceneRow->addWidget(m_scenes, 1);
-	sceneRow->addWidget(m_newScene);
-	sceneRow->addWidget(m_deleteScene);
-	layout->addLayout(sceneRow);
+	// Scenes: all of the map, grouped by NPC.
+	layout->addWidget(buildManager());
 
 	m_name = new QLineEdit;
 	m_name->setObjectName("choreoName");
-	m_name->setToolTip(tr("The scene's name (targetname): fire \"Start\" on it from your own I/O"));
-	m_trigger = new QComboBox;
-	m_trigger->setObjectName("choreoTrigger");
-	m_trigger->addItem(tr("At map start"), int(ChoreoTrigger::MapStart));
-	m_trigger->addItem(tr("When the player walks in"), int(ChoreoTrigger::Trigger));
-	m_trigger->addItem(tr("By input \"Start\""), int(ChoreoTrigger::Input));
-	m_trigger->addItem(tr("After another scene"), int(ChoreoTrigger::AfterScene));
-	m_trigger->setToolTip(tr("What starts the scene. \"When the player walks in\" adds a trigger box at the NPC - move and size it like any brush."));
-	m_after = new QComboBox;
-	m_after->setObjectName("choreoAfter");
+	m_name->setToolTip(tr("The scene's name (targetname): fire \"Start\" on it (or Trigger on <name>_start) from your own I/O"));
 	auto* startRow = new QHBoxLayout;
 	startRow->addWidget(new QLabel(tr("Name")));
 	startRow->addWidget(m_name, 1);
 	layout->addLayout(startRow);
-	auto* triggerRow = new QHBoxLayout;
-	triggerRow->addWidget(new QLabel(tr("Starts")));
-	triggerRow->addWidget(m_trigger, 1);
-	triggerRow->addWidget(m_after, 1);
-	layout->addLayout(triggerRow);
+
+	// The scene's tabs: steps, what starts it, conditions, the map's variables.
+	m_tabs = new QTabWidget;
+	m_tabs->setObjectName("choreoTabs");
+	m_tabs->setDocumentMode(true);
+	auto* stepsPage = new QWidget;
+	auto* steps = new QVBoxLayout(stepsPage);
+	steps->setContentsMargins(0, 6, 0, 0);
+	steps->setSpacing(6);
+	m_tabs->addTab(stepsPage, tr("Steps"));
+	m_tabs->addTab(buildStartsPage(), tr("Starts"));
+	m_tabs->addTab(buildConditionsPage(), tr("Conditions"));
+	m_tabs->addTab(buildVariablesPage(), tr("Variables"));
+	layout->addWidget(m_tabs);
 
 	// Steps as cards; drag to reorder.
 	m_steps = new QListWidget;
@@ -148,23 +144,25 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 	m_steps->setMinimumHeight(110);
 	m_steps->setMaximumHeight(240);
 	m_steps->setToolTip(tr("The steps in order - drag to reorder. A step marked + starts together with the one before."));
-	layout->addWidget(m_steps);
+	steps->addWidget(m_steps);
 
 	auto* addWalk = addButton(tr("Walk"), "step:move", "choreoAddWalk", tr("Add a walk: click the point in the map"));
 	auto* addAnimation = addButton(tr("Animation"), "step:animation", "choreoAddAnimation", tr("Add an animation the NPC plays where it stands"));
 	auto* addSay = addButton(tr("Say"), "step:say", "choreoAddSay", tr("Add a line the NPC says (import your own voice file)"));
 	auto* addWait = addButton(tr("Wait"), "step:wait", "choreoAddWait", tr("Add a pause"));
 	auto* addFace = addButton(tr("Face"), "step:face", "choreoAddFace", tr("Add a turn towards a point: click it in the map"));
+	auto* addSet = addButton(tr("Set variable"), "step:setvar", "choreoAddSetVariable",
+	                         tr("Add a step that changes a variable when the scene gets there (other scenes can check it in their conditions)"));
 	m_remove = new QPushButton(tr("Remove"));
 	m_remove->setObjectName("choreoRemove");
 	auto* addRow = new QGridLayout;
 	addRow->setContentsMargins(0, 0, 0, 0);
 	int slot = 0;
-	for (auto* button : {addWalk, addAnimation, addSay, addWait, addFace, m_remove}) {
+	for (auto* button : {addWalk, addAnimation, addSay, addWait, addFace, addSet, m_remove}) {
 		addRow->addWidget(button, slot / 3, slot % 3);
 		++slot;
 	}
-	layout->addLayout(addRow);
+	steps->addLayout(addRow);
 
 	// The current step.
 	m_editor_box = new QWidget;
@@ -225,6 +223,7 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 	m_seconds->setToolTip(tr("How long the step takes (auto: the animation's or the line's length)"));
 	m_secondsRow = row({new QLabel(tr("Length")), m_seconds});
 	stepLayout->addWidget(m_secondsRow);
+	stepLayout->addWidget(buildVariableStepRow());
 
 	m_scrub = new QSlider(Qt::Horizontal);
 	m_scrub->setObjectName("choreoScrub");
@@ -239,13 +238,13 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 	scrubLayout->addWidget(m_playStep);
 	scrubLayout->addWidget(m_scrub, 1);
 	stepLayout->addWidget(m_scrubRow);
-	layout->addWidget(m_editor_box);
+	steps->addWidget(m_editor_box);
 
 	m_issues = new QLabel;
 	m_issues->setObjectName("choreoIssues");
 	m_issues->setWordWrap(true);
 	m_issues->setStyleSheet(QStringLiteral("color: #ffb46a;"));
-	layout->addWidget(m_issues);
+	steps->addWidget(m_issues);
 
 	m_preview = new QPushButton(icon("run"), tr("Preview scene"));
 	m_preview->setObjectName("choreoPreview");
@@ -256,15 +255,15 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 	auto* previewRow = new QHBoxLayout;
 	previewRow->addWidget(m_preview);
 	previewRow->addWidget(m_length, 1);
-	layout->addLayout(previewRow);
+	steps->addLayout(previewRow);
 	m_subtitle = new QLabel;
 	m_subtitle->setObjectName("choreoSubtitle");
 	m_subtitle->setWordWrap(true);
 	m_subtitle->setAlignment(Qt::AlignCenter);
 	m_subtitle->setStyleSheet(QStringLiteral("color: #ffffff; background: rgba(0,0,0,140); padding: 4px;"));
 	m_subtitle->hide();
-	layout->addWidget(m_subtitle);
-	layout->addWidget(noteLabel(tr("Select the NPC to see its scene in the map: numbered markers, arrows for walks. "
+	steps->addWidget(m_subtitle);
+	steps->addWidget(noteLabel(tr("Select the NPC to see its scene in the map: numbered markers, arrows for walks. "
 	                               "Click a marker to edit its step; move point markers with the gizmo. "
 	                               "Mouths move with the voice's loudness (no phoneme data).")));
 	layout->addStretch(1);
@@ -273,20 +272,6 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 	connect(&m_timer, &QTimer::timeout, this, &ChoreographyPanel::previewTick);
 
 	// Scene level.
-	connect(m_scenes, &QComboBox::activated, this, [this](int index) {
-		stopPreview();
-		m_sceneId = m_scenes->itemData(index).toInt();
-		m_step = -1;
-		// Its NPC gets selected, so the views show the scene.
-		if (const auto scene = currentScene(); scene && !scene->steps.empty()) {
-			if (const Entity* npc = findNamedEntity(m_editor->doc(), scene->steps.front().actor)) {
-				Selection selection;
-				selection.entities.push_back(npc->id);
-				m_editor->setSelection(std::move(selection));
-			}
-		}
-		refresh();
-	});
 	connect(m_newScene, &QPushButton::clicked, this, [this] {
 		int npc = 0;
 		for (const int id : m_editor->selection().entities) {
@@ -332,22 +317,6 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 		scene->name = name;
 		apply(*scene, "Rename scene");
 	});
-	connect(m_trigger, &QComboBox::activated, this, [this](int) {
-		auto scene = currentScene();
-		if (!scene) return;
-		scene->trigger = static_cast<ChoreoTrigger>(m_trigger->currentData().toInt());
-		if (scene->trigger == ChoreoTrigger::AfterScene && scene->afterScene.empty() && m_after->count() > 0) {
-			scene->afterScene = m_after->itemText(0).toStdString();
-		}
-		apply(*scene, "Scene trigger");
-	});
-	connect(m_after, &QComboBox::activated, this, [this](int) {
-		auto scene = currentScene();
-		if (!scene) return;
-		scene->afterScene = m_after->currentText().toStdString();
-		apply(*scene, "Scene trigger");
-	});
-
 	// Steps.
 	connect(m_steps, &QListWidget::currentRowChanged, this, [this](int row) {
 		if (m_filling) return;
@@ -379,6 +348,16 @@ ChoreographyPanel::ChoreographyPanel(Editor* editor, QWidget* parent) : QWidget(
 		while (used(voiceLineName(scene->name, "line" + std::to_string(n)))) ++n;
 		step.sound = voiceLineName(scene->name, "line" + std::to_string(n));
 		addStep(step, "Add line");
+	});
+	connect(addSet, &QPushButton::clicked, this, [this] {
+		ChoreoStep step;
+		step.kind = ChoreoStep::Kind::SetVariable;
+		const auto variables = choreoVariables(m_editor->doc());
+		if (!variables.empty()) {
+			step.variable = variables.front().name;
+			step.value = variables.front().flag ? 1 : 0;
+		}
+		addStep(step, "Add set variable");
 	});
 	connect(addWait, &QPushButton::clicked, this, [this] {
 		ChoreoStep step;
@@ -639,8 +618,18 @@ void ChoreographyPanel::onSelectionChanged() {
 			if (!scene) continue;
 			const std::string prefix = tag + "_p";
 			const std::string name = entity->get("targetname");
+			const std::string role = entity->get(std::string(CHOREO_ROLE_KEY));
 			int step = m_step;
-			if (startsWithI(name, prefix)) step = std::atoi(name.c_str() + prefix.size()) - 1;
+			if (startsWithI(name, prefix) && (role.empty() || iequals(role, "point"))) step = std::atoi(name.c_str() + prefix.size()) - 1;
+			// A start's box or timer: the Starts tab with that start.
+			if (startsWithI(role, "start")) {
+				const int start = std::atoi(role.c_str() + 5) - 1;
+				if (start >= 0 && (start != m_start || scene->id != m_sceneId)) {
+					m_start = start;
+					m_tabs->setCurrentIndex(1);
+					if (scene->id == m_sceneId) refresh();
+				}
+			}
 			if (scene->id != m_sceneId || step != m_step) {
 				m_sceneId = scene->id;
 				m_step = step;
@@ -665,6 +654,7 @@ void ChoreographyPanel::onSelectionChanged() {
 				refresh();
 				return;
 			}
+			refreshManager();   // its group opens in the list
 		}
 	}
 	pushFocus();
@@ -698,24 +688,23 @@ void ChoreographyPanel::refresh() {
 		const auto visible = m_editor->visibleScenes();
 		if (!visible.empty()) m_sceneId = visible.front();
 	}
-	{
-		QSignalBlocker block(m_scenes);
-		m_scenes->clear();
-		for (const int id : scenes) {
-			m_scenes->addItem(qs(doc.findEntity(id)->get("targetname")), id);
-			if (id == m_sceneId) m_scenes->setCurrentIndex(m_scenes->count() - 1);
-		}
-	}
+	refreshManager();
+	refreshVariables();
 	const auto scene = currentScene();
 	m_deleteScene->setEnabled(scene.has_value());
+	m_copyScene->setEnabled(scene.has_value());
+	m_selectScene->setEnabled(scene.has_value());
 	m_name->setEnabled(scene.has_value());
-	m_trigger->setEnabled(scene.has_value());
-	m_steps->setEnabled(scene.has_value());
+	m_tabs->setEnabled(scene.has_value());
 	m_preview->setEnabled(scene && !scene->steps.empty());
 	if (!scene) {
 		m_name->clear();
 		m_steps->clear();
-		m_after->hide();
+		m_starts->clear();
+		m_conditions->clear();
+		m_start = m_condition = -1;
+		fillStartEditor();
+		fillConditionEditor();
 		m_issues->setText(scenes.empty() ? tr("No scene yet: select an NPC and press New (or Choreography ... in its Object Properties).")
 		                                 : tr("Choose a scene above or select an NPC with a scene."));
 		m_length->clear();
@@ -726,23 +715,13 @@ void ChoreographyPanel::refresh() {
 		return;
 	}
 	m_name->setText(qs(scene->name));
-	{
-		QSignalBlocker block(m_trigger);
-		m_trigger->setCurrentIndex(std::max(0, m_trigger->findData(int(scene->trigger))));
-	}
-	{
-		QSignalBlocker block(m_after);
-		m_after->clear();
-		for (const int id : scenes) {
-			if (id != m_sceneId) m_after->addItem(qs(doc.findEntity(id)->get("targetname")));
-		}
-		m_after->setCurrentIndex(std::max(0, m_after->findText(qs(scene->afterScene))));
-		m_after->setVisible(scene->trigger == ChoreoTrigger::AfterScene);
-	}
+	refreshStarts(*scene);
+	refreshConditions(*scene);
 	// Step cards.
 	const auto timeline = choreoTimeline(doc, *scene);
 	bool manyActors = false;
-	for (const auto& step : scene->steps) manyActors = manyActors || step.actor != scene->steps.front().actor;
+	const auto actors = choreoActors(*scene);
+	manyActors = actors.size() > 1;
 	{
 		QSignalBlocker block(m_steps);
 		m_steps->clear();
@@ -818,6 +797,10 @@ void ChoreographyPanel::fillStepEditor() {
 	m_animRow->setVisible(step.kind == Kind::Animation);
 	m_sayRow->setVisible(step.kind == Kind::Say);
 	m_secondsRow->setVisible(step.kind == Kind::Animation || step.kind == Kind::Say || step.kind == Kind::Wait);
+	m_actorBox->parentWidget()->setVisible(step.kind != Kind::SetVariable);
+	m_scrubRow->setVisible(step.kind != Kind::SetVariable);
+	m_varRow->setVisible(step.kind == Kind::SetVariable);
+	if (step.kind == Kind::SetVariable) fillVariableStep(step);
 	m_seconds->setSpecialValueText(step.kind == Kind::Wait ? QString() : tr("auto"));
 	if (step.kind == Kind::Animation) {
 		QSignalBlocker block(m_sequence);

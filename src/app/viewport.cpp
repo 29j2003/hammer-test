@@ -632,6 +632,7 @@ void Viewport::paintGL() {
 	drawConnectLine(lines);
 	drawDoorPreview(lines);
 	drawSceneLines(lines);
+	drawSceneStartLines(lines);
 	drawGizmo(lines);
 	drawSnapHit(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);

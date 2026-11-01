@@ -561,6 +561,17 @@ void drawIcon(QPainter& p, const QString& name) {
 		arrowHead(p, QPointF(60, 32), 0, 12, QColor(220, 150, 250));
 		return;
 	}
+	if (name == "step:setvar") {
+		// A counter box with a plus: a variable changes.
+		p.setPen(pen(QColor(250, 210, 90), 4));
+		p.setBrush(Qt::NoBrush);
+		p.drawRoundedRect(QRectF(6, 14, 34, 36), 6, 6);
+		p.drawLine(QPointF(15, 32), QPointF(31, 32));
+		p.setPen(pen(LINE, 5));
+		p.drawLine(QPointF(50, 22), QPointF(50, 42));
+		p.drawLine(QPointF(40, 32), QPointF(60, 32));
+		return;
+	}
 	if (name == "eye") {
 		QPainterPath lid;
 		lid.moveTo(6, 32);

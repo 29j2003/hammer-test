@@ -13,21 +13,28 @@
 //   - a logic_relay "<scene>_start": every way of starting the scene fires its Trigger input,
 //   - one entity per start (see ChoreoStart), firing "<scene>_start":
 //       map start  - logic_auto "<scene>_auto<N>" OnMapSpawn,
-//       area       - trigger_once / trigger_multiple "<scene>_area<N>" (a box in front of the NPC),
+//       area       - trigger_once / trigger_multiple "<scene>_area<N>" (a box in front of the NPC;
+//                    with conditions a trigger_multiple keeps firing while the player is inside),
 //       look at    - trigger_look "<scene>_look<N>" (player looks at an entity while inside),
 //       near       - trigger_multiple "<scene>_near<N>" around the NPC, parented to it,
 //       timer      - logic_timer "<scene>_timer<N>" (fixed or random time),
 //       use / output / after scene - an output on that entity (OnPlayerUse, any output, the other
 //       scene's OnCompletion), input - nothing (fire "<scene>_start" Trigger or the scene's Start),
+//     "once" starts are removed when the scene starts (OnStart -> Kill), external ones through a
+//     logic_relay "<scene>_gate<N>" when there are conditions or other starts; with a start that
+//     fires every time the relay is disabled while the scene plays,
 //   - the conditions in a chain after "<scene>_start", all must hold, the last one Starts the scene:
-//       scene played / not played - logic_branch_listener "<scene>_if<N>" on the other scene's
-//         logic_branch "<other>_played" (set by its OnCompletion), Test -> OnAllTrue / OnAllFalse,
+//       scene played / not played - a logic_branch "<scene>_if<N>" the other scene's OnCompletion
+//         sets to 1, Test -> OnTrue / OnFalse (one per condition: testing a shared one would fire
+//         every scene's chain),
 //       variable (number) - logic_compare "<scene>_if<N>" kept up to date by the variable's math_counter
 //         (OutValue -> SetValue), Compare -> OnEqualTo / OnNotEqualTo / OnGreaterThan / OnLessThan,
-//       variable (flag) - logic_branch_listener on the variable's logic_branch,
+//       variable (flag) - a logic_branch "<scene>_if<N>" mirrored from the variable by a
+//         logic_branch_listener "<scene>_if<N>w" (it fires whenever the variable changes), Test,
 //       global state - env_global "<scene>_if<N>g" GetCounter -> OutCounter -> logic_compare
 //         "<scene>_if<N>" SetValueCompare (the env_global's counter of that global state),
-//       random - logic_case "<scene>_if<N>" with ten cases, PickRandom, N/10 of them go on.
+//       random - logic_case "<scene>_if<N>" with ten cases, PickRandom, N/10 of them go on (the
+//         others only ResetShuffle: PickRandom picks among cases with an output).
 // Variables are map entities made here: math_counter (number) or logic_branch (flag) with
 // "mapsmith_var" set; "Set variable" steps fire them from the scene (a VCD "firetrigger" event,
 // the scene's OnTrigger<N> output -> SetValue / Add / Toggle).
@@ -82,11 +89,11 @@ struct ChoreoStep {
 struct ChoreoStart {
 	enum class Kind { MapStart, Area, Use, LookAt, Near, AfterScene, Output, Timer, Input };
 	Kind kind = Kind::MapStart;
-	bool once = true;       ///< Only the first time (Area, Near, Use, Output, Timer); else every time
+	bool once = true;       ///< Works until the scene has played (Area, Near, Use, Output, After, Timer); else every time
 	double delay = 0;       ///< Seconds from the trigger to the scene starting
 	std::string target;     ///< Use / LookAt / Output: the entity's targetname (empty: the scene's first NPC); AfterScene: the other scene
 	std::string output;     ///< Output: the output's name; Use: empty = the class's own (OnPlayerUse, OnPressed)
-	double a = 0, b = 0;    ///< Timer: seconds (a), random between a and b when b > a; Near: radius (a); Area/Near every time: wait between (a)
+	double a = 0, b = 0;    ///< Timer: seconds (a), random between a and b when b > a; Near: radius (a)
 	bool operator==(const ChoreoStart&) const = default;
 };
 

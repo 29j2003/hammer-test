@@ -167,7 +167,7 @@ struct Planner {
 		w.role = std::move(role);
 		w.classname = std::move(classname);
 		w.targetname = std::move(targetname);
-		w.origin = s.origin + Vec3(0, -24.0 * (++slot), 0);
+		w.origin = s.origin + Vec3(20.0 * (++slot), 0, 0);   // a row to the right of the scene's marker
 		wanted.push_back(std::move(w));
 		return wanted.size() - 1;
 	}
@@ -324,7 +324,7 @@ struct Planner {
 					Wanted& w = wanted[trigger];
 					w.brush = true;
 					w.keys = {{"spawnflags", "1"}, {"StartDisabled", "0"}};
-					if (classname == "trigger_multiple") w.keys.emplace_back("wait", start.once ? "1" : num(start.a > 0 ? start.a : 1));
+					if (classname == "trigger_multiple") w.keys.emplace_back("wait", "1");
 					if (look) {
 						w.keys.emplace_back("target", target);
 						w.keys.emplace_back("LookTime", "0.5");
@@ -342,7 +342,9 @@ struct Planner {
 					} else {
 						w.box = areaBoxFor(doc, scene, s.origin, areas++);
 					}
-					w.connections = {fire("OnTrigger")};
+					// Once: OnTrigger fires again while the player stays inside, until the conditions let the
+					// scene start. Every time: each time the player comes in (OnStartTouch).
+					w.connections = {fire(start.once || look ? "OnTrigger" : "OnStartTouch")};
 					if (start.once) killable = trigger;
 					break;
 				}

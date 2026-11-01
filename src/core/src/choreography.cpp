@@ -1034,10 +1034,12 @@ Change createChoreoScene(MapDocument& doc, int npcId, std::string_view mapName) 
 		npc->set("targetname", npcName);
 	}
 	// Scenes of the NPC: with a step of it, or named after it and still empty.
-	bool first = choreoScenesOfActor(doc, npcName).empty();
+	std::set<int> own;
+	for (const int id : choreoScenesOfActor(doc, npcName)) own.insert(id);
 	for (const auto& entity : doc.entities) {
-		if (isChoreoScene(entity) && startsWithI(entity.get("targetname"), npcName + "_scene")) first = false;
+		if (isChoreoScene(entity) && startsWithI(entity.get("targetname"), npcName + "_scene")) own.insert(entity.id);
 	}
+	const bool first = own.empty();
 	const std::string name = uniqueChoreoName(doc, npcName + "_scene");
 	const Vec3 origin = npc->origin();
 	Entity scene;
@@ -1056,7 +1058,8 @@ Change createChoreoScene(MapDocument& doc, int npcId, std::string_view mapName) 
 	start.kind = first ? ChoreoStart::Kind::MapStart : ChoreoStart::Kind::Area;
 	plan.starts.push_back(start);
 	writeChoreoPlanKeys(scene, plan);
-	scene.setOrigin(origin + Vec3(0, 0, 80));
+	// Above the NPC, one row per scene (its logic in a row to the right of it).
+	scene.setOrigin(origin + Vec3(0, 0, 80 + 24.0 * static_cast<double>(own.size())));
 	doc.entities.push_back(std::move(scene));
 	syncChoreoLogic(doc, t);
 	return t.finish();
@@ -1123,7 +1126,7 @@ Change duplicateChoreoScene(MapDocument& doc, int sceneId, std::string_view mapN
 	}
 	copy.set("targetname", scene.name);
 	copy.set("SceneFile", choreoSceneFile(mapName, scene.name));
-	copy.setOrigin(found->origin() + Vec3(0, 0, 16));
+	copy.setOrigin(found->origin() + Vec3(0, 0, 24));
 	writeChoreoPlanKeys(copy, scene);
 	const int copyId = copy.id;
 	doc.entities.push_back(std::move(copy));

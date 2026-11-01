@@ -8790,6 +8790,238 @@ TEST_CASE("choreography: an NPC walks, plays an animation and says an imported l
 	CHECK(std::filesystem::exists(f.mod / "scenes/demo/citizen_01_scene.vcd"));
 }
 
+TEST_CASE("choreography: two scenes for one NPC - the second when the player walks in after the first; list, overlay only while selected, undo") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	window.setQuadLayout(false);
+	window.resize(1500, 1000);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const QString shots = qEnvironmentVariable("SME_CHOREO_SHOTS");
+	if (!shots.isEmpty()) QDir().mkpath(shots);
+	int citizen = 0;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01") citizen = e.id;
+	}
+	REQUIRE(citizen != 0);
+	const Vec3 feet = editor.doc().findEntity(citizen)->origin();
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(float(feet.x) - 200, float(feet.y) - 260, 260);
+	view->camera().yaw = 50;
+	view->camera().pitch = -32;
+	view->update();
+
+	Selection only;
+	only.entities = {citizen};
+	editor.setSelection(only);
+	settle();
+	window.properties()->findChild<QPushButton*>("openChoreography")->click();
+	settle();
+	auto* panel = window.choreography();
+	REQUIRE(panel);
+	const auto sceneNamed = [&](std::string_view name) -> std::optional<ChoreoScene> {
+		const Entity* e = findNamedEntity(editor.doc(), name);
+		if (!e || !isChoreoScene(*e)) return std::nullopt;
+		return readChoreoScene(editor.doc(), *e);
+	};
+	auto* name = panel->findChild<QLineEdit*>("choreoName");
+	REQUIRE(name);
+	const auto rename = [&](const QString& text) {
+		name->setText(text);
+		emit name->editingFinished();
+		settle();
+	};
+	// Scene 1: the intro, a line at map start.
+	panel->findChild<QPushButton*>("choreoAddSay")->click();
+	settle();
+	rename("intro");
+	REQUIRE(sceneNamed("intro"));
+	CHECK(sceneNamed("intro")->starts == std::vector<ChoreoStart>{ChoreoStart{ChoreoStart::Kind::MapStart}});
+
+	// Scene 2 with New (the NPC is selected): the NPC's second scene starts when the player walks in.
+	panel->findChild<QPushButton*>("choreoNewScene")->click();
+	settle();
+	panel->findChild<QPushButton*>("choreoAddSay")->click();
+	settle();
+	rename("greet");
+	auto greet = sceneNamed("greet");
+	REQUIRE(greet);
+	REQUIRE(greet->starts.size() == 1);
+	CHECK(greet->starts[0].kind == ChoreoStart::Kind::Area);
+	const Entity* box = findNamedEntity(editor.doc(), "greet_area1");
+	REQUIRE(box);
+	CHECK(box->classname() == "trigger_once");
+	CHECK(box->solids.size() == 1);
+
+	// "Scene has played" from the Conditions tab: the first other scene is offered.
+	auto* tabs = panel->findChild<QTabWidget*>("choreoTabs");
+	REQUIRE(tabs);
+	auto* addCondition = panel->findChild<QPushButton*>("choreoAddCondition");
+	REQUIRE(addCondition);
+	REQUIRE(addCondition->menu());
+	const std::size_t historyBefore = editor.history().size();
+	for (QAction* action : addCondition->menu()->actions()) {
+		if (action->data().toInt() == int(ChoreoCondition::Kind::ScenePlayed)) action->trigger();
+	}
+	settle();
+	CHECK(tabs->currentIndex() == 2);
+	CHECK(editor.history().size() == historyBefore + 1);   // one undo step
+	greet = sceneNamed("greet");
+	REQUIRE(greet->conditions.size() == 1);
+	CHECK(greet->conditions[0].kind == ChoreoCondition::Kind::ScenePlayed);
+	CHECK(greet->conditions[0].name == "intro");
+	// With a condition the box keeps firing while the player is inside (until intro has played).
+	box = findNamedEntity(editor.doc(), "greet_area1");
+	REQUIRE(box);
+	CHECK(box->classname() == "trigger_multiple");
+	const Entity* played = findNamedEntity(editor.doc(), "greet_if1");
+	REQUIRE(played);
+	CHECK(played->classname() == "logic_branch");
+	const auto hasLink = [](const Entity* e, std::string_view output, std::string_view target, std::string_view input) {
+		return e && std::any_of(e->connections.begin(), e->connections.end(), [&](const Connection& c) {
+			       return c.output == output && iequals(c.target, target) && c.input == input;
+		       });
+	};
+	CHECK(hasLink(findNamedEntity(editor.doc(), "intro"), "OnCompletion", "greet_if1", "SetValue"));
+	CHECK(hasLink(findNamedEntity(editor.doc(), "greet_start"), "OnTrigger", "greet_if1", "Test"));
+	CHECK(hasLink(played, "OnTrue", "greet", "Start"));
+
+	// The list: both scenes under the NPC, with their starts and conditions; the search narrows it.
+	auto* tree = panel->findChild<QTreeWidget*>("choreoSceneTree");
+	REQUIRE(tree);
+	REQUIRE(tree->topLevelItemCount() == 1);
+	QTreeWidgetItem* group = tree->topLevelItem(0);
+	CHECK(group->text(0).startsWith("citizen_01"));
+	CHECK(group->isExpanded());   // the NPC is selected
+	REQUIRE(group->childCount() == 2);
+	CHECK(group->child(0)->text(0) == "intro");
+	CHECK(group->child(0)->text(1) == "At map start");
+	CHECK(group->child(1)->text(0) == "greet");
+	CHECK(group->child(1)->text(1) == "Player enters an area");
+	CHECK(group->child(1)->text(2) == "scene intro has played");
+	CHECK(tree->currentItem() == group->child(1));
+	auto* filter = panel->findChild<QLineEdit*>("choreoSceneFilter");
+	filter->setText("greet");
+	settle();
+	REQUIRE(tree->topLevelItemCount() == 1);
+	CHECK(tree->topLevelItem(0)->childCount() == 1);
+	filter->clear();
+	settle();
+	CHECK(tree->topLevelItem(0)->childCount() == 2);
+	// Clicking a scene in the list shows it.
+	tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+	settle();
+	CHECK(panel->sceneId() == findNamedEntity(editor.doc(), "intro")->id);
+	tree->setCurrentItem(tree->topLevelItem(0)->child(1));
+	settle();
+	CHECK(panel->sceneId() == findNamedEntity(editor.doc(), "greet")->id);
+	tabs->setCurrentIndex(1);
+	settle();
+	CHECK(panel->findChild<QListWidget*>("choreoStarts")->count() == 1);
+
+	// A variable the greeting sets: Variables tab, then a "Set variable" step.
+	tabs->setCurrentIndex(3);
+	panel->findChild<QPushButton*>("choreoNewNumber")->click();
+	settle();
+	const auto variables = choreoVariables(editor.doc());
+	REQUIRE(variables.size() == 1);
+	CHECK(variables[0].name == "citizen_01_count");
+	CHECK(panel->findChild<QTableWidget*>("choreoVariables")->rowCount() == 1);
+	tabs->setCurrentIndex(0);
+	panel->findChild<QPushButton*>("choreoAddSetVariable")->click();
+	settle();
+	greet = sceneNamed("greet");
+	REQUIRE(greet->steps.size() == 2);
+	CHECK(greet->steps[1].kind == ChoreoStep::Kind::SetVariable);
+	CHECK(greet->steps[1].variable == "citizen_01_count");
+	auto* op = panel->findChild<QComboBox*>("choreoStepOp");
+	REQUIRE(op);
+	CHECK(op->isVisibleTo(panel));
+	op->setCurrentIndex(op->findData(int(ChoreoStep::VariableOp::Add)));
+	emit op->activated(op->currentIndex());
+	settle();
+	auto* value = panel->findChild<QDoubleSpinBox*>("choreoStepValue");
+	value->setValue(1);
+	settle();
+	greet = sceneNamed("greet");
+	CHECK(greet->steps[1].op == ChoreoStep::VariableOp::Add);
+	CHECK(greet->steps[1].value == doctest::Approx(1));
+	const Entity* greetEntity = findNamedEntity(editor.doc(), "greet");
+	CHECK(std::any_of(greetEntity->connections.begin(), greetEntity->connections.end(), [](const Connection& c) {
+		return c.output == "OnTrigger1" && c.target == "citizen_01_count" && c.input == "Add" && c.parameter == "1";
+	}));
+	if (!shots.isEmpty()) panel->grab().save(shots + "/scenes_panel.png");
+	tabs->setCurrentIndex(2);
+	settle();
+	if (!shots.isEmpty()) panel->grab().save(shots + "/scenes_conditions.png");
+	tabs->setCurrentIndex(1);
+	settle();
+	if (!shots.isEmpty()) panel->grab().save(shots + "/scenes_starts.png");
+
+	// In the map, only while the NPC (or a scene) is selected: the box, a line to the NPC, a label.
+	editor.setSelection(only);
+	view->update();
+	settle();
+	auto starts = view->sceneStartMarkers();
+	REQUIRE(starts.size() == 1);
+	CHECK(starts[0].text == QStringLiteral("enter → greet (if 1)"));
+	if (!shots.isEmpty()) {
+		view->grabFramebuffer().save(shots + "/scenes_overlay.png");
+		window.grab().save(shots + "/scenes_window.png");
+	}
+	editor.setSelection({});
+	view->update();
+	settle();
+	CHECK(view->sceneStartMarkers().empty());
+	CHECK(view->sceneMarkers().empty());
+	if (!shots.isEmpty()) view->grabFramebuffer().save(shots + "/scenes_overlay_unselected.png");
+	// The box selected shows its scene (and its start in the panel).
+	Selection boxOnly;
+	boxOnly.entities = {findNamedEntity(editor.doc(), "greet_area1")->id};
+	editor.setSelection(boxOnly);
+	view->update();
+	settle();
+	CHECK(view->sceneStartMarkers().size() == 1);
+	CHECK(tabs->currentIndex() == 1);
+
+	// Undo, step by step back to before the condition: the chain goes, the box is a trigger_once again.
+	for (int guard = 0; guard < 20 && sceneNamed("greet") && !sceneNamed("greet")->conditions.empty(); ++guard) {
+		editor.undo();
+		settle();
+	}
+	REQUIRE(sceneNamed("greet"));
+	CHECK(sceneNamed("greet")->conditions.empty());
+	CHECK_FALSE(findNamedEntity(editor.doc(), "greet_if1"));
+	CHECK(findNamedEntity(editor.doc(), "greet_area1")->classname() == "trigger_once");
+	CHECK_FALSE(hasLink(findNamedEntity(editor.doc(), "intro"), "OnCompletion", "greet_if1", "SetValue"));
+	editor.redo();
+	settle();
+	CHECK(sceneNamed("greet")->conditions.size() == 1);
+	CHECK(findNamedEntity(editor.doc(), "greet_if1"));
+	// The map keeps it all: save, load, the same plans.
+	REQUIRE(editor.saveMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	settle();
+	REQUIRE(sceneNamed("greet"));
+	CHECK(sceneNamed("greet")->conditions.size() == 1);
+	CHECK(sceneNamed("greet")->starts.size() == 1);
+}
+
 namespace {
 
 /// Watches for windows that pop up by accident: a widget shown before it is put into a layout is

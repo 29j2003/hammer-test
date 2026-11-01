@@ -33,6 +33,7 @@ add_library(smeapp STATIC
 	model_viewer.cpp
 	scene_poser.cpp
 	choreography_panel.cpp
+	choreography_panel_logic.cpp
 	models_page.cpp animations_page.cpp
 	panels.cpp
 	particle_browser.cpp
