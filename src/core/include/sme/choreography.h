@@ -1,13 +1,43 @@
 // choreography.h - NPC scenes laid out step by step: who walks where, plays which animation,
-// says which line - and what Source needs to play them.
+// says which line - what starts them, under which conditions - and what Source needs to play them.
 //
 // A scene lives in the map as a logic_choreographed_scene with Mapsmith's plan in keyvalues
-// ("mapsmith_scene" 1, "mapsmith_trigger", "mapsmith_step01" ...; the engine ignores unknown keys
-// and Hammer keeps them), so it is saved with the .vmf, undone like any edit and survives a trip
-// through Hammer. setChoreoScene() keeps the helpers in step with the plan:
+// ("mapsmith_scene" 1, "mapsmith_start01" ..., "mapsmith_if01" ..., "mapsmith_step01" ...; the
+// engine ignores unknown keys and Hammer keeps them), so it is saved with the .vmf, undone like any
+// edit and survives a trip through Hammer. Older maps' single "mapsmith_trigger" key is still read.
+// Every edit regenerates the logic of ALL scenes from their plans (syncChoreoLogic, one pass over
+// the map, deterministic): Mapsmith's entities carry "mapsmith_scene" "<scene>" and
+// "mapsmith_role" (what they are for); hand-made entities are never touched, only the outputs
+// Mapsmith added to them (those aimed at its own entities). Per scene:
 //   - an info_target "<scene>_p<N>" for every point a step walks to or faces (the VCD names them),
-//   - the trigger: a logic_auto (map start), a trigger_once (player walks in) or an output of
-//     another scene (OnCompletion); helpers carry "mapsmith_scene" "<scene>".
+//   - a logic_relay "<scene>_start": every way of starting the scene fires its Trigger input,
+//   - one entity per start (see ChoreoStart), firing "<scene>_start":
+//       map start  - logic_auto "<scene>_auto<N>" OnMapSpawn,
+//       area       - trigger_once / trigger_multiple "<scene>_area<N>" (a box in front of the NPC;
+//                    with conditions a trigger_multiple keeps firing while the player is inside),
+//       look at    - trigger_look "<scene>_look<N>" (player looks at an entity while inside),
+//       near       - trigger_multiple "<scene>_near<N>" around the NPC, parented to it,
+//       timer      - logic_timer "<scene>_timer<N>" (fixed or random time),
+//       use / output / after scene - an output on that entity (OnPlayerUse, any output, the other
+//       scene's OnCompletion), input - nothing (fire "<scene>_start" Trigger or the scene's Start),
+//     "once" starts are removed when the scene starts (OnStart -> Kill), external ones through a
+//     logic_relay "<scene>_gate<N>" when there are conditions or other starts; with a start that
+//     fires every time the relay is disabled while the scene plays,
+//   - the conditions in a chain after "<scene>_start", all must hold, the last one Starts the scene:
+//       scene played / not played - a logic_branch "<scene>_if<N>" the other scene's OnCompletion
+//         sets to 1, Test -> OnTrue / OnFalse (one per condition: testing a shared one would fire
+//         every scene's chain),
+//       variable (number) - logic_compare "<scene>_if<N>" kept up to date by the variable's math_counter
+//         (OutValue -> SetValue), Compare -> OnEqualTo / OnNotEqualTo / OnGreaterThan / OnLessThan,
+//       variable (flag) - a logic_branch "<scene>_if<N>" mirrored from the variable by a
+//         logic_branch_listener "<scene>_if<N>w" (it fires whenever the variable changes), Test,
+//       global state - env_global "<scene>_if<N>g" GetCounter -> OutCounter -> logic_compare
+//         "<scene>_if<N>" SetValueCompare (the env_global's counter of that global state),
+//       random - logic_case "<scene>_if<N>" with ten cases, PickRandom, N/10 of them go on (the
+//         others only ResetShuffle: PickRandom picks among cases with an output).
+// Variables are map entities made here: math_counter (number) or logic_branch (flag) with
+// "mapsmith_var" set; "Set variable" steps fire them from the scene (a VCD "firetrigger" event,
+// the scene's OnTrigger<N> output -> SetValue / Add / Toggle).
 // writeVcd() turns the plan into Valve's text choreography (.vcd: actors, channels, events with
 // start/end times - the format CChoreoScene::ParseFromBuffer in the SDK reads); Mapbase plays a
 // loose scenes/<map>/<scene>.vcd from the mod folder (sceneentity.cpp: "check if it's a loose
@@ -18,6 +48,7 @@
 //   - Animation: sequence or gesture event with the sequence's length (or the time set).
 //   - Say: speak event playing a sound script entry (caption token = the entry's name).
 //   - Wait: nothing happens for the time set. Face: face event towards a point.
+//   - Set variable: a firetrigger event (scene-wide) at the step's time.
 
 #pragma once
 
@@ -36,7 +67,8 @@ namespace sme {
 
 /// One step of a scene.
 struct ChoreoStep {
-	enum class Kind { Move, Animation, Say, Wait, Face };
+	enum class Kind { Move, Animation, Say, Wait, Face, SetVariable };
+	enum class VariableOp { Set, Add, Toggle };
 	Kind kind = Kind::Wait;
 	std::string actor;          ///< The NPC's targetname
 	bool withPrevious = false;  ///< Starts together with the step before (else after it ends)
@@ -47,36 +79,81 @@ struct ChoreoStep {
 	double seconds = 0;         ///< Wait: length; Animation/Say: 0 = the default length (see choreoStepLength)
 	std::string sound;          ///< Say: sound script entry ("mymod.scene1.line1")
 	std::string caption;        ///< Say: subtitle text (the caption token is `sound`)
+	std::string variable;       ///< Set variable: the variable's name
+	VariableOp op = VariableOp::Set;   ///< Set variable: what to do (Toggle: flags only)
+	double value = 0;           ///< Set variable: the value to set or add (flags: 0 / 1)
 	bool operator==(const ChoreoStep&) const = default;
 };
 
-/// What starts a scene.
-enum class ChoreoTrigger {
-	MapStart,     ///< A logic_auto fires Start when the map has loaded
-	Trigger,      ///< A trigger_once fires Start when the player walks into it
-	Input,        ///< Nothing of Mapsmith's: fire "Start" from your own I/O
-	AfterScene,   ///< When another scene ends (its OnCompletion)
+/// One way to start a scene (a scene may have several: any of them starts it).
+struct ChoreoStart {
+	enum class Kind { MapStart, Area, Use, LookAt, Near, AfterScene, Output, Timer, Input };
+	Kind kind = Kind::MapStart;
+	bool once = true;       ///< Works until the scene has played (Area, Near, Use, Output, After, Timer); else every time
+	double delay = 0;       ///< Seconds from the trigger to the scene starting
+	std::string target;     ///< Use / LookAt / Output: the entity's targetname (empty: the scene's first NPC); AfterScene: the other scene
+	std::string output;     ///< Output: the output's name; Use: empty = the class's own (OnPlayerUse, OnPressed)
+	double a = 0, b = 0;    ///< Timer: seconds (a), random between a and b when b > a; Near: radius (a)
+	bool operator==(const ChoreoStart&) const = default;
+};
+
+/// A condition that must hold when a start fires (all conditions of a scene must hold).
+struct ChoreoCondition {
+	enum class Kind { ScenePlayed, SceneNotPlayed, Variable, Global, Random };
+	enum class Compare { Equal, NotEqual, Greater, Less };
+	Kind kind = Kind::ScenePlayed;
+	std::string name;       ///< Scene / variable / global state name
+	Compare compare = Compare::Equal;
+	double value = 0;       ///< Variable / Global: the value compared with (flags: 1 = set); Random: percent
+	bool operator==(const ChoreoCondition&) const = default;
 };
 
 /// A whole scene (see the file comment).
 struct ChoreoScene {
-	std::string name;                 ///< The logic_choreographed_scene's targetname
-	ChoreoTrigger trigger = ChoreoTrigger::MapStart;
-	std::string afterScene;           ///< AfterScene: the other scene's name
+	std::string name;                       ///< The logic_choreographed_scene's targetname
+	std::vector<ChoreoStart> starts;        ///< Ways to start it (none: only by its Start input)
+	std::vector<ChoreoCondition> conditions;
 	std::vector<ChoreoStep> steps;
 	bool operator==(const ChoreoScene&) const = default;
 };
 
+/// A variable scenes test and set (a map entity, see the file comment).
+struct ChoreoVariable {
+	std::string name;
+	bool flag = false;      ///< logic_branch (true/false) instead of a math_counter number
+	double initial = 0;
+	int entityId = 0;
+	bool operator==(const ChoreoVariable&) const = default;
+};
+
 /// Keyvalues of a scene entity (see the file comment).
 inline constexpr std::string_view CHOREO_SCENE_KEY = "mapsmith_scene";
-inline constexpr std::string_view CHOREO_TRIGGER_KEY = "mapsmith_trigger";
+inline constexpr std::string_view CHOREO_TRIGGER_KEY = "mapsmith_trigger";   ///< Older maps: one start ("mapstart", "trigger", "input", "after:<scene>")
+inline constexpr std::string_view CHOREO_START_KEY = "mapsmith_start";
+inline constexpr std::string_view CHOREO_CONDITION_KEY = "mapsmith_if";
+inline constexpr std::string_view CHOREO_ROLE_KEY = "mapsmith_role";
+inline constexpr std::string_view CHOREO_VARIABLE_KEY = "mapsmith_var";
 inline constexpr std::string_view CHOREO_STEP_KEY = "mapsmith_step";
 
 /// One step as the text of a "mapsmith_stepNN" key (fields split by '|', '|' and '%' escaped,
 /// '"' turned into '\'' - a VMF value cannot hold it) and back. nullopt for text it cannot read.
 [[nodiscard]] std::string encodeChoreoStep(const ChoreoStep& step);
 [[nodiscard]] std::optional<ChoreoStep> decodeChoreoStep(std::string_view text);
+/// The same for a start ("mapsmith_startNN") and a condition ("mapsmith_ifNN").
+[[nodiscard]] std::string encodeChoreoStart(const ChoreoStart& start);
+[[nodiscard]] std::optional<ChoreoStart> decodeChoreoStart(std::string_view text);
+[[nodiscard]] std::string encodeChoreoCondition(const ChoreoCondition& condition);
+[[nodiscard]] std::optional<ChoreoCondition> decodeChoreoCondition(std::string_view text);
+/// Short texts for lists ("Player enters an area", "scene intro has played" ...).
+[[nodiscard]] std::string describeChoreoStart(const ChoreoStart& start);
+[[nodiscard]] std::string describeChoreoCondition(const ChoreoCondition& condition);
+/// The output a "player uses it" start listens to on an entity of `classname` (OnPressed for
+/// buttons, OnPlayerUse for NPCs and props).
+[[nodiscard]] std::string defaultUseOutput(std::string_view classname);
 
+/// Writes a plan into a scene entity's keys ("mapsmith_stepNN", "mapsmith_startNN", "mapsmith_ifNN";
+/// old ones and an older map's "mapsmith_trigger" go). No transaction, no logic: for the edits below.
+void writeChoreoPlanKeys(Entity& entity, const ChoreoScene& scene);
 /// Whether an entity is a scene made here (a logic_choreographed_scene with "mapsmith_scene").
 [[nodiscard]] bool isChoreoScene(const Entity& entity);
 /// The plan kept in a scene entity (steps that cannot be read are left out).
@@ -86,6 +163,14 @@ inline constexpr std::string_view CHOREO_STEP_KEY = "mapsmith_step";
 [[nodiscard]] ChoreoScene readChoreoScene(const MapDocument& doc, const Entity& entity);
 /// Ids of all scenes made here, in map order.
 [[nodiscard]] std::vector<int> choreoScenes(const MapDocument& doc);
+/// The NPCs of a scene in the order of their first step (targetnames).
+[[nodiscard]] std::vector<std::string> choreoActors(const ChoreoScene& scene);
+/// A free scene name: `base`, else base_2, base_3 ... (no entity has it).
+[[nodiscard]] std::string uniqueChoreoName(const MapDocument& doc, std::string_view base);
+/// The variables of the map (entities with "mapsmith_var"), in map order.
+[[nodiscard]] std::vector<ChoreoVariable> choreoVariables(const MapDocument& doc);
+/// Whether an entity is one Mapsmith made for a scene (a helper: "mapsmith_scene" with a scene name).
+[[nodiscard]] bool isChoreoHelper(const Entity& entity);
 /// Ids of the scenes in which the NPC named `actor` has a step.
 [[nodiscard]] std::vector<int> choreoScenesOfActor(const MapDocument& doc, std::string_view actor);
 /// The info_target a step walks to or faces: "<scene>_p<step number>" (1-based).
@@ -158,6 +243,18 @@ struct ChoreoIssue {
                                                         const std::function<bool(std::string_view)>& soundKnown = {},
                                                         const std::function<std::optional<bool>(std::string_view actor, std::string_view sequence)>& sequenceKnown = {});
 
+/// Checks the starts and conditions of every scene of the map: a start aimed at an entity no one is
+/// named, an area or look trigger outside the map, a condition on a scene or variable that is gone,
+/// two scenes of one NPC that start the same way without any condition, more than 16 "Set
+/// variable" steps in a scene. Each issue names its scene (sceneId).
+struct ChoreoLogicIssue {
+	int sceneId = 0;
+	std::string scene;
+	std::string message;
+	bool warning = true;     ///< else an error (the scene cannot work like this)
+};
+[[nodiscard]] std::vector<ChoreoLogicIssue> checkChoreoLogic(const MapDocument& doc);
+
 // --- Files ------------------------------------------------------------------------------------
 
 /// Writes the .vcd of every scene of the map into the mod folder (at its SceneFile path). Returns
@@ -185,6 +282,26 @@ namespace edit {
 
 /// Removes a scene with its helpers (one undo step "Delete scene").
 [[nodiscard]] Change deleteChoreoScene(MapDocument& doc, int sceneId);
+
+/// A copy of scene `sceneId` under a new name (`<name>_2` ...), with its points, starts and
+/// conditions (one undo step "Duplicate scene"). Returns the change; the new scene is the last one.
+[[nodiscard]] Change duplicateChoreoScene(MapDocument& doc, int sceneId, std::string_view mapName);
+
+/// Regenerates the logic of every scene from the plans (see the file comment), inside an open
+/// transaction. Returns whether anything changed. Called by the edits here; exposed for callers that
+/// changed plans or variables by hand.
+bool syncChoreoLogic(MapDocument& doc, Transaction& t);
+
+/// A new variable (math_counter or logic_branch) at `origin` (one undo step "New variable"). The
+/// name is made unique. Empty Change when `name` is empty.
+[[nodiscard]] Change createChoreoVariable(MapDocument& doc, std::string_view name, bool flag, double initial, const Vec3& origin);
+/// Renames a variable; every scene condition and "Set variable" step follows (one undo step).
+[[nodiscard]] Change renameChoreoVariable(MapDocument& doc, std::string_view oldName, std::string_view newName);
+/// Sets a variable's starting value (one undo step).
+[[nodiscard]] Change setChoreoVariableInitial(MapDocument& doc, std::string_view name, double initial);
+/// Removes a variable (one undo step); conditions and steps that used it stay and are reported by
+/// checkChoreoLogic.
+[[nodiscard]] Change deleteChoreoVariable(MapDocument& doc, std::string_view name);
 
 } // namespace edit
 

@@ -686,6 +686,9 @@ void MainWindow::createDocks() {
 		m_choreography->openFor(entityId);
 	});
 	connect(m_choreography, &ChoreographyPanel::modChanged, this, &MainWindow::reloadGameSoon);
+	connect(m_choreography, &ChoreographyPanel::frameSelectionRequested, this, [this] {
+		if (Viewport* view = view3D()) view->frameSelection();
+	});
 	fill(tr("Asset Browser"), m_assets);
 	fill(tr("Sounds"), m_sounds);
 	fill(tr("Particles"), m_particles);

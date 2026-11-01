@@ -88,6 +88,9 @@ public:
 	};
 	/// The step markers drawn now (empty while no NPC scene is selected).
 	[[nodiscard]] std::vector<SceneMarker> sceneMarkers() const;
+	/// The labels of what starts the scenes shown ("enter → alyx_greet"), at the box or entity
+	/// that starts them (empty while no NPC scene is selected; step is -1).
+	[[nodiscard]] std::vector<SceneMarker> sceneStartMarkers() const;
 	/// Map > Build cubemaps: draws every env_cubemap again now.
 	void buildCubemaps();
 	/// Asks for a frame, at most as often as Editor::maxFps() allows (use instead of update()).
@@ -270,6 +273,7 @@ private:
 	void drawRopes(std::vector<LineVertex>& lines);
 	// NPC scenes (viewport_scenes.cpp): the click that places a scene point, the ghost NPC.
 	void drawSceneLines(std::vector<LineVertex>& lines) const;
+	void drawSceneStartLines(std::vector<LineVertex>& lines) const;
 	void drawSceneGhosts(const SceneRenderer::Params& params);
 	void drawSceneLabels(OverlayRecorder& p) const;
 	/// Floor point under the mouse for a scene step (walls drop to the floor below).

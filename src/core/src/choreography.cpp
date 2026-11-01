@@ -26,12 +26,14 @@ const char* kindName(ChoreoStep::Kind kind) {
 		case ChoreoStep::Kind::Say: return "say";
 		case ChoreoStep::Kind::Wait: return "wait";
 		case ChoreoStep::Kind::Face: return "face";
+		case ChoreoStep::Kind::SetVariable: return "setvar";
 	}
 	return "wait";
 }
 
 std::optional<ChoreoStep::Kind> kindFromName(std::string_view name) {
-	for (const auto kind : {ChoreoStep::Kind::Move, ChoreoStep::Kind::Animation, ChoreoStep::Kind::Say, ChoreoStep::Kind::Wait, ChoreoStep::Kind::Face}) {
+	for (const auto kind : {ChoreoStep::Kind::Move, ChoreoStep::Kind::Animation, ChoreoStep::Kind::Say, ChoreoStep::Kind::Wait, ChoreoStep::Kind::Face,
+	                        ChoreoStep::Kind::SetVariable}) {
 		if (iequals(name, kindName(kind))) return kind;
 	}
 	return std::nullopt;
@@ -83,34 +85,81 @@ double parseDouble(std::string_view text, double fallback = 0) {
 	return end && *end == '\0' && std::isfinite(v) ? v : fallback;
 }
 
-std::string encodeTrigger(const ChoreoScene& scene) {
-	switch (scene.trigger) {
-		case ChoreoTrigger::MapStart: return "mapstart";
-		case ChoreoTrigger::Trigger: return "trigger";
-		case ChoreoTrigger::Input: return "input";
-		case ChoreoTrigger::AfterScene: return "after:" + scene.afterScene;
+/// A scene's single start as older maps kept it ("mapsmith_trigger").
+void decodeLegacyTrigger(std::string_view text, ChoreoScene& scene) {
+	const auto t = trim(text);
+	ChoreoStart start;
+	if (iequals(t, "trigger")) start.kind = ChoreoStart::Kind::Area;
+	else if (iequals(t, "input")) return;
+	else if (startsWithI(t, "after:")) {
+		start.kind = ChoreoStart::Kind::AfterScene;
+		start.target = std::string(trim(t.substr(6)));
+	} else start.kind = ChoreoStart::Kind::MapStart;
+	scene.starts.push_back(std::move(start));
+}
+
+const char* startKindName(ChoreoStart::Kind kind) {
+	switch (kind) {
+		case ChoreoStart::Kind::MapStart: return "mapstart";
+		case ChoreoStart::Kind::Area: return "area";
+		case ChoreoStart::Kind::Use: return "use";
+		case ChoreoStart::Kind::LookAt: return "look";
+		case ChoreoStart::Kind::Near: return "near";
+		case ChoreoStart::Kind::AfterScene: return "after";
+		case ChoreoStart::Kind::Output: return "output";
+		case ChoreoStart::Kind::Timer: return "timer";
+		case ChoreoStart::Kind::Input: return "input";
 	}
 	return "mapstart";
 }
 
-void decodeTrigger(std::string_view text, ChoreoScene& scene) {
-	const auto t = trim(text);
-	if (iequals(t, "trigger")) scene.trigger = ChoreoTrigger::Trigger;
-	else if (iequals(t, "input")) scene.trigger = ChoreoTrigger::Input;
-	else if (startsWithI(t, "after:")) {
-		scene.trigger = ChoreoTrigger::AfterScene;
-		scene.afterScene = std::string(trim(t.substr(6)));
-	} else scene.trigger = ChoreoTrigger::MapStart;
+const char* conditionKindName(ChoreoCondition::Kind kind) {
+	switch (kind) {
+		case ChoreoCondition::Kind::ScenePlayed: return "played";
+		case ChoreoCondition::Kind::SceneNotPlayed: return "notplayed";
+		case ChoreoCondition::Kind::Variable: return "var";
+		case ChoreoCondition::Kind::Global: return "global";
+		case ChoreoCondition::Kind::Random: return "random";
+	}
+	return "played";
+}
+
+const char* compareName(ChoreoCondition::Compare compare) {
+	switch (compare) {
+		case ChoreoCondition::Compare::Equal: return "eq";
+		case ChoreoCondition::Compare::NotEqual: return "ne";
+		case ChoreoCondition::Compare::Greater: return "gt";
+		case ChoreoCondition::Compare::Less: return "lt";
+	}
+	return "eq";
+}
+
+const char* opName(ChoreoStep::VariableOp op) {
+	switch (op) {
+		case ChoreoStep::VariableOp::Set: return "set";
+		case ChoreoStep::VariableOp::Add: return "add";
+		case ChoreoStep::VariableOp::Toggle: return "toggle";
+	}
+	return "set";
+}
+
+bool isNumberedKey(std::string_view key, std::string_view prefix) {
+	if (!startsWithI(key, prefix) || key.size() == prefix.size()) return false;
+	return std::all_of(key.begin() + static_cast<std::ptrdiff_t>(prefix.size()), key.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+std::string numberedKey(std::string_view prefix, std::size_t index) {
+	std::string number = std::to_string(index + 1);
+	if (number.size() < 2) number.insert(0, 1, '0');
+	return std::string(prefix) + number;
 }
 
 bool isStepKey(std::string_view key) {
-	return startsWithI(key, CHOREO_STEP_KEY);
+	return isNumberedKey(key, CHOREO_STEP_KEY);
 }
 
 std::string stepKey(std::size_t index) {
-	std::string number = std::to_string(index + 1);
-	if (number.size() < 2) number.insert(0, 1, '0');
-	return std::string(CHOREO_STEP_KEY) + number;
+	return numberedKey(CHOREO_STEP_KEY, index);
 }
 
 double yawOf(const Entity& entity) {
@@ -135,42 +184,8 @@ bool stepUsesPoint(const ChoreoStep& step) {
 	return step.kind == ChoreoStep::Kind::Move || step.kind == ChoreoStep::Kind::Face;
 }
 
-bool sameConnection(const Connection& a, const Connection& b) {
-	return iequals(a.output, b.output) && iequals(a.target, b.target) && iequals(a.input, b.input) && a.parameter == b.parameter && a.delay == b.delay &&
-	       a.timesToFire == b.timesToFire;
-}
-
-Connection startConnection(std::string_view output, std::string_view scene) {
-	Connection c;
-	c.output = std::string(output);
-	c.target = std::string(scene);
-	c.input = "Start";
-	c.timesToFire = 1;
-	return c;
-}
-
 bool isHelperOf(const Entity& entity, std::string_view scene) {
 	return !scene.empty() && iequals(entity.get(CHOREO_SCENE_KEY), scene) && !iequals(entity.classname(), "logic_choreographed_scene");
-}
-
-/// Where a new trigger box goes: 128 x 128 x 112 on the floor of the first actor, in front of it.
-Bounds triggerBoxFor(const MapDocument& doc, const ChoreoScene& scene, const Vec3& fallback) {
-	Vec3 origin = fallback;
-	double yaw = 0;
-	for (const auto& step : scene.steps) {
-		if (const Entity* actor = findNamedEntity(doc, step.actor)) {
-			origin = actor->origin();
-			yaw = yawOf(*actor);
-			break;
-		}
-	}
-	const double rad = yaw * std::numbers::pi / 180.0;
-	const Vec3 centre = origin + Vec3(std::cos(rad), std::sin(rad), 0) * 192.0;
-	const auto snap = [](double v) { return std::round(v / 16.0) * 16.0; };
-	Bounds box;
-	box.add(Vec3(snap(centre.x) - 64, snap(centre.y) - 64, snap(origin.z)));
-	box.add(Vec3(snap(centre.x) + 64, snap(centre.y) + 64, snap(origin.z) + 112));
-	return box;
 }
 
 } // namespace
@@ -186,6 +201,11 @@ std::string encodeChoreoStep(const ChoreoStep& step) {
 	out += '|' + formatNumber(step.seconds);
 	out += '|' + escapeField(step.sound);
 	out += '|' + escapeField(step.caption);
+	if (step.kind == ChoreoStep::Kind::SetVariable) {
+		out += '|' + escapeField(step.variable);
+		out += '|' + std::string(opName(step.op));
+		out += '|' + formatNumber(step.value);
+	}
 	return out;
 }
 
@@ -206,7 +226,114 @@ std::optional<ChoreoStep> decodeChoreoStep(std::string_view text) {
 	step.seconds = std::max(0.0, parseDouble(field(7)));
 	step.sound = unescapeField(field(8));
 	step.caption = unescapeField(field(9));
+	step.variable = unescapeField(field(10));
+	const auto op = trim(field(11));
+	step.op = iequals(op, "add") ? ChoreoStep::VariableOp::Add : iequals(op, "toggle") ? ChoreoStep::VariableOp::Toggle : ChoreoStep::VariableOp::Set;
+	step.value = parseDouble(field(12));
 	return step;
+}
+
+std::string encodeChoreoStart(const ChoreoStart& start) {
+	std::string out = startKindName(start.kind);
+	out += start.once ? "|1" : "|0";
+	out += '|' + formatNumber(start.delay);
+	out += '|' + escapeField(start.target);
+	out += '|' + escapeField(start.output);
+	out += '|' + formatNumber(start.a);
+	out += '|' + formatNumber(start.b);
+	return out;
+}
+
+std::optional<ChoreoStart> decodeChoreoStart(std::string_view text) {
+	const auto parts = splitBars(text);
+	const auto field = [&parts](std::size_t i) { return i < parts.size() ? parts[i] : std::string_view(); };
+	ChoreoStart start;
+	bool known = false;
+	for (const auto kind : {ChoreoStart::Kind::MapStart, ChoreoStart::Kind::Area, ChoreoStart::Kind::Use, ChoreoStart::Kind::LookAt, ChoreoStart::Kind::Near,
+	                        ChoreoStart::Kind::AfterScene, ChoreoStart::Kind::Output, ChoreoStart::Kind::Timer, ChoreoStart::Kind::Input}) {
+		if (iequals(trim(field(0)), startKindName(kind))) {
+			start.kind = kind;
+			known = true;
+		}
+	}
+	if (!known) return std::nullopt;
+	start.once = trim(field(1)) != "0";
+	start.delay = std::max(0.0, parseDouble(field(2)));
+	start.target = unescapeField(field(3));
+	start.output = unescapeField(field(4));
+	start.a = std::max(0.0, parseDouble(field(5)));
+	start.b = std::max(0.0, parseDouble(field(6)));
+	return start;
+}
+
+std::string encodeChoreoCondition(const ChoreoCondition& condition) {
+	std::string out = conditionKindName(condition.kind);
+	out += '|' + escapeField(condition.name);
+	out += '|' + std::string(compareName(condition.compare));
+	out += '|' + formatNumber(condition.value);
+	return out;
+}
+
+std::optional<ChoreoCondition> decodeChoreoCondition(std::string_view text) {
+	const auto parts = splitBars(text);
+	const auto field = [&parts](std::size_t i) { return i < parts.size() ? parts[i] : std::string_view(); };
+	ChoreoCondition condition;
+	bool known = false;
+	for (const auto kind : {ChoreoCondition::Kind::ScenePlayed, ChoreoCondition::Kind::SceneNotPlayed, ChoreoCondition::Kind::Variable,
+	                        ChoreoCondition::Kind::Global, ChoreoCondition::Kind::Random}) {
+		if (iequals(trim(field(0)), conditionKindName(kind))) {
+			condition.kind = kind;
+			known = true;
+		}
+	}
+	if (!known) return std::nullopt;
+	condition.name = unescapeField(field(1));
+	for (const auto compare : {ChoreoCondition::Compare::Equal, ChoreoCondition::Compare::NotEqual, ChoreoCondition::Compare::Greater, ChoreoCondition::Compare::Less}) {
+		if (iequals(trim(field(2)), compareName(compare))) condition.compare = compare;
+	}
+	condition.value = parseDouble(field(3));
+	return condition;
+}
+
+std::string describeChoreoStart(const ChoreoStart& start) {
+	const std::string target = start.target.empty() ? std::string("the NPC") : start.target;
+	std::string text;
+	switch (start.kind) {
+		case ChoreoStart::Kind::MapStart: text = "At map start"; break;
+		case ChoreoStart::Kind::Area: text = start.once ? "Player enters an area" : "Player enters an area (every time)"; break;
+		case ChoreoStart::Kind::Use: text = "Player uses " + target; break;
+		case ChoreoStart::Kind::LookAt: text = "Player looks at " + target; break;
+		case ChoreoStart::Kind::Near: text = "Player comes within " + formatNumber(start.a > 0 ? start.a : 128) + " units of " + target; break;
+		case ChoreoStart::Kind::AfterScene: text = "After scene " + (start.target.empty() ? std::string("?") : start.target); break;
+		case ChoreoStart::Kind::Output: text = (start.target.empty() ? std::string("?") : start.target) + " " + (start.output.empty() ? std::string("?") : start.output); break;
+		case ChoreoStart::Kind::Timer:
+			text = start.b > start.a ? "After " + formatNumber(start.a) + "-" + formatNumber(start.b) + " s (random)" : "After " + formatNumber(start.a) + " s";
+			break;
+		case ChoreoStart::Kind::Input: text = "By input \"Start\""; break;
+	}
+	if (start.delay > 0) text += ", " + formatNumber(start.delay) + " s later";
+	return text;
+}
+
+std::string describeChoreoCondition(const ChoreoCondition& condition) {
+	const char* compare = condition.compare == ChoreoCondition::Compare::Equal      ? "="
+	                      : condition.compare == ChoreoCondition::Compare::NotEqual ? "!="
+	                      : condition.compare == ChoreoCondition::Compare::Greater  ? ">"
+	                                                                                : "<";
+	const std::string name = condition.name.empty() ? std::string("?") : condition.name;
+	switch (condition.kind) {
+		case ChoreoCondition::Kind::ScenePlayed: return "scene " + name + " has played";
+		case ChoreoCondition::Kind::SceneNotPlayed: return "scene " + name + " has not played yet";
+		case ChoreoCondition::Kind::Variable: return name + " " + compare + " " + formatNumber(condition.value);
+		case ChoreoCondition::Kind::Global: return "global " + name + " " + compare + " " + formatNumber(condition.value);
+		case ChoreoCondition::Kind::Random: return formatNumber(condition.value) + " % chance";
+	}
+	return {};
+}
+
+std::string defaultUseOutput(std::string_view classname) {
+	if (startsWithI(classname, "func_button") || startsWithI(classname, "func_rot_button") || iequals(classname, "momentary_rot_button")) return "OnPressed";
+	return "OnPlayerUse";
 }
 
 bool isChoreoScene(const Entity& entity) {
@@ -216,16 +343,30 @@ bool isChoreoScene(const Entity& entity) {
 ChoreoScene readChoreoScene(const Entity& entity) {
 	ChoreoScene scene;
 	scene.name = entity.get("targetname");
-	decodeTrigger(entity.get(CHOREO_TRIGGER_KEY), scene);
-	// Steps by their number (the keys may come in any order).
-	std::map<int, ChoreoStep> numbered;
+	// Steps, starts and conditions by their number (the keys may come in any order).
+	std::map<int, ChoreoStep> steps;
+	std::map<int, ChoreoStart> starts;
+	std::map<int, ChoreoCondition> conditions;
+	bool hasStarts = false;
 	for (const auto& [key, value] : entity.keyValues) {
-		if (!isStepKey(key)) continue;
-		const int number = static_cast<int>(parseDouble(std::string_view(key).substr(CHOREO_STEP_KEY.size()), -1));
-		if (number < 0) continue;
-		if (auto step = decodeChoreoStep(value)) numbered.emplace(number, std::move(*step));
+		if (isStepKey(key)) {
+			const int number = static_cast<int>(parseDouble(std::string_view(key).substr(CHOREO_STEP_KEY.size()), -1));
+			if (number < 0) continue;
+			if (auto step = decodeChoreoStep(value)) steps.emplace(number, std::move(*step));
+		} else if (isNumberedKey(key, CHOREO_START_KEY)) {
+			hasStarts = true;
+			const int number = static_cast<int>(parseDouble(std::string_view(key).substr(CHOREO_START_KEY.size()), -1));
+			if (auto start = decodeChoreoStart(value)) starts.emplace(number, std::move(*start));
+		} else if (isNumberedKey(key, CHOREO_CONDITION_KEY)) {
+			const int number = static_cast<int>(parseDouble(std::string_view(key).substr(CHOREO_CONDITION_KEY.size()), -1));
+			if (auto condition = decodeChoreoCondition(value)) conditions.emplace(number, std::move(*condition));
+		}
 	}
-	for (auto& [number, step] : numbered) scene.steps.push_back(std::move(step));
+	for (auto& [number, step] : steps) scene.steps.push_back(std::move(step));
+	for (auto& [number, start] : starts) scene.starts.push_back(std::move(start));
+	for (auto& [number, condition] : conditions) scene.conditions.push_back(std::move(condition));
+	// Older maps kept one start in "mapsmith_trigger" (the edits replace it with start keys).
+	if (!hasStarts && !entity.get(CHOREO_TRIGGER_KEY).empty()) decodeLegacyTrigger(entity.get(CHOREO_TRIGGER_KEY), scene);
 	return scene;
 }
 
@@ -300,6 +441,7 @@ double choreoStepLength(const ChoreoStep& step, const Vec3& from) {
 		case ChoreoStep::Kind::Say: return step.seconds > 0 ? step.seconds : 3.0;
 		case ChoreoStep::Kind::Wait: return std::max(0.0, step.seconds);
 		case ChoreoStep::Kind::Face: return 1.0;
+		case ChoreoStep::Kind::SetVariable: return 0;
 	}
 	return 0;
 }
@@ -402,6 +544,16 @@ std::string writeVcd(const MapDocument& doc, const ChoreoScene& scene) {
 		if (scene.steps[i].kind != ChoreoStep::Kind::Move || trim(scene.steps[i].actor).empty()) continue;
 		out += "event section \"wait_" + std::to_string(i + 1) + "\"\n{\n  time " + fmt(timeline[i].end) + " -1.000000\n  param \"noaction\"\n}\n";
 	}
+	// "Set variable" steps: the scene fires its OnTrigger<N> output (N = 1 for the first such step).
+	{
+		int number = 0;
+		for (std::size_t i = 0; i < scene.steps.size() && number < 16; ++i) {
+			if (scene.steps[i].kind != ChoreoStep::Kind::SetVariable) continue;
+			++number;
+			out += "event firetrigger \"set " + escapeField(scene.steps[i].variable) + " " + std::to_string(number) + "\"\n{\n  time " + fmt(timeline[i].start) +
+			       " -1.000000\n  param \"" + std::to_string(number) + "\"\n}\n";
+		}
+	}
 	const auto eventHeader = [](std::string& text, std::string_view type, std::size_t index, std::string_view what, double start, double end) {
 		text += "    event " + std::string(type) + " \"" + std::to_string(index + 1) + " " + std::string(what) + "\"\n    {\n";
 		text += "      time " + fmt(start) + " " + fmt(end) + "\n";
@@ -433,7 +585,8 @@ std::string writeVcd(const MapDocument& doc, const ChoreoScene& scene) {
 					eventHeader(audio, "speak", i, escapeField(step.sound), t.start, t.end);
 					audio += "      param \"" + escapeField(step.sound) + "\"\n      fixedlength\n      cctype \"cc_master\"\n      cctoken \"\"\n    }\n";
 					break;
-				case ChoreoStep::Kind::Wait: break;
+				case ChoreoStep::Kind::Wait:
+				case ChoreoStep::Kind::SetVariable: break;
 			}
 		}
 		out += "actor \"" + escapeField(actor) + "\"\n{\n";
@@ -600,6 +753,10 @@ std::vector<ChoreoIssue> checkChoreoScene(const MapDocument& doc, const ChoreoSc
 		const auto& step = scene.steps[i];
 		const int n = static_cast<int>(i);
 		const std::string label = "Step " + std::to_string(i + 1);
+		if (step.kind == ChoreoStep::Kind::SetVariable) {
+			if (trim(step.variable).empty()) issues.push_back({n, label + " sets no variable - pick one"});
+			continue;
+		}
 		if (trim(step.actor).empty()) {
 			issues.push_back({n, label + " has no NPC"});
 			continue;
@@ -629,7 +786,8 @@ std::vector<ChoreoIssue> checkChoreoScene(const MapDocument& doc, const ChoreoSc
 				}
 				break;
 			case ChoreoStep::Kind::Wait:
-			case ChoreoStep::Kind::Face: break;
+			case ChoreoStep::Kind::Face:
+			case ChoreoStep::Kind::SetVariable: break;
 		}
 	}
 	return issues;
@@ -696,64 +854,46 @@ bool setVoiceCaption(const std::filesystem::path& modDir, std::string_view token
 
 // --- Edits ---------------------------------------------------------------------------------
 
-namespace edit {
-
-Change createChoreoScene(MapDocument& doc, int npcId, std::string_view mapName) {
-	const Entity* found = doc.findEntity(npcId);
-	if (!found || npcId == 0) return {};
-	Transaction t(doc, "New scene");
-	t.touchEntity(npcId);
-	Entity* npc = doc.findEntity(npcId);
-	std::string npcName = npc->get("targetname");
-	if (npcName.empty()) {
-		npcName = npc->classname() + "_" + std::to_string(npc->id);
-		npc->set("targetname", npcName);
-	}
-	std::string name = npcName + "_scene";
-	for (int n = 2; findNamedEntity(doc, name); ++n) name = npcName + "_scene" + std::to_string(n);
-	const Vec3 origin = npc->origin();
-	Entity scene;
-	scene.id = doc.newEntityId();
-	t.touchEntity(scene.id);
-	scene.set("classname", "logic_choreographed_scene");
-	scene.set("targetname", name);
-	scene.set("SceneFile", choreoSceneFile(mapName, name));
-	scene.set("busyactor", "1");   // Wait for the NPC to finish what it is doing
-	scene.set("onplayerdeath", "0");
-	scene.set(CHOREO_SCENE_KEY, "1");
-	scene.set(CHOREO_TRIGGER_KEY, "mapstart");
-	scene.setOrigin(origin + Vec3(0, 0, 80));
-	doc.entities.push_back(std::move(scene));
-	// The map-start helper right away, so the new scene plays as soon as it has steps.
-	Entity automatic;
-	automatic.id = doc.newEntityId();
-	t.touchEntity(automatic.id);
-	automatic.set("classname", "logic_auto");
-	automatic.set("spawnflags", "1");
-	automatic.set(CHOREO_SCENE_KEY, name);
-	automatic.setOrigin(origin + Vec3(0, 0, 96));
-	automatic.connections.push_back(startConnection("OnMapSpawn", name));
-	doc.entities.push_back(std::move(automatic));
-	return t.finish();
+void writeChoreoPlanKeys(Entity& entity, const ChoreoScene& scene) {
+	auto& kv = entity.keyValues;
+	kv.erase(std::remove_if(kv.begin(), kv.end(),
+	                        [](const auto& p) {
+		                        return isStepKey(p.first) || isNumberedKey(p.first, CHOREO_START_KEY) || isNumberedKey(p.first, CHOREO_CONDITION_KEY) ||
+		                               iequals(p.first, CHOREO_TRIGGER_KEY);
+	                        }),
+	         kv.end());
+	for (std::size_t i = 0; i < scene.starts.size(); ++i) entity.set(numberedKey(CHOREO_START_KEY, i), encodeChoreoStart(scene.starts[i]));
+	for (std::size_t i = 0; i < scene.conditions.size(); ++i) entity.set(numberedKey(CHOREO_CONDITION_KEY, i), encodeChoreoCondition(scene.conditions[i]));
+	for (std::size_t i = 0; i < scene.steps.size(); ++i) entity.set(stepKey(i), encodeChoreoStep(scene.steps[i]));
 }
 
-Change setChoreoScene(MapDocument& doc, int sceneId, const ChoreoScene& scene, std::string_view undoName) {
+namespace {
+
+/// "scenes/map/old.vcd" -> "scenes/map/new.vcd" when the file was named after the scene.
+std::string renamedSceneFile(const std::string& file, std::string_view oldName, std::string_view newName) {
+	const std::string oldFile = choreoSceneFile("x", oldName);
+	const std::string oldLeaf = oldFile.substr(oldFile.rfind('/'));
+	const std::string normal = normalizePath(file);
+	if (normal.size() < oldLeaf.size() || !iequals(std::string_view(normal).substr(normal.size() - oldLeaf.size()), oldLeaf)) return file;
+	const std::string newFile = choreoSceneFile("x", newName);
+	return normal.substr(0, normal.size() - oldLeaf.size()) + newFile.substr(newFile.rfind('/'));
+}
+
+/// Writes plan, name and points of one scene (see setChoreoScene) inside `t`; the logic is synced
+/// by the caller. Returns whether anything changed.
+bool writeScene(MapDocument& doc, Transaction& t, int sceneId, const ChoreoScene& scene) {
 	const Entity* found = doc.findEntity(sceneId);
-	if (!found || sceneId == 0 || !isChoreoScene(*found) || trim(scene.name).empty()) return {};
 	const std::string oldName = found->get("targetname");
-	const ChoreoScene before = readChoreoScene(*found);
-	const Vec3 sceneOrigin = found->origin();
 	bool dirty = false;
-	Transaction t(doc, std::string(undoName));
 
 	// The scene entity: name and plan.
 	{
 		Entity changed = *found;
-		if (changed.get("targetname") != scene.name) changed.set("targetname", scene.name);
-		auto& kv = changed.keyValues;
-		kv.erase(std::remove_if(kv.begin(), kv.end(), [](const auto& p) { return isStepKey(p.first); }), kv.end());
-		changed.set(CHOREO_TRIGGER_KEY, encodeTrigger(scene));
-		for (std::size_t i = 0; i < scene.steps.size(); ++i) changed.set(stepKey(i), encodeChoreoStep(scene.steps[i]));
+		if (changed.get("targetname") != scene.name) {
+			changed.set("targetname", scene.name);
+			if (!oldName.empty()) changed.set("SceneFile", renamedSceneFile(changed.get("SceneFile"), oldName, scene.name));
+		}
+		writeChoreoPlanKeys(changed, scene);
 		if (changed.keyValues != found->keyValues) {
 			t.touchEntity(sceneId);
 			doc.findEntity(sceneId)->keyValues = std::move(changed.keyValues);
@@ -761,22 +901,68 @@ Change setChoreoScene(MapDocument& doc, int sceneId, const ChoreoScene& scene, s
 		}
 	}
 
-	// A new name: everything aimed at the old one follows (outputs, helper tags).
+	// A new name: everything aimed at the old one or its helpers follows (outputs, helper names and
+	// tags, other scenes' plans and the lists of linked entities).
 	if (!oldName.empty() && !iequals(oldName, scene.name)) {
+		std::map<std::string, std::string> renamed;   // lower old name -> new name
+		renamed[toLower(oldName)] = scene.name;
+		for (const auto& entity : doc.entities) {
+			if (!isHelperOf(entity, oldName)) continue;
+			const std::string name = entity.get("targetname");
+			if (startsWithI(name, oldName + "_")) renamed[toLower(name)] = scene.name + name.substr(oldName.size());
+		}
 		for (auto& entity : doc.entities) {
 			bool touched = false;
+			const auto touch = [&] {
+				if (!touched) t.touchEntity(entity.id);
+				touched = true;
+			};
 			for (auto& c : entity.connections) {
-				if (iequals(c.target, oldName)) {
-					if (!touched) t.touchEntity(entity.id);
-					touched = true;
-					c.target = scene.name;
+				if (const auto to = renamed.find(toLower(c.target)); to != renamed.end()) {
+					touch();
+					c.target = to->second;
 					c.sourceText.clear();
 				}
 			}
 			if (isHelperOf(entity, oldName)) {
-				if (!touched) t.touchEntity(entity.id);
-				touched = true;
+				touch();
 				entity.set(CHOREO_SCENE_KEY, scene.name);
+				if (const auto to = renamed.find(toLower(entity.get("targetname"))); to != renamed.end()) entity.set("targetname", to->second);
+			}
+			if (entity.id != sceneId && isChoreoScene(entity)) {
+				ChoreoScene other = readChoreoScene(entity);
+				bool changed = false;
+				for (auto& start : other.starts) {
+					if (start.kind == ChoreoStart::Kind::AfterScene && iequals(start.target, oldName)) {
+						start.target = scene.name;
+						changed = true;
+					}
+				}
+				for (auto& condition : other.conditions) {
+					const bool aboutScene = condition.kind == ChoreoCondition::Kind::ScenePlayed || condition.kind == ChoreoCondition::Kind::SceneNotPlayed;
+					if (aboutScene && iequals(condition.name, oldName)) {
+						condition.name = scene.name;
+						changed = true;
+					}
+				}
+				if (changed) {
+					touch();
+					writeChoreoPlanKeys(entity, other);
+				}
+			}
+			if (isChoreoScene(entity)) {
+				// The list of entities whose outputs Mapsmith set ("mapsmith_links").
+				const std::string links = entity.get("mapsmith_links");
+				std::string updated;
+				for (const auto part : splitBars(links)) {
+					const std::string name(trim(part));
+					if (name.empty()) continue;
+					updated += (updated.empty() ? "" : "|") + (iequals(name, oldName) ? scene.name : name);
+				}
+				if (!links.empty() && updated != links) {
+					touch();
+					entity.set("mapsmith_links", updated);
+				}
 			}
 			dirty = dirty || touched;
 		}
@@ -811,6 +997,7 @@ Change setChoreoScene(MapDocument& doc, int sceneId, const ChoreoScene& scene, s
 		point.set("classname", "info_target");
 		point.set("targetname", name);
 		point.set(CHOREO_SCENE_KEY, scene.name);
+		point.set(CHOREO_ROLE_KEY, "point");
 		point.set("origin", origin);
 		doc.entities.push_back(std::move(point));
 		dirty = true;
@@ -820,93 +1007,73 @@ Change setChoreoScene(MapDocument& doc, int sceneId, const ChoreoScene& scene, s
 		std::erase_if(doc.entities, [id = pointHelpers[k]](const Entity& e) { return e.id == id; });
 		dirty = true;
 	}
+	return dirty;
+}
 
-	// The trigger helpers.
-	const auto helperOfClass = [&doc, &scene](std::string_view classname) -> int {
-		for (const auto& entity : doc.entities) {
-			if (isHelperOf(entity, scene.name) && iequals(entity.classname(), classname)) return entity.id;
-		}
-		return 0;
-	};
-	const auto removeHelper = [&](std::string_view classname) {
-		while (const int id = helperOfClass(classname)) {
-			t.touchEntity(id);
-			std::erase_if(doc.entities, [id](const Entity& e) { return e.id == id; });
-			dirty = true;
-		}
-	};
-	const auto setOnlyConnection = [&](int id, const Connection& wanted) {
-		const Entity* e = doc.findEntity(id);
-		if (e->connections.size() == 1 && sameConnection(e->connections.front(), wanted)) return;
-		t.touchEntity(id);
-		doc.findEntity(id)->connections = {wanted};
-		dirty = true;
-	};
-	if (scene.trigger == ChoreoTrigger::MapStart) {
-		if (const int id = helperOfClass("logic_auto")) {
-			setOnlyConnection(id, startConnection("OnMapSpawn", scene.name));
-		} else {
-			Entity automatic;
-			automatic.id = doc.newEntityId();
-			t.touchEntity(automatic.id);
-			automatic.set("classname", "logic_auto");
-			automatic.set("spawnflags", "1");
-			automatic.set(CHOREO_SCENE_KEY, scene.name);
-			automatic.setOrigin(sceneOrigin + Vec3(0, 0, 16));
-			automatic.connections.push_back(startConnection("OnMapSpawn", scene.name));
-			doc.entities.push_back(std::move(automatic));
-			dirty = true;
-		}
-	} else {
-		removeHelper("logic_auto");
-	}
-	if (scene.trigger == ChoreoTrigger::Trigger) {
-		if (const int id = helperOfClass("trigger_once")) {
-			setOnlyConnection(id, startConnection("OnStartTouch", scene.name));
-			if (doc.findEntity(id)->get("targetname") != scene.name + "_trigger") {
-				t.touchEntity(id);
-				doc.findEntity(id)->set("targetname", scene.name + "_trigger");
-				dirty = true;
-			}
-		} else {
-			Entity trigger;
-			trigger.id = doc.newEntityId();
-			t.touchEntity(trigger.id);
-			trigger.set("classname", "trigger_once");
-			trigger.set("targetname", scene.name + "_trigger");
-			trigger.set("spawnflags", "1");   // Clients (the player)
-			trigger.set("StartDisabled", "0");
-			trigger.set(CHOREO_SCENE_KEY, scene.name);
-			trigger.connections.push_back(startConnection("OnStartTouch", scene.name));
-			trigger.solids.push_back(makeBlock(doc, triggerBoxFor(doc, scene, sceneOrigin), "tools/toolstrigger"));
-			doc.entities.push_back(std::move(trigger));
-			dirty = true;
-		}
-	} else {
-		removeHelper("trigger_once");
-	}
-	// After another scene: its OnCompletion starts this one (an old link from a previous choice goes).
-	const auto linkFrom = [&](std::string_view other, bool wanted) {
-		for (auto& entity : doc.entities) {
-			if (entity.id == sceneId || !iequals(entity.get("targetname"), other) || !iequals(entity.classname(), "logic_choreographed_scene")) continue;
-			const Connection link = startConnection("OnCompletion", scene.name);
-			const auto has = std::find_if(entity.connections.begin(), entity.connections.end(), [&link](const Connection& c) { return sameConnection(c, link); });
-			if (wanted && has == entity.connections.end()) {
-				t.touchEntity(entity.id);
-				entity.connections.push_back(link);
-				dirty = true;
-			} else if (!wanted && has != entity.connections.end()) {
-				t.touchEntity(entity.id);
-				entity.connections.erase(has);
-				dirty = true;
-			}
-		}
-	};
-	if (before.trigger == ChoreoTrigger::AfterScene && !(scene.trigger == ChoreoTrigger::AfterScene && iequals(before.afterScene, scene.afterScene))) {
-		linkFrom(before.afterScene, false);
-	}
-	if (scene.trigger == ChoreoTrigger::AfterScene && !trim(scene.afterScene).empty()) linkFrom(scene.afterScene, true);
+/// A scene name without a trailing "_<number>" (for copies: alyx_greet_2 -> alyx_greet).
+std::string withoutNumber(const std::string& name) {
+	const auto bar = name.rfind('_');
+	if (bar == std::string::npos || bar + 1 >= name.size() || bar == 0) return name;
+	if (!std::all_of(name.begin() + static_cast<std::ptrdiff_t>(bar) + 1, name.end(), [](char c) { return c >= '0' && c <= '9'; })) return name;
+	return name.substr(0, bar);
+}
 
+} // namespace
+
+namespace edit {
+
+Change createChoreoScene(MapDocument& doc, int npcId, std::string_view mapName) {
+	const Entity* found = doc.findEntity(npcId);
+	if (!found || npcId == 0) return {};
+	Transaction t(doc, "New scene");
+	t.touchEntity(npcId);
+	Entity* npc = doc.findEntity(npcId);
+	std::string npcName = npc->get("targetname");
+	if (npcName.empty()) {
+		npcName = npc->classname() + "_" + std::to_string(npc->id);
+		npc->set("targetname", npcName);
+	}
+	// Scenes of the NPC: with a step of it, or named after it and still empty.
+	std::set<int> own;
+	for (const int id : choreoScenesOfActor(doc, npcName)) own.insert(id);
+	for (const auto& entity : doc.entities) {
+		if (isChoreoScene(entity) && startsWithI(entity.get("targetname"), npcName + "_scene")) own.insert(entity.id);
+	}
+	const bool first = own.empty();
+	const std::string name = uniqueChoreoName(doc, npcName + "_scene");
+	const Vec3 origin = npc->origin();
+	Entity scene;
+	scene.id = doc.newEntityId();
+	t.touchEntity(scene.id);
+	scene.set("classname", "logic_choreographed_scene");
+	scene.set("targetname", name);
+	scene.set("SceneFile", choreoSceneFile(mapName, name));
+	scene.set("busyactor", "1");   // Wait for the NPC to finish what it is doing
+	scene.set("onplayerdeath", "0");
+	scene.set(CHOREO_SCENE_KEY, "1");
+	// The NPC's first scene plays at map start, the next ones when the player walks into an area.
+	ChoreoScene plan;
+	plan.name = name;
+	ChoreoStart start;
+	start.kind = first ? ChoreoStart::Kind::MapStart : ChoreoStart::Kind::Area;
+	plan.starts.push_back(start);
+	writeChoreoPlanKeys(scene, plan);
+	// Above the NPC, one row per scene (its logic in a row to the right of it).
+	scene.setOrigin(origin + Vec3(0, 0, 80 + 24.0 * static_cast<double>(own.size())));
+	doc.entities.push_back(std::move(scene));
+	syncChoreoLogic(doc, t);
+	return t.finish();
+}
+
+Change setChoreoScene(MapDocument& doc, int sceneId, const ChoreoScene& scene, std::string_view undoName) {
+	const Entity* found = doc.findEntity(sceneId);
+	if (!found || sceneId == 0 || !isChoreoScene(*found) || trim(scene.name).empty()) return {};
+	// Another entity has the name already: the scene keeps its own.
+	const Entity* named = findNamedEntity(doc, scene.name);
+	if (named && named->id != sceneId && !isHelperOf(*named, found->get("targetname"))) return {};
+	Transaction t(doc, std::string(undoName));
+	bool dirty = writeScene(doc, t, sceneId, scene);
+	dirty = syncChoreoLogic(doc, t) || dirty;
 	if (!dirty) return {};
 	return t.finish();
 }
@@ -917,23 +1084,73 @@ Change deleteChoreoScene(MapDocument& doc, int sceneId) {
 	const std::string name = found->get("targetname");
 	Transaction t(doc, "Delete scene");
 	std::vector<int> gone{sceneId};
+	std::set<std::string> helperNames;
 	for (const auto& entity : doc.entities) {
-		if (isHelperOf(entity, name)) gone.push_back(entity.id);
+		if (!isHelperOf(entity, name)) continue;
+		gone.push_back(entity.id);
+		if (!entity.get("targetname").empty()) helperNames.insert(toLower(entity.get("targetname")));
+	}
+	std::set<std::string> linked;
+	for (const auto part : splitBars(found->get("mapsmith_links"))) {
+		if (!trim(part).empty()) linked.insert(toLower(trim(part)));
 	}
 	for (const int id : gone) t.touchEntity(id);
 	std::erase_if(doc.entities, [&gone](const Entity& e) { return std::find(gone.begin(), gone.end(), e.id) != gone.end(); });
-	// Outputs of other scenes that started this one go too.
+	// Outputs Mapsmith set on other entities to start it go too (also older maps' OnCompletion -> Start).
 	for (auto& entity : doc.entities) {
-		const auto before = entity.connections.size();
-		const bool aimed = std::any_of(entity.connections.begin(), entity.connections.end(), [&name](const Connection& c) {
-			return iequals(c.target, name) && iequals(c.output, "OnCompletion") && iequals(c.input, "Start");
-		});
-		if (!aimed) continue;
+		const bool isLinked = linked.contains(toLower(entity.get("targetname")));
+		const auto aimed = [&](const Connection& c) {
+			if (isLinked && helperNames.contains(toLower(c.target))) return true;
+			return isChoreoScene(entity) && iequals(c.target, name) && iequals(c.output, "OnCompletion") && iequals(c.input, "Start");
+		};
+		if (std::none_of(entity.connections.begin(), entity.connections.end(), aimed)) continue;
 		t.touchEntity(entity.id);
-		std::erase_if(entity.connections, [&name](const Connection& c) {
-			return iequals(c.target, name) && iequals(c.output, "OnCompletion") && iequals(c.input, "Start");
-		});
-		(void)before;
+		std::erase_if(entity.connections, aimed);
+	}
+	syncChoreoLogic(doc, t);
+	return t.finish();
+}
+
+Change duplicateChoreoScene(MapDocument& doc, int sceneId, std::string_view mapName) {
+	const Entity* found = doc.findEntity(sceneId);
+	if (!found || sceneId == 0 || !isChoreoScene(*found)) return {};
+	ChoreoScene scene = readChoreoScene(doc, *found);
+	const std::string original = scene.name;
+	scene.name = uniqueChoreoName(doc, withoutNumber(original.empty() ? std::string("scene") : original));
+	Transaction t(doc, "Duplicate scene");
+	Entity copy;
+	copy.id = doc.newEntityId();
+	t.touchEntity(copy.id);
+	for (const auto& [key, value] : found->keyValues) {
+		if (!iequals(key, "mapsmith_links")) copy.keyValues.emplace_back(key, value);
+	}
+	copy.set("targetname", scene.name);
+	copy.set("SceneFile", choreoSceneFile(mapName, scene.name));
+	copy.setOrigin(found->origin() + Vec3(0, 0, 24));
+	writeChoreoPlanKeys(copy, scene);
+	const int copyId = copy.id;
+	doc.entities.push_back(std::move(copy));
+	writeScene(doc, t, copyId, scene);
+	syncChoreoLogic(doc, t);
+	// The copy's trigger boxes where the original's are (it is usually a variant of the same moment).
+	std::map<std::string, Bounds> boxes;
+	for (const auto& entity : doc.entities) {
+		if (!isHelperOf(entity, original) || entity.solids.empty()) continue;
+		Bounds box;
+		for (const auto& solid : entity.solids) box.add(buildBrushGeometry(solid).bounds);
+		if (!box.empty()) boxes[toLower(entity.get(CHOREO_ROLE_KEY))] = box;
+	}
+	std::vector<int> copies;
+	for (const auto& entity : doc.entities) {
+		if (isHelperOf(entity, scene.name) && !entity.solids.empty() && entity.get("parentname").empty() && boxes.contains(toLower(entity.get(CHOREO_ROLE_KEY)))) {
+			copies.push_back(entity.id);
+		}
+	}
+	for (const int id : copies) {
+		const Bounds box = boxes[toLower(doc.findEntity(id)->get(CHOREO_ROLE_KEY))];
+		Solid block = makeBlock(doc, box, "tools/toolstrigger");
+		t.touchEntity(id);
+		doc.findEntity(id)->solids = {std::move(block)};
 	}
 	return t.finish();
 }
