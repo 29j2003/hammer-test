@@ -125,8 +125,14 @@ TEST_CASE("choreography: a new scene, its steps, points and trigger in the map; 
 	const auto autos = helpers(doc, "intro", "logic_auto");
 	REQUIRE(autos.size() == 1);
 	REQUIRE(autos[0]->connections.size() == 1);
-	CHECK(autos[0]->connections[0].target == "intro");
-	CHECK(autos[0]->connections[0].input == "Start");
+	CHECK(autos[0]->connections[0].target == "intro_start");   // every start goes through the relay
+	CHECK(autos[0]->connections[0].input == "Trigger");
+	const auto relays = helpers(doc, "intro", "logic_relay");
+	REQUIRE(relays.size() == 1);
+	CHECK(relays[0]->get("targetname") == "intro_start");
+	REQUIRE(relays[0]->connections.size() == 1);
+	CHECK(relays[0]->connections[0].target == "intro");
+	CHECK(relays[0]->connections[0].input == "Start");
 	// Nothing to do the second time.
 	CHECK(edit::setChoreoScene(doc, id, scene).empty());
 	// A point moved with the gizmo (its info_target) is where the NPC walks.
@@ -141,12 +147,14 @@ TEST_CASE("choreography: a new scene, its steps, points and trigger in the map; 
 	}
 
 	// Started by a trigger: the logic_auto goes, a trigger_once comes (in front of the NPC).
-	scene.trigger = ChoreoTrigger::Trigger;
+	scene.starts = {ChoreoStart{ChoreoStart::Kind::Area}};
 	history.push(edit::setChoreoScene(doc, id, scene));
 	CHECK(helpers(doc, "intro", "logic_auto").empty());
 	const auto triggers = helpers(doc, "intro", "trigger_once");
 	REQUIRE(triggers.size() == 1);
-	CHECK(triggers[0]->connections[0].output == "OnStartTouch");
+	CHECK(triggers[0]->get("targetname") == "intro_area1");
+	CHECK(triggers[0]->connections[0].output == "OnTrigger");
+	CHECK(triggers[0]->connections[0].target == "intro_start");
 	REQUIRE(triggers[0]->solids.size() == 1);
 	// One move fewer: its point goes.
 	scene.steps.pop_back();
@@ -179,12 +187,14 @@ TEST_CASE("choreography: after another scene, by input; renaming moves outputs a
 	(void)edit::setChoreoScene(doc, first, a);
 	ChoreoScene b = readChoreoScene(*doc.findEntity(second));
 	b.steps = {say("barney", "s.two", 1, "Two")};
-	b.trigger = ChoreoTrigger::AfterScene;
-	b.afterScene = a.name;
+	ChoreoStart after;
+	after.kind = ChoreoStart::Kind::AfterScene;
+	after.target = a.name;
+	b.starts = {after};
 	(void)edit::setChoreoScene(doc, second, b);
 	const auto link = [&doc, first](std::string_view target) {
 		const auto& c = doc.findEntity(first)->connections;
-		return std::count_if(c.begin(), c.end(), [target](const Connection& x) { return x.output == "OnCompletion" && iequals(x.target, target) && x.input == "Start"; });
+		return std::count_if(c.begin(), c.end(), [target](const Connection& x) { return x.output == "OnCompletion" && iequals(x.target, std::string(target) + "_start") && x.input == "Trigger"; });
 	};
 	CHECK(link(b.name) == 1);
 	CHECK(helpers(doc, b.name, "logic_auto").empty());
@@ -193,7 +203,7 @@ TEST_CASE("choreography: after another scene, by input; renaming moves outputs a
 	(void)edit::setChoreoScene(doc, second, b);
 	CHECK(link("second_part") == 1);
 	// By input only: the link goes, nothing else is made.
-	b.trigger = ChoreoTrigger::Input;
+	b.starts = {ChoreoStart{ChoreoStart::Kind::Input}};
 	(void)edit::setChoreoScene(doc, second, b);
 	CHECK(link("second_part") == 0);
 	CHECK(helpers(doc, "second_part", "logic_auto").empty());

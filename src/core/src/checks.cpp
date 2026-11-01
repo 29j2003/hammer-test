@@ -564,6 +564,18 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 			problems.push_back(std::move(p));
 		}
 	}
+	// What starts the scenes: triggers in the void, conditions on deleted scenes or variables,
+	// two scenes of one NPC that start together.
+	for (const auto& issue : checkChoreoLogic(doc)) {
+		Problem p;
+		p.kind = Problem::Kind::ScenePlan;
+		p.severity = issue.warning ? Problem::Severity::Warning : Problem::Severity::Error;
+		p.entityId = issue.sceneId;
+		p.objects.entities.push_back(issue.sceneId);
+		p.message = "Scene \"" + issue.scene + "\": " + issue.message + ".";
+		p.howToFix = "Open Choreography (Scenes list) and fix the scene's starts or conditions.";
+		problems.push_back(std::move(p));
+	}
 	return problems;
 }
 
