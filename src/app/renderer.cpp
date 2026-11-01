@@ -2563,6 +2563,32 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 					note("brush", r, "displacement");
 				}
 			}
+			// The brush's other faces are drawn too: they are clicked through the planes like any
+			// brush (Julius, 01.11.2026: a stretched blend wall could only be clicked on its
+			// displaced side - the report showed the other faces were never tested). A ray entering
+			// through the displaced side itself is the triangles' business.
+			bool inside = false;
+			const auto hit = intersectSeen(ray, *solid, &inside);
+			if (trace && !hit) skip(item, "its box is on the ray, the brush is not");
+			if (hit) {
+				const Side& side = solid->sides[static_cast<std::size_t>(hit->sideIndex)];
+				const bool hiddenFace = !item.detached && m_hiddenSides.contains(side.id);
+				if (side.dispInfo() || hiddenFace) {
+					if (trace) skip(item, "plane hit on side " + std::to_string(side.id) + (hiddenFace ? " (hidden)" : " (the displaced side: its triangles count)"));
+				} else if (best && hit->distance >= bestRank + SAME_SURFACE) {
+					if (trace) skip(item, "face hit at " + reportNumber(hit->distance) + ", behind the nearest hit");
+				} else {
+					PickResult r;
+					r.distance = hit->distance;
+					r.point = ray.origin + ray.direction * hit->distance;
+					r.normal = side.plane().normal;
+					r.solid = item.solid;
+					r.entityId = item.entityId;
+					r.sideId = side.id;
+					offer(r, hit->distance, Kind::Brush);
+					note("brush", r, std::string("face of a displacement brush") + (inside ? ", from inside" : ""));
+				}
+			}
 			continue;
 		}
 		// From inside too: a brush stretched around the camera is drawn from inside (drawSurfaces).

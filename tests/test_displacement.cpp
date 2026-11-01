@@ -339,3 +339,46 @@ TEST_CASE("displacement: an imported dispinfo is read, and an untouched store ke
 	CHECK(again->distances == d->distances);
 	CHECK(again->alphas == d->alphas);
 }
+
+TEST_CASE("displacement: stretching and turning a displacement brush keeps its start corner and turns its normals") {
+	// Julius' report (01.11.2026): a blend wall copied and stretched kept the old start position,
+	// 672 units off its displaced face.
+	MapDocument doc;
+	auto [create, ref] = edit::createBlock(doc, box({0, 0, 0}, {576, 16, 336}), "DEV/DEV_BLENDMEASURE2");
+	(void)create;
+	FaceRef front;
+	{
+		const Solid* solid = doc.findSolid(ref);
+		for (const auto& face : buildBrushGeometry(*solid).faces) {
+			if (face.normal.y > 0.9) front = {ref, solid->sides[static_cast<std::size_t>(face.sideIndex)].id};
+		}
+	}
+	REQUIRE(front.sideId != 0);
+	(void)edit::createDisplacements(doc, {front}, 3);
+	CHECK(sideOf(doc, front).dispInfo()->get("startposition") == "[0 16 0]");
+
+	// Stretched along y: the displaced face (y = 16) moves to y = 688, the start corner with it.
+	Solid* solid = doc.findSolid(ref);
+	REQUIRE(scaleSolid(*solid, box({0, 0, 0}, {576, 16, 336}), box({0, 0, 0}, {576, 688, 336})));
+	CHECK(sideOf(doc, front).dispInfo()->get("startposition") == "[0 688 0]");
+	const auto corners = displacementCorners(faceOf(doc, front), Vec3{0, 688, 0});
+	CHECK(std::any_of(corners.begin(), corners.end(), [](const Vec3& c) { return length(c - Vec3{0, 688, 0}) < 1e-6; }));
+	auto mesh = buildDisplacement(sideOf(doc, front), faceOf(doc, front));
+	REQUIRE(mesh);
+	for (const auto& p : mesh->positions) CHECK(p.y == doctest::Approx(688));
+
+	// Turned 90° about z: the start corner and the normals turn too.
+	rotateSolid(*solid, Mat3::rotation(2, 90.0), Vec3{0, 0, 0}, false);
+	Vec3 start;
+	const auto text = sideOf(doc, front).dispInfo()->get("startposition");
+	REQUIRE(parseVec3(std::string_view(text).substr(1, text.size() - 2), start));
+	CHECK(start.x == doctest::Approx(-688));
+	CHECK(start.y == doctest::Approx(0).epsilon(1e-6));
+	const auto normals = sideOf(doc, front).dispInfo()->find("normals")->get("row0");
+	Vec3 n;
+	REQUIRE(parseVec3(normals.substr(0, normals.find(' ', normals.find(' ', normals.find(' ') + 1) + 1)), n));
+	CHECK(n.x == doctest::Approx(-1));
+	mesh = buildDisplacement(sideOf(doc, front), faceOf(doc, front));
+	REQUIRE(mesh);
+	for (const auto& p : mesh->positions) CHECK(p.x == doctest::Approx(-688));
+}

@@ -674,7 +674,18 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		if (!active(i) || !node[static_cast<std::size_t>(i)]) continue;
 		const auto near = activeLinks(i);
 		const Piece& piece = at(i);
-		if (near.size() == 2 && options.curveCorners) {
+		// A corner clearly longer one way, with one road running that way: it carries on that
+		// road (Julius' 1408 x 416 corner went with the short road across it) and is not cut.
+		const Link* extends = nullptr;
+		if (near.size() == 2) {
+			const LongAxis shape = longAxis(piece);
+			if (shape.aspect > ELONGATED) {
+				const bool along0 = std::abs(dot(-acrossEdge(piece, *near[0]), shape.axis)) > COS30;
+				const bool along1 = std::abs(dot(-acrossEdge(piece, *near[1]), shape.axis)) > COS30;
+				if (along0 != along1) extends = along0 ? near[0] : near[1];
+			}
+		}
+		if (near.size() == 2 && options.curveCorners && !extends) {
 			// A corner the road curves through (when it can be cut cleanly; tried here with the
 			// centre line through the edges' middles, cut for real once the centre line is known).
 			const Vec3 in = acrossEdge(piece, *near[0]);
@@ -682,7 +693,11 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 			const CurveArc arc = curveArc(near[0]->mid, in, *near[1], out, piece.normal);
 			MapDocument trial;
 			const Solid* solid = doc.findSolid(piece.ref.solid);
-			if (solid && cutCurve(trial, *solid, piece, arc)) {
+			// A displacement cannot be cut into pieces (its grid belongs to the whole face): it
+			// stays square (Julius' blend road, 01.11.2026).
+			const bool displaced = solid && std::any_of(solid->sides.begin(), solid->sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; });
+			if (displaced) plan.notes.push_back("piece " + std::to_string(i) + ": the corner is a displacement - kept square, the texture follows the road it extends");
+			if (solid && !displaced && cutCurve(trial, *solid, piece, arc)) {
 				curve[static_cast<std::size_t>(i)] = 1;
 				dir[static_cast<std::size_t>(i)] = in;
 				uses[static_cast<std::size_t>(i)] = {near[0]->other, near[1]->other};
@@ -698,6 +713,13 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 			++plan.squareCorners;
 		}
 		if (near.size() == 2) {
+			if (extends) {
+				dir[static_cast<std::size_t>(i)] = -acrossEdge(piece, *extends);
+				uses[static_cast<std::size_t>(i)] = {extends->other};
+				plan.notes.push_back("piece " + std::to_string(i) + ": long corner - it carries on the road from " + std::to_string(extends->other) +
+				                     ", kept in one piece");
+				continue;
+			}
 			// A corner continues the longer road (then the wider common edge); the other road
 			// starts at its edge. Never diagonal.
 			const auto better = [&](const Link* a, const Link* b) {

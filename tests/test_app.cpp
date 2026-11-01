@@ -8187,6 +8187,18 @@ TEST_CASE("picking: the click hits what the view shows - wall rows, floor, paste
 		to.max.x += 64;
 		editor.commit(edit::scale(editor.doc(), editor.selection(), from, to));
 	}
+	// Displacement brushes, as Julius' blend walls (report of 01.11.2026): a block and the stretched
+	// copy get a displaced front face; their other faces must stay clickable (before, a brush with
+	// a displacement was only picked on its displaced face).
+	for (const SolidRef& r : {blocks[2], stretched}) {
+		int front = 0;
+		for (const auto& side : editor.doc().findSolid(r)->sides) {
+			if (side.plane().normal.y < -0.99) front = side.id;
+		}
+		REQUIRE(front != 0);
+		editor.commit(edit::createDisplacements(editor.doc(), {FaceRef{r, front}}, 3));
+		REQUIRE(editor.doc().findSolid(r)->sides.size() == 6);
+	}
 	// Hammer++ writes its plane points with decimals (corners of the face, tiny errors): every
 	// plane point moved along its plane by an odd amount and off it by a hair.
 	{

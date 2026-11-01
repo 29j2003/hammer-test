@@ -6,6 +6,7 @@
 #include <sme/text.h>
 
 #include <cmath>
+#include <sstream>
 
 namespace sme {
 
@@ -282,6 +283,38 @@ Solid makeBlock(MapDocument& doc, const Bounds& box, const std::string& material
 	return solid;
 }
 
+/// Moves each displacement's start position with `map` (it names the corner the grid starts at;
+/// a stale one after a stretch or turn can pick another corner) and turns its world-space
+/// vectors (normals, offsets, offset normals) with `turn`, if given.
+template <typename MapPoint>
+void transformDisplacements(Solid& solid, MapPoint map, const Mat3* turn) {
+	for (auto& side : solid.sides) {
+		for (auto& extra : side.extra) {
+			if (!extra.block || !iequals(extra.key, "dispinfo")) continue;
+			Vec3 start;
+			const auto text = extra.get("startposition");
+			if (text.size() > 2 && parseVec3(std::string_view(text).substr(1, text.size() - 2), start)) {
+				extra.set("startposition", "[" + formatVec3(map(start)) + "]");
+			}
+			if (!turn) continue;
+			for (auto& block : extra.children) {
+				if (!block.block || !(iequals(block.key, "normals") || iequals(block.key, "offsets") || iequals(block.key, "offset_normals"))) continue;
+				for (auto& row : block.children) {
+					if (row.block) continue;
+					std::istringstream in(row.value);
+					std::string out;
+					double x, y, z;
+					while (in >> x >> y >> z) {
+						const Vec3 v = *turn * Vec3{x, y, z};
+						out += (out.empty() ? "" : " ") + formatVec3(v);
+					}
+					if (!out.empty()) row.value = out;
+				}
+			}
+		}
+	}
+}
+
 void translateSolid(Solid& solid, const Vec3& delta, bool textureLock) {
 	for (auto& side : solid.sides) {
 		for (auto& p : side.planePoints) {
@@ -293,17 +326,7 @@ void translateSolid(Solid& solid, const Vec3& delta, bool textureLock) {
 		}
 	}
 	// Displacement start positions move with the brush.
-	for (auto& side : solid.sides) {
-		for (auto& extra : side.extra) {
-			if (extra.block && iequals(extra.key, "dispinfo")) {
-				Vec3 start;
-				auto text = extra.get("startposition");
-				if (text.size() > 2 && parseVec3(std::string_view(text).substr(1, text.size() - 2), start)) {
-					extra.set("startposition", "[" + formatVec3(start + delta) + "]");
-				}
-			}
-		}
-	}
+	transformDisplacements(solid, [&delta](const Vec3& p) { return p + delta; }, nullptr);
 }
 
 void rotateSolid(Solid& solid, const Mat3& rotation, const Vec3& center, bool textureLock) {
@@ -321,6 +344,7 @@ void rotateSolid(Solid& solid, const Mat3& rotation, const Vec3& center, bool te
 			}
 		}
 	}
+	transformDisplacements(solid, [&](const Vec3& p) { return rotation * (p - center) + center; }, &rotation);
 }
 
 bool scaleSolid(Solid& solid, const Bounds& from, const Bounds& to) {
@@ -345,6 +369,16 @@ bool scaleSolid(Solid& solid, const Bounds& from, const Bounds& to) {
 			}
 		}
 	}
+	// The start position is a corner of the displaced face: it goes where that corner goes
+	// (Julius' stretched blend wall kept the old one, 672 units off).
+	transformDisplacements(solid, [&](Vec3 p) {
+		for (int i = 0; i < 3; ++i) {
+			if (std::abs(p[i] - from.min[i]) < 1e-6) p[i] = to.min[i];
+			else if (std::abs(p[i] - from.max[i]) < 1e-6) p[i] = to.max[i];
+			else p[i] = to.min[i] + (p[i] - from.min[i]) * ts[i] / fs[i];
+		}
+		return p;
+	}, nullptr);
 	return true;
 }
 

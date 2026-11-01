@@ -7,6 +7,7 @@
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/displacement.h>
 #include <sme/edge_round.h>
 #include <sme/editing.h>
 #include <sme/history.h>
@@ -690,4 +691,46 @@ TEST_CASE("road: a corner with no room for a curve stays square and says so") {
 	CHECK(plan.corners.empty());
 	CHECK(plan.squareCorners == 1);
 	CHECK(plan.faces.size() == 3);
+}
+
+TEST_CASE("road: a long corner carries on the road it extends; a displaced corner stays square (Julius' report, 01.11.2026)") {
+	// His map from the editor report: road 0 along x (480 wide), a strip, then a 1408 x 416 corner
+	// piece long along x; road 1 (528 wide) leaves its south edge along -y.
+	for (const bool displaced : {false, true}) {
+		CAPTURE(displaced);
+		MapDocument doc;
+		const auto p137 = addBox(doc, -2160, -1168, -1472, -688);
+		const auto p55 = addBox(doc, -1472, -1168, -768, -688);
+		const auto p66 = addBox(doc, -768, -1296, -624, -688);
+		const auto p54 = addBox(doc, -624, -1296, 784, -880);
+		const auto p60 = addBox(doc, 256, -2352, 784, -1296);
+		const auto p144 = addBox(doc, 256, -2880, 784, -2352);
+		if (displaced) {
+			for (const auto& ref : {p54, p60}) {
+				const auto faces = tops(doc, {ref});
+				REQUIRE(faces.size() == 1);
+				(void)edit::createDisplacements(doc, faces, 4);
+				const Solid* solid = doc.findSolid(ref);
+				const bool hasDisp = std::any_of(solid->sides.begin(), solid->sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; });
+				REQUIRE(hasDisp);
+			}
+		}
+		RoadOptions options{"CONCRETE/BLENDROAD_BROKEN01"};
+		const auto plan = planRoad(doc, tops(doc, {p137, p55, p66, p54, p60, p144}), options, size(1024, 1024));
+		REQUIRE(plan.faces.size() == 6);
+		CHECK(plan.corners.empty());   // long (and, the second time, displaced): never cut
+		// The long corner runs along x like road 0, not across it.
+		CHECK(runsAlong(plan, p54, {1, 0, 0}));
+		CHECK(runsAlong(plan, p66, {1, 0, 0}));
+		CHECK(runsAlong(plan, p60, {0, 1, 0}));
+		// Road 0 runs on into the corner without a jump along it.
+		for (const double y : {-1100.0, -1000.0, -900.0}) {
+			const Vec3 p{-624, y, 16};
+			CHECK(sameTexel(at(plan, p66, p).u, at(plan, p54, p).u, 1024));
+			CHECK(sameTexel(at(plan, p66, p).v, at(plan, p54, p).v, 1024));
+		}
+		if (displaced) {
+			CHECK(std::any_of(plan.notes.begin(), plan.notes.end(), [](const std::string& n) { return n.find("displacement") != std::string::npos || n.find("long corner") != std::string::npos; }));
+		}
+	}
 }
