@@ -17,6 +17,7 @@
 #include <QSet>
 #include <QVector3D>
 
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -137,11 +138,12 @@ public:
 	/// box wins over a model up to 16 units in front of it - the helper at an NPC's feet stays
 	/// clickable; a helper's see-through stand-in loses ties to the NPC it stands for.
 	/// Brushes hit on the same surface (a copy pasted in place, a brush flush with a floor it lies
-	/// in) tie: the smaller one comes first, then the newer one; `cycle` takes the next of them
-	/// (a second click on the same spot), so every one of them can be reached.
-	/// `preferred`: on a surface several brushes share, a selected one comes first (a click on the
-	/// selected brush's own resize square keeps it); the next click with `cycle` takes the others.
-	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false, int cycle = 0, const Selection* preferred = nullptr) const;
+	/// in, a brush stretched flush against walls) tie: a `preferred` (selected) one first, then the
+	/// one changed last (`editStamp`, higher = later), then the smaller one, then the newer one;
+	/// `cycle` takes the next of them (a second click on the same spot), so every one of them can
+	/// be reached. `preferred` keeps a selected brush on a click on its own resize square.
+	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false, int cycle = 0, const Selection* preferred = nullptr,
+	                                             const std::function<std::uint64_t(const SolidRef&)>& editStamp = {}) const;
 
 	/// Numbers about the scene and the last frame (status bar and its tooltip).
 	[[nodiscard]] Bounds sceneBounds() const { return m_sceneBounds; }

@@ -68,7 +68,7 @@ std::string formatAxis(const TextureAxis& axis) {
 	       formatNumber(axis.shift) + "] " + formatNumber(axis.scale);
 }
 
-KvNode sideNode(const Side& side);
+KvNode sideNode(const Side& side, bool brushUnchanged = true);
 KvNode solidNode(const Solid& solid);
 KvNode entityNode(const Entity& entity, std::string_view blockName);
 std::string formatAxis(const TextureAxis& axis);
@@ -189,6 +189,11 @@ std::optional<Solid> parseSolid(const KvNode& node, VmfLoadReport* report) {
 	}
 	if (!standardLayout(layout, solid.id, 0, {"side"}, solid.sides.size())) {
 		solid.source = std::make_shared<const Layout>(std::move(layout));
+	}
+	if (std::any_of(solid.sides.begin(), solid.sides.end(), [](const Side& side) { return std::any_of(side.extra.begin(), side.extra.end(), isCorners); })) {
+		auto planes = std::make_shared<std::vector<std::array<Vec3, 3>>>();
+		for (const auto& side : solid.sides) planes->push_back(side.planePoints);
+		solid.readPlanes = std::move(planes);
 	}
 	return solid;
 }
@@ -391,9 +396,19 @@ bool sideValueSet(const Side& side, SideKey key) {
 	return false;
 }
 
+/// Whether every side of the brush still has the plane it was read with (same sides, same order).
+bool brushAsRead(const Solid& solid) {
+	if (!solid.readPlanes || solid.readPlanes->size() != solid.sides.size()) return false;
+	for (std::size_t i = 0; i < solid.sides.size(); ++i) {
+		if (!(solid.sides[i].planePoints == (*solid.readPlanes)[i])) return false;
+	}
+	return true;
+}
+
 /// Hammer++ stores the exact corners of a face in a "vertices_plus" block. They hold only while
-/// the plane is the one they were read with; a moved, cut or new face drops them (Hammer++ then
-/// takes the corners from the plane, as for any VMF from Valve's Hammer).
+/// the plane is the one they were read with, and while the rest of the brush is too: a moved,
+/// cut or new face drops them, and so do its neighbours, whose corners moved with it (Hammer++
+/// then takes the corners from the planes, as for any VMF from Valve's Hammer).
 bool keepsCorners(const Side& side) {
 	if (!side.source) return false;
 	for (const auto& entry : *side.source) {
@@ -409,7 +424,7 @@ bool isCorners(const KvNode& node) {
 	return node.block && iequals(node.key, "vertices_plus");
 }
 
-KvNode sideNode(const Side& side) {
+KvNode sideNode(const Side& side, bool brushUnchanged) {
 	auto node = KvNode::makeBlock("side");
 	if (!side.source) {
 		for (const SideKey key : SIDE_ORDER) {
@@ -420,7 +435,7 @@ KvNode sideNode(const Side& side) {
 		}
 		return node;
 	}
-	const bool corners = keepsCorners(side);
+	const bool corners = brushUnchanged && keepsCorners(side);
 	// The file's order and text; a typed key the file did not have comes after the last one it
 	// had (unless it still has a side's default value), extras added since then at the end.
 	bool written[9] = {};
@@ -472,6 +487,8 @@ KvNode sideNode(const Side& side) {
 
 KvNode solidNode(const Solid& solid) {
 	auto node = KvNode::makeBlock("solid");
+	const bool asRead = !solid.readPlanes || brushAsRead(solid);
+	const auto sideNode = [asRead](const Side& side) { return sme::sideNode(side, asRead); };
 	const auto idValue = [&](std::string_view read) {
 		return !read.empty() && parseInt(read, -1) == solid.id ? std::string(read) : std::to_string(solid.id);
 	};

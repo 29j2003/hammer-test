@@ -1793,7 +1793,8 @@ void Viewport::clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers) 
 	// On a shared surface a selected brush comes first; the clicks after it go on in the order the
 	// first click saw (so they reach the others).
 	if (!again) m_cyclePreferred = m_editor->selection();
-	const auto hit = m_renderer.pick(rayAt(pos), faceMode, m_cycle, faceMode ? nullptr : &m_cyclePreferred);
+	const auto stamp = [this](const SolidRef& ref) { return m_editor->editStamp(ref); };
+	const auto hit = m_renderer.pick(rayAt(pos), faceMode, m_cycle, faceMode ? nullptr : &m_cyclePreferred, stamp);
 
 	if (hit && faceMode && (modifiers & Qt::AltModifier)) {
 		// Alt+click in face mode: pick the material of the face (eyedropper).
@@ -1828,6 +1829,9 @@ void Viewport::clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers) 
 				selection.solids = {hit->solid};
 			}
 		}
+	}
+	if (hit && hit->ties > 1 && !again) {
+		emit m_editor->message(tr("%1 brushes share this spot - click it again for the next one").arg(hit->ties));
 	}
 	m_cyclePos = hit && hit->ties > 1 ? std::optional<QPointF>(pos) : std::nullopt;
 	m_cycleSelection = selection;

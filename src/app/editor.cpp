@@ -237,6 +237,7 @@ void Editor::newMap() {
 	m_footerModified = false;
 	m_doc = MapDocument();
 	m_history.clear();
+	m_editStamps.clear();
 	m_selection.clear();
 	m_hidden.clear();
 	m_hiddenVisGroups.clear();
@@ -266,6 +267,7 @@ bool Editor::openMap(const QString& path, QString* error) {
 		return false;
 	}
 	m_history.clear();
+	m_editStamps.clear();
 	m_lastShape = {};
 	m_footerModified = false;
 	m_selection.clear();
@@ -346,10 +348,35 @@ bool Editor::openRecovered(const QString& autosavePath, const QString& originalP
 	return true;
 }
 
+namespace {
+
+long long editKey(const SolidRef& ref) {
+	return (static_cast<long long>(ref.entityId) << 32) ^ static_cast<unsigned int>(ref.solidId);
+}
+
+} // namespace
+
+std::uint64_t Editor::editStamp(const SolidRef& ref) const {
+	const auto it = m_editStamps.find(editKey(ref));
+	return it == m_editStamps.end() ? 0 : it->second;
+}
+
+void Editor::stampEdits(const Change& change) {
+	++m_editCounter;
+	for (const auto& state : change.solids) {
+		if (state.after) m_editStamps[editKey(state.ref)] = m_editCounter;
+	}
+	for (const auto& state : change.entities) {
+		if (!state.after) continue;
+		for (const auto& solid : state.after->solids) m_editStamps[editKey({state.entityId, solid.id})] = m_editCounter;
+	}
+}
+
 void Editor::commit(Change change) {
 	if (change.empty()) {
 		return;
 	}
+	stampEdits(change);
 	m_history.push(std::move(change));
 	m_selection.prune(m_doc);
 	emit documentChanged();
@@ -360,6 +387,7 @@ void Editor::commitMerged(Change change) {
 	if (change.empty()) {
 		return;
 	}
+	stampEdits(change);
 	m_history.push(std::move(change), true);
 	m_selection.prune(m_doc);
 	emit documentChanged();

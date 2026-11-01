@@ -11,6 +11,7 @@
 #include <sme/editing.h>
 #include <sme/map.h>
 
+#include <algorithm>
 #include <random>
 #include <string>
 
@@ -247,6 +248,29 @@ TEST_CASE("VMF round trip: Hammer++ (vertices_plus, many digits, cordons)") {
 	CHECK(again.world.solids[1].sides[0].extra.empty());
 	REQUIRE(again.world.solids[0].sides[0].extra.size() == 1);
 	CHECK(again.world.solids[0].sides[0].extra[0].key == "vertices_plus");
+}
+
+TEST_CASE("VMF round trip: resizing a Hammer++ brush drops the corners of all its faces, not only the moved one") {
+	// Pulling one face out changes the corners of the four faces around it while their planes stay:
+	// their vertices_plus would tell Hammer++ the old, smaller outline.
+	const auto text = hammerPlusPlusMap();
+	auto doc = MapDocument::parse(text);
+	Solid& box = doc.world.solids[0];
+	const Bounds from{{-64, -64, 0}, {64, 64, 128}};
+	REQUIRE(scaleSolid(box, from, Bounds{{-64, -64, 0}, {200, 64, 128}}));
+	const auto again = MapDocument::parse(doc.serialize());
+	for (const auto& side : again.world.solids[0].sides) {
+		CHECK(std::none_of(side.extra.begin(), side.extra.end(), [](const KvNode& n) { return n.key == "vertices_plus"; }));
+	}
+	// The rotated brush is untouched: it keeps its corners.
+	REQUIRE_FALSE(again.world.solids[1].sides[0].extra.empty());
+	CHECK(again.world.solids[1].sides[0].extra[0].key == "vertices_plus");
+	// A copy that was not changed keeps them too (same brush, same place).
+	auto copied = MapDocument::parse(text);
+	copied.world.solids.push_back(copied.world.solids[0]);
+	copied.world.solids.back().id = 99;
+	const auto both = MapDocument::parse(copied.serialize());
+	CHECK(both.world.solids.back().sides[2].extra.size() == 1);
 }
 
 TEST_CASE("VMF round trip: Portal 2 / CS:GO Hammer (ESC outputs, instances, triangle tags, -0)") {

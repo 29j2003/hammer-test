@@ -2337,7 +2337,8 @@ std::vector<std::pair<int, int>> SceneRenderer::rangesAround(const Vec3& point) 
 	return ranges;
 }
 
-std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, int cycle, const Selection* preferred) const {
+std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, int cycle, const Selection* preferred,
+                                               const std::function<std::uint64_t(const SolidRef&)>& editStamp) const {
 	if (!m_doc) {
 		return std::nullopt;
 	}
@@ -2507,8 +2508,12 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			if (!preferred) return false;
 			return h.result.entityId != 0 ? preferred->containsEntity(h.result.entityId) : preferred->contains(h.result.solid);
 		};
-		std::stable_sort(ties.begin(), ties.end(), [&isPreferred](const BrushHit& a, const BrushHit& b) {
+		// The brush changed last: a brush just stretched flush against walls or into a floor is the
+		// one meant (Julius: it could only be clicked through the side he had pulled out).
+		const auto stamp = [&editStamp](const BrushHit& h) { return editStamp ? editStamp(h.result.solid) : std::uint64_t(0); };
+		std::stable_sort(ties.begin(), ties.end(), [&isPreferred, &stamp](const BrushHit& a, const BrushHit& b) {
 			if (isPreferred(a) != isPreferred(b)) return isPreferred(a);
+			if (stamp(a) != stamp(b)) return stamp(a) > stamp(b);
 			if (std::abs(a.volume - b.volume) > 1e-6 * std::max(a.volume, b.volume)) return a.volume < b.volume;
 			if (a.result.entityId != b.result.entityId) return a.result.entityId > b.result.entityId;
 			return a.result.solid.solidId > b.result.solid.solidId;

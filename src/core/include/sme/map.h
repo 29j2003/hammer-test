@@ -68,6 +68,10 @@ struct Solid {
 	std::vector<Side> sides;
 	std::vector<KvNode> extra;           ///< editor block (color, visgroups) and unknown entries
 	std::shared_ptr<const Layout> source;   ///< As read from the file (null for new brushes)
+	/// The sides' plane points as read, only for a brush with Hammer++ corners ("vertices_plus"):
+	/// those are written back only while the whole brush is unchanged (one moved face changes
+	/// the corners of its neighbours too).
+	std::shared_ptr<const std::vector<std::array<Vec3, 3>>> readPlanes;
 };
 
 /// One entity output: "OnTrigger" -> "target,Input,param,delay,times".

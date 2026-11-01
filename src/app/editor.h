@@ -9,11 +9,13 @@
 #include <QString>
 #include <QStringList>
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
+#include <unordered_map>
 
 #include <sme/clipboard.h>
 #include <sme/doors.h>
@@ -72,6 +74,8 @@ public:
 	[[nodiscard]] MapDocument& doc() { return m_doc; }
 	[[nodiscard]] const MapDocument& doc() const { return m_doc; }
 	[[nodiscard]] History& history() { return m_history; }
+	/// When the brush was last changed in this session (higher = later; 0 = not since opening).
+	[[nodiscard]] std::uint64_t editStamp(const SolidRef& ref) const;
 	[[nodiscard]] QString filePath() const { return m_filePath; }
 	[[nodiscard]] bool modified() const { return m_history.modified() || m_footerModified || m_recovered; }
 	void newMap();
@@ -384,6 +388,11 @@ private:
 	QString m_gameKey;
 	MapDocument m_doc;
 	History m_history;
+	/// When each brush was last changed (by solid key, see editStamp): on a surface two brushes
+	/// share, a click takes the one changed last.
+	std::unordered_map<long long, std::uint64_t> m_editStamps;
+	std::uint64_t m_editCounter = 0;
+	void stampEdits(const Change& change);
 	QString m_filePath;
 	bool m_recovered = false;   ///< Opened from an autosave and not saved since
 	Selection m_selection;

@@ -554,3 +554,72 @@ TEST_CASE("number formatting") {
 	CHECK(formatNumber(-0.0) == "0");
 	CHECK(formatNumber(-128.5) == "-128.5");
 }
+
+TEST_CASE("resizing keeps every face of a brush pointing outward and hit from outside") {
+	// Julius (01.11.2026): a stretched brush could be clicked only through the face he had pulled.
+	// Brushes as Hammer and Hammer++ write them (plane points off the corners, many digits) and as
+	// Mapsmith makes them, stretched by large and small amounts, also onto off-grid values.
+	const char* vmf = R"vmf(world
+{
+	"id" "1"
+	"classname" "worldspawn"
+	solid
+	{
+		"id" "2"
+		side { "id" "1" "plane" "(-512 8 336) (512 8 336) (512 -8 336)" "material" "A" "uaxis" "[1 0 0 0] 0.25" "vaxis" "[0 -1 0 0] 0.25" "rotation" "0" "lightmapscale" "16" "smoothing_groups" "0" }
+		side { "id" "2" "plane" "(-512 -8 0) (512 -8 0) (512 8 0)" "material" "A" "uaxis" "[1 0 0 0] 0.25" "vaxis" "[0 -1 0 0] 0.25" "rotation" "0" "lightmapscale" "16" "smoothing_groups" "0" }
+		side { "id" "3" "plane" "(0 8 336) (0 -8 336) (0 -8 0)" "material" "A" "uaxis" "[0 1 0 0] 0.25" "vaxis" "[0 0 -1 0] 0.25" "rotation" "0" "lightmapscale" "16" "smoothing_groups" "0" }
+		side { "id" "4" "plane" "(576 8 0) (576 -8 0) (576 -8 336)" "material" "A" "uaxis" "[0 1 0 0] 0.25" "vaxis" "[0 0 -1 0] 0.25" "rotation" "0" "lightmapscale" "16" "smoothing_groups" "0" }
+		side { "id" "5" "plane" "(1000.5 8 1000) (-1000.25 8 1000) (-1000.25 8 -1000)" "material" "A" "uaxis" "[1 0 0 0] 0.25" "vaxis" "[0 0 -1 0] 0.25" "rotation" "0" "lightmapscale" "16" "smoothing_groups" "0" }
+		side { "id" "6" "plane" "(1000.5 -8 -1000) (-1000.25 -8 -1000) (-1000.25 -8 1000)" "material" "A" "uaxis" "[1 0 0 0] 0.25" "vaxis" "[0 0 -1 0] 0.25" "rotation" "0" "lightmapscale" "16" "smoothing_groups" "0" }
+	}
+}
+)vmf";
+	MapDocument doc = MapDocument::parse(vmf);
+	REQUIRE(doc.world.solids.size() == 1);
+	Bounds made;
+	made.add({0, -8, 0});
+	made.add({576, 8, 336});
+	doc.world.solids.push_back(makeBlock(doc, made, "B"));
+	const auto check = [](const Solid& solid) {
+		const auto geometry = buildBrushGeometry(solid);
+		REQUIRE(geometry.valid);
+		REQUIRE(geometry.faces.size() == solid.sides.size());
+		const Vec3 centre = geometry.bounds.center();
+		for (const auto& face : geometry.faces) {
+			const auto& side = solid.sides[std::size_t(face.sideIndex)];
+			const auto& p = side.planePoints;
+			CHECK(length(cross(p[0] - p[1], p[2] - p[1])) > 1e-6);   // not on one line
+			Vec3 middle;
+			for (const auto& v : face.vertices) middle += v;
+			middle = middle / double(face.vertices.size());
+			const Vec3 n = side.plane().normal;
+			CHECK(dot(n, middle - centre) > 0);   // points out of the brush
+			const auto hit = intersect(Ray{middle + n * 100, -n}, solid);
+			REQUIRE(hit);
+			CHECK(hit->sideIndex == face.sideIndex);
+			CHECK(hit->distance == doctest::Approx(100).epsilon(1e-6));
+		}
+	};
+	const Bounds from = made;
+	const double targets[] = {600, 1408, 180.5, 4.5, 832, 577.25};
+	for (std::size_t s = 0; s < doc.world.solids.size(); ++s) {
+		for (const int axis : {0, 1, 2}) {
+			for (const double t : targets) {
+				Bounds to = from;
+				to.max[axis] = from.min[axis] + t;
+				Solid copy = doc.world.solids[s];
+				REQUIRE(scaleSolid(copy, from, to));
+				check(copy);
+				translateSolid(copy, {0, 128, 0}, true);   // as paste next to the copied objects
+				check(copy);
+				Bounds back = to;
+				back.min[axis] = to.min[axis] - t / 3;   // the other side out too
+				Solid twice = copy;
+				translateSolid(twice, {0, -128, 0}, true);
+				REQUIRE(scaleSolid(twice, to, back));
+				check(twice);
+			}
+		}
+	}
+}

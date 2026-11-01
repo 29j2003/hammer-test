@@ -7381,6 +7381,43 @@ TEST_CASE("picking: brushes stay clickable after resizing, pasting and tying the
 	CHECK(boundsOf(editor, flush).max.x == doctest::Approx(208));
 	CHECK(clicks({40, 48, 0}, flush));
 	CHECK(clicks({180, 48, 0}, flush));
+
+	// (h) Stretched into a row of smaller wall blocks, flush with their tops and sides (Julius,
+	// 01.11.2026: "I can only click it from the side I pulled out"). The brush changed last wins
+	// the shared surfaces; a second click on the same spot still reaches the wall.
+	editor.newMap();
+	editor.createShape(box({128, 0, 0}, {256, 96, 128}));
+	const SolidRef wallA = editor.selection().solids.front();
+	editor.createShape(box({256, 0, 0}, {384, 96, 128}));
+	editor.createShape(box({0, 0, 0}, {128, 96, 128}));
+	settle();
+	const SolidRef pulled = editor.selection().solids.front();
+	stretch(128, 384, 48, 64);
+	REQUIRE(boundsOf(editor, pulled).max.x == doctest::Approx(384));
+	CHECK(clicks({200, 48, 128}, pulled));   // its top, flush with wall A's top
+	CHECK(clicks({320, 48, 128}, pulled));
+	CHECK(clicks({200, 0, 64}, pulled));     // its front, flush with wall A's front
+	CHECK(clicks({60, 48, 128}, pulled));
+	{
+		editor.setSelection({});
+		settle();
+		std::set<int> both;
+		for (int i = 0; i < 2; ++i) {
+			QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{200, 48, 128}));
+			settle();
+			REQUIRE(editor.selection().solids.size() == 1);
+			both.insert(editor.selection().solids.front().solidId);
+		}
+		CHECK(both.count(pulled.solidId) == 1);
+		CHECK(both.count(wallA.solidId) == 1);
+	}
+	// Changing wall A afterwards makes it the one changed last: it wins its own surfaces again.
+	editor.setSelection(Selection{{wallA}});
+	editor.nudgeSelection({0, 0, 16});
+	editor.nudgeSelection({0, 0, -16});
+	settle();
+	CHECK(clicks({200, 48, 128}, wallA));
+	CHECK(clicks({320, 48, 128}, pulled));
 }
 
 namespace {
