@@ -3,6 +3,8 @@
 #include <sme/road_texture.h>
 
 #include <sme/brush.h>
+#include <sme/csg.h>
+#include <sme/edge_round.h>
 #include <sme/material.h>
 #include <sme/texture.h>
 
@@ -11,6 +13,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
 
 namespace sme {
@@ -27,6 +30,7 @@ constexpr double SMALL_NARROW = 0.25; ///< A piece this much narrower than the o
 constexpr double SMALL_AREA = 0.15;   ///< ... or this much smaller
 const double COS30 = std::cos(30.0 * 3.14159265358979323846 / 180.0);
 const double COS45 = std::cos(45.0 * 3.14159265358979323846 / 180.0);
+const double COS35 = std::cos(35.0 * 3.14159265358979323846 / 180.0);   ///< From this turn on a corner can curve
 
 /// One road face: its corners (in its plane) and where it is.
 struct Piece {
@@ -293,6 +297,166 @@ double lowerMedian(std::vector<double> values) {
 	return values[(values.size() - 1) / 2];
 }
 
+
+/// `v` turned about the unit axis `n` by `angle` (radians, counter-clockwise seen from `n`).
+Vec3 rotateAbout(const Vec3& v, const Vec3& n, double angle) {
+	const double c = std::cos(angle), s = std::sin(angle);
+	return v * c + cross(n, v) * s + n * (dot(n, v) * (1 - c));
+}
+
+/// The circular arc the road's centre line takes through a corner: it leaves `start` along
+/// `inDir`, turns and crosses the common edge `out` running `outDir` - tangent to both, so the
+/// lane runs on smoothly from one road into the other.
+struct CurveArc {
+	bool ok = false;
+	Vec3 normal;      ///< The corner's plane normal (the axis the arc turns about)
+	Vec3 centre;      ///< Middle of the circle (the turn's inside)
+	Vec3 start, end;  ///< Where it enters and leaves the corner
+	double radius = 0;
+	double angle = 0; ///< How far it turns (radians)
+	double turn = 1;  ///< +1 counter-clockwise seen from `normal`, -1 clockwise
+
+	/// The point `a` radians along the arc from `start`.
+	[[nodiscard]] Vec3 at(double a) const { return centre + rotateAbout(start - centre, normal, turn * a); }
+};
+
+constexpr double PI = 3.14159265358979323846;
+
+CurveArc curveArc(const Vec3& start, const Vec3& inDir, const Link& out, const Vec3& outDir, const Vec3& normal) {
+	CurveArc arc;
+	const Vec3 t1 = inPlane(inDir, normal), t2 = inPlane(outDir, normal);
+	if (length(t1) < 0.5 || length(t2) < 0.5) return arc;
+	const double turn = dot(cross(t1, t2), normal);
+	const double angle = std::acos(std::clamp(dot(t1, t2), -1.0, 1.0));
+	// Only real turns: 20° .. 150° (flatter bends need no curve, sharper ones have no room).
+	if (std::abs(turn) < 1e-3 || angle < 20.0 * PI / 180.0 || angle > 150.0 * PI / 180.0) return arc;
+	arc.turn = turn > 0 ? 1 : -1;
+	const Vec3 n1 = cross(normal, t1) * arc.turn;   // from the entry towards the circle's middle
+	const Vec3 n2 = cross(normal, t2) * arc.turn;   // from the exit towards it
+	const Vec3 m2 = normalize(cross(normal, out.dir));
+	const double den = dot(n1 - n2, m2);
+	if (std::abs(den) < 1e-6) return arc;
+	const double r = dot(out.mid - start, m2) / den;
+	if (r < 4.0) return arc;
+	arc.normal = normal;
+	arc.radius = r;
+	arc.angle = angle;
+	arc.start = start;
+	arc.centre = start + n1 * r;
+	arc.end = arc.centre - n2 * r;
+	// It must leave through the common edge, not beside it.
+	arc.ok = std::abs(dot(arc.end - out.mid, out.dir)) <= out.length * 0.5 + ON_LINE;
+	return arc;
+}
+
+/// A piece of a cut corner: the brush and the arc segment its road top holds (-1: the small
+/// block at the turn's inside the lane never crosses).
+struct CurveCut {
+	Solid solid;
+	int segment = -1;
+};
+
+/// The corner brush cut into `segments` (even) pieces along `arc` by planes through the circle's
+/// middle, optionally with a block cut off at the turn's inside (so no piece runs out to a point
+/// there): the first half of the pieces lies beyond a line along the entry road, the second half
+/// beyond one along the exit road, the block inside both. Every cut keeps the pieces convex and
+/// tiling the brush; nullopt when a piece would be no clean Source brush (brushProblem), a
+/// segment would miss its piece of the arc, or the pieces would not fill the brush.
+std::optional<std::vector<CurveCut>> cutCorner(MapDocument& ids, const Solid& solid, const Piece& top, const CurveArc& arc, int segments, bool block) {
+	if (segments < 2 || segments % 2 != 0) return std::nullopt;
+	std::set<int> ownSides;
+	for (const auto& side : solid.sides) ownSides.insert(side.id);
+	Side cap;
+	cap.material = "TOOLS/TOOLSNODRAW";
+	cap.u = {{1, 0, 0}, 0, 0.25};
+	cap.v = {{0, -1, 0}, 0, 0.25};
+	const auto radial = [&](double a) {
+		const Vec3 d = normalize(arc.at(a) - arc.centre);
+		const Vec3 n = normalize(cross(arc.normal, d)) * arc.turn;   // in front: farther along the arc
+		return Plane{n, dot(n, arc.centre)};
+	};
+	const auto split = [&](const Solid& s, const Plane& plane) { return splitSolid(ids, s, plane, cap); };
+	std::vector<CurveCut> cuts;
+	const auto wedge = [&](std::optional<Solid> part, int first, int last, const Vec3& towardsCentre) -> bool {
+		if (!part) return false;
+		Solid rest = std::move(*part);
+		if (block) {
+			// Beyond the line half the radius from the circle's middle: the block stays inside.
+			const double reach = arc.radius * 0.5;
+			auto [inside, beyond] = split(rest, Plane{towardsCentre, dot(towardsCentre, arc.centre) - reach});
+			if (!beyond) return false;
+			if (inside) cuts.push_back({std::move(*inside), -1});
+			rest = std::move(*beyond);
+		}
+		for (int k = first; k < last; ++k) {
+			auto [later, piece] = split(rest, radial(arc.angle * (k + 1) / segments));
+			if (!piece || !later) return false;
+			cuts.push_back({std::move(*piece), k});
+			rest = std::move(*later);
+		}
+		cuts.push_back({std::move(rest), last});
+		return true;
+	};
+	auto [second, first] = split(solid, radial(arc.angle * 0.5));
+	const int half = segments / 2;
+	const Vec3 n1 = normalize(arc.centre - arc.start), n2 = normalize(arc.centre - arc.end);
+	if (!wedge(std::move(first), 0, half - 1, n1) || !wedge(std::move(second), half, segments - 1, n2)) return std::nullopt;
+	// The block's two halves as one brush when they make one.
+	std::vector<std::size_t> blocks;
+	for (std::size_t i = 0; i < cuts.size(); ++i) {
+		if (cuts[i].segment < 0) blocks.push_back(i);
+	}
+	if (blocks.size() == 2) {
+		if (auto merged = mergeSolids(ids, {cuts[blocks[0]].solid, cuts[blocks[1]].solid}); merged && merged->exact) {
+			merged->solid.id = cuts[blocks[0]].solid.id;
+			cuts[blocks[0]].solid = std::move(merged->solid);
+			cuts.erase(cuts.begin() + static_cast<std::ptrdiff_t>(blocks[1]));
+		}
+	}
+	// Clean brushes, the whole corner filled, every segment holding its piece of the arc.
+	double volume = 0;
+	for (auto& cut : cuts) {
+		for (auto& side : cut.solid.sides) {
+			if (!ownSides.contains(side.id)) {
+				side.material = "TOOLS/TOOLSNODRAW";
+				alignToWorld(side);
+			}
+		}
+		if (!brushProblem(cut.solid).empty()) return std::nullopt;
+		volume += solidVolume(cut.solid);
+		if (cut.segment >= 0) {
+			const Vec3 mid = arc.at(arc.angle * (cut.segment + 0.5) / segments) - top.normal * 0.25;
+			if (!solidContains(cut.solid, mid, 0.01)) return std::nullopt;
+		}
+	}
+	const double whole = solidVolume(solid);
+	if (std::abs(volume - whole) > std::max(1.0, whole * 1e-4)) return std::nullopt;
+	// The piece that kept the brush's id first.
+	std::stable_partition(cuts.begin(), cuts.end(), [&](const CurveCut& c) { return c.solid.id == solid.id; });
+	return cuts;
+}
+
+/// How many pieces a curve gets: about one per 22.5° of turn, at least 4 (even, 4 .. 8), fewer
+/// while a piece's stretch of the centre line would be shorter than 16 units.
+int curveSegments(const CurveArc& arc) {
+	int segments = 2 * static_cast<int>(std::ceil(arc.angle / (45.0 * PI / 180.0) - 1e-9));
+	segments = std::clamp(segments, 4, 8);
+	while (segments > 2 && arc.radius * arc.angle / segments < 16.0) segments -= 2;
+	return segments;
+}
+
+/// The corner cut along `arc`: first with a block at the turn's inside, then without, then
+/// with fewer pieces; nullopt when none of them is clean.
+std::optional<std::vector<CurveCut>> cutCurve(MapDocument& ids, const Solid& solid, const Piece& top, const CurveArc& arc) {
+	if (!arc.ok) return std::nullopt;
+	for (int segments = curveSegments(arc); segments >= 2; segments -= 2) {
+		for (const bool block : {true, false}) {
+			if (auto cuts = cutCorner(ids, solid, top, arc, segments, block)) return cuts;
+		}
+	}
+	return std::nullopt;
+}
+
 } // namespace
 
 std::pair<int, int> materialTextureSize(const GameFileSystem& fs, std::string_view material) {
@@ -327,8 +491,11 @@ std::vector<FaceRef> roadFaces(const MapDocument& doc, const Selection& selectio
 	return faces;
 }
 
-RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, const RoadOptions& options, const TextureSizeFn& textureSize) {
+RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, const RoadOptions& options, const TextureSizeFn& textureSize,
+                  MapDocument* ids) {
 	RoadPlan plan;
+	MapDocument scratch;   // ids for a preview
+	MapDocument& idSource = ids ? *ids : scratch;
 	std::vector<Piece> pieces = collectPieces(doc, faces, plan.ignored);
 	if (pieces.empty()) return plan;
 	const int count = static_cast<int>(pieces.size());
@@ -425,6 +592,7 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 	std::vector<Vec3> dir(static_cast<std::size_t>(count));
 	std::vector<std::vector<int>> uses(static_cast<std::size_t>(count));   // the neighbours the road crosses to
 	std::vector<char> node(static_cast<std::size_t>(count), 0);           // corner or junction
+	std::vector<char> curve(static_cast<std::size_t>(count), 0);          // a corner the road curves through
 	for (int i = 0; i < count; ++i) {
 		if (!active(i)) continue;
 		const auto near = activeLinks(i);
@@ -432,7 +600,7 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		if (near.size() >= 3) {
 			node[static_cast<std::size_t>(i)] = 1;
 		} else if (near.size() == 2) {
-			if (std::abs(dot(near[0]->dir, near[1]->dir)) < COS45) {
+			if (std::abs(dot(near[0]->dir, near[1]->dir)) < (options.curveCorners ? COS35 : COS45)) {
 				node[static_cast<std::size_t>(i)] = 1;
 			} else {
 				const Vec3 in = acrossEdge(piece, *near[0]);
@@ -484,6 +652,29 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		if (!active(i) || !node[static_cast<std::size_t>(i)]) continue;
 		const auto near = activeLinks(i);
 		const Piece& piece = at(i);
+		if (near.size() == 2 && options.curveCorners) {
+			// A corner the road curves through (when it can be cut cleanly; tried here with the
+			// centre line through the edges' middles, cut for real once the centre line is known).
+			const Vec3 in = acrossEdge(piece, *near[0]);
+			const Vec3 out = -acrossEdge(piece, *near[1]);
+			const CurveArc arc = curveArc(near[0]->mid, in, *near[1], out, piece.normal);
+			MapDocument trial;
+			const Solid* solid = doc.findSolid(piece.ref.solid);
+			if (solid && cutCurve(trial, *solid, piece, arc)) {
+				curve[static_cast<std::size_t>(i)] = 1;
+				dir[static_cast<std::size_t>(i)] = in;
+				uses[static_cast<std::size_t>(i)] = {near[0]->other, near[1]->other};
+				continue;
+			}
+			if (std::abs(dot(near[0]->dir, near[1]->dir)) >= COS45) {
+				// A gentle bend (35°..45°) that cannot be cut: one strip, from one edge to the other.
+				node[static_cast<std::size_t>(i)] = 0;
+				dir[static_cast<std::size_t>(i)] = inPlane(in + out, piece.normal);
+				uses[static_cast<std::size_t>(i)] = {near[0]->other, near[1]->other};
+				continue;
+			}
+			++plan.squareCorners;
+		}
 		if (near.size() == 2) {
 			// A corner continues the longer road (then the wider common edge); the other road
 			// starts at its edge. Never diagonal.
@@ -527,7 +718,9 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		return std::find(u.begin(), u.end(), j) != u.end();
 	};
 	const auto joined = [&](int i, int j) {
-		return usesEdge(i, j) && usesEdge(j, i) && std::abs(dot(dir[static_cast<std::size_t>(i)], dir[static_cast<std::size_t>(j)])) > COS45;
+		return usesEdge(i, j) && usesEdge(j, i) &&
+		       (curve[static_cast<std::size_t>(i)] || curve[static_cast<std::size_t>(j)] ||
+		        std::abs(dot(dir[static_cast<std::size_t>(i)], dir[static_cast<std::size_t>(j)])) > COS45);
 	};
 	const auto joinedNeighbours = [&](int i) {
 		std::vector<int> result;
@@ -627,23 +820,32 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 			along[k] = d;
 		}
 
-		// One scale for the whole road: from its width (the lower median of the pieces' widths).
+		// Corners the road curves through (not at the road's ends).
+		const auto isCurve = [&](std::size_t k) { return k > 0 && k + 1 < n && curve[static_cast<std::size_t>(chain[k])]; };
+
+		// One scale for the whole road: from its width (the lower median of the pieces' widths;
+		// curve corners left out, their width across is no road's width).
 		std::vector<Vec3> across(n);
 		std::vector<double> width(n);
+		std::vector<double> straightWidths;
 		for (std::size_t k = 0; k < n; ++k) {
 			across[k] = normalize(cross(piece(k).normal, along[k]));
 			width[k] = std::max(1.0, extent(piece(k), across[k]));
+			if (!isCurve(k)) straightWidths.push_back(width[k]);
 		}
-		const double typical = lowerMedian(width);
+		const double typical = lowerMedian(straightWidths.empty() ? width : straightWidths);
 		const double roadWidth = options.roadWidth > 0 ? options.roadWidth : typical;
 		plan.widths.push_back(roadWidth);
 		const double texels = texAcross * repeats / roadWidth;   // per unit, across and along (square pixels)
 
 		// The centre line: through the middle of the piece of typical width, carried on from piece
-		// to piece where it meets the common edges.
+		// to piece where it meets the common edges - through a curve corner along its arc.
 		std::size_t reference = 0;
+		bool referenceSet = false;
 		for (std::size_t k = 0; k < n; ++k) {
-			if (std::abs(width[k] - typical) < std::abs(width[reference] - typical) - 1e-6) reference = k;
+			if (isCurve(k)) continue;
+			if (!referenceSet || std::abs(width[k] - typical) < std::abs(width[reference] - typical) - 1e-6) reference = k;
+			referenceSet = true;
 		}
 		std::vector<Vec3> centre(n);   // a point of the centre line on each piece
 		std::vector<Vec3> crossing(n); // where it crosses the common edge to the piece before (k >= 1)
@@ -658,16 +860,46 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		}
 		for (std::size_t k = reference + 1; k < n; ++k) {
 			crossing[k] = meetEdge(centre[k - 1], along[k - 1], *linkTo(k - 1, k), piece(k - 1).normal);
+			if (isCurve(k - 1)) {
+				// Out of a curve: where its arc (from where it came in) leaves.
+				const CurveArc arc = curveArc(crossing[k - 1], along[k - 2], *linkTo(k - 1, k), along[k], piece(k - 1).normal);
+				if (arc.ok) crossing[k] = arc.end;
+			}
 			centre[k] = crossing[k];
 		}
 		for (std::size_t k = reference; k-- > 0;) {
 			crossing[k + 1] = meetEdge(centre[k + 1], along[k + 1], *linkTo(k + 1, k), piece(k + 1).normal);
+			if (isCurve(k + 1)) {
+				// Back through a curve: the same arc, run the other way round.
+				const CurveArc arc = curveArc(crossing[k + 2], -along[k + 2], *linkTo(k + 1, k), -along[k], piece(k + 1).normal);
+				if (arc.ok) crossing[k + 1] = arc.end;
+			}
 			centre[k] = crossing[k + 1];
 		}
 
+		// Cut the curve corners along their arcs (now that the centre line is known); a corner
+		// that cannot be cut stays one piece and runs on like the road before it.
+		std::map<std::size_t, std::pair<CurveArc, std::vector<CurveCut>>> curves;
+		for (std::size_t k = 1; k + 1 < n; ++k) {
+			if (!isCurve(k)) continue;
+			const Piece& p = piece(k);
+			const CurveArc arc = curveArc(crossing[k], along[k - 1], *linkTo(k, k + 1), along[k + 1], p.normal);
+			const Solid* solid = doc.findSolid(p.ref.solid);
+			auto cuts = solid ? cutCurve(idSource, *solid, p, arc) : std::nullopt;
+			if (!cuts) {
+				++plan.squareCorners;
+				along[k] = along[k - 1];
+				across[k] = across[k - 1];
+				continue;
+			}
+			curves.emplace(k, std::make_pair(arc, std::move(*cuts)));
+		}
+
 		// Along: 0 where the road starts (the junction's or corner's edge, else the free end),
-		// carried on across every common edge at the centre line.
+		// carried on across every common edge at the centre line; through a curve along its
+		// chords (the pieces' straight stretches of the arc).
 		std::vector<double> shift(n);
+		std::vector<double> entry(n);   // a curve's value along the road where it starts
 		if (start) {
 			shift[0] = -dot(meetEdge(centre[0], along[0], *start, piece(0).normal), along[0]) * texels;
 		} else {
@@ -675,33 +907,79 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 			for (const auto& v : piece(0).poly) lo = std::min(lo, dot(v, along[0]));
 			shift[0] = -lo * texels;
 		}
+		const auto chordLength = [&](std::size_t k) {
+			const auto& [arc, cuts] = curves.at(k);
+			int segments = 0;
+			for (const auto& cut : cuts) segments = std::max(segments, cut.segment + 1);
+			return 2.0 * arc.radius * std::sin(arc.angle / segments * 0.5) * segments;
+		};
 		for (std::size_t k = 1; k < n; ++k) {
-			const double before = dot(crossing[k], along[k - 1]) * texels + shift[k - 1];
+			if (curves.contains(k)) {
+				entry[k] = curves.contains(k - 1) ? entry[k - 1] + chordLength(k - 1) * texels : dot(crossing[k], along[k - 1]) * texels + shift[k - 1];
+				continue;
+			}
+			const double before = curves.contains(k - 1) ? entry[k - 1] + chordLength(k - 1) * texels
+			                                              : dot(crossing[k], along[k - 1]) * texels + shift[k - 1];
 			shift[k] = before - dot(crossing[k], along[k]) * texels;
 		}
+
+		const double middle = texAcross * repeats * 0.5;   // the texture's middle sits on the centre line
+		// A face's texture: running `alongDir`, the centre line through `point` where the value
+		// along the road is `value` (texels).
+		const auto mapSide = [&](Side& side, const Vec3& alongDir, const Vec3& normal, const Vec3& point, double value) {
+			const Vec3 acrossDir = normalize(cross(normal, alongDir));
+			side.material = plan.material;
+			side.rotation = 0;
+			const TextureAxis alongAxis{alongDir, wrapShift(value - dot(point, alongDir) * texels, texAlong), 1.0 / texels};
+			if (plan.alongV) {
+				// U across (cross(normal, along): the picture is not mirrored), V along the road.
+				side.u = {acrossDir, wrapShift(middle - dot(point, acrossDir) * texels, texAcross), 1.0 / texels};
+				side.v = alongAxis;
+			} else {
+				// U along, V across the other way round (keeps the picture unmirrored).
+				side.u = alongAxis;
+				side.v = {-acrossDir, wrapShift(middle + dot(point, acrossDir) * texels, texAcross), 1.0 / texels};
+			}
+		};
 
 		for (std::size_t k = 0; k < n; ++k) {
 			const Piece& p = piece(k);
 			const Solid* solid = doc.findSolid(p.ref.solid);
+			if (const auto found = curves.find(k); found != curves.end()) {
+				// The curve's pieces: each road top runs along its chord of the arc.
+				const auto& [arc, cuts] = found->second;
+				int segments = 0;
+				for (const auto& cut : cuts) segments = std::max(segments, cut.segment + 1);
+				const Plane topPlane{p.normal, dot(p.normal, p.centroid)};
+				RoadPlan::CornerSplit split;
+				split.original = p.ref.solid;
+				for (const auto& cut : cuts) {
+					Solid brush = cut.solid;
+					const int segment = cut.segment >= 0 ? cut.segment : segments / 2 - 1;   // the block: like the piece beside it
+					const Vec3 a0 = arc.at(arc.angle * segment / segments);
+					const Vec3 a1 = arc.at(arc.angle * (segment + 1) / segments);
+					const double value = entry[k] + 2.0 * arc.radius * std::sin(arc.angle / segments * 0.5) * segment * texels;
+					for (auto& side : brush.sides) {
+						const Plane plane = side.plane();
+						if (dot(plane.normal, topPlane.normal) > 0.9999 && std::abs(plane.dist - topPlane.dist) < ON_LINE) {
+							mapSide(side, normalize(a1 - a0), p.normal, a0, value);
+						} else if (!options.sideMaterial.empty() && std::abs(plane.normal.z) < UP && side.material != "TOOLS/TOOLSNODRAW") {
+							side.material = options.sideMaterial;
+						}
+					}
+					split.pieces.push_back(std::move(brush));
+				}
+				plan.corners.push_back(std::move(split));
+				continue;
+			}
 			RoadPlan::FaceChange change;
 			change.face = p.ref;
 			change.chain = static_cast<int>(c);
 			for (const auto& side : solid->sides) {
 				if (side.id == p.ref.sideId) change.side = side;
 			}
-			change.side.material = plan.material;
-			change.side.rotation = 0;
-			const double middle = texAcross * repeats * 0.5;   // the texture's middle sits on the centre line
-			const TextureAxis alongAxis{along[k], wrapShift(shift[k], texAlong), 1.0 / texels};
-			if (plan.alongV) {
-				// U across (cross(normal, along): the picture is not mirrored), V along the road.
-				change.side.u = {across[k], wrapShift(middle - dot(centre[k], across[k]) * texels, texAcross), 1.0 / texels};
-				change.side.v = alongAxis;
-			} else {
-				// U along, V across the other way round (keeps the picture unmirrored).
-				change.side.u = alongAxis;
-				change.side.v = {-across[k], wrapShift(middle + dot(centre[k], across[k]) * texels, texAcross), 1.0 / texels};
-			}
+			const double value = dot(centre[k], along[k]) * texels + shift[k];
+			mapSide(change.side, along[k], p.normal, centre[k], value);
 			mapped.emplace(chain[k], std::move(change));
 		}
 	}
@@ -790,6 +1068,10 @@ std::vector<SolidRef> plannedSolids(const RoadPlan& plan) {
 
 std::vector<Solid> roadPreview(const MapDocument& doc, const RoadPlan& plan, std::vector<SolidRef>* replaced) {
 	std::vector<Solid> copies;
+	for (const auto& corner : plan.corners) {
+		copies.insert(copies.end(), corner.pieces.begin(), corner.pieces.end());
+		if (replaced) replaced->push_back(corner.original);
+	}
 	for (const auto& ref : plannedSolids(plan)) {
 		const Solid* solid = doc.findSolid(ref);
 		if (!solid) continue;
@@ -808,6 +1090,26 @@ Change applyRoad(MapDocument& doc, const RoadPlan& plan) {
 	for (const auto& ref : plannedSolids(plan)) {
 		t.touchSolid(ref);
 		if (Solid* solid = doc.findSolid(ref)) applyToSolid(*solid, ref, plan);
+	}
+	// Curve corners: the corner brush replaced by its pieces (in its place where the first keeps
+	// its id - undo puts it back exactly there - the others after it).
+	for (const auto& corner : plan.corners) {
+		Entity* entity = doc.findEntity(corner.original.entityId);
+		if (!entity || corner.pieces.empty()) continue;
+		t.touchSolid(corner.original);
+		const auto at = std::find_if(entity->solids.begin(), entity->solids.end(), [&](const Solid& s) { return s.id == corner.original.solidId; });
+		const bool keeps = corner.pieces.front().id == corner.original.solidId;
+		if (at != entity->solids.end()) {
+			if (keeps) {
+				*at = corner.pieces.front();
+			} else {
+				entity->solids.erase(at);
+			}
+		}
+		for (std::size_t i = keeps ? 1 : 0; i < corner.pieces.size(); ++i) {
+			t.touchSolid({corner.original.entityId, corner.pieces[i].id});
+			entity->solids.push_back(corner.pieces[i]);
+		}
 	}
 	return t.finish();
 }

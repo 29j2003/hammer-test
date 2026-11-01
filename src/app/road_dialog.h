@@ -48,6 +48,7 @@ private:
 	QLineEdit* m_material;
 	QComboBox* m_along;
 	QCheckBox* m_flip;
+	QCheckBox* m_curve;
 	QSpinBox* m_repeats;
 	QDoubleSpinBox* m_width;
 	QLineEdit* m_side;
