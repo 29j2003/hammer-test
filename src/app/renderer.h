@@ -23,10 +23,12 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <sme/brush.h>
 #include <sme/cubemaps.h>
+#include <sme/editor_report.h>
 #include <sme/editing.h>
 #include <sme/entity_catalog.h>
 #include <sme/instances.h>
@@ -146,8 +148,10 @@ public:
 	/// one changed last (`editStamp`, higher = later), then the smaller one, then the newer one;
 	/// `cycle` takes the next of them (a second click on the same spot), so every one of them can
 	/// be reached. `preferred` keeps a selected brush on a click on its own resize square.
+	/// `trace` (the editor report's picks.log) gets every candidate, what was left out and why,
+	/// the order on a shared surface and the result.
 	[[nodiscard]] std::optional<PickResult> pick(const Ray& ray, bool facesOnly = false, int cycle = 0, const Selection* preferred = nullptr,
-	                                             const std::function<std::uint64_t(const SolidRef&)>& editStamp = {}) const;
+	                                             const std::function<std::uint64_t(const SolidRef&)>& editStamp = {}, PickTrace* trace = nullptr) const;
 
 	/// Numbers about the scene and the last frame (status bar and its tooltip).
 	[[nodiscard]] Bounds sceneBounds() const { return m_sceneBounds; }
@@ -370,6 +374,7 @@ private:
 	std::unordered_multimap<std::size_t, CachedBrush> m_brushCache;
 	std::unordered_map<int, Bounds> m_instanceBounds;
 	Selection m_hidden;
+	std::unordered_set<int> m_hiddenSides;   ///< Side ids of m_hidden.faces: not drawn, so not picked either
 	std::vector<Light> m_lights;
 	QVector3D m_sunDirection{0.3f, 0.2f, -0.9f};
 	QVector3D m_sunColor{0, 0, 0};

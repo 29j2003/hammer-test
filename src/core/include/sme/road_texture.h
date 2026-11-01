@@ -75,6 +75,9 @@ struct RoadPlan {
 	std::vector<double> widths;       ///< The width (units) each chain's texture spans
 	bool alongV = true;               ///< The texture's V axis runs along the road
 	int squareCorners = 0;            ///< Corners that should curve but stay one piece (no clean cut)
+	/// What the planner saw and decided, one line each (pieces, neighbours, corners, junctions,
+	/// kerbs, roads): for the editor report (docs/ENTWICKLUNG.md, "Editor-Bericht").
+	std::vector<std::string> notes;
 
 	/// Faces the road gets: planned faces plus the road tops of the curve pieces.
 	[[nodiscard]] int faceCount() const {

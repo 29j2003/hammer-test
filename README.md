@@ -363,6 +363,13 @@ is shown at the bottom right; when an update is out it turns into an **Update to
 checks by hand, *Help > Check for updates at start* turns the automatic check off. Nothing else is ever sent: no data
 about you or your maps.
 
+### Something not working? The editor report
+
+When a brush cannot be clicked, a road is laid oddly or a tool does something strange, choose **Help > Make editor
+report ...** right away (also a button above the Log). It saves one `.zip` – the map around the selection, the editor's
+settings, your last clicks and edits and a picture of each view, with your user name and home folder masked – and
+**Open folder** shows it. Send that file. Mapsmith itself sends nothing.
+
 ### Help us test: the setup report
 
 `sme-probe.exe report --out report.json` writes what the editor finds on your PC (games, mods, search paths, FGDs,

@@ -58,6 +58,7 @@ add_library(smeapp STATIC
 	updater.cpp
 	viewport.cpp
 	viewport_tools.cpp
+	main_window_report.cpp
 	viewport_doors.cpp
 	viewport_ropes.cpp
 	viewport_scenes.cpp
@@ -66,6 +67,17 @@ add_library(smeapp STATIC
 	visgroups_panel.cpp)
 target_include_directories(smeapp PUBLIC .)
 target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)
+# The commit the build comes from, for the editor report (taken when CMake configures).
+find_package(Git QUIET)
+set(SME_COMMIT "unknown")
+if(GIT_FOUND)
+	execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+	                OUTPUT_VARIABLE SME_COMMIT_OUT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE SME_COMMIT_RESULT)
+	if(SME_COMMIT_RESULT EQUAL 0 AND SME_COMMIT_OUT)
+		set(SME_COMMIT "${SME_COMMIT_OUT}")
+	endif()
+endif()
+set_source_files_properties(main_window_report.cpp PROPERTIES COMPILE_DEFINITIONS SME_COMMIT="${SME_COMMIT}")
 target_link_libraries(smeapp PUBLIC smecore Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network)
 if(TARGET Qt6::Multimedia)
 	target_link_libraries(smeapp PUBLIC Qt6::Multimedia)

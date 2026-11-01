@@ -73,6 +73,9 @@ struct PackageEntry {
                             const std::function<void(std::size_t, std::size_t)>& progress = {});
 /// Names of the entries of a ZIP written by writeZip (for checks); empty if it cannot be read.
 [[nodiscard]] std::vector<std::string> zipEntryNames(const std::filesystem::path& zip);
+/// The bytes of one entry of a ZIP written by writeZip (stored, not compressed); nullopt when it is
+/// missing, compressed or the file is damaged.
+[[nodiscard]] std::optional<std::string> readZipEntry(const std::filesystem::path& zip, std::string_view name);
 /// The same entries as plain files below `folder` (for a Workshop content folder).
 [[nodiscard]] bool writeFolder(const std::filesystem::path& folder, const std::vector<PackageEntry>& entries, std::string* error = nullptr);
 

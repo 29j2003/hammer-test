@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <cstdio>
 #include <map>
 #include <optional>
 #include <set>
@@ -31,6 +32,13 @@ constexpr double SMALL_AREA = 0.15;   ///< ... or this much smaller
 const double COS30 = std::cos(30.0 * 3.14159265358979323846 / 180.0);
 const double COS45 = std::cos(45.0 * 3.14159265358979323846 / 180.0);
 const double COS35 = std::cos(35.0 * 3.14159265358979323846 / 180.0);   ///< From this turn on a corner can curve
+
+/// "x y z" with one decimal, for the plan's notes.
+std::string noteVec(const Vec3& v) {
+	char text[96];
+	std::snprintf(text, sizeof text, "%.1f %.1f %.1f", v.x, v.y, v.z);
+	return text;
+}
 
 /// One road face: its corners (in its plane) and where it is.
 struct Piece {
@@ -501,6 +509,20 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 	const int count = static_cast<int>(pieces.size());
 	const auto at = [&](int i) -> const Piece& { return pieces[static_cast<std::size_t>(i)]; };
 	const auto links = linkPieces(pieces);
+	plan.notes.push_back("pieces " + std::to_string(count) + ", left out " + std::to_string(plan.ignored) + " (not facing up or broken)");
+	for (int i = 0; i < count; ++i) {
+		const Piece& p = at(i);
+		std::string line = "piece " + std::to_string(i) + ": brush " + std::to_string(p.ref.solid.entityId) + "/" + std::to_string(p.ref.solid.solidId) +
+		                   " side " + std::to_string(p.ref.sideId) + " at " + noteVec(p.centroid) + " normal " + noteVec(p.normal) + " " + p.material +
+		                   ", " + std::to_string(p.poly.size()) + " corners; neighbours:";
+		for (const auto& link : links[static_cast<std::size_t>(i)]) {
+			char text[128];
+			std::snprintf(text, sizeof text, " %d (edge %.1f long, dir %.2f %.2f %.2f)", link.other, link.length, link.dir.x, link.dir.y, link.dir.z);
+			line += text;
+		}
+		if (links[static_cast<std::size_t>(i)].empty()) line += " none";
+		plan.notes.push_back(std::move(line));
+	}
 
 	// --- Which tops are road: kerbs and sidewalks beside it at another height are not. ---
 	// Pieces that touch form a surface; the largest surface is road, and so is every other
@@ -712,6 +734,32 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		uses[static_cast<std::size_t>(i)] = {near[bestA]->other, near[bestB]->other};
 	}
 
+	for (int i = 0; i < count; ++i) {
+		std::string what;
+		if (kerb[static_cast<std::size_t>(i)]) {
+			what = "kerb or sidewalk (another height than the road beside it)";
+		} else if (parent[static_cast<std::size_t>(i)] >= 0) {
+			what = "edge piece of " + std::to_string(parent[static_cast<std::size_t>(i)]);
+		} else {
+			const auto near = activeLinks(i);
+			if (curve[static_cast<std::size_t>(i)]) {
+				what = "corner, curves";
+			} else if (node[static_cast<std::size_t>(i)] && near.size() == 2) {
+				what = "corner, square (continues to " + std::to_string(uses[static_cast<std::size_t>(i)].empty() ? -1 : uses[static_cast<std::size_t>(i)].front()) + ")";
+			} else if (node[static_cast<std::size_t>(i)]) {
+				what = "junction of " + std::to_string(near.size()) + ", main road through";
+				for (const int u : uses[static_cast<std::size_t>(i)]) what += " " + std::to_string(u);
+			} else {
+				what = near.size() == 1 ? "end" : near.empty() ? "alone" : "strip";
+				what += ", crosses to";
+				for (const int u : uses[static_cast<std::size_t>(i)]) what += " " + std::to_string(u);
+				if (uses[static_cast<std::size_t>(i)].empty()) what += " nothing (runs along its length)";
+			}
+			what += ", runs " + noteVec(dir[static_cast<std::size_t>(i)]);
+		}
+		plan.notes.push_back("piece " + std::to_string(i) + " is " + what);
+	}
+
 	// --- Roads: pieces linked where both use the common edge and run the same way. ---
 	const auto usesEdge = [&](int i, int j) {
 		const auto& u = uses[static_cast<std::size_t>(i)];
@@ -771,6 +819,13 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		}
 	}
 	plan.chains = static_cast<int>(chains.size());
+	for (std::size_t c = 0; c < chains.size(); ++c) {
+		std::string line = "road " + std::to_string(c) + ":";
+		for (const int i : chains[c]) line += " " + std::to_string(i);
+		const Link* start = startEdge(chains[c].front());
+		line += start ? ", starts at the edge to " + std::to_string(start->other) : ", starts at its free end";
+		plan.notes.push_back(std::move(line));
+	}
 
 	// --- The material and the texture's size. ---
 	plan.material = options.material;
@@ -836,6 +891,13 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 		const double typical = lowerMedian(straightWidths.empty() ? width : straightWidths);
 		const double roadWidth = options.roadWidth > 0 ? options.roadWidth : typical;
 		plan.widths.push_back(roadWidth);
+		{
+			char text[32];
+			std::snprintf(text, sizeof text, "%.2f", roadWidth);
+			std::string line = "road " + std::to_string(c) + " width " + text + (options.roadWidth > 0 ? " (set)" : " (typical)") + ", pieces' widths:";
+			for (const double w : width) line += " " + std::to_string(static_cast<int>(std::lround(w)));
+			plan.notes.push_back(std::move(line));
+		}
 		const double texels = texAcross * repeats / roadWidth;   // per unit, across and along (square pixels)
 
 		// The centre line: through the middle of the piece of typical width, carried on from piece
@@ -888,10 +950,13 @@ RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, con
 			auto cuts = solid ? cutCurve(idSource, *solid, p, arc) : std::nullopt;
 			if (!cuts) {
 				++plan.squareCorners;
+				plan.notes.push_back("road " + std::to_string(c) + " piece " + std::to_string(chain[k]) + ": the curve could not be cut cleanly, stays square");
 				along[k] = along[k - 1];
 				across[k] = across[k - 1];
 				continue;
 			}
+			plan.notes.push_back("road " + std::to_string(c) + " piece " + std::to_string(chain[k]) + ": curve radius " + std::to_string(arc.radius) + ", " +
+			                     std::to_string(cuts->size()) + " pieces");
 			curves.emplace(k, std::make_pair(arc, std::move(*cuts)));
 		}
 

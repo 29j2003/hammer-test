@@ -409,6 +409,13 @@ void Viewport::setCameraKind(Camera::Kind kind) {
 void Viewport::initializeGL() {
 	QString error;
 	m_glReady = m_renderer.initialize(m_materials, &error);
+	if (auto* gl = QOpenGLContext::currentContext() ? QOpenGLContext::currentContext()->functions() : nullptr) {
+		const auto text = [gl](GLenum what) {
+			const auto* s = gl->glGetString(what);
+			return s ? QString::fromLatin1(reinterpret_cast<const char*>(s)) : QString();
+		};
+		m_glInfo = text(GL_VENDOR) + " | " + text(GL_RENDERER) + " | " + text(GL_VERSION);
+	}
 	m_renderer.setModels(m_editor->models());
 	// func_instance content comes from the editor's instance cache.
 	m_renderer.setInstanceProvider([this](const Entity& entity) { return m_editor->instancePreview(entity); });
@@ -421,6 +428,16 @@ void Viewport::initializeGL() {
 
 void Viewport::resizeGL(int, int) {
 	if (m_densityLegend) m_densityLegend->move(6, height() - m_densityLegend->height() - 6);
+}
+
+QString Viewport::kindName() const {
+	switch (m_camera.kind) {
+		case Camera::Kind::Perspective: return QStringLiteral("3D");
+		case Camera::Kind::Top: return QStringLiteral("Top");
+		case Camera::Kind::Front: return QStringLiteral("Front");
+		case Camera::Kind::Side: return QStringLiteral("Side");
+	}
+	return QStringLiteral("3D");
 }
 
 Ray Viewport::rayAt(const QPointF& pos) const {
@@ -1810,7 +1827,24 @@ void Viewport::clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers) 
 	// first click saw (so they reach the others).
 	if (!again) m_cyclePreferred = m_editor->selection();
 	const auto stamp = [this](const SolidRef& ref) { return m_editor->editStamp(ref); };
-	const auto hit = m_renderer.pick(rayAt(pos), faceMode, m_cycle, faceMode ? nullptr : &m_cyclePreferred, stamp);
+	// What this click saw, for the editor report (picks.log).
+	PickTrace trace;
+	trace.view = kindName().toStdString();
+	trace.viewWidth = width();
+	trace.viewHeight = height();
+	trace.screenX = pos.x();
+	trace.screenY = pos.y();
+	trace.tool = Editor::toolName(m_editor->tool());
+	{
+		std::string keys;
+		if (modifiers & Qt::AltModifier) keys += "alt+";
+		if (modifiers & Qt::ControlModifier) keys += "ctrl+";
+		if (modifiers & Qt::ShiftModifier) keys += "shift+";
+		trace.modifiers = keys.empty() ? "-" : keys.substr(0, keys.size() - 1);
+	}
+	trace.faceMode = faceMode;
+	trace.cycle = m_cycle;
+	const auto hit = m_renderer.pick(rayAt(pos), faceMode, m_cycle, faceMode ? nullptr : &m_cyclePreferred, stamp, &trace);
 
 	if (hit && faceMode && (modifiers & Qt::AltModifier)) {
 		// Alt+click in face mode: pick the material of the face (eyedropper).
@@ -1852,6 +1886,14 @@ void Viewport::clickSelect(const QPointF& pos, Qt::KeyboardModifiers modifiers) 
 	m_cyclePos = hit && hit->ties > 1 ? std::optional<QPointF>(pos) : std::nullopt;
 	m_cycleSelection = selection;
 	m_editor->setSelection(std::move(selection));
+	{
+		const Selection& now = m_editor->selection();
+		std::string entities;
+		for (const int id : now.entities) entities += (entities.empty() ? "" : ",") + std::to_string(id);
+		trace.selection = "brushes " + (now.solids.empty() ? std::string("-") : formatSolids(now.solids)) + " entities " + (entities.empty() ? "-" : entities) +
+		                  " faces " + (now.faces.empty() ? std::string("-") : formatFaces(now.faces));
+	}
+	m_editor->notePick(trace);
 }
 
 void Viewport::marqueeSelect(const QRectF& rect, Qt::KeyboardModifiers modifiers) {
@@ -2311,6 +2353,17 @@ void Viewport::setPreviewSolids(const std::vector<Solid>& solids) {
 
 void Viewport::finishGizmoDrag(bool clone) {
 	const auto handle = m_dragHandle;
+	{
+		// The drag for the editor report (picks.log); the edit itself goes to edits.log.
+		const auto box = [](const Bounds& b) { return "(" + reportNumber(b.min.x) + " " + reportNumber(b.min.y) + " " + reportNumber(b.min.z) + ")-(" +
+		                                             reportNumber(b.max.x) + " " + reportNumber(b.max.y) + " " + reportNumber(b.max.z) + ")"; };
+		std::string line = "drag view=" + kindName().toStdString() + " handle=" + std::to_string(static_cast<int>(handle)) + " tool=" + Editor::toolName(m_editor->tool()) +
+		                   (clone ? " clone" : "") + " box " + box(m_dragBounds) + " -> " + box(m_dragNewBounds) + " delta " + reportNumber(m_dragDelta.x) + " " +
+		                   reportNumber(m_dragDelta.y) + " " + reportNumber(m_dragDelta.z) + " angle " + reportNumber(m_dragAngle) + " snap " +
+		                   reportNumber(m_editor->snapGrid()) + " object snap targets " + std::to_string(m_snapTargets.size());
+		if (m_snapHit) line += " snapped to " + reportNumber(m_snapHit->x) + " " + reportNumber(m_snapHit->y) + " " + reportNumber(m_snapHit->z);
+		m_editor->noteDrag(line);
+	}
 	m_previewBounds = {};
 	setPreviewSolids({});
 	m_drag = Drag::None;

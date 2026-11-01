@@ -403,6 +403,7 @@ void Editor::commit(Change change) {
 		return;
 	}
 	stampEdits(change);
+	noteEdit(describeChange(change));
 	m_history.push(std::move(change));
 	m_selection.prune(m_doc);
 	emit documentChanged();
@@ -414,6 +415,7 @@ void Editor::commitMerged(Change change) {
 		return;
 	}
 	stampEdits(change);
+	noteEdit(describeChange(change), true);
 	m_history.push(std::move(change), true);
 	m_selection.prune(m_doc);
 	emit documentChanged();
@@ -423,6 +425,7 @@ void Editor::commitMerged(Change change) {
 void Editor::undo() {
 	const auto name = m_history.undoName();
 	if (m_history.undo(m_doc)) {
+		noteEdit("undo \"" + name + "\"\n");
 		m_selection.prune(m_doc);
 		emit documentChanged();
 		emit selectionChanged();
@@ -447,6 +450,7 @@ void Editor::undoTo(std::size_t index) {
 void Editor::redo() {
 	const auto name = m_history.redoName();
 	if (m_history.redo(m_doc)) {
+		noteEdit("redo \"" + name + "\"\n");
 		m_selection.prune(m_doc);
 		emit documentChanged();
 		emit selectionChanged();
@@ -1367,7 +1371,13 @@ RoadPlan Editor::planSelectedRoad(const RoadOptions& options) const {
 	const auto size = [files](const std::string& material) {
 		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
 	};
-	return planRoad(m_doc, roadFaces(m_doc, m_selection), options, size);
+	auto plan = planRoad(m_doc, roadFaces(m_doc, m_selection), options, size);
+	m_roadReplay.clear();
+	addRoadSettings(m_roadReplay, options, size(options.material));
+	m_roadReplay.emplace_back("road.faces", formatFaces(m_selection.faces));
+	m_roadReplay.emplace_back("road.solids", formatSolids(m_selection.solids));
+	notePlan(describeRoadPlan(plan, options));
+	return plan;
 }
 
 void Editor::applySelectedRoad(const RoadOptions& options) {
@@ -1382,6 +1392,7 @@ void Editor::applySelectedRoad(const RoadOptions& options) {
 		emit message(tr("No road: select the road's brushes (or their top faces) first"));
 		return;
 	}
+	notePlan("applied:\n" + describeRoadPlan(plan, options));
 	commit(edit::applyRoad(m_doc, plan));
 	if (!plan.corners.empty() && !m_selection.solids.empty()) {
 		// The curve pieces stand where the corner brush was: selected like it.
@@ -1402,7 +1413,13 @@ FlowPlan Editor::planSelectedTextureFlow(const FlowOptions& options) const {
 	const auto size = [files](const std::string& material) {
 		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
 	};
-	return planTextureFlow(m_doc, flowFaces(m_doc, m_selection), options, size);
+	auto plan = planTextureFlow(m_doc, flowFaces(m_doc, m_selection), options, size);
+	m_flowReplay.clear();
+	addFlowSettings(m_flowReplay, options, size(options.material));
+	m_flowReplay.emplace_back("flow.faces", formatFaces(m_selection.faces));
+	m_flowReplay.emplace_back("flow.solids", formatSolids(m_selection.solids));
+	notePlan(describeFlowPlan(plan, options));
+	return plan;
 }
 
 void Editor::applySelectedTextureFlow(const FlowOptions& options) {
@@ -1417,6 +1434,7 @@ void Editor::applySelectedTextureFlow(const FlowOptions& options) {
 		emit message(tr("No texture flow: select faces (or brushes) that touch each other first"));
 		return;
 	}
+	notePlan("applied:\n" + describeFlowPlan(plan, options));
 	commit(edit::applyTextureFlow(m_doc, plan));
 	if (!plan.plan.corners.empty() && !m_selection.solids.empty()) {
 		Selection selection = m_selection;
@@ -1749,6 +1767,101 @@ void Editor::setCordons(const CordonSet& cordons) {
 	writeCordons(m_doc, cordons);
 	m_footerModified = true;
 	emit documentChanged();
+}
+
+} // namespace sme::app
+
+namespace sme::app {
+
+// --- Editor report journal ----------------------------------------------------
+
+const char* Editor::toolName(Tool tool) {
+	switch (tool) {
+		case Tool::Select: return "Select";
+		case Tool::Move: return "Move";
+		case Tool::Rotate: return "Rotate";
+		case Tool::Scale: return "Scale";
+		case Tool::Block: return "Block";
+		case Tool::Entity: return "Entity";
+		case Tool::Clip: return "Clip";
+		case Tool::Vertex: return "Vertex";
+		case Tool::Polygon: return "Polygon";
+		case Tool::Displace: return "Displace";
+	}
+	return "?";
+}
+
+void Editor::notePick(const PickTrace& trace) {
+	m_pickJournal.push_back(formatPickTrace(trace, ++m_pickCount));
+	while (m_pickJournal.size() > 50) m_pickJournal.pop_front();
+}
+
+void Editor::noteDrag(const std::string& line) {
+	m_pickJournal.push_back(line + "\n");
+	while (m_pickJournal.size() > 50) m_pickJournal.pop_front();
+}
+
+void Editor::noteEdit(const std::string& text, bool merged) {
+	const std::string entry = "#" + std::to_string(m_editCounter) + " " + text;
+	// A paint stroke merges into one undo step: one entry, the latest.
+	if (merged && !m_editJournal.empty() && m_editJournal.back().find(text.substr(0, text.find('\n'))) != std::string::npos) {
+		m_editJournal.back() = entry;
+		return;
+	}
+	m_editJournal.push_back(entry);
+	while (m_editJournal.size() > 30) m_editJournal.pop_front();
+}
+
+void Editor::notePlan(std::string text) const {
+	// The live preview plans on every change of the dialog: the same plan once.
+	if (!m_planJournal.empty() && m_planJournal.back() == text) return;
+	m_planJournal.push_back(std::move(text));
+	while (m_planJournal.size() > 6) m_planJournal.pop_front();
+}
+
+namespace {
+
+std::string joined(const std::deque<std::string>& entries) {
+	std::string out;
+	for (const auto& entry : entries) out += entry + "\n";
+	return out;
+}
+
+} // namespace
+
+std::string Editor::pickJournal() const {
+	return joined(m_pickJournal);
+}
+
+std::string Editor::editJournal() const {
+	return joined(m_editJournal);
+}
+
+std::string Editor::planJournal() const {
+	return joined(m_planJournal);
+}
+
+std::vector<std::pair<std::string, std::string>> Editor::replaySettings() const {
+	std::vector<std::pair<std::string, std::string>> out;
+	const Selection& hidden = this->hidden();
+	out.emplace_back("hidden.solids", formatSolids(hidden.solids));
+	std::string entities;
+	for (const int id : hidden.entities) entities += (entities.empty() ? "" : ",") + std::to_string(id);
+	out.emplace_back("hidden.entities", entities);
+	out.emplace_back("hidden.faces", formatFaces(hidden.faces));
+	out.emplace_back("hidden.kinds", std::to_string(m_hiddenKinds));
+	out.emplace_back("selection.solids", formatSolids(m_selection.solids));
+	std::string selected;
+	for (const int id : m_selection.entities) selected += (selected.empty() ? "" : ",") + std::to_string(id);
+	out.emplace_back("selection.entities", selected);
+	out.emplace_back("selection.faces", formatFaces(m_selection.faces));
+	out.emplace_back("grid", reportNumber(m_grid));
+	out.emplace_back("snap", reportNumber(snapGrid()));
+	out.emplace_back("objectSnap", m_objectSnap ? "1" : "0");
+	out.emplace_back("textureLock", m_textureLock ? "1" : "0");
+	out.insert(out.end(), m_roadReplay.begin(), m_roadReplay.end());
+	out.insert(out.end(), m_flowReplay.begin(), m_flowReplay.end());
+	return out;
 }
 
 } // namespace sme::app

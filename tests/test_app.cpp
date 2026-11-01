@@ -66,6 +66,10 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QContextMenuEvent>
+#include <QFileDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <QFrame>
 #include <QOpenGLWidget>
 #include <QSplitter>
@@ -99,6 +103,7 @@
 #include <sme/map_tools.h>
 #include <sme/shipping.h>
 #include <sme/soundscape_area.h>
+#include <sme/editor_report.h>
 
 #include <cmath>
 #include <filesystem>
@@ -8119,6 +8124,302 @@ TEST_CASE("picking: after every kind of edit each visible brush can be clicked t
 		if (!check(step, what)) ++failures;
 	}
 	CHECK(failures == 0);
+}
+
+TEST_CASE("picking: the click hits what the view shows - wall rows, floor, pasted and stretched brushes, Hammer++ decimals, hidden tool faces") {
+	// The deep check behind Julius' brush that could only be clicked through the side he had
+	// pulled out (01.11.2026, build ae31b69): rays from many directions at every face of every
+	// visible brush; the pick must agree with plain geometry (brushesAlongRay, hidden objects and
+	// faces left out), and a brush on a shared surface must be reachable by clicking again.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1200, 800);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	editor.setGrid(16);
+	editor.setShapeOptions(ShapeOptions{});
+	editor.setTool(Editor::Tool::Select);
+	Viewport* view = window.view3D();
+
+	// Floor, two rows of 128 blocks on top of each other, a wall behind them.
+	editor.createShape(box({-512, -512, -32}, {1280, 1280, 0}));
+	std::vector<SolidRef> blocks;
+	for (int row = 0; row < 2; ++row) {
+		for (int i = 0; i < 7; ++i) {
+			editor.createShape(box({i * 128.0, 256, row * 128.0}, {i * 128.0 + 128, 384, row * 128.0 + 128}));
+			blocks.push_back(editor.selection().solids.front());
+		}
+	}
+	editor.createShape(box({0, 640, 0}, {896, 704, 320}));
+	const SolidRef back = editor.selection().solids.front();
+	settle();
+	// A block pasted in place and stretched over four of its neighbours (front and top flush with
+	// them), and one pasted, moved out and stretched up and sideways into the row.
+	editor.setSelection(Selection{{blocks[0]}});
+	editor.copySelection();
+	REQUIRE(editor.paste(PasteOptions{}));
+	const SolidRef stretched = editor.selection().solids.back();
+	{
+		const Bounds from = boundsOf(editor, stretched);
+		Bounds to = from;
+		to.max.x = 640;
+		editor.commit(edit::scale(editor.doc(), editor.selection(), from, to));
+	}
+	REQUIRE(editor.paste(PasteOptions{}));
+	const SolidRef second = editor.selection().solids.back();
+	editor.nudgeSelection({256, -192, 0});
+	{
+		const Bounds from = boundsOf(editor, second);
+		Bounds to = from;
+		to.max.z = 192;
+		to.max.y = 320;
+		to.max.x += 64;
+		editor.commit(edit::scale(editor.doc(), editor.selection(), from, to));
+	}
+	// Hammer++ writes its plane points with decimals (corners of the face, tiny errors): every
+	// plane point moved along its plane by an odd amount and off it by a hair.
+	{
+		Transaction t(editor.doc(), "Hammer++ decimals");
+		for (auto& solid : editor.doc().world.solids) {
+			t.touchSolid({0, solid.id});
+			for (auto& side : solid.sides) {
+				const Plane plane = side.plane();
+				const Vec3 u = normalize(side.planePoints[1] - side.planePoints[0]);
+				const Vec3 v = normalize(cross(plane.normal, u));
+				for (int k = 0; k < 3; ++k) {
+					side.planePoints[std::size_t(k)] += u * (0.3125 * (k + 1)) + v * (-0.71875 * k) + plane.normal * (k == 1 ? 0.00002 : -0.00001);
+				}
+			}
+		}
+		editor.commit(t.finish());
+	}
+	// One block's front face nodraw, tool textures hidden: the view shows what lies behind it.
+	const SolidRef nodrawBlock = blocks[5];
+	int nodrawSide = 0;
+	for (const auto& side : editor.doc().findSolid(nodrawBlock)->sides) {
+		if (side.plane().normal.y < -0.99) nodrawSide = side.id;
+	}
+	REQUIRE(nodrawSide != 0);
+	editor.setSelectMode(Editor::SelectMode::Face);
+	editor.setSelection(Selection{{}, {}, {FaceRef{nodrawBlock, nodrawSide}}});
+	editor.applyMaterialToSelection("tools/toolsnodraw");
+	editor.setSelectMode(Editor::SelectMode::Object);
+	editor.setKindVisible(ObjectKind::ToolBrushes, false);
+	editor.setSelection({});
+	view->update();
+	settle();
+	const Selection hidden = editor.hidden();
+	REQUIRE(hidden.contains(FaceRef{nodrawBlock, nodrawSide}));
+
+	const auto name = [](const SolidRef& r) { return std::to_string(r.entityId) + "/" + std::to_string(r.solidId); };
+	int rays = 0, mismatches = 0, unreachable = 0;
+	for (const auto& solid : editor.doc().world.solids) {
+		const SolidRef ref{0, solid.id};
+		if (hidden.contains(ref)) continue;
+		const auto geometry = buildBrushGeometry(solid);
+		REQUIRE(geometry.valid);
+		for (const auto& face : geometry.faces) {
+			if (hidden.contains(FaceRef{ref, solid.sides[std::size_t(face.sideIndex)].id})) continue;
+			Vec3 center;
+			for (const auto& p : face.vertices) center += p;
+			center = center / double(face.vertices.size());
+			std::vector<Vec3> targets{center};
+			for (const auto& p : face.vertices) targets.push_back(center + (p - center) * 0.8);
+			const Vec3 n = normalize(face.normal);
+			const Vec3 u = normalize(face.vertices[1] - face.vertices[0]);
+			const Vec3 w = normalize(cross(n, u));
+			for (const Vec3& target : targets) {
+				for (const auto& [a, b] : std::vector<std::pair<double, double>>{{0, 0}, {0.6, 0}, {-0.6, 0}, {0, 0.6}, {0, -0.6}, {0.4, 0.4}}) {
+					const Vec3 dir = normalize(-n + u * a + w * b);
+					const Ray ray{target - dir * 1500, dir};
+					++rays;
+					const auto expected = brushesAlongRay(editor.doc(), ray, &hidden);
+					const auto hit = view->renderer().pick(ray, false, 0, nullptr, nullptr);
+					if (expected.empty()) {
+						if (hit && hit->solid.solidId != 0) {
+							++mismatches;
+							INFO("ray at " << name(ref) << ": geometry hits nothing, the pick " << name(hit->solid));
+							CHECK(false);
+						}
+						continue;
+					}
+					// The brushes on the nearest surface.
+					std::vector<SolidRef> front;
+					for (const auto& e : expected) {
+						if (e.distance <= expected.front().distance + 0.05) front.push_back(e.solid);
+					}
+					const bool agrees = hit && std::find(front.begin(), front.end(), hit->solid) != front.end();
+					if (!agrees && mismatches < 8) {
+						INFO("ray toward brush " << name(ref) << " at " << target.x << " " << target.y << " " << target.z << ": geometry "
+						                           << name(expected.front().solid) << " at " << expected.front().distance << ", pick "
+						                           << (hit ? name(hit->solid) + " at " + std::to_string(hit->distance) : std::string("nothing")));
+						CHECK(agrees);
+					}
+					if (!agrees) {
+						++mismatches;
+						continue;
+					}
+					// On a shared surface clicking again reaches every brush on it.
+					if (std::find(front.begin(), front.end(), ref) != front.end() && !(hit->solid == ref)) {
+						bool reached = false;
+						for (int cycle = 1; cycle < std::max(hit->ties, 1) && !reached; ++cycle) {
+							const auto next = view->renderer().pick(ray, false, cycle, nullptr, nullptr);
+							reached = next && next->solid == ref;
+						}
+						if (!reached) {
+							++unreachable;
+							INFO("brush " << name(ref) << " on a surface of " << front.size() << " cannot be reached by clicking again");
+							CHECK(reached);
+						}
+					}
+				}
+			}
+		}
+	}
+	MESSAGE(rays << " rays checked");
+	CHECK(rays > 2000);
+	CHECK(mismatches == 0);
+	CHECK(unreachable == 0);
+
+	// With the mouse: through the hidden nodraw face the wall behind is clicked, not the block.
+	view->camera().position = QVector3D(5 * 128 + 64, -700, 64);
+	view->camera().yaw = 90;
+	view->camera().pitch = 0;
+	view->update();
+	settle();
+	editor.setSelection({});
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{5 * 128 + 64, 256, 64}));
+	settle();
+	REQUIRE(editor.selection().solids.size() == 1);
+	CHECK(editor.selection().solids.front() == back);
+	// Shown again: the block.
+	editor.setKindVisible(ObjectKind::ToolBrushes, true);
+	view->update();
+	settle();
+	editor.setSelection({});
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{5 * 128 + 64, 256, 64}));
+	settle();
+	REQUIRE(editor.selection().solids.size() == 1);
+	CHECK(editor.selection().solids.front() == nodrawBlock);
+	(void)stretched;   // its faces are among the rays above (flush with the rows: shared surfaces)
+}
+
+TEST_CASE("editor report: Help > Make editor report ... writes one ZIP that reads back and replays") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1200, 800);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	editor.setGrid(16);
+	editor.setShapeOptions(ShapeOptions{});
+	editor.setTool(Editor::Tool::Select);
+	Viewport* view = window.view3D();
+	editor.createShape(box({-512, -512, -32}, {512, 512, 0}));
+	editor.createShape(box({0, 0, 0}, {128, 128, 128}));
+	const SolidRef block = editor.selection().solids.front();
+	{
+		const Bounds from = boundsOf(editor, block);
+		Bounds to = from;
+		to.max.x = 384;
+		editor.commit(edit::scale(editor.doc(), editor.selection(), from, to));
+	}
+	view->camera().position = QVector3D(192, -700, 300);
+	view->camera().yaw = 90;
+	view->camera().pitch = -20;
+	view->update();
+	settle();
+	editor.setSelection({});
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{192, 0, 64}));
+	settle();
+	REQUIRE(editor.selection().solids.size() == 1);
+	CHECK(editor.selection().solids.front() == block);
+	// A path with the home folder in the Log: masked in the report.
+	auto* log = window.findChild<LogPanel*>();
+	REQUIRE(log);
+	log->append(home.path() + "/maps/secret.vmf");
+	REQUIRE(window.findChild<QPushButton*>("logEditorReport"));
+
+	// Saved where the last report went (here: the test's folder), named with the date.
+	QSettings().setValue("report/folder", home.path());
+	auto* action = window.findChild<QAction*>("makeEditorReport");
+	REQUIRE(action);
+	action->trigger();
+	settle();
+	auto* dialog = window.findChild<QFileDialog*>("editorReportFile");
+	REQUIRE(dialog);
+	QMetaObject::invokeMethod(dialog, "accept");   // the Save button (accept is protected)
+	settle();
+	auto* done = window.findChild<QMessageBox*>("editorReportDone");
+	REQUIRE(done);
+	CHECK(done->text().contains("send this file"));
+	CHECK(done->findChild<QPushButton*>("editorReportOpen"));
+	done->close();
+	settle();
+	const QStringList saved = QDir(home.path()).entryList({"mapsmith_report_*.zip"}, QDir::Files);
+	REQUIRE(saved.size() == 1);
+	const QString path = QDir(home.path()).filePath(saved.front());
+	const std::filesystem::path zip(path.toStdWString());
+	const auto names = zipEntryNames(zip);
+	for (const std::string name : {"scene.vmf", "editor.json", "replay.txt", "picks.log", "edits.log", "road.log", "log.txt", "problems.txt", "view0_3d.png"}) {
+		INFO(name);
+		CHECK(std::find(names.begin(), names.end(), name) != names.end());
+	}
+	const auto vmf = readZipEntry(zip, "scene.vmf");
+	REQUIRE(vmf);
+	const MapDocument scene = MapDocument::parse(*vmf);
+	CHECK(scene.findSolid(block));   // ids kept
+	const auto json = readZipEntry(zip, "editor.json");
+	REQUIRE(json);
+	const QJsonObject info = QJsonDocument::fromJson(QByteArray::fromStdString(*json)).object();
+	CHECK(info.value("version").toString() == QApplication::applicationVersion());
+	CHECK(info.value("tool").toString() == "Select");
+	CHECK(info.value("views").toArray().size() >= 1);
+	CHECK(info.value("gpu").toString().contains("|"));
+	const auto picks = readZipEntry(zip, "picks.log");
+	REQUIRE(picks);
+	CHECK(picks->find("pick #1 view=3D") != std::string::npos);
+	CHECK(picks->find("result brush 0/" + std::to_string(block.solidId)) != std::string::npos);
+	const auto edits = readZipEntry(zip, "edits.log");
+	REQUIRE(edits);
+	CHECK(edits->find("before:") != std::string::npos);
+	CHECK(edits->find("(384 128 128)") != std::string::npos);
+	// Nothing personal: the home folder is "~".
+	for (const auto& name : names) {
+		if (name.ends_with(".png")) continue;
+		const auto text = readZipEntry(zip, name);
+		REQUIRE(text);
+		INFO(name);
+		CHECK(text->find(home.path().toStdString()) == std::string::npos);
+	}
+	CHECK(readZipEntry(zip, "log.txt")->find("~/maps/secret.vmf") != std::string::npos);
+	// The replay reads it: the click against the map now.
+	std::string error;
+	const auto replay = replayEditorReport(zip, &error);
+	REQUIRE_MESSAGE(replay, error);
+	CHECK(replay->find("pick #1 (3D): recorded brush 0/" + std::to_string(block.solidId)) != std::string::npos);
+	CHECK(replay->find("  now: brush 0/" + std::to_string(block.solidId)) != std::string::npos);
 }
 
 TEST_CASE("texture flow: pillar, rounded corner, stairs and a trim - Texture flow ..., OK - the texture runs on; undo") {

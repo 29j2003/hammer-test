@@ -136,6 +136,27 @@ Turn off **Help > Check for updates at start**. Mapsmith then never connects to 
 
 ## Reporting a problem
 
+### Sending a report
+
+When something in the editor does not work as it should – a brush you cannot click, a road laid oddly, a tool doing
+something strange – make an **editor report** right after it happened:
+
+1. Leave the map as it is (do not undo), and select the brush or faces it is about if you can.
+2. Choose **Help > Make editor report ...** (or the **Make editor report ...** button above the Log).
+3. Pick a folder (the Desktop is suggested) and press *Save*.
+4. Mapsmith says **Report saved - send this file**; **Open folder** shows it. Send that `.zip` with a sentence on what
+   you did and what you expected.
+
+The report holds the part of the map around the selection (the whole map when it is small), the editor's settings and
+views, your last clicks and drags with what the editor found under the mouse, your last edits, the last road or
+texture flow plans, the Log and Problems texts and a picture of each view. Your user name and home folder are replaced
+by `<user>` and `~`. Nothing is sent anywhere by Mapsmith: the file stays on your PC until you send it yourself, and
+nothing is recorded to disk until you make a report.
+
+This is not the same as **Make report** in the Map menu, which packs what `fidelity_report` wrote while you played.
+
+### The setup report
+
 Mapsmith comes with a small command line tool, **`sme-probe`**, next to `Mapsmith.exe`. It shows what Mapsmith finds on
 your PC:
 
@@ -145,6 +166,7 @@ sme-probe report --out report.json  a report of Steam, games, mods and FGDs
 sme-probe mounts <game>             the search order of a game
 sme-probe find <game> <path>        which folder or VPK a file comes from
 sme-probe vmf <map.vmf>             check a map: load, save, compare, find broken brushes
+sme-probe editor-report <report.zip>  replay an editor report: its clicks and its road again
 ```
 
 `<game>` is a key from `sme-probe games`, such as `220/hl2` or `sourcemods/mymod`. The report masks your user name

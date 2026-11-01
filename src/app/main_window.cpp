@@ -692,7 +692,24 @@ void MainWindow::createDocks() {
 	fill(tr("Compile"), m_compileWindow);
 	fill(tr("Problems"), m_problems);
 	fill(tr("Map Budget"), m_budget);
-	fill(tr("Log"), m_log);
+	{
+		// The Log with a button for the editor report above it (where one looks when something is off).
+		auto* logPage = new QWidget(host(tr("Log")));
+		auto* layout = new QVBoxLayout(logPage);
+		layout->setContentsMargins(0, 0, 0, 0);
+		layout->setSpacing(2);
+		auto* row = new QHBoxLayout;
+		row->setContentsMargins(4, 2, 4, 0);
+		row->addStretch(1);
+		auto* reportButton = new QPushButton(tr("Make editor report ..."), logPage);
+		reportButton->setObjectName("logEditorReport");
+		reportButton->setToolTip(tr("Something in the editor not working as it should? This saves one file to send (Help > Make editor report)"));
+		connect(reportButton, &QPushButton::clicked, this, &MainWindow::makeEditorReport);
+		row->addWidget(reportButton);
+		layout->addLayout(row);
+		layout->addWidget(m_log, 1);
+		fill(tr("Log"), logPage);
+	}
 	fill(tr("History"), new HistoryPanel(m_editor, host(tr("History"))));
 	// Materials: edit from the browser's menu or the face panel; saved changes show up everywhere.
 	connect(m_assets, &AssetBrowser::materialsIndexed, this, [this] {
@@ -1652,6 +1669,14 @@ void MainWindow::createActions() {
 		ShortcutDialog dialog(this, this);
 		dialog.exec();
 	}));
+	help->addSeparator();
+	// Something in the editor went wrong (a brush that cannot be clicked, a road laid oddly): one
+	// file with everything needed to see it again (main_window_report.cpp).
+	auto* editorReport = action(tr("Make editor report ..."), QKeySequence(), [this] { makeEditorReport(); });
+	editorReport->setObjectName("makeEditorReport");
+	editorReport->setToolTip(tr("Saves a ZIP with the map around the selection, the editor's settings, your last clicks and edits and a picture of each view - "
+	                            "send it when something in the editor does not work as it should"));
+	help->addAction(editorReport);
 	help->addSeparator();
 	help->addAction(action(tr("Check for updates"), QKeySequence(), [this] { checkForUpdates(true); }));
 	auto* autoCheck = action(tr("Check for updates at start"), QKeySequence(), [](bool) {});

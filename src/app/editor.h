@@ -10,6 +10,7 @@
 #include <QStringList>
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -21,6 +22,7 @@
 #include <sme/clipboard.h>
 #include <sme/doors.h>
 #include <sme/edge_round.h>
+#include <sme/editor_report.h>
 #include <sme/road_texture.h>
 #include <sme/texture_flow.h>
 #include <sme/editing.h>
@@ -281,6 +283,19 @@ public:
 	[[nodiscard]] FlowPlan planSelectedTextureFlow(const FlowOptions& options) const;
 	/// Applies the texture flow (one undo step); clears the preview.
 	void applySelectedTextureFlow(const FlowOptions& options);
+	/// The editor report's journal (docs/ENTWICKLUNG.md, "Editor-Bericht"): the last clicks and
+	/// drags with what the pick saw, the last edits with their brushes before and after, the last
+	/// road / texture flow plans. Kept in memory only; written when he makes a report.
+	void notePick(const PickTrace& trace);
+	/// "Select", "Move" ... (the editor report).
+	[[nodiscard]] static const char* toolName(Tool tool);
+	void noteDrag(const std::string& line);
+	[[nodiscard]] std::string pickJournal() const;
+	[[nodiscard]] std::string editJournal() const;
+	[[nodiscard]] std::string planJournal() const;
+	/// The state the replay needs (replay.txt): hidden objects, selection, last road / texture
+	/// flow settings with the texture size and selection they were planned for, snapping.
+	[[nodiscard]] std::vector<std::pair<std::string, std::string>> replaySettings() const;
 	/// Brushes shown as they would become (a live preview); `replaced` are hidden meanwhile.
 	void setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced);
 	void clearBrushPreview() { setBrushPreview({}, {}); }
@@ -437,6 +452,14 @@ private:
 	std::unordered_map<long long, std::uint64_t> m_editStamps;
 	std::uint64_t m_editCounter = 0;
 	void stampEdits(const Change& change);
+	// The report's journal (notePick ...); mutable: planning (const) notes its plan.
+	std::deque<std::string> m_pickJournal;
+	int m_pickCount = 0;
+	std::deque<std::string> m_editJournal;
+	mutable std::deque<std::string> m_planJournal;
+	mutable std::vector<std::pair<std::string, std::string>> m_roadReplay, m_flowReplay;
+	void noteEdit(const std::string& text, bool merged = false);
+	void notePlan(std::string text) const;
 	QString m_filePath;
 	SceneFocus m_sceneFocus;
 	std::function<void(const Vec3&)> m_scenePoint;

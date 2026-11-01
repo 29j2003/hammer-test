@@ -1462,6 +1462,8 @@ void SceneRenderer::setSelection(const MapDocument& doc, const Selection& select
 	}
 	m_selectedRanges.clear();
 	m_hidden = hidden;
+	m_hiddenSides.clear();
+	for (const auto& face : hidden.faces) m_hiddenSides.insert(face.sideId);
 	const auto mark = [&](const std::vector<int>& faces, std::uint8_t flag) {
 		for (const int face : faces) {
 			if (face >= 0 && static_cast<std::size_t>(face) < m_flags.size()) {
@@ -2391,10 +2393,24 @@ std::vector<std::pair<int, int>> SceneRenderer::rangesAround(const Vec3& point) 
 }
 
 std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, int cycle, const Selection* preferred,
-                                               const std::function<std::uint64_t(const SolidRef&)>& editStamp) const {
+                                               const std::function<std::uint64_t(const SolidRef&)>& editStamp, PickTrace* trace) const {
 	if (!m_doc) {
+		if (trace) trace->result = "nothing (no map)";
 		return std::nullopt;
 	}
+	if (trace) trace->ray = ray;
+	// The trace (editor report): what an item was left out for; capped, a click over a big map
+	// passes the boxes of many brushes.
+	const auto skip = [trace](const PickItem& item, const std::string& why) {
+		if (!trace || trace->skipped.size() >= 40) return;
+		trace->skipped.push_back((item.solid.solidId != 0 ? "brush " + std::to_string(item.solid.entityId) + "/" + std::to_string(item.solid.solidId)
+		                                                  : "entity " + std::to_string(item.entityId)) +
+		                         ": " + why);
+	};
+	const auto note = [trace](const char* kind, const PickResult& r, const std::string& text) {
+		if (!trace || trace->candidates.size() >= 60) return;
+		trace->candidates.push_back({kind, r.solid.solidId != 0 ? r.solid.entityId : r.entityId, r.solid.solidId, r.sideId, r.distance, text});
+	};
 	// Exact hits (brush faces, point entity boxes, model triangles) compete by distance; a
 	// model's box without a triangle hit counts at its back side. Point entity boxes win over
 	// models up to SMALL_BONUS units in front of them (not over brushes).
@@ -2439,10 +2455,15 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 	};
 	for (const auto& item : m_pickItems) {
 		if ((item.solid.solidId != 0 && item.entityId == 0 && m_hidden.contains(item.solid)) || (item.entityId != 0 && m_hidden.containsEntity(item.entityId))) {
+			if (trace && intersect(ray, item.bounds) >= 0) skip(item, "hidden");
 			continue;
 		}
 		const double boxHit = intersect(ray, item.bounds);
-		if (boxHit < 0 || (best && bestKind == Kind::Brush && boxHit > bestRank + SMALL_BONUS)) {
+		if (boxHit < 0) {
+			continue;
+		}
+		if (best && bestKind == Kind::Brush && boxHit > bestRank + SMALL_BONUS) {
+			skip(item, "its box starts at " + reportNumber(boxHit) + ", behind the nearest hit");
 			continue;
 		}
 		{
@@ -2485,6 +2506,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 					r.point = ray.origin + ray.direction * nearest;
 					r.normal = item.rotation * normal;
 					offer(r, nearest, item.seeThrough ? Kind::StandIn : Kind::Model);
+					note(item.seeThrough ? "stand-in" : "model", r, "triangle");
 				} else {
 					// Between the legs: the box, at its back side (anything exact in front wins).
 					const Vec3 far = ray.origin + ray.direction * (boxHit + length(item.bounds.size()));
@@ -2493,6 +2515,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 					r.point = ray.origin + ray.direction * boxHit;
 					r.normal = -ray.direction;
 					offer(r, exit >= 0 ? boxHit + length(item.bounds.size()) - exit : boxHit, item.seeThrough ? Kind::StandIn : Kind::Model);
+					note(item.seeThrough ? "stand-in" : "model", r, "box only, counts at its back");
 				}
 				continue;
 			}
@@ -2512,6 +2535,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			r.normal = {};
 			r.normal[axis] = local[axis] >= 0 ? 1 : -1;
 			offer(r, boxHit, Kind::Box);
+			note("box", r, "");
 			continue;
 		}
 		if (item.detached && facesOnly) {
@@ -2519,12 +2543,14 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 		}
 		const auto* solid = item.detached ? item.detached : m_doc->findSolid(item.solid);
 		if (!solid) {
+			skip(item, "not in the map any more (stale pick list)");
 			continue;
 		}
 		if (!item.triangles.empty()) {
 			// Displacements: pick the triangles; other faces of the brush still use the planes.
 			for (std::size_t t = 0; t + 2 < item.triangles.size(); t += 3) {
 				double dist;
+				if (!item.detached && m_hiddenSides.contains(solid->sides[static_cast<std::size_t>(item.triangleSides[t / 3])].id)) continue;
 				if (intersectTriangle(ray, item.triangles[t], item.triangles[t + 1], item.triangles[t + 2], dist) && (!best || dist < bestRank + SAME_SURFACE)) {
 					PickResult r;
 					r.distance = dist;
@@ -2534,12 +2560,21 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 					r.entityId = item.entityId;
 					r.sideId = solid->sides[static_cast<std::size_t>(item.triangleSides[t / 3])].id;
 					offer(r, dist, Kind::Brush);
+					note("brush", r, "displacement");
 				}
 			}
 			continue;
 		}
 		// From inside too: a brush stretched around the camera is drawn from inside (drawSurfaces).
-		if (const auto hit = intersectSeen(ray, *solid); hit && (!best || hit->distance < bestRank + SAME_SURFACE)) {
+		// A hidden face (tool textures hidden) is not drawn: the click goes on to what is seen behind it
+		// (Julius, 01.11.2026: brushes behind hidden nodraw faces could not be clicked).
+		bool inside = false;
+		const auto hit = intersectSeen(ray, *solid, &inside);
+		if (trace && hit && best && hit->distance >= bestRank + SAME_SURFACE) skip(item, "hit at " + reportNumber(hit->distance) + ", behind the nearest hit");
+		if (trace && !hit) skip(item, "its box is on the ray, the brush is not");
+		const bool hiddenFace = hit && !item.detached && m_hiddenSides.contains(solid->sides[static_cast<std::size_t>(hit->sideIndex)].id);
+		if (hiddenFace) skip(item, "the face hit is hidden (side " + std::to_string(solid->sides[static_cast<std::size_t>(hit->sideIndex)].id) + ")");
+		if (hit && (!best || hit->distance < bestRank + SAME_SURFACE) && !hiddenFace) {
 			PickResult r;
 			r.distance = hit->distance;
 			r.point = ray.origin + ray.direction * hit->distance;
@@ -2548,6 +2583,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			r.entityId = item.entityId;
 			r.sideId = solid->sides[static_cast<std::size_t>(hit->sideIndex)].id;
 			offer(r, hit->distance, Kind::Brush);
+			note("brush", r, std::string(inside ? "from inside" : "") + (item.detached ? "instance content" : ""));
 		}
 	}
 	// Brushes on the same surface: the smaller first (a brush lying in a floor, flush with it), then
@@ -2571,6 +2607,13 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			if (a.result.entityId != b.result.entityId) return a.result.entityId > b.result.entityId;
 			return a.result.solid.solidId > b.result.solid.solidId;
 		});
+		if (trace && ties.size() > 1) {
+			trace->ties = static_cast<int>(ties.size());
+			for (const auto& h : ties) {
+				trace->order += (trace->order.empty() ? "" : ", ") + std::to_string(h.result.solid.entityId) + "/" + std::to_string(h.result.solid.solidId) +
+				                (isPreferred(h) ? " selected" : "") + " edited " + std::to_string(stamp(h)) + " volume " + reportNumber(h.volume);
+			}
+		}
 		if (!ties.empty()) {
 			const int n = static_cast<int>(ties.size());
 			best = ties[static_cast<std::size_t>(((cycle % n) + n) % n)].result;
@@ -2588,6 +2631,15 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			best = hit.result;
 			bestRank = rank;
 			bestKind = hit.kind;
+		}
+	}
+	if (trace) {
+		if (!best) trace->result = "nothing";
+		else if (best->solid.solidId != 0) {
+			trace->result = "brush " + std::to_string(best->solid.entityId) + "/" + std::to_string(best->solid.solidId) + " side " + std::to_string(best->sideId) +
+			                " at " + reportNumber(best->distance);
+		} else {
+			trace->result = "entity " + std::to_string(best->entityId) + " at " + reportNumber(best->distance);
 		}
 	}
 	return best;

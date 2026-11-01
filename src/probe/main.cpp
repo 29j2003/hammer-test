@@ -8,6 +8,7 @@
 #include <sme/assets.h>
 #include <sme/audio.h>
 #include <sme/brush.h>
+#include <sme/editor_report.h>
 #include <sme/entity_catalog.h>
 #include <sme/game.h>
 #include <sme/map.h>
@@ -44,6 +45,7 @@ Usage:
   sme-probe fgd FILE.fgd... [--class NAME]    load FGDs, optionally show one class
   sme-probe vmf FILE.vmf                      check a map: load, save again, compare, find broken brushes
   sme-probe sound FILE [--out RAW]            decode a sound file (WAV/MP3/OGG): format, length, loop
+  sme-probe editor-report REPORT.zip          replay an editor report: its clicks against its map, its road again
 
 GAME is a key from "games" (e.g. 220/hl2, sourcemods/mymod) or a folder with gameinfo.txt.
 Options: --steam DIR uses another Steam folder (also: environment variable SME_STEAM_ROOT).
@@ -438,6 +440,16 @@ int main(int argc, char** argv) {
 		if (command == "fgd" && need(2)) return cmdFgd(args);
 		if (command == "vmf" && need(2)) return cmdVmf(args);
 		if (command == "sound" && need(2)) return cmdSound(args);
+		if (command == "editor-report" && need(2)) {
+			std::string error;
+			const auto replay = replayEditorReport(toNativePath(args.positional[1]), &error);
+			if (!replay) {
+				std::cerr << "error: " << error << "\n";
+				return 1;
+			}
+			std::cout << *replay;
+			return 0;
+		}
 	} catch (const std::exception& e) {
 		std::cerr << "error: " << e.what() << "\n";
 		return 2;

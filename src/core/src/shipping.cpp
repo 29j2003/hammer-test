@@ -505,6 +505,38 @@ std::vector<std::string> zipEntryNames(const std::filesystem::path& zip) {
 	return names;
 }
 
+std::optional<std::string> readZipEntry(const std::filesystem::path& zip, std::string_view name) {
+	const auto text = readFileText(zip);
+	if (!text || text->size() < 22) return std::nullopt;
+	const auto& in = *text;
+	std::size_t endAt = std::string::npos;
+	for (std::size_t i = in.size() - 22 + 1; i-- > 0 && in.size() - i <= 22 + 0xFFFF;) {
+		if (get32(in, i) == 0x06054b50) {
+			endAt = i;
+			break;
+		}
+	}
+	if (endAt == std::string::npos) return std::nullopt;
+	const std::size_t count = get16(in, endAt + 10);
+	std::size_t at = get32(in, endAt + 16);
+	for (std::size_t i = 0; i < count; ++i) {
+		if (at + 46 > in.size() || get32(in, at) != 0x02014b50) return std::nullopt;
+		const std::size_t method = get16(in, at + 10);
+		const std::size_t compressed = get32(in, at + 20);
+		const std::size_t nameLength = get16(in, at + 28), extraLength = get16(in, at + 30), commentLength = get16(in, at + 32);
+		const std::size_t local = get32(in, at + 42);
+		if (at + 46 + nameLength > in.size()) return std::nullopt;
+		if (std::string_view(in).substr(at + 46, nameLength) == name) {
+			if (method != 0 || local + 30 > in.size() || get32(in, local) != 0x04034b50) return std::nullopt;
+			const std::size_t start = local + 30 + get16(in, local + 26) + get16(in, local + 28);
+			if (start > in.size() || compressed > in.size() - start) return std::nullopt;
+			return in.substr(start, compressed);
+		}
+		at += 46 + nameLength + extraLength + commentLength;
+	}
+	return std::nullopt;
+}
+
 bool writeFolder(const std::filesystem::path& folder, const std::vector<PackageEntry>& entries, std::string* error) {
 	std::error_code ec;
 	for (const auto& entry : entries) {

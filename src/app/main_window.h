@@ -124,6 +124,14 @@ public:
 	/// report.ps1 and opens the zip's folder). Reachable from the Map menu, the Compile dock and
 	/// the Problems dock - where one looks after testing a map in the game.
 	void makeReport();
+	/// Help › "Make editor report ..." (and the Log panel's button): asks where, writes the ZIP
+	/// (writeEditorReport) and says "Report saved - send this file" with Open folder. Separate from
+	/// makeReport, which is about the game.
+	void makeEditorReport();
+	/// The editor report (see editor_report.h): the map around the selection, the editor's state,
+	/// the last clicks, edits and road plans, Log, Problems and a picture of each view, paths
+	/// masked. False with `error` when it could not be written.
+	bool writeEditorReport(const QString& path, QString* error = nullptr);
 	/// "Import ..." (pages, File › Import into the mod): the import dialog for a kind of file.
 	ImportDialog* openImport(ImportDialog::Kind kind);
 	/// File › Import into the mod › Imported files: the list of imports, each can be removed.

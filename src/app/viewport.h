@@ -101,6 +101,10 @@ public:
 	[[nodiscard]] int doorTestId() const { return m_doorTest.id; }
 	/// Line from a compile leak (.lin pointfile); empty clears it.
 	void setLeakLine(const std::vector<Vec3>& points);
+	/// The graphics driver as OpenGL names it ("vendor | renderer | version"), for the editor report.
+	[[nodiscard]] QString glInfo() const { return m_glInfo; }
+	/// "3D", "Top", "Front" or "Side" (the editor report).
+	[[nodiscard]] QString kindName() const;
 
 signals:
 	/// World position under the mouse as text, for the status bar.
@@ -292,6 +296,7 @@ private:
 	bool m_needsRebuild = true;
 	bool m_selectionDirty = true;
 	QString m_glError;
+	QString m_glInfo;
 
 	// Input state
 	Drag m_drag = Drag::None;
