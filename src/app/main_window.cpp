@@ -33,6 +33,7 @@
 #include "particle_browser.h"
 #include "properties_panel.h"
 #include "road_dialog.h"
+#include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
 #include "shortcut_dialog.h"
 #include "sound_browser.h"
@@ -701,6 +702,7 @@ void MainWindow::createDocks() {
 	m_properties->setAssetMenuFiller(filler);
 	m_modelsPage->setAssetMenuFiller(filler);
 	connect(m_properties, &PropertiesPanel::roadRequested, this, [this] { roadDialog(); });
+	connect(m_properties, &PropertiesPanel::textureFlowRequested, this, [this] { textureFlowDialog(); });
 	connect(m_properties, &PropertiesPanel::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
 		raiseDock("Material Editor");
@@ -1068,6 +1070,10 @@ void MainWindow::createActions() {
 	road->setObjectName("brushesRoad");
 	road->setToolTip(tr("Lays a road material along the selected floor brushes: along the road, across its width, on through curves and ramps"));
 	brushes->addAction(road);
+	auto* flow = action(tr("Texture flow ..."), QKeySequence(), [this] { textureFlowDialog(); });
+	flow->setObjectName("brushesTextureFlow");
+	flow->setToolTip(tr("Lets the texture run on over the selected faces or brushes: wrapped over edges, round curves, along strips, or continuing a neighbour"));
+	brushes->addAction(flow);
 	auto* water = action(tr("Make water"), QKeySequence(), [this] { m_editor->makeWaterFromSelection(m_assets->materialNames()); });
 	water->setToolTip(tr("Top face water, the other faces nodraw; adds a water_lod_control and a cubemap above the water if missing"));
 	brushes->addAction(water);
@@ -2156,6 +2162,7 @@ QMenu* MainWindow::buildContextMenu() {
 		// Brushes or faces: the road tool lays a road material along them.
 		if (!selection.solids.empty() || !selection.faces.empty()) {
 			menu.addAction(tr("Road ..."), this, [this] { roadDialog(); })->setObjectName("contextRoad");
+			menu.addAction(tr("Texture flow ..."), this, [this] { textureFlowDialog(); })->setObjectName("contextTextureFlow");
 		}
 		if (selection.entities.size() == 1 && selection.solids.empty() && selection.entities.front() != 0) {
 			menu.addSeparator();
@@ -2436,6 +2443,26 @@ void MainWindow::roadDialog(const QString& material) {
 	m_roadDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_roadDialog->show();
 	if (m_active) m_roadDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::textureFlowDialog(const QString& material) {
+	const auto& selection = m_editor->selection();
+	if (selection.solids.empty() && selection.faces.empty() && selection.entities.empty()) {
+		QMessageBox::information(this, tr("Texture flow"),
+		                         tr("Select the faces first (Faces mode: click the face to start from, Ctrl+click the others), or the brushes.\n"
+		                            "The texture then runs on over their common edges."));
+		return;
+	}
+	if (m_flowDialog) {
+		if (!material.isEmpty()) m_flowDialog->findChild<QLineEdit*>("flowMaterial")->setText(material);
+		m_flowDialog->raise();
+		m_flowDialog->activateWindow();
+		return;
+	}
+	m_flowDialog = new TextureFlowDialog(m_editor, material, this);
+	m_flowDialog->setAttribute(Qt::WA_DeleteOnClose);
+	m_flowDialog->show();
+	if (m_active) m_flowDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
 }
 
 void MainWindow::checkForUpdates(bool manual) {

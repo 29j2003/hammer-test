@@ -126,6 +126,7 @@
 #include "compile_window.h"
 #include "properties_panel.h"
 #include "road_dialog.h"
+#include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
 #include "ship_panel.h"
 #include "toggle_switch.h"
@@ -8114,6 +8115,166 @@ TEST_CASE("picking: after every kind of edit each visible brush can be clicked t
 		if (!check(step, what)) ++failures;
 	}
 	CHECK(failures == 0);
+}
+
+TEST_CASE("texture flow: pillar, rounded corner, stairs and a trim - Texture flow ..., OK - the texture runs on; undo") {
+	// Julius (01.11.2026): the road's idea - a texture laid right relative to its neighbours - for
+	// many more cases: one tool, Texture flow.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	Viewport* view = window.view3D();
+
+	// Brushes world aligned at an odd scale, so "before" shows the texture not running on.
+	const auto add = [&](std::vector<Vec3> points) {
+		auto solid = solidFromPoints(editor.doc(), points, "ROAD/DEMO_ROAD");
+		REQUIRE(solid);
+		for (auto& side : solid->sides) alignToWorld(side, 0.5);
+		const SolidRef ref{0, solid->id};
+		Transaction t(editor.doc(), "Piece");
+		t.touchSolid(ref);
+		editor.doc().world.solids.push_back(*solid);
+		editor.commit(t.finish());
+		return ref;
+	};
+	const auto box = [&](Vec3 lo, Vec3 hi) {
+		return add({{lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z}, {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z}});
+	};
+	const auto facesOf = [&](const SolidRef& ref, const std::function<bool(const Vec3&, const Vec3&)>& test) {
+		std::vector<FaceRef> faces;
+		const Solid* solid = editor.doc().findSolid(ref);
+		const auto geometry = buildBrushGeometry(*solid);
+		for (const auto& face : geometry.faces) {
+			Vec3 c;
+			for (const auto& v : face.vertices) c += v;
+			c = c / double(face.vertices.size());
+			if (test(normalize(face.normal), c)) faces.push_back({ref, solid->sides[std::size_t(face.sideIndex)].id});
+		}
+		return faces;
+	};
+	const auto shoot = [&](const QString& name, QVector3D position, float yaw, float pitch) {
+		view->camera().position = position;
+		view->camera().yaw = yaw;
+		view->camera().pitch = pitch;
+		view->update();
+		settle();
+		QTest::qWait(300);
+		settle();
+		view->grabFramebuffer().save(shotDir + "/" + name);
+	};
+	// Opens the dialog from the right-click menu (checked) and the Brushes menu, waits for the note.
+	const auto openDialog = [&]() -> TextureFlowDialog* {
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		CHECK(menu->findChild<QAction*>("contextTextureFlow") != nullptr);
+		menu.reset();
+		auto* action = window.findChild<QAction*>("brushesTextureFlow");
+		REQUIRE(action);
+		action->trigger();
+		settle();
+		auto* dialog = window.findChild<TextureFlowDialog*>("textureFlowDialog");
+		REQUIRE(dialog);
+		QTest::qWait(150);
+		settle();
+		return dialog;
+	};
+	const auto texel = [&](const FaceRef& face, const Vec3& p) {
+		for (const auto& side : editor.doc().findSolid(face.solid)->sides) {
+			if (side.id == face.sideId) return textureCoordinate(side, p);
+		}
+		FAIL("no face");
+		return TexCoord{};
+	};
+
+	// 1. A pillar: wrapped round its four sides from the front.
+	const auto pillar = box({0, 0, 0}, {96, 96, 256});
+	const auto sides = facesOf(pillar, [](const Vec3& n, const Vec3&) { return std::abs(n.z) < 0.5; });
+	const auto front = facesOf(pillar, [](const Vec3& n, const Vec3&) { return n.y < -0.5; }).front();
+	const auto right = facesOf(pillar, [](const Vec3& n, const Vec3&) { return n.x > 0.5; }).front();
+	// 2. A rounded corner: four standing strips of a quarter circle.
+	std::vector<FaceRef> curve;
+	for (int k = 0; k < 4; ++k) {
+		const auto at = [&](double r, double degrees, double z) {
+			const double a = degrees * std::numbers::pi / 180.0;
+			return Vec3{400 + r * std::cos(a), r * std::sin(a), z};
+		};
+		const double s = 22.5 * k, e = s + 22.5;
+		const auto strip = add({at(64, s, 0), at(96, s, 0), at(64, e, 0), at(96, e, 0), at(64, s, 160), at(96, s, 160), at(64, e, 160), at(96, e, 160)});
+		const auto outer = facesOf(strip, [](const Vec3& n, const Vec3& c) { return std::abs(n.z) < 0.1 && dot(n, normalize(Vec3{c.x - 400, c.y, 0})) > 0.9; });
+		REQUIRE(outer.size() == 1);
+		curve.push_back(outer.front());
+	}
+	// 3. Stairs: four steps, risers and treads.
+	std::vector<FaceRef> stairs;
+	for (int k = 0; k < 4; ++k) {
+		const auto step = box({700.0 + k * 32, 0, 0}, {732.0 + k * 32, 128, (k + 1) * 16.0});
+		for (const auto& face : facesOf(step, [](const Vec3& n, const Vec3&) { return n.x < -0.5 || n.z > 0.5; })) stairs.push_back(face);
+	}
+	// 4. A trim round a corner: two baseboards, 24 high.
+	const auto trimA = box({0, 300, 0}, {256, 308, 24});
+	const auto trimB = box({248, 308, 0}, {256, 564, 24});
+	const auto trimFaces = std::vector<FaceRef>{facesOf(trimA, [](const Vec3& n, const Vec3&) { return n.y > 0.5; }).front(),
+	                                            facesOf(trimB, [](const Vec3& n, const Vec3&) { return n.x < -0.5; }).front()};
+	const std::string before = editor.doc().serialize();
+	shoot("flow_pillar_before.png", QVector3D(-200, -260, 260), 50, -20);
+	shoot("flow_curve_before.png", QVector3D(620, 260, 180), -130, -15);
+	shoot("flow_stairs_before.png", QVector3D(600, -220, 220), 40, -30);
+	shoot("flow_trim_before.png", QVector3D(60, 420, 90), -20, -25);
+
+	const auto run = [&](const std::vector<FaceRef>& faces, const QString& expect) {
+		Selection selection;
+		selection.faces = faces;
+		editor.setSelection(selection);
+		settle();
+		auto* dialog = openDialog();
+		INFO("note: " << dialog->note().toStdString());
+		CHECK(dialog->note().contains(expect));
+		auto* ok = dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok);
+		REQUIRE(ok->isEnabled());
+		CHECK_FALSE(editor.brushPreview().empty());   // the live preview
+		dialog->accept();
+		settle();
+		CHECK(editor.brushPreview().empty());
+	};
+	run(sides.front() == front ? sides : [&] {
+		std::vector<FaceRef> ordered{front};
+		for (const auto& f : sides) if (!(f == front)) ordered.push_back(f);
+		return ordered;
+	}(), "Wrap");
+	// The pillar's front-right edge: the texture meets.
+	CHECK(std::abs(texel(front, {96, 0, 100}).u - texel(right, {96, 0, 100}).u) < 0.5);
+	CHECK(std::abs(texel(front, {96, 0, 100}).v - texel(right, {96, 0, 100}).v) < 0.5);
+	run(curve, "Around a curve");
+	run(stairs, "Wrap");
+	run(trimFaces, "Trim");
+	CHECK(std::abs(texel(trimFaces[0], {248, 308, 12}).u - texel(trimFaces[1], {248, 308, 12}).u) < 0.5);
+	editor.setSelection({});
+	shoot("flow_pillar_after.png", QVector3D(-200, -260, 260), 50, -20);
+	shoot("flow_curve_after.png", QVector3D(620, 260, 180), -130, -15);
+	shoot("flow_stairs_after.png", QVector3D(600, -220, 220), 40, -30);
+	shoot("flow_trim_after.png", QVector3D(60, 420, 90), -20, -25);
+
+	// Four undo steps give everything back.
+	for (int i = 0; i < 4; ++i) editor.undo();
+	settle();
+	CHECK(editor.doc().serialize() == before);
 }
 
 namespace {

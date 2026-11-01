@@ -254,6 +254,33 @@ Example: a spiral of 12 pillars. Copy one pillar, *Number of copies* 11, *Offset
   center, as one undo step.
 - **Drop to floor** (Ctrl+Shift+F) lets the selected objects fall straight down onto what is below them.
 
+## Texture flow
+
+**Texture flow ...** (right-click on selected faces or brushes, the **Brushes** menu, and next to
+**Road ...** under **Justify** in the face panel) lets a texture run on correctly from face to face.
+*Mode: Auto* picks what fits the faces; you can choose another:
+
+- **Wrap**: the texture starts on the first face you picked (Faces mode: click it first, then
+  Ctrl+click the others) and is folded over every common edge onto the next face, like a sheet of
+  paper - round a pillar, over a box, round wall corners, up stairs (treads and risers), over a
+  bevelled edge or an arch. Nothing is stretched. Where the texture comes round to itself again (a
+  pillar's four sides) there is one seam, behind the face you started from; the note says so.
+- **Around a curve**: for rounded edges, arches and cylinders the texture's height runs along the
+  curve's axis and its width round the curve, so a brick wall continues round a rounded corner
+  without a jump.
+- **Along a path**: strips get the texture along their chain with one scale, centred, on through
+  corners. *Strip kind* **Road**, **Kerb** and **River** are floors (the road tool below, with
+  *Curve corners*); **Trim** and **Fence / rail** are standing strips (baseboards, wall trims,
+  fences): the texture's height is fitted to the strip's height (*Fit across* times) and it runs
+  round the corners.
+- **Match neighbour** (also a button in the dialog): the selected faces continue the texture of the
+  faces next to them that are not selected - the same material first.
+
+Auto takes *Along a path* for floors only (Road) and for long, low standing strips (Trim), *Around a
+curve* when most of the edges between the faces are small bends (a rounded edge, an arch, a
+cylinder), else *Wrap*. The views show the result while you change the settings; OK applies it as
+one undo step. Empty *Material* keeps the first face's material (Match: the neighbour's).
+
 ## Roads
 
 Select the floor brushes of a road (or their top faces in Faces mode), right-click and pick

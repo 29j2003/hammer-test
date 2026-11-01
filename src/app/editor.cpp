@@ -1290,6 +1290,40 @@ void Editor::applySelectedRoad(const RoadOptions& options) {
 	emit message(tr("Road laid over %n face(s)", nullptr, plan.faceCount()));
 }
 
+FlowPlan Editor::planSelectedTextureFlow(const FlowOptions& options) const {
+	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
+	const auto size = [files](const std::string& material) {
+		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
+	};
+	return planTextureFlow(m_doc, flowFaces(m_doc, m_selection), options, size);
+}
+
+void Editor::applySelectedTextureFlow(const FlowOptions& options) {
+	clearBrushPreview();
+	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
+	const auto size = [files](const std::string& material) {
+		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
+	};
+	// Planned again with the map's own ids (road corners cut into curve pieces become real brushes).
+	const auto plan = planTextureFlow(m_doc, flowFaces(m_doc, m_selection), options, size, &m_doc);
+	if (plan.empty()) {
+		emit message(tr("No texture flow: select faces (or brushes) that touch each other first"));
+		return;
+	}
+	commit(edit::applyTextureFlow(m_doc, plan));
+	if (!plan.plan.corners.empty() && !m_selection.solids.empty()) {
+		Selection selection = m_selection;
+		for (const auto& corner : plan.plan.corners) {
+			for (const auto& piece : corner.pieces) {
+				const SolidRef ref{corner.original.entityId, piece.id};
+				if (std::find(selection.solids.begin(), selection.solids.end(), ref) == selection.solids.end()) selection.solids.push_back(ref);
+			}
+		}
+		setSelection(std::move(selection));
+	}
+	emit message(tr("Texture flow over %n face(s)", nullptr, plan.faceCount()));
+}
+
 EdgeRoundPlan Editor::planSelectedEdgeRound(double radius, int segments, bool allowMerge) const {
 	MapDocument scratch;   // ids for the preview only; applying plans again with the map's own
 	return planEdgeRounds(m_doc, scratch, m_selection.faces, radius, segments, EdgeRoundOptions{allowMerge});

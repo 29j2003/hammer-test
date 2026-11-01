@@ -2045,7 +2045,14 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 	road->setObjectName("faceRoad");
 	road->setToolTip(tr("Lay a road material along the selected faces: along the road, across its width, on through curves and ramps"));
 	connect(road, &QPushButton::clicked, this, &PropertiesPanel::roadRequested);
-	jv->addWidget(road);
+	auto* flow = new QPushButton(tr("Texture flow ..."));
+	flow->setObjectName("faceTextureFlow");
+	flow->setToolTip(tr("Let the texture run on over the selected faces: wrapped over edges, round curves, along strips, or continuing a neighbour"));
+	connect(flow, &QPushButton::clicked, this, &PropertiesPanel::textureFlowRequested);
+	auto* toolRow = new QHBoxLayout;
+	toolRow->addWidget(road);
+	toolRow->addWidget(flow);
+	jv->addLayout(toolRow);
 	layout->addWidget(justifyBox);
 
 	if (faces.size() == 2 && faces[0].solid == faces[1].solid) {

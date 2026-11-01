@@ -83,6 +83,8 @@ signals:
 	void animationPreviewRequested(const QString& model, const QString& sequence);
 	/// "Road ..." under Justify: the road tool over the selected faces.
 	void roadRequested();
+	/// "Texture flow ..." under Justify: the texture flow tool over the selected faces.
+	void textureFlowRequested();
 
 protected:
 	/// Sends wheel turns over unfocused boxes to the scroll area (see rebuild()).

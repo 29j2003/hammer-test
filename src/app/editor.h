@@ -21,6 +21,7 @@
 #include <sme/doors.h>
 #include <sme/edge_round.h>
 #include <sme/road_texture.h>
+#include <sme/texture_flow.h>
 #include <sme/editing.h>
 #include <sme/fidelity_look.h>
 #include <sme/visibility.h>
@@ -271,6 +272,11 @@ public:
 	[[nodiscard]] RoadPlan planSelectedRoad(const RoadOptions& options) const;
 	/// Applies the road (one undo step, "Road"); clears the preview.
 	void applySelectedRoad(const RoadOptions& options);
+	/// Texture flow (see texture_flow.h) over the selected faces (or all faces of the selected
+	/// brushes), not yet applied; the first selected face is the seed.
+	[[nodiscard]] FlowPlan planSelectedTextureFlow(const FlowOptions& options) const;
+	/// Applies the texture flow (one undo step); clears the preview.
+	void applySelectedTextureFlow(const FlowOptions& options);
 	/// Brushes shown as they would become (a live preview); `replaced` are hidden meanwhile.
 	void setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced);
 	void clearBrushPreview() { setBrushPreview({}, {}); }
