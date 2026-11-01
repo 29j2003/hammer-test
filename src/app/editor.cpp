@@ -6,6 +6,7 @@
 
 #include "enhancements.h"
 #include "model_cache.h"
+#include "scene_poser.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -18,6 +19,7 @@
 
 #include <sme/assets.h>
 #include <sme/brush.h>
+#include <sme/editing.h>
 #include <sme/autosave.h>
 #include <sme/csg.h>
 #include <sme/displacement.h>
@@ -45,6 +47,7 @@ QString fromPath(const std::filesystem::path& path) {
 }
 
 Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<ModelCache>()) {
+	m_poser = std::make_unique<ScenePoser>(this);
 	QSettings settings;
 	m_grid = settings.value("editor/grid", 16.0).toDouble();
 	m_textureLock = settings.value("editor/textureLock", true).toBool();
@@ -294,6 +297,25 @@ bool Editor::openMap(const QString& path, QString* error) {
 }
 
 bool Editor::saveMap(const QString& path, QString* error) {
+	// Scene files live in scenes/<map>/: a scene made before the first save (or kept through
+	// Save As) moves to the folder of the name the map is saved under (one undo step).
+	{
+		const std::string base = QFileInfo(path).completeBaseName().toStdString();
+		Change moved;
+		for (const int id : choreoScenes(m_doc)) {
+			const Entity* scene = m_doc.findEntity(id);
+			const std::string wanted = choreoSceneFile(base, scene->get("targetname"));
+			const std::string current = scene->get("SceneFile");
+			if (current != wanted && (current.empty() || current.starts_with("scenes/"))) {
+				auto change = edit::setKeyValue(m_doc, {id}, "SceneFile", wanted);
+				moved.entities.insert(moved.entities.end(), change.entities.begin(), change.entities.end());
+			}
+		}
+		if (!moved.empty()) {
+			moved.name = "Scene file paths";
+			commit(std::move(moved));
+		}
+	}
 	// Hammer counts saves in versioninfo/mapversion and the world's mapversion.
 	int version = 0;
 	for (auto& block : m_doc.headerBlocks) {
@@ -334,6 +356,10 @@ bool Editor::saveMap(const QString& path, QString* error) {
 	m_recovered = false;
 	emit documentChanged();
 	emit message(tr("Saved %1").arg(QFileInfo(path).fileName()));
+	// NPC scenes play from .vcd files in the mod: keep them in step with the saved map.
+	if (QString sceneError; !writeSceneFiles(&sceneError)) {
+		emit message(tr("Could not write the scene file %1").arg(sceneError));
+	}
 	return true;
 }
 
@@ -622,6 +648,7 @@ void Editor::setTool(Tool tool) {
 		return;
 	}
 	if (m_tool != tool) {
+		cancelScenePoint();
 		m_tool = tool;
 		emit toolChanged();
 	}
@@ -1112,6 +1139,86 @@ void Editor::finishConnect(int targetId) {
 	if (source != 0 && targetId != 0 && m_doc.findEntity(targetId)) {
 		emit connectRequested(source, targetId);
 	}
+}
+
+// --- NPC scenes -------------------------------------------------------------
+
+void Editor::setSceneFocus(const SceneFocus& focus) {
+	if (focus.sceneId == m_sceneFocus.sceneId && focus.step == m_sceneFocus.step && focus.stepTime == m_sceneFocus.stepTime &&
+	    focus.playTime == m_sceneFocus.playTime) {
+		return;
+	}
+	m_sceneFocus = focus;
+	emit sceneFocusChanged();
+}
+
+std::vector<int> Editor::visibleScenes() const {
+	std::vector<int> scenes;
+	const auto add = [&](int id) {
+		if (id != 0 && std::find(scenes.begin(), scenes.end(), id) == scenes.end()) scenes.push_back(id);
+	};
+	for (const int id : m_selection.entities) {
+		const Entity* entity = m_doc.findEntity(id);
+		if (!entity) continue;
+		if (isChoreoScene(*entity)) {
+			add(id);
+			continue;
+		}
+		// A point helper or trigger of a scene shows its scene.
+		const std::string tag = entity->get(std::string(CHOREO_SCENE_KEY));
+		if (!tag.empty() && tag != "1") {
+			if (const Entity* scene = findNamedEntity(m_doc, tag); scene && isChoreoScene(*scene)) add(scene->id);
+			continue;
+		}
+		const std::string name = entity->get("targetname");
+		if (!name.empty()) {
+			for (const int scene : choreoScenesOfActor(m_doc, name)) add(scene);
+		}
+	}
+	return scenes;
+}
+
+void Editor::requestScenePoint(const QString& hint, std::function<void(const Vec3&)> done) {
+	m_scenePoint = std::move(done);
+	emit scenePointRequestChanged();
+	if (!hint.isEmpty()) emit message(hint);
+}
+
+void Editor::cancelScenePoint() {
+	if (!m_scenePoint) {
+		return;
+	}
+	m_scenePoint = nullptr;
+	emit scenePointRequestChanged();
+}
+
+void Editor::deliverScenePoint(const Vec3& point) {
+	auto done = std::move(m_scenePoint);
+	m_scenePoint = nullptr;
+	emit scenePointRequestChanged();
+	if (done) done(point);
+}
+
+bool Editor::writeSceneFiles(QString* error) {
+	const GameEntry* game = gameEntry();
+	if (!game || choreoScenes(m_doc).empty()) {
+		return true;
+	}
+	std::string failed;
+	writeChoreoFiles(m_doc, game->gameDir, &failed);
+	if (!failed.empty()) {
+		if (error) *error = QString::fromStdString(failed);
+		return false;
+	}
+	return true;
+}
+
+QString Editor::mapName() const {
+	return m_filePath.isEmpty() ? QStringLiteral("untitled") : QFileInfo(m_filePath).completeBaseName();
+}
+
+QString Editor::entityModel(const Entity& entity) const {
+	return QString::fromStdString(edit::entityModelKey(entity, entities()));
 }
 
 void Editor::showConnection(int entityId, int index) {

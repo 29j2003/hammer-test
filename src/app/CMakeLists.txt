@@ -31,6 +31,8 @@ add_library(smeapp STATIC
 	model_cache.cpp
 	model_thumbnails.cpp
 	model_viewer.cpp
+	scene_poser.cpp
+	choreography_panel.cpp
 	models_page.cpp animations_page.cpp
 	panels.cpp
 	particle_browser.cpp
@@ -58,6 +60,7 @@ add_library(smeapp STATIC
 	viewport_tools.cpp
 	viewport_doors.cpp
 	viewport_ropes.cpp
+	viewport_scenes.cpp
 	editor_helpers.cpp
 	viewport_displace.cpp
 	visgroups_panel.cpp)

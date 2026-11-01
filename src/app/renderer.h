@@ -123,6 +123,10 @@ public:
 	/// A model drawn tinted where it would be placed (entity tool preview, a model dragged in);
 	/// `opacity` below 1 lets the map show through.
 	void drawGhostModel(const Params& params, const QString& path, const QMatrix4x4& transform, float opacity = 1.f);
+	/// The same model in a pose: `vertices` are the model's vertices moved by an animation
+	/// (skinVertices; same count and order as the model's), e.g. an NPC scene's ghost.
+	void drawPosedGhost(const Params& params, const QString& path, const std::vector<ModelVertex>& vertices, const QMatrix4x4& transform,
+	                    float opacity = 1.f);
 	/// Brushes drawn exactly as they would become (scaling, new shapes, clipping); empty clears.
 	void setPreviewSolids(const std::vector<Solid>& solids);
 	void drawPreviewSolids(const Params& params);
@@ -261,6 +265,8 @@ private:
 	/// Uploads m_faceLightmap (one byte per face, same layout as the flags).
 	void uploadLightmapScales();
 	GpuModel* gpuModel(const QString& path);
+	/// Draws a model's meshes from `vao` tinted (drawGhostModel, drawPosedGhost).
+	void drawGhostMeshes(const Params& params, GLuint vao, const std::vector<GpuModel::Mesh>& meshes, const QMatrix4x4& transform, float opacity);
 	// Shadows (renderer_shadows.cpp): a sun map over the whole map and an atlas of 16 tiles for
 	// the nearest spot lights (one tile) and point lights (six tiles, one per cube side).
 	bool initShadows(QString* error);
@@ -326,6 +332,8 @@ private:
 	GLuint m_edgeVao = 0, m_edgeVbo = 0;    // wireframe edges
 	GLuint m_lineVao = 0, m_lineVbo = 0;    // dynamic helper lines
 	GLuint m_previewVao = 0, m_previewVbo = 0;           // live preview brushes
+	GLuint m_posedVao = 0, m_posedVbo = 0;               // drawPosedGhost (index buffer of the model)
+	std::size_t m_posedCapacity = 0;
 	GLuint m_previewEdgeVao = 0, m_previewEdgeVbo = 0;
 	std::vector<Batch> m_previewBatches;
 	GLsizei m_previewEdgeCount = 0;

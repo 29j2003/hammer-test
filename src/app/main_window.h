@@ -54,6 +54,7 @@ class ParticleBrowser;
 class ProblemsPanel;
 class BudgetPanel;
 class PropertiesPanel;
+class ChoreographyPanel;
 class SoundBrowser;
 class ToolPanel;
 class Updater;
@@ -83,6 +84,7 @@ public:
 	[[nodiscard]] ToolPanel* toolPanel() const { return m_toolPanel; }
 	[[nodiscard]] SoundBrowser* sounds() const { return m_sounds; }
 	[[nodiscard]] PropertiesPanel* properties() const { return m_properties; }
+	[[nodiscard]] ChoreographyPanel* choreography() const { return m_choreography; }
 	[[nodiscard]] CompileWindow* compileWindow() const { return m_compileWindow; }
 	[[nodiscard]] MaterialEditor* materialEditor() const { return m_materialEditor; }
 	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
@@ -221,6 +223,7 @@ private:
 
 	AssetBrowser* m_assets = nullptr;
 	PropertiesPanel* m_properties = nullptr;
+	ChoreographyPanel* m_choreography = nullptr;
 	ToolPanel* m_toolPanel = nullptr;
 	SoundBrowser* m_sounds = nullptr;
 	ParticleBrowser* m_particles = nullptr;

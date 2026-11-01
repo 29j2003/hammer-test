@@ -17,6 +17,7 @@
 #include <set>
 #include <unordered_map>
 
+#include <sme/choreography.h>
 #include <sme/clipboard.h>
 #include <sme/doors.h>
 #include <sme/edge_round.h>
@@ -35,6 +36,7 @@ namespace sme::app {
 
 class GameEnhancements;
 class ModelCache;
+class ScenePoser;
 
 /// Settings stored per game/mod (FGDs, compile tools, folders).
 struct GameSettings {
@@ -69,6 +71,8 @@ public:
 	[[nodiscard]] const EntityCatalog* entities() const { return m_game ? &m_game->entities : nullptr; }
 	/// Models of the current game, loaded in the background (shared by all views and previews).
 	[[nodiscard]] ModelCache* models() const { return m_models.get(); }
+	/// NPC poses for scene ghosts (skeletons read in the background, shared by views and panels).
+	[[nodiscard]] ScenePoser* poser() const { return m_poser.get(); }
 
 	// --- Document ------------------------------------------------------------
 	[[nodiscard]] MapDocument& doc() { return m_doc; }
@@ -336,6 +340,35 @@ public:
 	/// Selects the entity and asks Object Properties to show its output number `index`.
 	void showConnection(int entityId, int index);
 
+	// --- NPC scenes (choreography.h; Choreography panel, views) ---------------
+	/// What the views show of a scene: its path while the scene or one of its NPCs is selected;
+	/// `step` (>= 0) gets the ghost NPC at `stepTime` seconds into it; `playTime` (>= 0) plays the
+	/// whole scene at that time instead (Preview scene).
+	struct SceneFocus {
+		int sceneId = 0;
+		int step = -1;
+		double stepTime = 0;
+		double playTime = -1;
+	};
+	void setSceneFocus(const SceneFocus& focus);
+	[[nodiscard]] const SceneFocus& sceneFocus() const { return m_sceneFocus; }
+	/// The scenes the views draw: those of the selected NPCs / scene entities / their helpers
+	/// (nothing while none is selected: the NPC just stands there).
+	[[nodiscard]] std::vector<int> visibleScenes() const;
+	/// The next click in a 3D view puts a point on the surface under the mouse: `done` gets it
+	/// (Esc or another tool cancels). `hint` goes to the status bar.
+	void requestScenePoint(const QString& hint, std::function<void(const Vec3&)> done);
+	void cancelScenePoint();
+	[[nodiscard]] bool scenePointPending() const { return static_cast<bool>(m_scenePoint); }
+	/// A view picked the point (ends the request).
+	void deliverScenePoint(const Vec3& point);
+	/// Writes the .vcd of every scene into the mod (also done on save). False if a file failed.
+	bool writeSceneFiles(QString* error = nullptr);
+	/// The map's name for scene file paths (the file name without .vmf, "untitled" before saving).
+	[[nodiscard]] QString mapName() const;
+	/// Model path an entity is drawn with (its "model" or the FGD's studio model), "" if none.
+	[[nodiscard]] QString entityModel(const Entity& entity) const;
+
 	// --- Cordons (stored in the map, compile only what is inside) -------------
 	[[nodiscard]] CordonSet cordons() const;
 	void setCordons(const CordonSet& cordons);
@@ -374,6 +407,10 @@ signals:
 	void doorTestRequested(int doorId);
 	/// liveBounds() changed (cheap to follow: only labels change, nothing is rebuilt).
 	void liveBoundsChanged();
+	/// setSceneFocus() changed what the views show of a scene (ghost NPC, step, preview time).
+	void sceneFocusChanged();
+	/// A scene point request started or ended (views show a hint and a crosshair).
+	void scenePointRequestChanged();
 
 private:
 	/// lookValue() with the map's own values already read (mapLookValues).
@@ -385,6 +422,7 @@ private:
 	std::unique_ptr<LoadedGame> m_game;
 	std::unique_ptr<ModelCache> m_models;   ///< After m_game: stops reading before the game goes away
 	std::unique_ptr<GameEnhancements> m_enhancements;   ///< After m_game, as m_models
+	std::unique_ptr<ScenePoser> m_poser;                ///< After m_game, as m_models
 	QString m_gameKey;
 	MapDocument m_doc;
 	History m_history;
@@ -394,6 +432,8 @@ private:
 	std::uint64_t m_editCounter = 0;
 	void stampEdits(const Change& change);
 	QString m_filePath;
+	SceneFocus m_sceneFocus;
+	std::function<void(const Vec3&)> m_scenePoint;
 	bool m_recovered = false;   ///< Opened from an autosave and not saved since
 	Selection m_selection;
 	Selection m_hidden;
