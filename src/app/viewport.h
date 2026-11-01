@@ -74,6 +74,20 @@ public:
 	[[nodiscard]] std::optional<Vec3> pasteCenter(const Bounds& box) const;
 	/// The view's renderer (numbers about what it draws, for tests and the status bar).
 	[[nodiscard]] const SceneRenderer& renderer() const { return m_renderer; }
+	// NPC scenes (viewport_scenes.cpp): the path of the selected NPC's scenes with a numbered
+	// marker per step, the ghost NPC at the step/time the Choreography panel shows, and the
+	// click that places a scene point.
+	struct SceneMarker {
+		int sceneId = 0;
+		int step = -1;
+		Vec3 anchor;          ///< Where the step happens
+		QPointF at;           ///< Projected
+		QRectF label;         ///< Its text in the view
+		QString text;
+		QColor color;
+	};
+	/// The step markers drawn now (empty while no NPC scene is selected).
+	[[nodiscard]] std::vector<SceneMarker> sceneMarkers() const;
 	/// Map > Build cubemaps: draws every env_cubemap again now.
 	void buildCubemaps();
 	/// Asks for a frame, at most as often as Editor::maxFps() allows (use instead of update()).
@@ -250,6 +264,14 @@ private:
 	void drawDoorPreview(std::vector<LineVertex>& lines) const;
 	/// Ropes (viewport_ropes.cpp): move_rope chains drawn sagging, rebuilt only after a change.
 	void drawRopes(std::vector<LineVertex>& lines);
+	// NPC scenes (viewport_scenes.cpp): the click that places a scene point, the ghost NPC.
+	void drawSceneLines(std::vector<LineVertex>& lines) const;
+	void drawSceneGhosts(const SceneRenderer::Params& params);
+	void drawSceneLabels(OverlayRecorder& p) const;
+	/// Floor point under the mouse for a scene step (walls drop to the floor below).
+	[[nodiscard]] std::optional<Vec3> scenePointAt(const QPointF& pos) const;
+	/// Left click: delivers a requested scene point or selects a clicked step marker.
+	bool sceneMousePress(QMouseEvent* event);
 	void startDoorTest(int doorId);
 	/// After a frame: keeps the animation going while it runs.
 	void advanceDoorTest();

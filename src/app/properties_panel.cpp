@@ -8,6 +8,7 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "icons.h"
 #include "enhancements.h"
 #include "material_cache.h"
 #include "toggle_switch.h"
@@ -58,6 +59,7 @@
 #include <cstring>
 #include <set>
 
+#include <sme/animation_use.h>
 #include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/doors.h>
@@ -845,8 +847,9 @@ void PropertiesPanel::buildEntity(QVBoxLayout* layout, const std::vector<int>& e
 		layout->addWidget(warn);
 	}
 
-	// NPC helper first: posing NPCs is the common job.
+	// NPC helper first: posing NPCs is the common job; their scenes right with it.
 	if (entityIds.size() == 1 && !world) {
+		buildSceneBox(layout, *first);
 		buildNpcHelper(layout, *first, definition);
 	}
 	if (entityIds.size() == 1 && iequals(classname, "scripted_sequence")) {
@@ -1541,6 +1544,32 @@ void PropertiesPanel::buildRawKeys(QVBoxLayout* layout, const std::vector<int>& 
 	});
 	v->addWidget(remove);
 	buildAddKeyRow(v, entityIds);
+	layout->addWidget(box);
+}
+
+void PropertiesPanel::buildSceneBox(QVBoxLayout* layout, const Entity& entity) {
+	const bool scene = isChoreoScene(entity);
+	if (!scene && !isNpcClass(entity.classname())) {
+		return;
+	}
+	auto* box = new QGroupBox(tr("Scene"));
+	auto* v = new QVBoxLayout(box);
+	QStringList names;
+	if (!scene) {
+		const std::string name = entity.get("targetname");
+		for (const int id : name.empty() ? std::vector<int>{} : choreoScenesOfActor(m_editor->doc(), name)) {
+			names << qs(m_editor->doc().findEntity(id)->get("targetname"));
+		}
+	}
+	v->addWidget(descriptionLabel(scene ? tr("A scene laid out step by step in the Choreography panel.")
+	                                    : (names.isEmpty() ? tr("Let this NPC walk, play animations and say your own lines - laid out visually in the map.")
+	                                                       : tr("In: %1").arg(names.join(QStringLiteral(", "))))));
+	auto* open = new QPushButton(icon("step:move"), tr("Choreography ..."));
+	open->setObjectName("openChoreography");
+	open->setToolTip(tr("Opens the Choreography panel: steps as cards, the path drawn in the map, a ghost of the NPC in each pose"));
+	const int entityId = entity.id;
+	connect(open, &QPushButton::clicked, this, [this, entityId] { emit choreographyRequested(entityId); });
+	v->addWidget(open);
 	layout->addWidget(box);
 }
 

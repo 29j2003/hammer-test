@@ -504,6 +504,63 @@ void drawIcon(QPainter& p, const QString& name) {
 		p.drawLine(QPointF(38, 38), QPointF(54, 54));
 		return;
 	}
+	// NPC scene steps (Choreography panel).
+	if (name == "step:move") {
+		// Footprints along an arrow.
+		p.setPen(pen(QColor(90, 200, 250), 5));
+		p.drawLine(QPointF(10, 46), QPointF(44, 20));
+		arrowHead(p, QPointF(54, 12), -37, 16, QColor(90, 200, 250));
+		p.setBrush(LINE);
+		p.setPen(Qt::NoPen);
+		p.drawEllipse(QPointF(14, 28), 5, 8);
+		p.drawEllipse(QPointF(30, 50), 5, 8);
+		return;
+	}
+	if (name == "step:animation") {
+		// A figure with a raised arm.
+		p.setPen(pen(QColor(250, 170, 70), 5));
+		p.setBrush(Qt::NoBrush);
+		p.drawEllipse(QPointF(32, 13), 7, 7);
+		p.drawLine(QPointF(32, 21), QPointF(32, 40));
+		p.drawLine(QPointF(32, 26), QPointF(48, 10));
+		p.drawLine(QPointF(32, 26), QPointF(18, 36));
+		p.drawLine(QPointF(32, 40), QPointF(22, 56));
+		p.drawLine(QPointF(32, 40), QPointF(42, 56));
+		return;
+	}
+	if (name == "step:say") {
+		// A speech bubble.
+		QPainterPath bubble;
+		bubble.addRoundedRect(QRectF(6, 8, 52, 36), 10, 10);
+		bubble.moveTo(18, 42);
+		bubble.lineTo(14, 58);
+		bubble.lineTo(30, 43);
+		p.setPen(pen(QColor(140, 230, 140), 4));
+		p.setBrush(Qt::NoBrush);
+		p.drawPath(bubble.simplified());
+		p.drawLine(QPointF(16, 22), QPointF(48, 22));
+		p.drawLine(QPointF(16, 31), QPointF(38, 31));
+		return;
+	}
+	if (name == "step:wait") {
+		// A clock.
+		p.setPen(pen(LINE, 4));
+		p.setBrush(Qt::NoBrush);
+		p.drawEllipse(QPointF(32, 32), 24, 24);
+		p.drawLine(QPointF(32, 32), QPointF(32, 16));
+		p.drawLine(QPointF(32, 32), QPointF(44, 38));
+		return;
+	}
+	if (name == "step:face") {
+		// An eye looking along an arrow.
+		p.setPen(pen(LINE, 4));
+		p.setBrush(Qt::NoBrush);
+		p.drawEllipse(QPointF(18, 32), 12, 12);
+		p.setPen(pen(QColor(220, 150, 250), 4));
+		p.drawLine(QPointF(32, 32), QPointF(50, 32));
+		arrowHead(p, QPointF(60, 32), 0, 12, QColor(220, 150, 250));
+		return;
+	}
 	if (name == "eye") {
 		QPainterPath lid;
 		lid.moveTo(6, 32);

@@ -24,6 +24,7 @@ up to share.
 | build rooms, stairs, ramps and details | [Building](manual/building.html) |
 | put textures on walls and edit materials | [Texturing and materials](manual/texturing.html) |
 | place lights, doors, NPCs and logic | [Entities](manual/entities.html) |
+| let NPCs walk, act and say your own lines | [Scenes / Choreography](manual/scenes.html) |
 | add ambient sound and look at particle effects | [Sounds, soundscapes and particles](manual/sounds-particles.html) |
 | play your map | [Compiling and running](manual/compiling.html) |
 | manage a whole mod | [The Project page](manual/project.html) |

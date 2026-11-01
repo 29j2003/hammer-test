@@ -32,6 +32,7 @@
 #include "panels.h"
 #include "particle_browser.h"
 #include "properties_panel.h"
+#include "choreography_panel.h"
 #include "road_dialog.h"
 #include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
@@ -68,7 +69,9 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QCursor>
+#include <QFrame>
 #include <QScreen>
+#include <QScrollArea>
 #include <QToolButton>
 #include <QWidgetAction>
 #include <QMenuBar>
@@ -465,6 +468,9 @@ void MainWindow::createDocks() {
 	tabifyDockWidget(tool, mapLook);
 	tool->raise();
 	auto* properties = placeDock(tr("Object Properties"), Qt::RightDockWidgetArea);
+	// NPC scenes under the properties, shown when "Choreography ..." is pressed.
+	auto* choreography = placeDock(tr("Choreography"), Qt::RightDockWidgetArea);
+	choreography->hide();
 	auto* assets = placeDock(tr("Asset Browser"), Qt::BottomDockWidgetArea);
 	m_assetsDock = assets;
 	m_soundsDock = placeDock(tr("Sounds"), Qt::BottomDockWidgetArea);
@@ -657,6 +663,29 @@ void MainWindow::createDocks() {
 	fill(tr("Map Look"), m_mapLook);
 	fill(tr("VisGroups"), new VisGroupsPanel(m_editor, visgroups));
 	fill(tr("Object Properties"), m_properties);
+	{
+		// Scrolls, so the properties above keep their room on small screens.
+		auto* scroll = new QScrollArea(host(tr("Choreography")));
+		scroll->setObjectName("choreographyScroll");
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		m_choreography = new ChoreographyPanel(m_editor, scroll);
+		scroll->setWidget(m_choreography);
+		fill(tr("Choreography"), scroll);
+	}
+	connect(m_properties, &PropertiesPanel::choreographyRequested, this, [this, choreography, properties](int entityId) {
+		if (currentPage() != Page::Map) showPage(Page::Map);
+		if (!choreography->isVisible() && !choreography->isFloating()) {
+			// Half of the side for the steps, half for the properties.
+			choreography->show();
+			const int height = std::max(400, properties->height());
+			resizeDocks({properties, choreography}, {height * 2 / 5, height * 3 / 5}, Qt::Vertical);
+		}
+		choreography->show();
+		choreography->raise();
+		m_choreography->openFor(entityId);
+	});
+	connect(m_choreography, &ChoreographyPanel::modChanged, this, &MainWindow::reloadGameSoon);
 	fill(tr("Asset Browser"), m_assets);
 	fill(tr("Sounds"), m_sounds);
 	fill(tr("Particles"), m_particles);

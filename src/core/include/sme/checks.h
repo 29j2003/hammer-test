@@ -61,6 +61,7 @@ struct Problem {
 		DetailCandidates,       ///< optimization_checks: world brushes that are only details (fix: tie to func_detail)
 		BrokenBrush,            ///< A brush VBSP may drop or leave a hole for: a tiny edge, paper thin (fix: delete)
 		DuplicateBrush,         ///< Two brushes exactly in one place (faces flicker, clicks pick either; fix: delete one)
+		ScenePlan,              ///< choreography: a scene step without an NPC, sound or way (objects = the scene)
 	};
 
 	Severity severity = Severity::Warning;

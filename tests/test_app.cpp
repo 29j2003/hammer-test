@@ -168,6 +168,10 @@
 #include "updater.h"
 #include "model_cache.h"
 #include "viewport.h"
+#include "choreography_panel.h"
+#include "scene_poser.h"
+#include <sme/choreography.h>
+#include <sme/sound_edit.h>
 
 using namespace sme;
 using namespace sme::app;
@@ -8275,6 +8279,214 @@ TEST_CASE("texture flow: pillar, rounded corner, stairs and a trim - Texture flo
 	for (int i = 0; i < 4; ++i) editor.undo();
 	settle();
 	CHECK(editor.doc().serialize() == before);
+}
+
+TEST_CASE("choreography: an NPC walks, plays an animation and says an imported line - drawn while selected, a ghost per step, undo") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	window.setQuadLayout(false);
+	window.resize(1500, 950);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const QString shots = qEnvironmentVariable("SME_CHOREO_SHOTS");
+	int citizen = 0;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01") citizen = e.id;
+	}
+	REQUIRE(citizen != 0);
+	const Vec3 feet = editor.doc().findEntity(citizen)->origin();
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(float(feet.x) + 60, float(feet.y) - 330, 300);
+	view->camera().yaw = 90;
+	view->camera().pitch = -45;
+	view->update();
+
+	// Select the NPC: its Object Properties have "Choreography ..."; pressing it makes a scene.
+	Selection only;
+	only.entities = {citizen};
+	editor.setSelection(only);
+	settle();
+	auto* open = window.properties()->findChild<QPushButton*>("openChoreography");
+	REQUIRE(open);
+	const std::size_t historyBefore = editor.history().size();
+	open->click();
+	settle();
+	auto* panel = window.choreography();
+	REQUIRE(panel);
+	CHECK(panel->isVisible());
+	REQUIRE(choreoScenes(editor.doc()).size() == 1);
+	const int sceneId = choreoScenes(editor.doc()).front();
+	CHECK(panel->sceneId() == sceneId);
+	CHECK(editor.doc().findEntity(sceneId)->get("targetname") == "citizen_01_scene");
+	CHECK(editor.doc().findEntity(sceneId)->get("SceneFile") == "scenes/demo/citizen_01_scene.vcd");
+	CHECK(editor.history().size() == historyBefore + 1);
+	const auto scene = [&] { return readChoreoScene(editor.doc(), *editor.doc().findEntity(sceneId)); };
+
+	// Add walk: the next click in the 3D view is the point (on the floor, on the grid).
+	panel->findChild<QPushButton*>("choreoAddWalk")->click();
+	CHECK(editor.scenePointPending());
+	const Vec3 target{feet.x + 128, feet.y + 64, 0};
+	QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, target));
+	settle();
+	CHECK_FALSE(editor.scenePointPending());
+	REQUIRE(scene().steps.size() == 1);
+	CHECK(scene().steps[0].kind == ChoreoStep::Kind::Move);
+	CHECK(scene().steps[0].actor == "citizen_01");
+	CHECK(std::abs(scene().steps[0].point.x - target.x) < 9);
+	CHECK(std::abs(scene().steps[0].point.y - target.y) < 9);
+	CHECK(std::abs(scene().steps[0].point.z) < 1);
+	// Its point is an info_target the VCD names.
+	CHECK(findNamedEntity(editor.doc(), "citizen_01_scene_p1") != nullptr);
+
+	// Add an animation: the NPC model's sequences are listed (read in the background).
+	panel->findChild<QPushButton*>("choreoAddAnimation")->click();
+	settle();
+	auto* sequence = panel->findChild<QComboBox*>("choreoSequence");
+	REQUIRE(sequence);
+	for (int i = 0; i < 200 && sequence->count() == 0; ++i) settle();
+	REQUIRE(sequence->count() > 0);
+	int pick = -1;
+	const QString model = editor.entityModel(*editor.doc().findEntity(citizen));
+	const auto* animated = editor.poser()->animated(model);
+	REQUIRE(animated);
+	for (int i = 0; i < sequence->count() && pick < 0; ++i) {
+		const int index = animated->findSequence(sequence->itemText(i).toStdString());
+		if (index >= 0 && animated->sequences()[std::size_t(index)].frames > 2 && !animated->sequences()[std::size_t(index)].layer) pick = i;
+	}
+	REQUIRE(pick >= 0);
+	const QString chosen = sequence->itemText(pick);
+	sequence->setCurrentIndex(pick);
+	emit sequence->textActivated(chosen);
+	settle();
+	REQUIRE(scene().steps.size() == 2);
+	CHECK(scene().steps[1].kind == ChoreoStep::Kind::Animation);
+	CHECK(QString::fromStdString(scene().steps[1].sequence) == chosen);
+	CHECK(scene().steps[1].seconds > 0);
+	CHECK(panel->currentStep() == 1);
+
+	// The ghost NPC at that step: posed by the animation, different along the scrub bar.
+	CHECK(editor.sceneFocus().sceneId == sceneId);
+	CHECK(editor.sceneFocus().step == 1);
+	std::vector<ModelVertex> early, late;
+	REQUIRE(editor.poser()->pose(model, chosen, 0, early));
+	REQUIRE(editor.poser()->pose(model, chosen, scene().steps[1].seconds * 0.5, late));
+	REQUIRE(early.size() == late.size());
+	bool moved = false;
+	for (std::size_t i = 0; i < early.size() && !moved; ++i) {
+		moved = std::abs(early[i].position[0] - late[i].position[0]) + std::abs(early[i].position[2] - late[i].position[2]) > 0.01f;
+	}
+	CHECK(moved);
+	auto* scrub = panel->findChild<QSlider*>("choreoScrub");
+	scrub->setValue(500);
+	settle();
+	CHECK(editor.sceneFocus().stepTime > 0);
+	if (!shots.isEmpty()) {
+		QDir().mkpath(shots);
+		view->grabFramebuffer().save(shots + "/choreo_ghost.png");
+	}
+
+	// A line with the mapper's own recording: imported on the voice channel with a caption.
+	DecodedAudio voice;
+	voice.sampleRate = 22050;
+	voice.channels = 1;
+	for (int i = 0; i < 22050 * 3 / 2; ++i) voice.samples.push_back(std::int16_t(8000 * std::sin(i * 0.05) * std::sin(i * 0.0005)));
+	const QString wav = home.filePath("my line.wav");
+	{
+		const auto bytes = encodeWav(voice);
+		QFile file(wav);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(reinterpret_cast<const char*>(bytes.data()), qint64(bytes.size()));
+	}
+	REQUIRE(panel->importVoiceLine(wav, "We have to get out of here."));
+	settle();
+	REQUIRE(scene().steps.size() == 3);
+	const auto line = scene().steps[2];
+	CHECK(line.kind == ChoreoStep::Kind::Say);
+	CHECK(line.sound == "citizen_01_scene.line1");
+	CHECK(line.caption == "We have to get out of here.");
+	CHECK(std::abs(line.seconds - 1.5) < 0.05);
+	CHECK(std::filesystem::exists(f.mod / "sound/mymod/vo/citizen_01_scene/line1.wav"));
+	const auto readAll = [](const std::filesystem::path& path) {
+		QFile file(fromPath(path));
+		return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+	};
+	const QString script = readAll(f.mod / "scripts/game_sounds_mapsmith.txt");
+	CHECK(script.contains("citizen_01_scene.line1"));
+	CHECK(script.contains("CHAN_VOICE"));
+	{
+		// Captions are UTF-16 like the game's own files.
+		QFile file(fromPath(f.mod / "resource/closecaption_english.txt"));
+		REQUIRE(file.open(QIODevice::ReadOnly));
+		const QByteArray bytes = file.readAll();
+		const QString text = QString::fromUtf16(reinterpret_cast<const char16_t*>(bytes.constData()), bytes.size() / 2);
+		CHECK(text.contains("citizen_01_scene.line1"));
+		CHECK(text.contains("We have to get out of here."));
+	}
+	CHECK(std::filesystem::exists(f.mod / "resource/closecaption_english.dat"));
+	// The .vcd is in the mod right away: walk, animation, line in order.
+	const QString vcd = readAll(f.mod / "scenes/demo/citizen_01_scene.vcd");
+	const auto events = parseVcd(vcd.toStdString());
+	std::vector<std::string> types;
+	for (const auto& event : events) {
+		if (!event.actor.empty()) types.push_back(event.type);
+	}
+	CHECK(types == std::vector<std::string>{"moveto", "sequence", "speak"});
+	// Shown in the map: a marker per step while the NPC is selected.
+	view->update();
+	settle();
+	CHECK(view->sceneMarkers().size() == 3);
+	if (!shots.isEmpty()) {
+		view->grabFramebuffer().save(shots + "/choreo_path.png");
+		window.grab().save(shots + "/choreo_window.png");
+		panel->grab().save(shots + "/choreo_panel.png");
+	}
+
+	// Undo takes the line back, redo brings it again.
+	editor.undo();
+	settle();
+	CHECK(scene().steps.size() == 2);
+	editor.redo();
+	settle();
+	CHECK(scene().steps.size() == 3);
+
+	// Clicking the walk's marker shows that step and selects its point (to move it with the gizmo).
+	view->update();
+	settle();
+	const auto markers = view->sceneMarkers();
+	REQUIRE(markers.size() == 3);
+	QTest::mouseClick(view, Qt::LeftButton, {}, markers[0].at.toPoint());
+	settle();
+	CHECK(panel->currentStep() == 0);
+	REQUIRE(editor.selection().entities.size() == 1);
+	CHECK(editor.doc().findEntity(editor.selection().entities.front())->get("targetname") == "citizen_01_scene_p1");
+	CHECK(view->sceneMarkers().size() == 3);   // the helper shows its scene
+
+	// Not selected: the NPC just stands there - no path, no markers, no ghost.
+	editor.setSelection({});
+	view->update();
+	settle();
+	CHECK(editor.visibleScenes().empty());
+	CHECK(view->sceneMarkers().empty());
+	if (!shots.isEmpty()) view->grabFramebuffer().save(shots + "/choreo_unselected.png");
+	// Saving the map writes the scene file again.
+	std::filesystem::remove(f.mod / "scenes/demo/citizen_01_scene.vcd");
+	REQUIRE(editor.saveMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	CHECK(std::filesystem::exists(f.mod / "scenes/demo/citizen_01_scene.vcd"));
 }
 
 namespace {

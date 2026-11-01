@@ -4,6 +4,7 @@
 
 #include <sme/assets.h>
 #include <sme/brush.h>
+#include <sme/choreography.h>
 #include <sme/doors.h>
 #include <sme/edge_round.h>
 #include <sme/filesystem.h>
@@ -541,6 +542,28 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 	// Where things are: player start in a brush, entities in the void, lightmap scales, NPC nodes.
 	for (auto& p : checkLayout(doc, context)) problems.push_back(std::move(p));
 	for (auto& p : checkOptimization(doc, context)) problems.push_back(std::move(p));
+	// NPC scenes (choreography): steps without an NPC or a sound, NPCs without a way.
+	for (const int sceneId : choreoScenes(doc)) {
+		const Entity* sceneEntity = doc.findEntity(sceneId);
+		const ChoreoScene scene = readChoreoScene(doc, *sceneEntity);
+		std::function<bool(std::string_view)> soundKnown;
+		if (context.files) {
+			soundKnown = [&cache, &context](std::string_view sound) {
+				if (!cache.soundScripts) cache.soundScripts = soundScripts(*context.files);
+				return std::any_of(cache.soundScripts->begin(), cache.soundScripts->end(), [sound](const SoundScriptEntry& e) { return iequals(e.name, sound); });
+			};
+		}
+		for (const auto& issue : checkChoreoScene(doc, scene, soundKnown)) {
+			Problem p;
+			p.kind = Problem::Kind::ScenePlan;
+			p.severity = Problem::Severity::Warning;
+			p.entityId = sceneId;
+			p.objects.entities.push_back(sceneId);
+			p.message = "Scene \"" + scene.name + "\": " + issue.message + ".";
+			p.howToFix = "Select the NPC and open Choreography... to fix the step.";
+			problems.push_back(std::move(p));
+		}
+	}
 	return problems;
 }
 

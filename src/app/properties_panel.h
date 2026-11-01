@@ -85,6 +85,8 @@ signals:
 	void roadRequested();
 	/// "Texture flow ..." under Justify: the texture flow tool over the selected faces.
 	void textureFlowRequested();
+	/// "Choreography ..." on an NPC or a scene: open the Choreography panel for that entity.
+	void choreographyRequested(int entityId);
 
 protected:
 	/// Sends wheel turns over unfocused boxes to the scroll area (see rebuild()).
@@ -117,6 +119,8 @@ private:
 	/// Shows `html` (from helpText()) in the help area, the description shortened unless "More…" is on.
 	void setHelp(const QString& html);
 	void buildNpcHelper(QVBoxLayout* layout, const Entity& entity, const EntityClass* definition);
+	/// NPCs and NPC scenes: their scenes and "Choreography ..." (choreography_panel.h).
+	void buildSceneBox(QVBoxLayout* layout, const Entity& entity);
 	void buildFaces(QVBoxLayout* layout);
 	/// env_cubemap: its room box for parallax-corrected reflections (Mapbase).
 	void buildCubemapBox(QVBoxLayout* layout, const Entity& cubemap);

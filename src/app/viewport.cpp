@@ -2,6 +2,8 @@
 
 #include "viewport.h"
 
+#include "scene_poser.h"
+
 #include "startup_trace.h"
 
 #include <utility>
@@ -172,6 +174,9 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	});
 	connect(editor, &Editor::settingsChanged, this, &Viewport::requestFrame);
 	connect(editor, &Editor::connectModeChanged, this, &Viewport::requestFrame);
+	connect(editor, &Editor::sceneFocusChanged, this, &Viewport::requestFrame);
+	connect(editor, &Editor::scenePointRequestChanged, this, &Viewport::requestFrame);
+	connect(editor->poser(), &ScenePoser::ready, this, &Viewport::requestFrame);
 	connect(editor, &Editor::doorTestRequested, this, &Viewport::startDoorTest);
 	connect(editor, &Editor::toolChanged, this, &Viewport::resetToolState);
 	connect(editor, &Editor::selectionChanged, this, [this] {
@@ -585,6 +590,7 @@ void Viewport::paintGL() {
 		}
 		boxLines(lines, m_ghost->box, {0.3f, 1.0f, 0.5f, 0.9f});
 	}
+	drawSceneGhosts(params);
 	if (m_drag == Drag::BlockBase || m_drag == Drag::BlockHeight) {
 		boxLines(lines, m_blockBox, {1.0f, 0.75f, 0.2f, 0.5f});
 		m_renderer.drawPreviewSolids(params);
@@ -608,6 +614,7 @@ void Viewport::paintGL() {
 	drawConnections(lines);
 	drawConnectLine(lines);
 	drawDoorPreview(lines);
+	drawSceneLines(lines);
 	drawGizmo(lines);
 	drawSnapHit(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
@@ -1108,6 +1115,8 @@ void Viewport::drawOverlay() {
 		}
 	}
 
+	drawSceneLabels(p);
+
 	const bool changed = p.items != m_overlayItems || m_overlayImage.size() != size() * devicePixelRatio();
 	if (changed) {
 		m_overlayItems = std::move(p.items);
@@ -1411,6 +1420,9 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 		return;
 	}
 
+	if (m_editor->scenePointPending() && sceneMousePress(event)) {
+		return;
+	}
 	if (m_editor->connectSource() != 0) {
 		// Connect mode: the clicked entity is the target.
 		const auto hit = m_renderer.pick(rayAt(event->position()));
@@ -1454,6 +1466,10 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 	const Handle handle = hitHandle(event->position());
 	if (handle != Handle::None) {
 		beginGizmoDrag(handle, event->position());
+		return;
+	}
+	// A click on a step marker of a selected NPC's scene shows that step.
+	if (sceneMousePress(event)) {
 		return;
 	}
 	// A click on a connection line shows that output in Object Properties.
@@ -2606,6 +2622,10 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
 	}
 	if (event->key() == Qt::Key_Escape && m_editor->connectSource() != 0) {
 		m_editor->cancelConnect();
+		return;
+	}
+	if (event->key() == Qt::Key_Escape && m_editor->scenePointPending()) {
+		m_editor->cancelScenePoint();
 		return;
 	}
 	if (toolKey(event)) {

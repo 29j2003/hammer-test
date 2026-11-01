@@ -879,6 +879,12 @@ void SceneRenderer::release() {
 	glDeleteBuffers(1, &m_previewVbo);
 	glDeleteBuffers(1, &m_previewEdgeVbo);
 	glDeleteVertexArrays(1, &m_previewVao);
+	if (m_posedVao) {
+		glDeleteBuffers(1, &m_posedVbo);
+		glDeleteVertexArrays(1, &m_posedVao);
+		m_posedVao = m_posedVbo = 0;
+		m_posedCapacity = 0;
+	}
 	glDeleteVertexArrays(1, &m_previewEdgeVao);
 	glDeleteVertexArrays(1, &m_vao);
 	glDeleteVertexArrays(1, &m_edgeVao);
@@ -1907,6 +1913,53 @@ void SceneRenderer::drawGhostModel(const Params& params, const QString& path, co
 	if (!model) {
 		return;
 	}
+	drawGhostMeshes(params, model->vao, model->meshes, transform, opacity);
+}
+
+void SceneRenderer::drawPosedGhost(const Params& params, const QString& path, const std::vector<ModelVertex>& vertices, const QMatrix4x4& transform,
+                                   float opacity) {
+	if (!m_initialized) {
+		return;
+	}
+	auto* model = gpuModel(path);
+	const auto geometry = m_models ? m_models->get(path) : nullptr;
+	if (!model || !geometry || vertices.size() != geometry->vertices.size() || vertices.empty()) {
+		return;
+	}
+	std::vector<float> data;
+	data.reserve(vertices.size() * FLOATS_PER_VERTEX);
+	for (const auto& v : vertices) {
+		data.insert(data.end(), {v.position[0], v.position[1], v.position[2], v.normal[0], v.normal[1], v.normal[2], v.uv[0], v.uv[1], 0.f, 0.f});
+	}
+	if (!m_posedVao) {
+		glGenVertexArrays(1, &m_posedVao);
+		glGenBuffers(1, &m_posedVbo);
+	}
+	glBindVertexArray(m_posedVao);
+	glBindBuffer(GL_ARRAY_BUFFER, m_posedVbo);
+	const auto bytes = data.size() * sizeof(float);
+	if (bytes > m_posedCapacity) {
+		glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(bytes), data.data(), GL_DYNAMIC_DRAW);
+		m_posedCapacity = bytes;
+	} else {
+		glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes), data.data());
+	}
+	// The triangles are the model's own (its index buffer): only the positions move.
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, model->ibo);
+	const GLsizei stride = FLOATS_PER_VERTEX * sizeof(float);
+	for (GLuint i = 0; i < 4; ++i) {
+		glEnableVertexAttribArray(i);
+	}
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(3 * sizeof(float)));
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(6 * sizeof(float)));
+	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(9 * sizeof(float)));
+	glBindVertexArray(0);
+	drawGhostMeshes(params, m_posedVao, model->meshes, transform, opacity);
+}
+
+void SceneRenderer::drawGhostMeshes(const Params& params, GLuint vao, const std::vector<GpuModel::Mesh>& meshes, const QMatrix4x4& transform,
+                                    float opacity) {
 	const bool flat = params.mode == Mode::Wireframe || params.mode == Mode::Flat2D;
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
@@ -1931,8 +1984,8 @@ void SceneRenderer::drawGhostModel(const Params& params, const QString& path, co
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	}
-	glBindVertexArray(model->vao);
-	for (const auto& mesh : model->meshes) {
+	glBindVertexArray(vao);
+	for (const auto& mesh : meshes) {
 		auto& tex = texture(mesh.material);
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, tex.id ? tex.id : m_whiteTexture);
