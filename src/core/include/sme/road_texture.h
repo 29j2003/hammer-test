@@ -7,8 +7,12 @@
 // more of the texture's edge) and the shift along the road carried on across every common
 // edge, so the lane line runs on without jumps. Pieces of a curve (round-edge strips, arch
 // strips) get their axis along the curve. Slopes are measured along the slope.
-// Square corner pieces never run diagonally: a corner continues the longer road, the other
-// road starts at its edge. At a junction (a piece with three or more neighbours) the main
+// Square corner pieces never run diagonally. With "Curve corners" (on by default) a corner
+// piece between two roads is cut into a few convex pieces that let the lane follow a circular
+// arc - tangent to both roads' centre lines, centred where the turn's inner side is - and the
+// road runs on through the curve into the other road (one road, one mapping, the shift carried
+// on along the curve). Where no clean cut exists the corner stays one piece: it continues the
+// longer road and the other road starts at its edge. At a junction (a piece with three or more neighbours) the main
 // road - the straightest pair of opposite neighbours, the widest of them - runs straight
 // through, every branch starts at the junction's edge. Tops beside the road at another height
 // (kerbs, sidewalks) are left out, small pieces at road height that hang on one road piece
@@ -42,6 +46,7 @@ struct RoadOptions {
 	int repeatsAcross = 1;      ///< How often the texture repeats across the road's width
 	std::string sideMaterial;   ///< Optional kerb material: the brushes' sides and the kerb tops beside the road; empty = leave them
 	double roadWidth = 0;       ///< The road's width in units (the texture spans it); 0 = Auto (the typical piece width)
+	bool curveCorners = true;   ///< Cut square corner pieces into a curve the lane follows
 };
 
 /// What the road tool would do (planRoad): new texture values per face.
@@ -52,6 +57,14 @@ struct RoadPlan {
 		int chain = 0;          ///< Which chain it belongs to (0 based)
 	};
 	std::vector<FaceChange> faces;
+	/// A square corner cut into curve pieces: the brush and what replaces it (the first piece keeps
+	/// the brush's id; the road's top already carries its mapping, the cuts between the pieces are
+	/// nodraw).
+	struct CornerSplit {
+		SolidRef original;
+		std::vector<Solid> pieces;
+	};
+	std::vector<CornerSplit> corners;
 	std::vector<FaceRef> sideFaces;   ///< Brush sides that get RoadOptions::sideMaterial
 	std::string material;             ///< The road material used
 	std::string sideMaterial;
@@ -61,8 +74,15 @@ struct RoadPlan {
 	int edgePieces = 0;               ///< Small pieces at road height that took their neighbour's mapping
 	std::vector<double> widths;       ///< The width (units) each chain's texture spans
 	bool alongV = true;               ///< The texture's V axis runs along the road
+	int squareCorners = 0;            ///< Corners that should curve but stay one piece (no clean cut)
 
-	[[nodiscard]] bool empty() const { return faces.empty(); }
+	/// Faces the road gets: planned faces plus the road tops of the curve pieces.
+	[[nodiscard]] int faceCount() const {
+		int count = static_cast<int>(faces.size());
+		for (const auto& corner : corners) count += static_cast<int>(corner.pieces.size());
+		return count;
+	}
+	[[nodiscard]] bool empty() const { return faces.empty() && corners.empty(); }
 };
 
 /// Texture size (width, height in texels) of a material.
@@ -78,11 +98,13 @@ using TextureSizeFn = std::function<std::pair<int, int>(const std::string& mater
 
 /// Plans the road over `faces` (see the file comment). Faces that do not face up are counted
 /// in `ignored`, kerb tops in `kerbs`. The result does not depend on the order of `faces`.
+/// Curve pieces take new ids from `ids` (the map itself when the plan is applied; any other
+/// document for a preview - nullptr: a scratch document).
 [[nodiscard]] RoadPlan planRoad(const MapDocument& doc, const std::vector<FaceRef>& faces, const RoadOptions& options,
-                                const TextureSizeFn& textureSize);
+                                const TextureSizeFn& textureSize, MapDocument* ids = nullptr);
 
-/// Copies of the brushes the plan changes, already changed (for a live preview); `replaced`
-/// gets the brushes they stand in for.
+/// Copies of the brushes the plan changes, already changed, and the curve pieces (for a live
+/// preview); `replaced` gets the brushes they stand in for.
 [[nodiscard]] std::vector<Solid> roadPreview(const MapDocument& doc, const RoadPlan& plan, std::vector<SolidRef>* replaced);
 
 namespace edit {

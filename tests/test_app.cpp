@@ -7676,12 +7676,51 @@ TEST_CASE("road: a T junction, a corner and a road of two widths - one scale per
 	}
 
 	shoot("road2_corner_before.png", QVector3D(512, 1400, 0));
-	road(corner, {"3 faces", "2 roads"});
+	// Julius (01.11.2026, 58/59): the lane must curve round the corner - the corner brush is cut
+	// into curve pieces, one road runs round it.
+	const std::size_t brushesBefore = editor.doc().world.solids.size();
+	road(corner, {"1 road", "corner cut into"});
 	shoot("road2_corner_after.png", QVector3D(512, 1400, 0));
-	// No diagonal: every top runs along x or y.
-	for (const auto& ref : corner) {
-		const Vec3 v = top(ref).v.axis;
-		CHECK((std::abs(std::abs(v.x) - 1) < 1e-9 || std::abs(std::abs(v.y) - 1) < 1e-9));
+	const std::size_t curvePieces = editor.doc().world.solids.size() - brushesBefore + 1;
+	CHECK(curvePieces >= 4);
+	// Seamless from the first road into the curve: the corner's first piece keeps its id and
+	// starts at the common edge (x = 512), the lane (texture's middle) at the road's middle.
+	CHECK(same(textureCoordinate(top(corner[0]), {512, 1152, 16}).v, textureCoordinate(top(corner[1]), {512, 1152, 16}).v, 512));
+	CHECK(same(textureCoordinate(top(corner[1]), {512, 1152, 16}).u, 128, 256));
+	// The second road runs on from the curve along y, its lane in its middle.
+	CHECK(std::abs(std::abs(top(corner[2]).v.axis.y) - 1) < 1e-9);
+	CHECK(same(textureCoordinate(top(corner[2]), {640, 1600, 16}).u, 128, 256));
+	// "Curve corners" off: undone and laid again, the corner stays one piece, two roads, no diagonal.
+	editor.undo();
+	settle();
+	CHECK(editor.doc().world.solids.size() == brushesBefore);
+	{
+		Selection selection;
+		selection.solids = corner;
+		editor.setSelection(selection);
+		window.findChild<QAction*>("brushesRoad")->trigger();
+		settle();
+		auto* dialog = window.findChild<RoadDialog*>("roadDialog");
+		REQUIRE(dialog);
+		dialog->findChild<QLineEdit*>("roadMaterial")->setText("ROAD/DEMO_ROAD");
+		auto* curve = dialog->findChild<QCheckBox*>("roadCurveCorners");
+		REQUIRE(curve);
+		CHECK(curve->isChecked());
+		curve->setChecked(false);
+		QTest::qWait(150);
+		settle();
+		INFO("note: " << dialog->note().toStdString());
+		CHECK(dialog->note().contains("3 faces"));
+		CHECK(dialog->note().contains("2 roads"));
+		dialog->accept();
+		settle();
+		editor.setSelection({});
+		CHECK(editor.doc().world.solids.size() == brushesBefore);
+		for (const auto& ref : corner) {
+			const Vec3 v = top(ref).v.axis;
+			CHECK((std::abs(std::abs(v.x) - 1) < 1e-9 || std::abs(std::abs(v.y) - 1) < 1e-9));
+		}
+		QSettings().setValue("road/curveCorners", true);
 	}
 
 	shoot("road2_junction_before.png", QVector3D(2176, 256, 0));

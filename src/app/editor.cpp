@@ -1265,13 +1265,29 @@ RoadPlan Editor::planSelectedRoad(const RoadOptions& options) const {
 
 void Editor::applySelectedRoad(const RoadOptions& options) {
 	clearBrushPreview();
-	const auto plan = planSelectedRoad(options);
+	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
+	const auto size = [files](const std::string& material) {
+		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
+	};
+	// Planned again with the map's own ids: curve pieces become real brushes.
+	const auto plan = planRoad(m_doc, roadFaces(m_doc, m_selection), options, size, &m_doc);
 	if (plan.empty()) {
 		emit message(tr("No road: select the road's brushes (or their top faces) first"));
 		return;
 	}
 	commit(edit::applyRoad(m_doc, plan));
-	emit message(tr("Road laid over %n face(s)", nullptr, int(plan.faces.size())));
+	if (!plan.corners.empty() && !m_selection.solids.empty()) {
+		// The curve pieces stand where the corner brush was: selected like it.
+		Selection selection = m_selection;
+		for (const auto& corner : plan.corners) {
+			for (const auto& piece : corner.pieces) {
+				const SolidRef ref{corner.original.entityId, piece.id};
+				if (std::find(selection.solids.begin(), selection.solids.end(), ref) == selection.solids.end()) selection.solids.push_back(ref);
+			}
+		}
+		setSelection(std::move(selection));
+	}
+	emit message(tr("Road laid over %n face(s)", nullptr, plan.faceCount()));
 }
 
 EdgeRoundPlan Editor::planSelectedEdgeRound(double radius, int segments, bool allowMerge) const {

@@ -264,8 +264,12 @@ road to selection ...** on a material in the Asset Browser). Pick the road mater
   **road's width** (or *Fit width* times) and carries on from piece to piece, so the lane line has
   no jumps. **Road width**: *Auto* takes the typical width of the road's pieces; a wider piece just
   shows more of the texture's edge. Type a width in units to set it yourself.
-- **Corners** of square pieces never run diagonally: the corner continues the longer road, and the
-  other road starts at the corner's edge.
+- **Corners**: with **Curve corners** (on by default) a corner piece between two roads (a turn of
+  35° to 150°) is cut into a few pieces (4 to 8 and a small block at the turn's inside), and the
+  lane runs **round the corner** on a circle into the other road - one road, no jump. The corner's
+  first piece keeps the brush, the cuts between the pieces are nodraw. Where no clean cut exists
+  (the note says so), or with *Curve corners* off, the corner stays one piece: it continues the
+  longer road, the other road starts at the corner's edge - never diagonally.
 - **Junctions** (a piece with three or more roads on it): the main road (the straight one, the
   widest) runs straight through; every branch starts at the junction's edge.
 - **Curves** made with *Round or bevel edge* or arch strips: every strip turns with the curve and

@@ -1,11 +1,13 @@
 // test_road_texture.cpp - Road tool: chains of floor faces, the texture along the road and
 // fitted across it, continuous over straight pieces, curves (round-edge strips), S-bends and ramps;
-// one scale per road (pieces of other widths), square corners, junctions, kerbs and edge pieces.
+// one scale per road (pieces of other widths), square corners (cut into a curve the lane follows,
+// or kept square), junctions, kerbs and edge pieces.
 
 #include <doctest/doctest.h>
 
 #include <sme/brush.h>
 #include <sme/csg.h>
+#include <sme/edge_round.h>
 #include <sme/editing.h>
 #include <sme/history.h>
 #include <sme/road_texture.h>
@@ -361,13 +363,16 @@ TEST_CASE("road: pieces of different widths share one scale; the lane runs strai
 	CHECK(std::abs(1.0 / planned(plan2, a)->side.u.scale - 512.0 / 320.0) < 1e-9);
 }
 
-TEST_CASE("road: an L of straight pieces with a square corner - never diagonal; the other road starts at the corner (Julius' 54)") {
+TEST_CASE("road: an L of straight pieces with a square corner, curves off - never diagonal; the other road starts at the corner (Julius' 54)") {
 	MapDocument doc;
 	const auto a = addBox(doc, 0, 0, 512, 256);           // along x, 512 long
 	const auto corner = addBox(doc, 512, 0, 768, 256);    // the square corner
 	const auto b = addBox(doc, 512, 256, 768, 1024);      // along y, 768 long (the longer road)
-	const auto plan = planRoad(doc, tops(doc, {a, corner, b}), RoadOptions{"ROAD/DIRT01"}, size(512, 512));
+	RoadOptions options{"ROAD/DIRT01"};
+	options.curveCorners = false;   // "Curve corners" off: the corner stays one piece
+	const auto plan = planRoad(doc, tops(doc, {a, corner, b}), options, size(512, 512));
 	REQUIRE(plan.faces.size() == 3);
+	CHECK(plan.corners.empty());
 	CHECK(plan.chains == 2);
 	// Nothing runs diagonally: the corner continues the longer road (along y).
 	CHECK(runsAlong(plan, corner, {0, 1, 0}));
@@ -481,4 +486,208 @@ TEST_CASE("road: a crossing - the wider road runs through, both halves of the ot
 	CHECK(planned(plan, south)->side.v.axis.y < 0);
 	CHECK(sameTexel(at(plan, north, {640, 320, 16}).v, 0, 512));
 	CHECK(sameTexel(at(plan, south, {640, 0, 16}).v, 0, 512));
+}
+
+namespace {
+
+/// The planned road top of a curve piece (the side facing up).
+const Side* curveTop(const Solid& piece) {
+	for (const auto& side : piece.sides) {
+		if (side.plane().normal.z > 0.99) return &side;
+	}
+	return nullptr;
+}
+
+/// The texture coordinate on whichever planned face (straight piece or curve piece) holds `p`.
+std::optional<TexCoord> roadAt(const RoadPlan& plan, const MapDocument& doc, const Vec3& p) {
+	for (const auto& corner : plan.corners) {
+		for (const auto& piece : corner.pieces) {
+			if (solidContains(piece, p - Vec3{0, 0, 0.25}, 0.01)) return textureCoordinate(*curveTop(piece), p);
+		}
+	}
+	for (const auto& change : plan.faces) {
+		const Solid* solid = doc.findSolid(change.face.solid);
+		if (solid && solidContains(*solid, p - Vec3{0, 0, 0.25}, 0.01)) return textureCoordinate(change.side, p);
+	}
+	return std::nullopt;
+}
+
+/// Checks a curve corner: clean pieces filling the corner exactly, touching but not overlapping
+/// the roads beside it, the lane's centre texel the same on both sides of every seam along the
+/// arc (centre `centre`, radius `radius`, from angle `a0` turning by `turn` degrees, signed) and
+/// following the arc in between (within the chords' error).
+void checkCurve(const MapDocument& doc, const RoadPlan& plan, const SolidRef& corner, const std::vector<SolidRef>& beside, Vec3 centre,
+                double radius, double a0, double turn, double texels, double texSize) {
+	REQUIRE(plan.corners.size() == 1);
+	const auto& split = plan.corners.front();
+	CHECK(split.original == corner);
+	REQUIRE(split.pieces.size() >= 3);
+	CHECK(split.pieces.front().id == corner.solidId);   // the first keeps the brush's id
+	double volume = 0;
+	for (std::size_t i = 0; i < split.pieces.size(); ++i) {
+		CHECK(brushProblem(split.pieces[i]).empty());
+		REQUIRE(curveTop(split.pieces[i]));
+		CHECK(curveTop(split.pieces[i])->material == "ROAD/DIRT01");
+		volume += solidVolume(split.pieces[i]);
+		// Touching, not overlapping: a fraction of a cubic unit (of a corner of 300 000 and more) is
+		// the plane points written with two decimals - as the corner brush already has them.
+		for (std::size_t j = i + 1; j < split.pieces.size(); ++j) CHECK(sharedVolume(split.pieces[i], split.pieces[j]) < 0.5);
+		for (const auto& ref : beside) CHECK(sharedVolume(split.pieces[i], *doc.findSolid(ref)) < sharedVolume(*doc.findSolid(corner), *doc.findSolid(ref)) + 0.5);
+	}
+	CHECK(std::abs(volume - solidVolume(*doc.findSolid(corner))) < solidVolume(*doc.findSolid(corner)) * 1e-5);
+	// Along the arc: every 1/40 of the turn the lane's centre (u at the texture's middle across;
+	// V runs along) - continuous where pieces meet, on the circle within the chord error.
+	const double rad = std::numbers::pi / 180.0;
+	const auto arcPoint = [&](double degrees) {
+		return Vec3{centre.x + radius * std::cos(degrees * rad), centre.y + radius * std::sin(degrees * rad), 16};
+	};
+	int pieces = 0;
+	for (const auto& piece : split.pieces) pieces += curveTop(piece) ? 1 : 0;
+	const double chordError = radius * (1 - std::cos(turn * rad / 8)) * texels + 0.5;   // 4 or more segments
+	for (int i = 1; i < 40; ++i) {
+		const auto tc = roadAt(plan, doc, arcPoint(a0 + turn * i / 40));
+		REQUIRE(tc);
+		CHECK(sameTexel(tc->u, texSize * 0.5, texSize, chordError));
+	}
+	// At each seam between two curve pieces the same texel from both.
+	for (const auto& a : split.pieces) {
+		for (const auto& b : split.pieces) {
+			if (a.id >= b.id) continue;
+			for (int i = 0; i <= 400; ++i) {
+				const Vec3 p = arcPoint(a0 + turn * i / 400);
+				if (!solidContains(a, p - Vec3{0, 0, 0.25}, 0.01) || !solidContains(b, p - Vec3{0, 0, 0.25}, 0.01)) continue;
+				const auto ta = textureCoordinate(*curveTop(a), p), tb = textureCoordinate(*curveTop(b), p);
+				CHECK(sameTexel(ta.u, tb.u, texSize));
+				CHECK(sameTexel(ta.v, tb.v, texSize));
+			}
+		}
+	}
+}
+
+} // namespace
+
+TEST_CASE("road: an L with a square corner curves - the corner is cut into pieces the lane runs round on (Julius' 58/59)") {
+	MapDocument doc;
+	const auto a = addBox(doc, 0, 0, 512, 256);           // along +x
+	const auto corner = addBox(doc, 512, 0, 768, 256);    // the square corner
+	const auto b = addBox(doc, 512, 256, 768, 1024);      // along +y
+	// The kerbs at the turn's inside, higher than the road, their corner rounded.
+	const auto kerbA = addBox(doc, 0, 256, 448, 320, 24);
+	const auto kerbB = addBox(doc, 448, 320, 512, 1024, 24);
+	std::vector<SolidRef> kerbCorner;
+	for (int k = 0; k < 4; ++k) {
+		const double s = (-90.0 + 90.0 * k / 4) * std::numbers::pi / 180.0, e = (-90.0 + 90.0 * (k + 1) / 4) * std::numbers::pi / 180.0;
+		const Vec3 c{448, 320, 0};
+		kerbCorner.push_back(addSolid(doc, {c, {c.x + 64 * std::cos(s), c.y + 64 * std::sin(s), 0}, {c.x + 64 * std::cos(e), c.y + 64 * std::sin(e), 0},
+		                                    {c.x, c.y, 24}, {c.x + 64 * std::cos(s), c.y + 64 * std::sin(s), 24}, {c.x + 64 * std::cos(e), c.y + 64 * std::sin(e), 24}}));
+	}
+	std::vector<SolidRef> all{b, kerbA, corner, kerbB, a};
+	all.insert(all.end(), kerbCorner.begin(), kerbCorner.end());
+	MapDocument ids = doc;
+	const auto plan = planRoad(doc, tops(doc, all), RoadOptions{"ROAD/DIRT01"}, size(512, 512), &ids);
+	CHECK(plan.chains == 1);                 // one road round the corner
+	CHECK(plan.squareCorners == 0);
+	CHECK(plan.kerbs == 6);
+	CHECK(plan.faces.size() == 2);           // the two straight roads; the corner is in plan.corners
+	const double texels = 512.0 / 256.0;
+	checkCurve(doc, plan, corner, {a, b}, {512, 256, 0}, 128, -90, 90, texels, 512);
+	// Seamless into both roads: at the entry (512, 128) and the exit (640, 256).
+	for (const auto& seam : {std::pair{Vec3{512, 128, 16}, a}, std::pair{Vec3{640, 256, 16}, b}}) {
+		const Vec3 p = seam.first;
+		const SolidRef road = seam.second;
+		const auto onRoad = at(plan, road, p);
+		// The curve piece just inside the corner from the seam.
+		const Vec3 inside = p + (road == a ? Vec3{0.5, 0, -0.25} : Vec3{0, -0.5, -0.25});
+		const Solid* holder = nullptr;
+		for (const auto& piece : plan.corners.front().pieces) {
+			if (!holder && solidContains(piece, inside, 0.01)) holder = &piece;
+		}
+		REQUIRE(holder);
+		const auto onCurveExact = textureCoordinate(*curveTop(*holder), p);
+		CHECK(sameTexel(onRoad.u, onCurveExact.u, 512));
+		CHECK(sameTexel(onRoad.v, onCurveExact.v, 512));
+	}
+	// The second road runs on from the curve (along +y, away from it), the lane in its middle.
+	CHECK(runsAlong(plan, b, {0, 1, 0}));
+	CHECK(sameTexel(at(plan, b, {640, 600, 16}).u, 256, 512));
+
+	// Applied: one undo step; undo gives the corner brush back exactly; the saved map reloads the same.
+	const std::string before = doc.serialize();
+	History history;
+	const auto real = planRoad(doc, tops(doc, all), RoadOptions{"ROAD/DIRT01"}, size(512, 512), &doc);
+	REQUIRE(real.corners.size() == 1);
+	history.push(edit::applyRoad(doc, real));
+	CHECK(doc.world.solids.size() == 9 - 1 + real.corners.front().pieces.size());
+	for (const auto& piece : real.corners.front().pieces) {
+		REQUIRE(doc.findSolid({0, piece.id}));
+		CHECK(brushProblem(*doc.findSolid({0, piece.id})).empty());
+	}
+	const std::string after = doc.serialize();
+	CHECK(MapDocument::parse(after).serialize() == after);
+	REQUIRE(history.undo(doc));
+	CHECK(doc.serialize() == before);
+	REQUIRE(history.redo(doc));
+	CHECK(doc.serialize() == after);
+}
+
+TEST_CASE("road: corners of 45, 60, 90 and 120 degrees, other widths and no kerbs curve cleanly") {
+	const double rad = std::numbers::pi / 180.0;
+	for (const double turn : {45.0, 60.0, 90.0, 120.0}) {
+		for (const double widthB : {256.0, 192.0}) {
+			for (const bool right : {false, true}) {
+				CAPTURE(turn);
+				CAPTURE(widthB);
+				CAPTURE(right);
+				MapDocument doc;
+				const double sign = right ? -1 : 1;
+				// Road a along +x ending at x = 512; the corner is the wedge between its end edge and
+				// the start edge of road b, both meeting at the turn's inside I.
+				const Vec3 I{512, right ? 0.0 : 256.0, 0};
+				const Vec3 outerA{512, right ? 256.0 : 0.0, 0};
+				const auto rot = [&](Vec3 v, double degrees) {
+					const double c = std::cos(sign * degrees * rad), s = std::sin(sign * degrees * rad);
+					return Vec3{v.x * c - v.y * s, v.x * s + v.y * c, 0};
+				};
+				const Vec3 edgeB = rot(outerA - I, turn);             // I -> b's outer start corner, 256 long
+				const Vec3 dirB = rot({1, 0, 0}, turn);               // b runs this way
+				const Vec3 outerB = I + edgeB * (widthB / 256.0);
+				const auto a = addBox(doc, 0, 0, 512, 256);
+				const auto lift = [](Vec3 p, double z) { return Vec3{p.x, p.y, z}; };
+				std::vector<Vec3> wedge{I, outerA, I + edgeB};
+				std::vector<Vec3> points;
+				for (const auto& p : wedge) {
+					points.push_back(lift(p, 0));
+					points.push_back(lift(p, 16));
+				}
+				const auto corner = addSolid(doc, points);
+				std::vector<Vec3> bPoints;
+				for (const auto& p : {I, outerB, I + dirB * 512, outerB + dirB * 512}) {
+					bPoints.push_back(lift(p, 0));
+					bPoints.push_back(lift(p, 16));
+				}
+				const auto b = addSolid(doc, bPoints);
+				MapDocument ids = doc;
+				const auto plan = planRoad(doc, tops(doc, {a, corner, b}), RoadOptions{"ROAD/DIRT01"}, size(512, 512), &ids);
+				CHECK(plan.chains == 1);
+				CHECK(plan.squareCorners == 0);
+				// The centre line runs through the narrower road's middle (the road's width): the
+				// circle round I has half that width as radius.
+				const double width = std::min(256.0, widthB);
+				checkCurve(doc, plan, corner, {a, b}, I, width / 2, right ? 90 : -90, sign * turn, 512.0 / width, 512);
+			}
+		}
+	}
+}
+
+TEST_CASE("road: a corner with no room for a curve stays square and says so") {
+	MapDocument doc;
+	// The second road leaves the corner beside the first one's line: the arc would leave the
+	// corner beside its common edge with b.
+	const auto a = addBox(doc, 0, 0, 512, 256);
+	const auto corner = addBox(doc, 512, 0, 768, 256);
+	const auto b = addBox(doc, 700, 256, 768, 1024);    // a narrow road at the corner's far side
+	const auto plan = planRoad(doc, tops(doc, {a, corner, b}), RoadOptions{"ROAD/DIRT01"}, size(512, 512));
+	CHECK(plan.corners.empty());
+	CHECK(plan.squareCorners == 1);
+	CHECK(plan.faces.size() == 3);
 }

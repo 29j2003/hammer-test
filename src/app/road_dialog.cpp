@@ -68,6 +68,12 @@ RoadDialog::RoadDialog(Editor* editor, const QString& material, QWidget* parent)
 	m_flip->setToolTip(tr("Turn the texture around: it runs from the other end of the road"));
 	form->addRow(QString(), m_flip);
 
+	m_curve = new QCheckBox(tr("Curve corners"), this);
+	m_curve->setObjectName("roadCurveCorners");
+	m_curve->setToolTip(tr("Cut a square corner between two roads into a few pieces, so the lane runs on round the corner into the other road (off: the corner continues the longer road, the other road starts at its edge)"));
+	m_curve->setChecked(QSettings().value("road/curveCorners", true).toBool());
+	form->addRow(QString(), m_curve);
+
 	m_repeats = new QSpinBox(this);
 	m_repeats->setObjectName("roadRepeats");
 	m_repeats->setRange(1, 16);
@@ -112,6 +118,7 @@ RoadDialog::RoadDialog(Editor* editor, const QString& material, QWidget* parent)
 	connect(m_side, &QLineEdit::textChanged, this, later);
 	connect(m_along, &QComboBox::currentIndexChanged, this, later);
 	connect(m_flip, &QCheckBox::toggled, this, later);
+	connect(m_curve, &QCheckBox::toggled, this, later);
 	connect(m_repeats, &QSpinBox::valueChanged, this, later);
 	connect(m_width, &QDoubleSpinBox::valueChanged, this, later);
 	// Another brush picked or the map changed meanwhile: the preview follows.
@@ -132,6 +139,7 @@ RoadOptions RoadDialog::options() const {
 	options.repeatsAcross = m_repeats->value();
 	options.sideMaterial = m_side->text().trimmed().toStdString();
 	options.roadWidth = m_width->value();
+	options.curveCorners = m_curve->isChecked();
 	return options;
 }
 
@@ -152,7 +160,7 @@ void RoadDialog::refresh() {
 	std::vector<SolidRef> replaced;
 	m_editor->setBrushPreview(roadPreview(m_editor->doc(), plan, &replaced), replaced);
 	QStringList lines;
-	lines << tr("%n face(s) with %1,", nullptr, int(plan.faces.size())).arg(qs(plan.material));
+	lines << tr("%n face(s) with %1,", nullptr, plan.faceCount()).arg(qs(plan.material));
 	lines.last() += ' ' + tr("in %n road(s) - pieces that touch run on into each other.", nullptr, plan.chains);
 	QStringList widths;
 	for (const double w : plan.widths) {
@@ -164,6 +172,12 @@ void RoadDialog::refresh() {
 	if (plan.kerbs > 0) left << tr("%n kerb or side face(s)", nullptr, plan.kerbs);
 	if (plan.ignored > 0) left << tr("%n wall or bottom face(s)", nullptr, plan.ignored);
 	if (!left.isEmpty()) lines << tr("Left out: %1.").arg(left.join(", "));
+	if (!plan.corners.empty()) {
+		int pieces = 0;
+		for (const auto& corner : plan.corners) pieces += int(corner.pieces.size());
+		lines << tr("%n corner(s) cut into %1 curve pieces - the lane runs on round the corner.", nullptr, int(plan.corners.size())).arg(pieces);
+	}
+	if (plan.squareCorners > 0) lines << tr("%n corner(s) stay square - no clean way to cut a curve there.", nullptr, plan.squareCorners);
 	if (plan.edgePieces > 0) lines << tr("%n small piece(s) at the road's edge continue the road next to them.", nullptr, plan.edgePieces);
 	if (!plan.sideFaces.empty()) lines << tr("%n kerb face(s) get %1.", nullptr, int(plan.sideFaces.size())).arg(qs(plan.sideMaterial));
 	m_note->setText(lines.join('\n'));
@@ -174,6 +188,7 @@ void RoadDialog::accept() {
 	m_soon.stop();
 	QSettings().setValue("road/along", m_along->currentIndex());
 	QSettings().setValue("road/repeats", m_repeats->value());
+	QSettings().setValue("road/curveCorners", m_curve->isChecked());
 	QSettings().setValue("road/sideMaterial", m_side->text().trimmed());
 	m_finished = true;
 	m_editor->applySelectedRoad(options());   // clears the preview
