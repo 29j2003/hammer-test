@@ -72,7 +72,7 @@ add_library(smecore STATIC
 	src/shapes.cpp
 	src/snapping.cpp
 	src/steam.cpp
-	src/studio_model.cpp src/studio_anim.cpp src/animation_use.cpp src/animation_import.cpp src/model_export.cpp src/npc_scripts.cpp
+	src/studio_model.cpp src/studio_anim.cpp src/animation_use.cpp src/animation_import.cpp src/model_export.cpp src/npc_scripts.cpp src/choreography.cpp
 	src/text.cpp
 	src/texture.cpp
 	src/version.cpp)

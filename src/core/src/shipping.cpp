@@ -1,6 +1,7 @@
 // shipping.cpp - Map dependencies, packages and Workshop items (see shipping.h).
 
 #include <sme/shipping.h>
+#include <sme/choreography.h>
 
 #include <sme/assets.h>
 #include <sme/material.h>
@@ -255,6 +256,17 @@ private:
 			const auto key = toLower(rawKey);
 			if (key == "classname" || key == "targetname" || key == "origin" || key == "angles" || key == "target" || key == "parentname") continue;
 			if (value.empty()) continue;
+			// Scenes made here: the .vcd and the sounds their steps say (the plan keys are no file names).
+			if (key == "scenefile" && endsWithI(value, ".vcd")) {
+				add(normalizePath(value), ShipFile::Kind::Other, who);
+				continue;
+			}
+			if (key.starts_with("mapsmith_")) {
+				if (key.starts_with(std::string(CHOREO_STEP_KEY))) {
+					if (const auto step = decodeChoreoStep(value); step && step->kind == ChoreoStep::Kind::Say && !step->sound.empty()) sound(step->sound, who);
+				}
+				continue;
+			}
 			if (endsWithI(value, ".mdl")) {
 				model(value, who, 0);
 			} else if (endsWithI(value, ".vmt") || endsWithI(value, ".spr")) {
