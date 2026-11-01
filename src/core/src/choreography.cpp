@@ -229,6 +229,19 @@ ChoreoScene readChoreoScene(const Entity& entity) {
 	return scene;
 }
 
+ChoreoScene readChoreoScene(const MapDocument& doc, const Entity& entity) {
+	ChoreoScene scene = readChoreoScene(entity);
+	for (std::size_t i = 0; i < scene.steps.size(); ++i) {
+		auto& step = scene.steps[i];
+		if (step.kind != ChoreoStep::Kind::Move && step.kind != ChoreoStep::Kind::Face) continue;
+		const Entity* point = findNamedEntity(doc, choreoPointName(scene.name, i));
+		if (point && iequals(point->classname(), "info_target") && iequals(point->get(CHOREO_SCENE_KEY), scene.name) && point->hasOrigin()) {
+			step.point = point->origin();
+		}
+	}
+	return scene;
+}
+
 std::vector<int> choreoScenes(const MapDocument& doc) {
 	std::vector<int> ids;
 	for (const auto& entity : doc.entities) {
@@ -630,7 +643,7 @@ std::vector<std::string> writeChoreoFiles(const MapDocument& doc, const std::fil
 		if (!isChoreoScene(entity)) continue;
 		const std::string file = normalizePath(entity.get("SceneFile"));
 		if (file.empty() || file.find("..") != std::string::npos || !startsWithI(file, "scenes/")) continue;
-		const auto scene = readChoreoScene(entity);
+		const auto scene = readChoreoScene(doc, entity);
 		const std::string text = writeVcd(doc, scene);
 		const auto path = modDir / toNativePath(file);
 		std::error_code ec;

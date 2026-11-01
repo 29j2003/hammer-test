@@ -129,6 +129,16 @@ TEST_CASE("choreography: a new scene, its steps, points and trigger in the map; 
 	CHECK(autos[0]->connections[0].input == "Start");
 	// Nothing to do the second time.
 	CHECK(edit::setChoreoScene(doc, id, scene).empty());
+	// A point moved with the gizmo (its info_target) is where the NPC walks.
+	{
+		Entity* p1 = doc.findEntity(points[0]->id);
+		p1->set("origin", "200 40 0");
+		const auto resolved = readChoreoScene(doc, *doc.findEntity(id));
+		CHECK(resolved.steps[0].point.x == doctest::Approx(200));
+		CHECK(resolved.steps[0].point.y == doctest::Approx(40));
+		CHECK(readChoreoScene(*doc.findEntity(id)).steps[0].point.x == doctest::Approx(160));   // the plan alone still says 160
+		p1->set("origin", "160 0 0");
+	}
 
 	// Started by a trigger: the logic_auto goes, a trigger_once comes (in front of the NPC).
 	scene.trigger = ChoreoTrigger::Trigger;

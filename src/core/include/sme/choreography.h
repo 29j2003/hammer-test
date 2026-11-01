@@ -81,6 +81,9 @@ inline constexpr std::string_view CHOREO_STEP_KEY = "mapsmith_step";
 [[nodiscard]] bool isChoreoScene(const Entity& entity);
 /// The plan kept in a scene entity (steps that cannot be read are left out).
 [[nodiscard]] ChoreoScene readChoreoScene(const Entity& entity);
+/// The same, with every Move/Face point taken from its info_target when the mapper moved that
+/// (the helpers are ordinary entities: select one and move it with the gizmo, undo included).
+[[nodiscard]] ChoreoScene readChoreoScene(const MapDocument& doc, const Entity& entity);
 /// Ids of all scenes made here, in map order.
 [[nodiscard]] std::vector<int> choreoScenes(const MapDocument& doc);
 /// Ids of the scenes in which the NPC named `actor` has a step.

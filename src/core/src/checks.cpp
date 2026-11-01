@@ -545,7 +545,7 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 	// NPC scenes (choreography): steps without an NPC or a sound, NPCs without a way.
 	for (const int sceneId : choreoScenes(doc)) {
 		const Entity* sceneEntity = doc.findEntity(sceneId);
-		const ChoreoScene scene = readChoreoScene(*sceneEntity);
+		const ChoreoScene scene = readChoreoScene(doc, *sceneEntity);
 		std::function<bool(std::string_view)> soundKnown;
 		if (context.files) {
 			soundKnown = [&cache, &context](std::string_view sound) {
