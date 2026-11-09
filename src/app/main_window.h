@@ -37,6 +37,7 @@ namespace sme::app {
 
 class RoundEdgeDialog;
 class RoadDialog;
+class RoadBuilderDialog;
 class TextureFlowDialog;
 class AssetBrowser;
 class DockLayout;
@@ -182,6 +183,8 @@ private:
 	void roundEdgeDialog();
 	/// "Road ...": the road tool over the selection (`material`: the road material to start with).
 	void roadDialog(const QString& material = {});
+	/// "Build road ...": along the selected floor brushes, or clicked points without a selection.
+	void roadBuilderDialog();
 	/// "Texture flow ...": the texture flow tool over the selection (`material`: to start with).
 	void textureFlowDialog(const QString& material = {});
 	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).
@@ -227,6 +230,7 @@ private:
 	QByteArray m_mapDockState;                  ///< The docks' layout before another tab put them away
 	QPointer<ImportDialog> m_importDialog;     ///< The open import dialog
 	QPointer<RoadDialog> m_roadDialog;          ///< The open "Road" dialog
+	QPointer<RoadBuilderDialog> m_roadBuilderDialog;   ///< The open "Build road" dialog
 	QPointer<TextureFlowDialog> m_flowDialog;   ///< The open "Texture flow" dialog
 	QPointer<RoundEdgeDialog> m_roundDialog;   ///< The open "Round or bevel edge" dialog
 	bool m_reloadPending = false;               ///< The game is read again soon (the mod's files changed)

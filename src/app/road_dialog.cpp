@@ -28,7 +28,7 @@ const QString UNTOUCHED_MATERIAL = "DEV/DEV_MEASUREGENERIC01";
 
 RoadDialog::RoadDialog(Editor* editor, const QString& material, QWidget* parent) : QDialog(parent), m_editor(editor) {
 	setObjectName("roadDialog");
-	setWindowTitle(tr("Road"));
+	setWindowTitle(tr("Road texture"));
 	setModal(false);
 	setProperty("smeNoFit", true);   // small enough for any screen; no scroll area (dialog_fit.h)
 	auto* form = new QFormLayout(this);

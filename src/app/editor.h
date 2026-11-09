@@ -23,6 +23,7 @@
 #include <sme/doors.h>
 #include <sme/edge_round.h>
 #include <sme/editor_report.h>
+#include <sme/road_builder.h>
 #include <sme/road_texture.h>
 #include <sme/texture_flow.h>
 #include <sme/editing.h>
@@ -278,6 +279,13 @@ public:
 	[[nodiscard]] RoadPlan planSelectedRoad(const RoadOptions& options) const;
 	/// Applies the road (one undo step, "Road"); clears the preview.
 	void applySelectedRoad(const RoadOptions& options);
+	/// Road builder (road_builder.h): the road along `paths`, or (fromSelection) along the selected
+	/// floor brushes, which it replaces; not yet applied (live preview, scratch ids).
+	[[nodiscard]] RoadBuildPlan planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) const;
+	/// Builds it (one undo step, "Build road") and selects the new road; clears the preview.
+	void applyRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection);
+	/// The paths through the selected floor brushes; `suggested` gets their width, thickness and material.
+	[[nodiscard]] std::vector<RoadPath> selectedRoadPaths(RoadBuildOptions* suggested = nullptr) const;
 	/// Texture flow (see texture_flow.h) over the selected faces (or all faces of the selected
 	/// brushes), not yet applied; the first selected face is the seed.
 	[[nodiscard]] FlowPlan planSelectedTextureFlow(const FlowOptions& options) const;
@@ -379,6 +387,10 @@ public:
 	/// The next click in a 3D view puts a point on the surface under the mouse: `done` gets it
 	/// (Esc or another tool cancels). `hint` goes to the status bar.
 	void requestScenePoint(const QString& hint, std::function<void(const Vec3&)> done);
+	/// The hint of the pending request (shown in the views), empty for the default.
+	[[nodiscard]] const QString& scenePointHint() const { return m_scenePointHint; }
+	/// Enter or Backspace pressed in a view while a point is requested (scenePointKey signal).
+	void pressScenePointKey(int key) { emit scenePointKey(key); }
 	void cancelScenePoint();
 	[[nodiscard]] bool scenePointPending() const { return static_cast<bool>(m_scenePoint); }
 	/// A view picked the point (ends the request).
@@ -432,6 +444,8 @@ signals:
 	void sceneFocusChanged();
 	/// A scene point request started or ended (views show a hint and a crosshair).
 	void scenePointRequestChanged();
+	/// Enter / Backspace in a view while a point is requested (the road builder finishes / takes back a point).
+	void scenePointKey(int key);
 
 private:
 	/// lookValue() with the map's own values already read (mapLookValues).
@@ -463,6 +477,7 @@ private:
 	QString m_filePath;
 	SceneFocus m_sceneFocus;
 	std::function<void(const Vec3&)> m_scenePoint;
+	QString m_scenePointHint;
 	bool m_recovered = false;   ///< Opened from an autosave and not saved since
 	Selection m_selection;
 	Selection m_hidden;

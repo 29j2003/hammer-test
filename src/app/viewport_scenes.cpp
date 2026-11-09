@@ -276,7 +276,8 @@ void Viewport::drawSceneStartLines(std::vector<LineVertex>& lines) const {
 
 void Viewport::drawSceneLabels(OverlayRecorder& p) const {
 	if (m_editor->scenePointPending()) {
-		p.drawText(QRectF(8, height() - 26, width() - 16, 20), tr("Scene: click where the step should happen - Esc cancels"), QColor(150, 230, 255));
+		const QString hint = m_editor->scenePointHint().isEmpty() ? tr("Scene: click where the step should happen - Esc cancels") : m_editor->scenePointHint();
+		p.drawText(QRectF(8, height() - 26, width() - 16, 20), hint, QColor(150, 230, 255));
 	}
 	for (const auto& marker : sceneMarkers()) {
 		p.drawText(marker.label, marker.text, marker.color);

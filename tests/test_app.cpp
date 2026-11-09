@@ -130,6 +130,7 @@
 #include "compile.h"
 #include "compile_window.h"
 #include "properties_panel.h"
+#include "road_builder_dialog.h"
 #include "road_dialog.h"
 #include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
@@ -7764,6 +7765,152 @@ TEST_CASE("road: a T junction, a corner and a road of two widths - one scale per
 	dialog->reject();
 	settle();
 	CHECK(editor.brushPreview().empty());
+}
+
+TEST_CASE("road builder: click points on the floor, Enter builds a curved road sunk into it; a second road ends on it (T); undo") {
+	// Julius (09.11.2026): "so musst du Straßen bauen ... die Umgebung ein bisschen wie das Carve-Tool".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	{
+		auto [change, ref] = edit::createBlock(editor.doc(), [] {
+			Bounds b;
+			b.add({-1024, -1024, -32});
+			b.add({2048, 2048, 0});
+			return b;
+		}(), "CONCRETE/FLOOR01");
+		editor.commit(std::move(change));
+	}
+	const std::string before = editor.doc().serialize();
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(512, 0, 3000);
+	view->camera().yaw = 90;
+	view->camera().pitch = -89;
+	view->update();
+	settle();
+
+	// No selection: Brushes > Build road ... starts clicking points.
+	auto* action = window.findChild<QAction*>("brushesBuildRoad");
+	REQUIRE(action);
+	action->trigger();
+	settle();
+	auto* dialog = window.findChild<RoadBuilderDialog*>("roadBuilderDialog");
+	REQUIRE(dialog);
+	CHECK_FALSE(dialog->fromSelection());
+	CHECK(editor.scenePointPending());
+	dialog->findChild<QLineEdit*>("roadBuilderMaterial")->setText("ROAD/DEMO_ROAD");
+	// A click in the view puts the first point on the floor (top at z = 0).
+	QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, QPoint(view->width() / 2, view->height() / 2));
+	settle();
+	REQUIRE(dialog->points().size() == 1);
+	CHECK(dialog->points().front().z == doctest::Approx(0).epsilon(0.01));
+	CHECK(editor.scenePointPending());   // the next one
+	// Backspace in the view takes it back; then the L is clicked.
+	QTest::keyClick(view, Qt::Key_Backspace);
+	settle();
+	CHECK(dialog->points().empty());
+	dialog->findChild<QCheckBox*>("roadBuilderDisplacement")->setChecked(true);   // a raised middle
+	dialog->addPoint({0, 0, 0});
+	dialog->addPoint({1024, 0, 0});
+	dialog->addPoint({1024, 1024, 0});
+	QTest::qWait(150);
+	settle();
+	const std::string firstNote = dialog->note().toStdString();
+	INFO("note: " << firstNote);
+	CHECK(dialog->note().contains("1 curve"));
+	CHECK(dialog->note().contains("Carves 1 brush"));
+	CHECK(dialog->note().contains("10 displacements"));
+	CHECK_FALSE(editor.brushPreview().empty());
+	CHECK(editor.doc().serialize() == before);   // only the preview so far
+	// Enter in the view builds it.
+	view->setFocus();
+	QTest::keyClick(view, Qt::Key_Return);
+	settle();
+	CHECK_FALSE(editor.scenePointPending());
+	CHECK(window.findChild<RoadBuilderDialog*>("roadBuilderDialog") == nullptr);
+	CHECK(editor.brushPreview().empty());
+	const auto roadCount = [&] {
+		return std::count_if(editor.doc().world.solids.begin(), editor.doc().world.solids.end(), [](const Solid& s) {
+			return std::any_of(s.sides.begin(), s.sides.end(), [](const Side& side) {
+				return side.material == "ROAD/DEMO_ROAD" && side.plane().normal.z > 0.5 && side.plane().dist < 0.01;   // not the kerbs' tops
+			});
+		});
+	};
+	CHECK(roadCount() == 10);   // straight, 8 curve pieces, straight
+	CHECK(editor.selection().solids.size() == 20);   // with the nodraw seals under the displacements
+	for (const auto& s : editor.doc().world.solids) CHECK(brushProblem(s).empty());
+
+	// A second road from the field to the first one's middle: it stops at its edge.
+	editor.setSelection({});
+	action->trigger();
+	settle();
+	dialog = window.findChild<RoadBuilderDialog*>("roadBuilderDialog");
+	REQUIRE(dialog);
+	CHECK(dialog->findChild<QLineEdit*>("roadBuilderMaterial")->text() == "ROAD/DEMO_ROAD");   // remembered
+	CHECK(dialog->findChild<QCheckBox*>("roadBuilderDisplacement")->isChecked());   // remembered
+	dialog->findChild<QCheckBox*>("roadBuilderDisplacement")->setChecked(false);
+	dialog->findChild<QCheckBox*>("roadBuilderKerbs")->setChecked(true);
+	dialog->findChild<QLineEdit*>("roadBuilderKerbMaterial")->setText("CONCRETE/WALL01");
+	dialog->addPoint({400, 900, 0});
+	dialog->addPoint({400, 0, 0});
+	QTest::qWait(150);
+	settle();
+	const std::string secondNote = dialog->note().toStdString();
+	INFO("note: " << secondNote);
+	CHECK(dialog->note().contains("Meets 1 road piece"));
+	dialog->accept();
+	settle();
+	CHECK(roadCount() == 11);
+	for (const auto& a : editor.doc().world.solids) {
+		CHECK(brushProblem(a).empty());
+		for (const auto& b : editor.doc().world.solids) {
+			if (a.id < b.id) CHECK(sharedVolume(a, b) < 8);   // long slanted cuts: a few cubic units of rounding
+		}
+	}
+	editor.setSelection({});
+	view->camera().position = QVector3D(600, -700, 900);
+	view->camera().yaw = 80;
+	view->camera().pitch = -45;
+	view->update();
+	settle();
+	QTest::qWait(300);   // the road texture loads in the background
+	settle();
+	view->grabFramebuffer().save(shotDir + "/road_builder.png");
+
+	// Selected blocks: the right-click menu offers Build road along them.
+	Selection selection;
+	selection.solids.push_back({0, editor.doc().world.solids.back().id});
+	editor.setSelection(selection);
+	std::unique_ptr<QMenu> menu(window.buildContextMenu());
+	CHECK(menu->findChild<QAction*>("contextBuildRoad") != nullptr);
+	CHECK(menu->findChild<QAction*>("contextRoad") != nullptr);
+	menu.reset();
+	editor.setSelection({});
+
+	// Two undo steps give the map back as it was.
+	editor.undo();
+	editor.undo();
+	settle();
+	CHECK(editor.doc().world.solids.size() == 1);
+	CHECK(buildBrushGeometry(editor.doc().world.solids.front()).bounds.max.z == doctest::Approx(0));
 }
 
 TEST_CASE("picking: a copy pasted in place and stretched far stays clickable everywhere") {

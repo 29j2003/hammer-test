@@ -1184,6 +1184,7 @@ std::vector<int> Editor::visibleScenes() const {
 
 void Editor::requestScenePoint(const QString& hint, std::function<void(const Vec3&)> done) {
 	m_scenePoint = std::move(done);
+	m_scenePointHint = hint;
 	emit scenePointRequestChanged();
 	if (!hint.isEmpty()) emit message(hint);
 }
@@ -1406,6 +1407,48 @@ void Editor::applySelectedRoad(const RoadOptions& options) {
 		setSelection(std::move(selection));
 	}
 	emit message(tr("Road laid over %n face(s)", nullptr, plan.faceCount()));
+}
+
+std::vector<RoadPath> Editor::selectedRoadPaths(RoadBuildOptions* suggested) const {
+	return roadPathsFromSolids(m_doc, m_selection.solids, suggested);
+}
+
+RoadBuildPlan Editor::planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) const {
+	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
+	const auto size = [files](const std::string& material) {
+		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
+	};
+	MapDocument scratch;   // ids for the preview only; building plans again with the map's own
+	if (fromSelection) return planRoadBuild(m_doc, scratch, selectedRoadPaths(), options, size, m_selection.solids);
+	return planRoadBuild(m_doc, scratch, paths, options, size);
+}
+
+void Editor::applyRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) {
+	clearBrushPreview();
+	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
+	const auto size = [files](const std::string& material) {
+		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
+	};
+	const auto replace = fromSelection ? m_selection.solids : std::vector<SolidRef>{};
+	const auto plan = planRoadBuild(m_doc, m_doc, fromSelection ? selectedRoadPaths() : paths, options, size, replace);
+	if (!plan.ok()) {
+		emit message(tr("No road: click at least two points (or select the road's floor brushes)"));
+		return;
+	}
+	std::string text = "road builder: " + std::to_string(plan.road.size()) + " road brushes, " + std::to_string(plan.kerbs.size()) + " kerbs, " +
+	                   std::to_string(plan.curves) + " curves, " + std::to_string(plan.junctions) + " junctions, " + std::to_string(plan.carved) + " carved";
+	for (const auto& line : plan.centreLines) {
+		text += "\nline:";
+		for (const auto& p : line) text += " (" + formatVec3(p) + ")";
+	}
+	for (const auto& note : plan.notes) text += "\nnote: " + note;
+	notePlan(text);
+	auto [change, refs] = edit::applyRoadBuild(m_doc, plan);
+	commit(std::move(change));
+	Selection selection;
+	selection.solids = refs;
+	setSelection(std::move(selection));
+	emit message(tr("Road built: %n brush(es)", nullptr, int(refs.size())));
 }
 
 FlowPlan Editor::planSelectedTextureFlow(const FlowOptions& options) const {
