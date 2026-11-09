@@ -10559,8 +10559,8 @@ TEST_CASE("measure, fill gap, place props, command search: the helpers around a 
 	CHECK(editor.propPreview().size() == scattered.size());
 	for (const auto& p : scattered) {
 		CHECK(p.origin.z == doctest::Approx(0).epsilon(0.01));
-		const bool near = p.origin.x > -64 && p.origin.x < 320 && p.origin.y > -64 && p.origin.y < 320;
-		CHECK_FALSE(near);
+		const bool nearRoad = p.origin.x > -64 && p.origin.x < 320 && p.origin.y > -64 && p.origin.y < 320;
+		CHECK_FALSE(nearRoad);
 	}
 	props->accept();
 	settle();
