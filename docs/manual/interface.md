@@ -95,8 +95,19 @@ The narrow column of icons next to the side bar holds the tools. The small lette
 | Wire cube | **Vertex** | Shift+V | Move corners, pick edges. |
 | Pentagon | **Polygon** | Shift+P | Draw a brush from its outline. |
 | Hill | **Displacement** | Shift+D | Make terrain from faces, sculpt it and paint blends. |
+| Ruler | **Measure** | M | Click two points: distance, height, slope and what the player can do there. |
 
 The [Building](building.html) page describes each tool.
+
+## Command search (Ctrl+K)
+
+With so many functions, the quickest way to one is to type its name. **Ctrl+K** (Edit > Command search ...) opens a
+search field at the top of the window. Type a few letters - every word you type has to appear, in any order - and
+press **Enter** to run the first entry, or pick another with the arrow keys.
+
+The list holds every menu entry (with its menu and key), every tool, mode and page. From three letters on it also
+finds the game's **materials** (Enter makes it the current material and shows it in the browser), **models** (shown
+in the asset browser) and **entity classes** (Enter arms the Entity tool with that class).
 
 ## The top bar
 

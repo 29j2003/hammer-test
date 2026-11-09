@@ -254,6 +254,9 @@ bool Viewport::toolMousePress(QMouseEvent* event) {
 	if (event->button() != Qt::LeftButton) {
 		return false;
 	}
+	if (tool == Editor::Tool::Measure) {
+		return measureMousePress(event);
+	}
 	const QPointF pos = event->position();
 	if (tool == Editor::Tool::Clip) {
 		if (m_camera.is2D()) {

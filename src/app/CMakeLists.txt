@@ -64,6 +64,10 @@ add_library(smeapp STATIC
 	viewport_overlays.cpp
 	viewport_ropes.cpp
 	viewport_scenes.cpp
+	viewport_measure.cpp
+	gap_fill_dialog.cpp
+	prop_placement_dialog.cpp
+	command_palette.cpp
 	editor_helpers.cpp
 	viewport_displace.cpp
 	visgroups_panel.cpp)

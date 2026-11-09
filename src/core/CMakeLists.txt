@@ -60,6 +60,9 @@ add_library(smecore STATIC
 	src/road_builder.cpp
 	src/grid_snap.cpp
 	src/overlay_tools.cpp
+	src/gap_fill.cpp
+	src/prop_placement.cpp
+	src/command_search.cpp
 	src/texture_flow.cpp
 	src/history.cpp
 	src/keyvalues.cpp

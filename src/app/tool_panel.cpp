@@ -1149,6 +1149,17 @@ void ToolPanel::refresh() {
 			                   "makes a brush as high as the last block. Backspace removes the last corner."));
 			showKeys({{tr("Enter"), tr("Make the brush")}, {tr("Backspace"), tr("Remove the last corner")}, {tr("Esc"), tr("Cancel")}});
 			break;
+		case Editor::Tool::Measure:
+			m_hint->setText(tr("<b>Measure</b><br>Click two points (on surfaces in 3D, or in a 2D view): distance, how far across, how high, "
+			                   "the slope - and what the player can do there.<br>The blue box is a standing player: 32 wide, 72 high, "
+			                   "eyes at 64, a step at 18."));
+			showKeys({{tr("Click"), tr("First point, then the second; a third click starts again")},
+			          {tr("Ctrl+Click"), tr("Without grid snapping")},
+			          {tr("Esc"), tr("Clear the line")},
+			          {tr("72 / 36"), tr("Player standing / crouching height")},
+			          {tr("18 / 56"), tr("Step up / jump up (crouch jump)")},
+			          {tr("45.6°"), tr("Steepest slope the player walks up")}});
+			break;
 		case Editor::Tool::Displace:
 			m_hint->setText(tr("<b>Displacement</b><br>Terrain from brush faces. Create: click a face (or Make for the selection). "
 			                   "Then drag over it: Raise, Smooth, Flatten, Noise, or paint the blend of a two-material ground.<br>"

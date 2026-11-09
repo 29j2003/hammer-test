@@ -36,6 +36,7 @@ The Tool tab's key tables follow your own shortcuts.
 | Shift+V | Vertex |
 | Shift+P | Polygon |
 | Shift+D | Displacement (Ctrl+wheel or [ ] sizes the brush) |
+| M | Measure (Ctrl+click: without grid snapping, Esc clears) |
 | 3 | Faces mode |
 | 5 or 4 | Objects mode |
 
@@ -106,6 +107,7 @@ The Tool tab's key tables follow your own shortcuts.
 | Ctrl+D | Duplicate |
 | Delete | Delete |
 | Ctrl+A | Select all |
+| Ctrl+K | Command search ... |
 | Ctrl+Shift+D | Select nothing |
 | Ctrl+Alt+O | Select similar |
 | Ctrl+Shift+G | Go to ID ... |

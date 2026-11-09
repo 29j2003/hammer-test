@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
 			static const QMap<QString, Editor::Tool> TOOLS = {
 				{"select", Editor::Tool::Select}, {"move", Editor::Tool::Move},     {"rotate", Editor::Tool::Rotate},
 				{"scale", Editor::Tool::Scale},   {"block", Editor::Tool::Block},   {"entity", Editor::Tool::Entity},
-				{"clip", Editor::Tool::Clip},     {"vertex", Editor::Tool::Vertex}, {"polygon", Editor::Tool::Polygon},
+				{"clip", Editor::Tool::Clip},     {"vertex", Editor::Tool::Vertex}, {"polygon", Editor::Tool::Polygon}, {"measure", Editor::Tool::Measure},
 				{"displace", Editor::Tool::Displace},
 			};
 			editor.setTool(TOOLS.value(parser.value("tool").toLower(), Editor::Tool::Select));
