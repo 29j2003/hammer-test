@@ -2728,8 +2728,23 @@ void MainWindow::roadBuilderDialog() {
 		}
 		if (material.isEmpty()) material = road;
 	}
+	// Plain asphalt (no lines) for the floor left beside a road built through a street whose floor
+	// already has the road material (the parking lanes would get the sidewalk's look otherwise).
+	QString plain;
+	for (const auto& name : m_assets->materialNames()) {
+		const QString n = QString::fromStdString(name);
+		if (!n.contains("asphalt", Qt::CaseInsensitive)) continue;
+		if (n.startsWith("tools/", Qt::CaseInsensitive) || n.startsWith("decals/", Qt::CaseInsensitive)) continue;
+		if (n.contains("line", Qt::CaseInsensitive) || n.contains("stripe", Qt::CaseInsensitive) || n.contains("road", Qt::CaseInsensitive) ||
+		    n.contains("blend", Qt::CaseInsensitive)) {
+			continue;
+		}
+		plain = n.toUpper();
+		break;
+	}
 	// Beside the map, not in front of it: the views show the road while it is drawn.
 	m_roadBuilderDialog = new RoadBuilderDialog(m_editor, material, this);
+	m_roadBuilderDialog->setPlainMaterial(plain);
 	m_roadBuilderDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_roadBuilderDialog->show();
 	if (m_active) m_roadBuilderDialog->move(m_active->mapToGlobal(QPoint(16, 16)));

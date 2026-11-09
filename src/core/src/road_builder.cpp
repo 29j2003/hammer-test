@@ -84,8 +84,13 @@ struct PathLayout {
 PathLayout layoutPath(const RoadPath& path, const RoadBuildOptions& o, RoadBuildPlan& plan) {
 	PathLayout out;
 	std::vector<Vec3> p;
-	for (const auto& point : path.points) {
-		if (p.empty() || length(flat(point - p.back())) >= 1) p.push_back(point);
+	std::vector<double> radii;   // each point's own inner radius (below 0: the options')
+	for (std::size_t i = 0; i < path.points.size(); ++i) {
+		const Vec3& point = path.points[i];
+		if (p.empty() || length(flat(point - p.back())) >= 1) {
+			p.push_back(point);
+			radii.push_back(i < path.innerRadius.size() ? path.innerRadius[i] : -1.0);
+		}
 	}
 	// A turn back on itself has no curve: the point is left out.
 	for (bool again = true; again && p.size() > 2;) {
@@ -95,6 +100,7 @@ PathLayout layoutPath(const RoadPath& path, const RoadBuildOptions& o, RoadBuild
 			if (dot(d0, d1) < std::cos(170.0 * PI / 180)) {
 				plan.notes.push_back("a point where the path turns back on itself was left out");
 				p.erase(p.begin() + std::ptrdiff_t(i));
+				radii.erase(radii.begin() + std::ptrdiff_t(i));
 				again = true;
 				break;
 			}
@@ -126,8 +132,8 @@ PathLayout layoutPath(const RoadPath& path, const RoadBuildOptions& o, RoadBuild
 	};
 
 	addStation(p[0], leftOf(dir[0]), false, {}, 0);
-	const double wanted = std::max(0.0, o.innerRadius) + hw;
 	for (std::size_t i = 1; i < n; ++i) {
+		const double wanted = std::max(0.0, radii[i] >= 0 ? radii[i] : o.innerRadius) + hw;
 		const Vec3 d0 = dir[i - 1], d1 = dir[i];
 		const double theta = std::atan2(cross2(d0, d1), dot(d0, d1));   // + left turn
 		const double turn = std::abs(theta);
@@ -441,306 +447,6 @@ std::vector<SolidRef> RoadBuildPlan::replacedRefs() const {
 	std::vector<SolidRef> refs;
 	for (const auto& r : changed) refs.push_back(r.ref);
 	return refs;
-}
-
-// --- Paths from selected floor brushes ---------------------------------------------------------
-
-namespace {
-
-/// A selected floor brush seen from above.
-struct FloorPiece {
-	SolidRef ref;
-	std::vector<Vec3> outline;   ///< Top face corners
-	Plane top;
-	double bottom = 0;
-	Vec3 centre;
-	Vec3 dir;                    ///< Along its longest top edge
-	double along = 0, across = 0;
-	bool longPiece = false;
-	std::string material;
-	[[nodiscard]] double zAt(double x, double y) const {
-		return std::abs(top.normal.z) > 1e-6 ? (top.dist - top.normal.x * x - top.normal.y * y) / top.normal.z : centre.z;
-	}
-};
-
-/// Where two outlines touch: the shared stretch of edge (more than a unit long, same height).
-struct Contact {
-	Vec3 mid;
-	Vec3 dir;
-	double length = 0;
-};
-std::optional<Contact> touching(const FloorPiece& a, const FloorPiece& b) {
-	for (std::size_t i = 0; i < a.outline.size(); ++i) {
-		const Vec3 p = a.outline[i], q = a.outline[(i + 1) % a.outline.size()];
-		const Vec3 d = flat(q - p);
-		const double len = length(d);
-		if (len < 1) continue;
-		const Vec3 u = d / len;
-		for (std::size_t j = 0; j < b.outline.size(); ++j) {
-			const Vec3 r = b.outline[j], s = b.outline[(j + 1) % b.outline.size()];
-			if (std::abs(cross2(u, flat(r - p))) > 0.5 || std::abs(cross2(u, flat(s - p))) > 0.5) continue;
-			const double t0 = dot(flat(r - p), u), t1 = dot(flat(s - p), u);
-			const double lo = std::max(0.0, std::min(t0, t1)), hi = std::min(len, std::max(t0, t1));
-			if (hi - lo <= 1) continue;
-			const Vec3 m = p + u * ((lo + hi) / 2);
-			if (std::abs(a.zAt(m.x, m.y) - b.zAt(m.x, m.y)) < 2) return Contact{m, u, hi - lo};
-		}
-	}
-	return std::nullopt;
-}
-
-/// Whether the contact lies at an end of the piece (the road goes on there), not along its side
-/// (a road joining it there: a T). Square pieces go on in every direction.
-bool atEnd(const FloorPiece& piece, const Contact& contact) {
-	if (!piece.longPiece || std::abs(dot(contact.dir, piece.dir)) < 0.5) return true;
-	// Touching along most of its long side: the road crosses it (a short piece between two roads).
-	if (contact.length >= 0.75 * piece.along) return true;
-	const double fromEnd = piece.along / 2 - std::abs(dot(flat(contact.mid - piece.centre), piece.dir));
-	return fromEnd <= contact.length / 2 + 1;
-}
-
-/// Where the lines through a (direction da) and b (direction db) cross (horizontally).
-std::optional<Vec3> crossing(const Vec3& a, const Vec3& da, const Vec3& b, const Vec3& db) {
-	const double det = cross2(da, db);
-	if (std::abs(det) < 1e-6) return std::nullopt;
-	const double t = cross2(flat(b - a), db) / det;
-	return a + da * t;
-}
-
-/// Centre line points through a chain of pieces (in order).
-RoadPath chainPath(const std::vector<FloorPiece>& pieces, const std::vector<std::size_t>& chain, std::optional<Vec3> startAt) {
-	RoadPath path;
-	if (chain.empty()) return path;
-	// Each piece's direction of travel.
-	std::vector<Vec3> travel(chain.size());
-	std::vector<bool> crossed(chain.size(), false);
-	for (std::size_t i = 0; i < chain.size(); ++i) {
-		const Vec3 from = i > 0 ? pieces[chain[i - 1]].centre : (startAt ? *startAt : pieces[chain[i]].centre);
-		const Vec3 to = i + 1 < chain.size() ? pieces[chain[i + 1]].centre : pieces[chain[i]].centre;
-		Vec3 t = flat(to - from);
-		if (length(t) < 1e-6) t = pieces[chain[i]].dir;
-		const FloorPiece& p = pieces[chain[i]];
-		// A long piece the road crosses (its neighbours lie beside its long sides) counts as a joint.
-		if (p.longPiece && chain.size() > 1 && std::abs(dot(p.dir, normalize(t))) < 0.5) crossed[i] = true;
-		const bool runs = p.longPiece && !crossed[i];
-		Vec3 d = runs ? p.dir : normalize(t);
-		if (runs && dot(d, t) < 0) d = -d;
-		travel[i] = normalize(d);
-	}
-	const auto runs = [&](std::size_t i) { return pieces[chain[i]].longPiece && !crossed[i]; };
-	const auto add = [&](Vec3 point, const FloorPiece& on) {
-		point.z = on.zAt(point.x, point.y);
-		if (path.points.empty() || length(flat(point - path.points.back())) > 0.5) path.points.push_back(point);
-	};
-	const auto half = [&](std::size_t i) {
-		const FloorPiece& p = pieces[chain[i]];
-		return dot(travel[i], p.dir) * dot(travel[i], p.dir) > 0.5 ? p.along / 2 : p.across / 2;
-	};
-	// The start: the far end of the first piece (or the junction it starts from).
-	if (startAt) {
-		add(*startAt, pieces[chain[0]]);
-		path.points.back().z = startAt->z;
-	} else {
-		add(pieces[chain[0]].centre - travel[0] * half(0), pieces[chain[0]]);
-	}
-	// Corners: where the centre lines of consecutive long pieces cross.
-	std::optional<std::size_t> last;
-	for (std::size_t i = 0; i < chain.size(); ++i) {
-		if (!runs(i)) continue;
-		if (last) {
-			const FloorPiece &a = pieces[chain[*last]], &b = pieces[chain[i]];
-			const Vec3 da = travel[*last], db = travel[i];
-			if (std::abs(cross2(da, db)) < 0.02) {
-				if (std::abs(cross2(da, flat(b.centre - a.centre))) > 1) {
-					// A jog sideways: from a little before the first piece's end to a little after
-					// the second's start, so the S between them is not tighter than it has to be.
-					const double pullA = std::min(a.across / 2, half(*last) / 2), pullB = std::min(b.across / 2, half(i) / 2);
-					add(a.centre + da * (half(*last) - pullA), a);
-					add(b.centre - db * (half(i) - pullB), b);
-				}
-			} else if (const auto corner = crossing(a.centre, da, b.centre, db)) {
-				// The corner's height: the piece between them if there is one, else the first.
-				const FloorPiece& on = (i > *last + 1) ? pieces[chain[*last + 1]] : a;
-				add(*corner, on);
-			}
-		}
-		last = i;
-	}
-	const std::size_t end = chain.size() - 1;
-	add(pieces[chain[end]].centre + travel[end] * half(end), pieces[chain[end]]);
-	return path;
-}
-
-} // namespace
-
-std::vector<RoadPath> roadPathsFromSolids(const MapDocument& doc, const std::vector<SolidRef>& solids, RoadBuildOptions* suggested,
-                                          std::vector<std::string>* notes) {
-	std::vector<FloorPiece> pieces;
-	std::map<std::string, int> materials;
-	for (const auto& ref : solids) {
-		const Solid* solid = doc.findSolid(ref);
-		if (!solid) continue;
-		const auto geometry = buildBrushGeometry(*solid);
-		if (!geometry.valid) continue;
-		const FaceGeometry* top = nullptr;
-		for (const auto& face : geometry.faces) {
-			if (face.normal.z > 0.7 && (!top || face.normal.z > top->normal.z)) top = &face;
-		}
-		if (!top || top->vertices.size() < 3) continue;
-		FloorPiece p;
-		p.ref = ref;
-		p.outline = top->vertices;
-		p.top = solid->sides[std::size_t(top->sideIndex)].plane();
-		p.bottom = geometry.bounds.min.z;
-		p.material = solid->sides[std::size_t(top->sideIndex)].material;
-		++materials[p.material];
-		for (const auto& v : p.outline) p.centre += v;
-		p.centre = p.centre / double(p.outline.size());
-		double longest = 0;
-		for (std::size_t i = 0; i < p.outline.size(); ++i) {
-			const Vec3 e = flat(p.outline[(i + 1) % p.outline.size()] - p.outline[i]);
-			if (length(e) > longest) {
-				longest = length(e);
-				p.dir = normalize(e);
-			}
-		}
-		double a0 = 1e30, a1 = -1e30, c0 = 1e30, c1 = -1e30;
-		const Vec3 left = leftOf(p.dir);
-		for (const auto& v : p.outline) {
-			a0 = std::min(a0, dot(v, p.dir));
-			a1 = std::max(a1, dot(v, p.dir));
-			c0 = std::min(c0, dot(v, left));
-			c1 = std::max(c1, dot(v, left));
-		}
-		p.along = a1 - a0;
-		p.across = c1 - c0;
-		// The middle of its extent (not the corners' average, which leans towards a cut corner).
-		const double mid = (a0 + a1) / 2, side = (c0 + c1) / 2;
-		const Vec3 c = p.dir * mid + left * side;
-		p.centre = {c.x, c.y, p.zAt(c.x, c.y)};
-		p.longPiece = p.along >= 1.25 * p.across;
-		pieces.push_back(std::move(p));
-	}
-	std::vector<RoadPath> paths;
-	if (pieces.empty()) return paths;
-	if (suggested) {
-		std::vector<double> widths, thick;
-		for (const auto& p : pieces) {
-			if (p.longPiece) widths.push_back(p.across);
-			thick.push_back(p.centre.z - p.bottom);
-		}
-		if (widths.empty()) {
-			for (const auto& p : pieces) widths.push_back(std::min(p.along, p.across));
-		}
-		std::sort(widths.begin(), widths.end());
-		std::sort(thick.begin(), thick.end());
-		suggested->width = std::max(16.0, std::round(widths[widths.size() / 2]));
-		suggested->thickness = std::max(2.0, std::round(thick[thick.size() / 2]));
-		if (suggested->material.empty()) {
-			int most = 0;
-			for (const auto& [material, n] : materials) {
-				if (n > most) {
-					most = n;
-					suggested->material = material;
-				}
-			}
-		}
-	}
-	// Neighbours: pieces the road goes on into, and pieces joining another one's side (T).
-	const std::size_t count = pieces.size();
-	std::vector<std::vector<std::size_t>> next(count);
-	struct SideJoin {
-		std::size_t trunk, branch;
-	};
-	std::vector<SideJoin> sideJoins;
-	for (std::size_t i = 0; i < count; ++i) {
-		for (std::size_t j = i + 1; j < count; ++j) {
-			const auto contact = touching(pieces[i], pieces[j]);
-			if (!contact) continue;
-			const bool endI = atEnd(pieces[i], *contact), endJ = atEnd(pieces[j], *contact);
-			if (endI && endJ) {
-				next[i].push_back(j);
-				next[j].push_back(i);
-			} else if (!endI) {
-				sideJoins.push_back({i, j});
-			} else {
-				sideJoins.push_back({j, i});
-			}
-		}
-	}
-	std::vector<bool> used(count, false);
-	const auto weight = [&](std::size_t i) { return std::max(pieces[i].along, pieces[i].across); };
-	// The longest chain from `from` through unused pieces (depth-first, small graphs).
-	std::function<std::vector<std::size_t>(std::size_t, std::vector<bool>&, int&)> longest = [&](std::size_t from, std::vector<bool>& seen,
-	                                                                                             int& budget) -> std::vector<std::size_t> {
-		seen[from] = true;
-		std::vector<std::size_t> best;
-		double bestLength = -1;
-		for (const std::size_t n : next[from]) {
-			if (seen[n] || used[n] || --budget < 0) continue;
-			auto chain = longest(n, seen, budget);
-			double total = 0;
-			for (const auto c : chain) total += weight(c);
-			if (total > bestLength) {
-				bestLength = total;
-				best = std::move(chain);
-			}
-		}
-		seen[from] = false;
-		best.insert(best.begin(), from);
-		return best;
-	};
-	const auto longestFrom = [&](std::size_t from) {
-		std::vector<bool> seen(count, false);
-		int budget = 20000;
-		return longest(from, seen, budget);
-	};
-	const auto branchOut = [&] {
-		for (bool again = true; again;) {
-			again = false;
-			// Through a junction piece: the branch starts at its middle.
-			for (std::size_t i = 0; i < count && !again; ++i) {
-				if (!used[i]) continue;
-				for (const std::size_t n : next[i]) {
-					if (used[n]) continue;
-					auto branch = longestFrom(n);
-					for (const auto c : branch) used[c] = true;
-					paths.push_back(chainPath(pieces, branch, pieces[i].centre));
-					if (notes) notes->push_back("a junction: one road joins another");
-					again = true;
-					break;
-				}
-			}
-			// Along a road's side (T): the branch starts on that road's centre line.
-			for (std::size_t k = 0; k < sideJoins.size() && !again; ++k) {
-				const auto [trunk, b] = sideJoins[k];
-				if (!used[trunk] || used[b]) continue;
-				auto branch = longestFrom(b);
-				for (const auto c : branch) used[c] = true;
-				const FloorPiece& t = pieces[trunk];
-				Vec3 start = t.centre + t.dir * dot(flat(pieces[b].centre - t.centre), t.dir);
-				start.z = t.zAt(start.x, start.y);
-				paths.push_back(chainPath(pieces, branch, start));
-				if (notes) notes->push_back("a junction: one road joins another");
-				again = true;
-			}
-		}
-	};
-	for (;;) {
-		// The next main road: the longest chain through the biggest piece left.
-		std::optional<std::size_t> start;
-		for (std::size_t i = 0; i < count; ++i) {
-			if (!used[i] && (!start || weight(i) > weight(*start))) start = i;
-		}
-		if (!start) break;
-		auto chain = longestFrom(*start);
-		chain = longestFrom(chain.back());
-		for (const auto c : chain) used[c] = true;
-		paths.push_back(chainPath(pieces, chain, std::nullopt));
-		branchOut();
-	}
-	std::erase_if(paths, [](const RoadPath& p) { return p.points.size() < 2; });
-	return paths;
 }
 
 // --- Planning ------------------------------------------------------------------------------
@@ -1140,13 +846,38 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 		if (groundMaterial.empty() && o.kerbs) groundMaterial = kerbMaterial;
 	}
 	// The selected floor the road is built from: what is left of it stays (fill).
+	double lostFloor = 0;   // square units of floor in slivers that joined nothing
+	int lostSlivers = 0;
 	for (const auto& ref : replace) {
 		const Solid* solid = doc.findSolid(ref);
 		if (!solid) continue;
 		std::vector<Solid> pieces;
 		carveByColumns(*solid, pieces);
 		tidyCarved(ids, *solid, pieces, mainMaterial(*solid));
-		std::erase_if(pieces, [](const Solid& s) { return !brushProblem(s).empty(); });
+		// A sliver the cuts left (too thin for a brush) joins a neighbouring piece instead of
+		// leaving a hole; only what joins nothing is left out (and said).
+		{
+			std::vector<Solid> good, bad;
+			for (auto& piece : pieces) (brushProblem(piece).empty() ? good : bad).push_back(std::move(piece));
+			for (auto& sliver : bad) {
+				bool joined = false;
+				const Bounds sb = buildBrushGeometry(sliver).bounds;
+				for (auto& piece : good) {
+					if (!boxesOverlap(sb, buildBrushGeometry(piece).bounds, -0.05)) continue;
+					auto merged = mergeSolids(ids, {piece, sliver});
+					if (!merged || std::abs(solidVolume(merged->solid) - solidVolume(piece) - solidVolume(sliver)) > 0.5 || !brushProblem(merged->solid).empty()) continue;
+					merged->solid.id = piece.id;
+					piece = std::move(merged->solid);
+					joined = true;
+					break;
+				}
+				if (!joined) {
+					lostFloor += solidVolume(sliver) / std::max(1.0, o.thickness);
+					++lostSlivers;
+				}
+			}
+			pieces = std::move(good);
+		}
 		// What is left beside a curve was road: it gets the fill material, else the ground's.
 		const std::string fill = !o.fillMaterial.empty() ? o.fillMaterial : groundMaterial;
 		for (auto& piece : pieces) {
@@ -1159,6 +890,11 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 		}
 		keepId(ref, pieces);
 		plan.changed.push_back({ref, std::move(pieces)});
+	}
+
+	if (lostSlivers > 0) {
+		plan.notes.push_back(std::to_string(lostSlivers) + " sliver(s) of the floor (about " + units(lostFloor) +
+		                     " square units) were too thin for a brush and are left out: check beside the road");
 	}
 
 	// Displacements: every four-cornered road top, bent onto the road's true surface.

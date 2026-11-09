@@ -305,3 +305,53 @@ TEST_CASE("editor report: a whole report is replayed - its clicks against its ma
 	CHECK_FALSE(replayEditorReport(dir.path / "missing.zip", &error));
 	CHECK(error.find("no scene.vmf") != std::string::npos);
 }
+
+TEST_CASE("editor report: the road builder's settings go there and back; a street is planned again from its selection") {
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT01";
+	o.parking = 80;
+	o.wholeWidth = false;
+	o.kerbs = true;
+	o.kerbWidth = 24;
+	o.displacement = true;
+	o.power = 2;
+	o.fillMaterial = "CONCRETE/PLAIN";
+	std::vector<std::pair<std::string, std::string>> settings;
+	addRoadBuildSettings(settings, o, false, {{0, 0, 8}, {512, 0, 8}}, {256, 512});
+	std::map<std::string, std::string> map(settings.begin(), settings.end());
+	bool fromSelection = true;
+	std::vector<Vec3> points;
+	std::pair<int, int> size;
+	const auto back = roadBuildSettings(map, &fromSelection, &points, &size);
+	CHECK_FALSE(fromSelection);
+	REQUIRE(points.size() == 2);
+	CHECK(points[1].x == doctest::Approx(512));
+	CHECK(size == std::pair<int, int>{256, 512});
+	CHECK(back.material == o.material);
+	CHECK(back.parking == doctest::Approx(80));
+	CHECK(back.kerbs);
+	CHECK(back.kerbWidth == doctest::Approx(24));
+	CHECK(back.displacement);
+	CHECK(back.power == 2);
+	CHECK(back.fillMaterial == o.fillMaterial);
+
+	// A street of two blocks (an L), recorded as built from its selection: replayed.
+	MapDocument doc;
+	const auto a = addBlock(doc, {0, -240, -16}, {1536, 240, 8});
+	const auto b = addBlock(doc, {1056, 240, -16}, {1536, 1536, 8});
+	std::vector<std::pair<std::string, std::string>> recorded;
+	addRoadBuildSettings(recorded, RoadBuildOptions{}, true, {}, {512, 512});
+	recorded.emplace_back("build.solids", formatSolids({a, b}));
+	TempDir dir;
+	const auto zip = dir.path / "report.zip";
+	REQUIRE(writeZip(zip, {{"scene.vmf", {}, bytes(doc.serialize())}, {"replay.txt", {}, bytes(formatSettings(recorded))}}));
+	std::string error;
+	const auto replay = replayEditorReport(zip, &error);
+	REQUIRE_MESSAGE(replay, error);
+	INFO(*replay);
+	CHECK(replay->find("road builder replayed with the recorded settings and selection:") != std::string::npos);
+	CHECK(replay->find("street: 2 floor brush(es)") != std::string::npos);
+	CHECK(replay->find("width 480: road 288, parking 96") != std::string::npos);
+	CHECK(replay->find("main road:") != std::string::npos);
+	CHECK(replay->find("1 curve(s)") != std::string::npos);
+}

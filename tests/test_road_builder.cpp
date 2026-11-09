@@ -1,6 +1,7 @@
 // test_road_builder.cpp - Road builder: straight roads, curves (no gaps, texture running on),
 // slopes, junctions, displacements with a crown, carving into the floor, paths from selected
-// floor brushes, one undo step.
+// floor brushes (the street they make: centred road, parking lanes, curves round the kerbs, no
+// holes), one undo step.
 
 #include <doctest/doctest.h>
 
@@ -8,6 +9,7 @@
 #include <sme/csg.h>
 #include <sme/displacement.h>
 #include <sme/edge_round.h>
+#include <sme/editing.h>
 #include <sme/history.h>
 #include <sme/road_builder.h>
 
@@ -339,113 +341,334 @@ TEST_CASE("road builder: the road is carved into the floor and through what stan
 	CHECK(holders(after, {450, 250, 20}) == 1);
 }
 
-TEST_CASE("road builder: selected floor blocks of an L become one curved road, the rest stays as fill") {
+// --- From selected floor brushes: the street and the road through it ---------------------------
+
+namespace {
+
+/// Julius' street (editor report of 01.11.2026): an L of floor blocks 24 thick (top at 8), 480
+/// wide along x, a jog to 416 wide, then 528 wide along y; sidewalks (top at 16) beside it.
+struct Street {
 	MapDocument doc;
-	doc.world.solids.push_back(makeBlock(doc, box({0, -128, -16}, {768, 128, 0}), "ROAD/ASPHALT"));
-	doc.world.solids.push_back(makeBlock(doc, box({768, -128, -16}, {1024, 128, 0}), "ROAD/ASPHALT"));
-	doc.world.solids.push_back(makeBlock(doc, box({768, 128, -16}, {1024, 1024, 0}), "ROAD/ASPHALT"));
-	std::vector<SolidRef> refs;
-	for (const auto& s : doc.world.solids) refs.push_back({0, s.id});
-	RoadBuildOptions o;
-	std::vector<std::string> notes;
-	const auto paths = roadPathsFromSolids(doc, refs, &o, &notes);
-	REQUIRE(paths.size() == 1);
-	CHECK(o.width == doctest::Approx(256));
-	CHECK(o.thickness == doctest::Approx(16));
-	CHECK(o.material == "ROAD/ASPHALT");
-	REQUIRE(paths.front().points.size() == 3);
-	CHECK(length(paths.front().points[0] - Vec3{0, 0, 0}) < 0.01);
-	CHECK(length(paths.front().points[1] - Vec3{896, 0, 0}) < 0.01);
-	CHECK(length(paths.front().points[2] - Vec3{896, 1024, 0}) < 0.01);
-	o.innerRadius = 0;
-	o.fillMaterial = "CONCRETE/SIDEWALK";
-	o.fit = false;
-	const auto plan = planRoadBuild(doc, doc, paths, o, SQUARE, refs);
-	CHECK(plan.curves == 1);
-	std::vector<Solid> after = plan.resultSolids();
-	CHECK(allSound(after));
-	CHECK(noOverlaps(after));
-	// The whole L is still filled (road or fill), and the outer corner got the fill material.
-	for (double x = 8; x < 1024; x += 64) {
-		for (double y = -120; y < 1024; y += 64) {
-			if (x < 768 && y > 128) continue;
-			CHECK(holders(after, {x, y, -8}) == 1);
+	std::vector<SolidRef> floor;
+	std::vector<SolidRef> sidewalks;
+	SolidRef innerCorner;   ///< The sidewalk at the L's inside corner (256, -1296)
+};
+
+const std::vector<std::pair<Vec3, Vec3>> STREET_FLOOR{{{-2160, -1168, -16}, {-1472, -688, 8}}, {{-1472, -1168, -16}, {-768, -688, 8}},
+                                                     {{-768, -1296, -16}, {-624, -688, 8}},   {{-624, -1296, -16}, {784, -880, 8}},
+                                                     {{256, -2352, -16}, {784, -1296, 8}},    {{256, -2880, -16}, {784, -2352, 8}}};
+
+/// `piece`: 0 = the blocks as they are; else every block cut into tiles about that big.
+Street julius(double piece = 0) {
+	Street s;
+	for (const auto& [a, b] : STREET_FLOOR) {
+		if (piece <= 0) {
+			s.doc.world.solids.push_back(makeBlock(s.doc, box(a, b), "CONCRETE/STREET"));
+			s.floor.push_back({0, s.doc.world.solids.back().id});
+			continue;
+		}
+		// Tiles of uneven size (piece, piece / 2 + 16, ...), like a floor blocked in by hand.
+		std::vector<double> xs{a.x}, ys{a.y};
+		for (int k = 0; xs.back() < b.x; ++k) xs.push_back(std::min(b.x, xs.back() + (k % 2 ? piece : piece / 2 + 16)));
+		for (int k = 0; ys.back() < b.y; ++k) ys.push_back(std::min(b.y, ys.back() + (k % 3 ? piece : piece / 2)));
+		for (std::size_t i = 0; i + 1 < xs.size(); ++i) {
+			for (std::size_t j = 0; j + 1 < ys.size(); ++j) {
+				s.doc.world.solids.push_back(makeBlock(s.doc, box({xs[i], ys[j], a.z}, {xs[i + 1], ys[j + 1], b.z}), "CONCRETE/STREET"));
+				s.floor.push_back({0, s.doc.world.solids.back().id});
+			}
 		}
 	}
-	bool sidewalk = false;
-	for (const auto& r : plan.changed) {
-		for (const auto& p : r.pieces) sidewalk = sidewalk || (top(p) && top(p)->material == "CONCRETE/SIDEWALK");
+	for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{-2160, -688, -16}, {-624, -592, 16}},  {{-624, -880, -16}, {-528, -592, 16}},
+	                                                            {{-528, -880, -16}, {880, -784, 16}},   {{784, -2880, -16}, {880, -880, 16}},
+	                                                            {{-2160, -1264, -16}, {-768, -1168, 16}}, {{-768, -1392, -16}, {256, -1296, 16}},
+	                                                            {{160, -2880, -16}, {256, -1392, 16}}}) {
+		s.doc.world.solids.push_back(makeBlock(s.doc, box(a, b), "CONCRETE/SIDEWALK"));
+		s.sidewalks.push_back({0, s.doc.world.solids.back().id});
 	}
-	CHECK(sidewalk);
+	s.innerCorner = s.sidewalks[5];
+	return s;
+}
+
+Vec3 flat(const Vec3& v) {
+	return {v.x, v.y, 0};
+}
+
+FaceRef facing(const MapDocument& doc, const SolidRef& ref, Vec3 normal) {
+	for (const auto& side : doc.findSolid(ref)->sides) {
+		if (dot(side.plane().normal, normal) > 0.999) return {ref, side.id};
+	}
+	return {};
+}
+
+/// The map after the plan (a copy).
+MapDocument applied(const MapDocument& doc, const RoadBuildPlan& plan) {
+	MapDocument after = doc;
+	(void)edit::applyRoadBuild(after, plan);
+	return after;
+}
+
+/// Every point of the old floor (on a 7.7 unit raster, just below its top) is in exactly one
+/// brush afterwards: no hole, nothing doubled.
+void checkCovered(const MapDocument& before, const std::vector<SolidRef>& floor, const MapDocument& after) {
+	int holes = 0, doubled = 0, samples = 0;
+	for (const auto& ref : floor) {
+		const Solid* solid = before.findSolid(ref);
+		REQUIRE(solid);
+		const auto b = buildBrushGeometry(*solid).bounds;
+		for (double x = b.min.x + 1.3; x < b.max.x; x += 7.7) {
+			for (double y = b.min.y + 1.7; y < b.max.y; y += 7.7) {
+				const Vec3 p{x, y, b.max.z - 4};
+				if (!solidContains(*solid, p, -0.05)) continue;
+				++samples;
+				int strict = 0, loose = 0;
+				for (const auto& s : after.world.solids) {
+					strict += solidContains(s, p, -0.05) ? 1 : 0;
+					loose += solidContains(s, p, 0.05) ? 1 : 0;
+				}
+				if (loose == 0) {
+					if (holes < 5) MESSAGE("hole at " << x << " " << y);
+					++holes;
+				}
+				if (strict > 1) {
+					if (doubled < 5) MESSAGE("doubled at " << x << " " << y);
+					++doubled;
+				}
+			}
+		}
+	}
+	CHECK(samples > 100);
+	CHECK(holes == 0);
+	CHECK(doubled == 0);
+}
+
+/// The road's pieces in the map afterwards (road material on top).
+std::vector<const Solid*> roadIn(const MapDocument& doc, const std::string& material) {
+	std::vector<const Solid*> out;
+	for (const auto& s : doc.world.solids) {
+		if (const Side* t = top(s); t && t->material == material) out.push_back(&s);
+	}
+	return out;
+}
+
+bool roadAt(const std::vector<const Solid*>& road, double x, double y, double z) {
+	return std::any_of(road.begin(), road.end(), [&](const Solid* s) { return solidContains(*s, {x, y, z}, -0.05); });
+}
+
+} // namespace
+
+TEST_CASE("road from selection: Julius' street - centred road, parking lanes both sides, curves round the corners, no holes") {
+	Street street = julius();
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT";
+	o.fit = true;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(street.doc, street.doc, street.floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	REQUIRE(plan.ok());
+	CHECK(corridor.floor.size() == 6);
+	CHECK(corridor.width == doctest::Approx(416));   // the narrowest part (the middle)
+	CHECK(corridor.parking == doctest::Approx(96));
+	CHECK(corridor.roadWidth == doctest::Approx(224));
+	CHECK(corridor.thickness == doctest::Approx(24));
+	REQUIRE(corridor.paths.size() == 1);
+	const auto& points = corridor.paths.front().points;
+	REQUIRE(points.size() >= 4);
+	// Starts and ends exactly at the street's ends, in the middle between the kerbs.
+	const Vec3 first = points.front(), last = points.back();
+	CHECK(((std::abs(first.x + 2160) < 0.5 && std::abs(first.y + 928) < 0.5 && std::abs(last.x - 520) < 0.5 && std::abs(last.y + 2880) < 0.5) ||
+	       (std::abs(last.x + 2160) < 0.5 && std::abs(last.y + 928) < 0.5 && std::abs(first.x - 520) < 0.5 && std::abs(first.y + 2880) < 0.5)));
+	CHECK(first.z == doctest::Approx(8));
+	CHECK(plan.curves >= 2);
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(street.doc, plan);
+	checkCovered(street.doc, street.floor, after);
+	const auto road = roadIn(after, "ROAD/ASPHALT");
+	// Road in the middle, parking lanes free of it, sidewalks untouched.
+	for (const double x : {-2000.0, -1600.0, -1100.0}) {
+		CHECK(roadAt(road, x, -928, 0));
+		CHECK_FALSE(roadAt(road, x, -688 - 56, 0));
+		CHECK_FALSE(roadAt(road, x, -1168 + 56, 0));
+	}
+	for (const double x : {-300.0, 0.0}) {
+		CHECK(roadAt(road, x, -1088, 0));
+		CHECK_FALSE(roadAt(road, x, -880 - 40, 0));
+		CHECK_FALSE(roadAt(road, x, -1296 + 40, 0));
+	}
+	for (const double y : {-1800.0, -2400.0, -2800.0}) {
+		CHECK(roadAt(road, 520, y, 0));
+		CHECK_FALSE(roadAt(road, 256 + 60, y, 0));
+		CHECK_FALSE(roadAt(road, 784 - 60, y, 0));
+	}
+	for (const auto& ref : street.sidewalks) {
+		const Solid* walk = after.findSolid(ref);
+		REQUIRE(walk);
+		CHECK(walk->sides.size() == street.doc.findSolid(ref)->sides.size());
+		for (const Solid* r : road) CHECK(sharedVolume(*r, *walk) < 1);
+	}
+	// The parking lanes keep the floor's own material (it is not the road material).
+	bool parking = false;
+	for (const auto& s : after.world.solids) {
+		if (solidContains(s, {-1600, -688 - 56, 0}, -0.05) && top(s)) parking = top(s)->material == "CONCRETE/STREET";
+	}
+	CHECK(parking);
+}
+
+TEST_CASE("road from selection: the same street blocked in from many small blocks gives the same road") {
+	Street big = julius();
+	Street small = julius(112);
+	CHECK(small.floor.size() > 150);
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT";
+	RoadCorridor a, b;
+	const auto planA = planRoadFromSelection(big.doc, big.doc, big.floor, o, SQUARE, &a);
+	const auto planB = planRoadFromSelection(small.doc, small.doc, small.floor, o, SQUARE, &b);
+	INFO(describeRoadCorridor(b));
+	REQUIRE(planB.ok());
+	CHECK(b.width == doctest::Approx(a.width));
+	CHECK(b.roadWidth == doctest::Approx(a.roadWidth));
+	REQUIRE(a.paths.size() == 1);
+	REQUIRE(b.paths.size() == 1);
+	REQUIRE(a.paths.front().points.size() == b.paths.front().points.size());
+	for (std::size_t i = 0; i < a.paths.front().points.size(); ++i) CHECK(length(a.paths.front().points[i] - b.paths.front().points[i]) < 2);
+	CHECK(planB.skipped == 0);
+	CHECK(allSound(planB.resultSolids()));
+	checkCovered(small.doc, small.floor, applied(small.doc, planB));
+}
+
+TEST_CASE("road from selection: only the two blocks of the corner give a curve inside them") {
+	Street street = julius();
+	const std::vector<SolidRef> corner{street.floor[3], street.floor[4]};   // 1408 x 416 along x, 528 x 1056 along y
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT";
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(street.doc, street.doc, corner, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	REQUIRE(plan.ok());
+	REQUIRE(corridor.paths.size() == 1);
+	CHECK(plan.curves == 1);
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(street.doc, plan);
+	checkCovered(street.doc, corner, after);
+	// Nothing outside the two blocks changed.
+	for (const auto& ref : {street.floor[0], street.floor[1], street.floor[2], street.floor[5]}) {
+		CHECK(after.findSolid(ref)->sides.size() == street.doc.findSolid(ref)->sides.size());
+	}
+	const auto road = roadIn(after, "ROAD/ASPHALT");
+	CHECK(roadAt(road, 0, -1088, 0));
+	CHECK(roadAt(road, 520, -2000, 0));
+	// The curve's middle keeps clear of the inside corner (256, -1296) by the parking lane.
+	for (const Solid* r : road) {
+		for (const auto& v : solidCorners(*r)) CHECK(length(flat(v - Vec3{256, -1296, 0})) > corridor.parking - 16);
+	}
+}
+
+TEST_CASE("road from selection: a rounded sidewalk corner - the curve runs round its middle, no gap beside it") {
+	Street street = julius();
+	// Round the sidewalk's corner at the L's inside (Julius' screenshot: a gap there).
+	REQUIRE(edit::roundEdge(street.doc, facing(street.doc, street.innerCorner, {1, 0, 0}), facing(street.doc, street.innerCorner, {0, 1, 0}), 128, 0));
+	// The floor is everything with its top at 8 now (the rounding filled the corner's foot).
+	std::vector<SolidRef> floor;
+	for (const auto& s : street.doc.world.solids) {
+		const auto b = buildBrushGeometry(s).bounds;
+		if (std::abs(b.max.z - 8) < 0.01) floor.push_back({0, s.id});
+	}
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT";
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(street.doc, street.doc, floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	REQUIRE(plan.ok());
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(street.doc, plan);
+	checkCovered(street.doc, floor, after);
+	// The rounded sidewalk stands where it stood; the road keeps the lane clear of its curve.
+	const Solid* walk = after.findSolid(street.innerCorner);
+	REQUIRE(walk);
+	CHECK(brushProblem(*walk).empty());
+	const auto road = roadIn(after, "ROAD/ASPHALT");
+	for (const Solid* r : road) CHECK(sharedVolume(*r, *walk) < 1);
+	// The curve at that corner: inner radius about the rounding's plus the lane.
+	const auto& radii = corridor.paths.front().innerRadius;
+	const double biggest = *std::max_element(radii.begin(), radii.end());
+	CHECK(biggest >= 128 + corridor.parking - 48);
+	// Next to the rounding (between it and the road) is floor, not a hole.
+	const Vec3 rounding{256 - 128, -1296 + 128, 0};   // the rounding's middle
+	for (const double angle : {0.3, 0.8, 1.2}) {
+		const Vec3 p = rounding + Vec3{std::cos(angle), -std::sin(angle), 0} * (128 + 24) + Vec3{0, 0, 0};
+		const Vec3 q{p.x, p.y, 0};
+		CHECK(std::any_of(after.world.solids.begin(), after.world.solids.end(), [&](const Solid& s) { return solidContains(s, q, 0.05); }));
+	}
+}
+
+TEST_CASE("road from selection: a T street - a main road and a side street that starts on its centre line") {
+	MapDocument doc;
+	std::vector<SolidRef> floor;
+	for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{0, -240, -16}, {784, 240, 8}}, {{784, -240, -16}, {1264, 240, 8}},
+	                                                            {{1264, -240, -16}, {2560, 240, 8}}, {{784, 240, -16}, {1264, 1600, 8}}}) {
+		doc.world.solids.push_back(makeBlock(doc, box(a, b), "CONCRETE/STREET"));
+		floor.push_back({0, doc.world.solids.back().id});
+	}
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT";
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(doc, doc, floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	REQUIRE(plan.ok());
+	REQUIRE(corridor.paths.size() == 2);
+	CHECK(corridor.roadWidth == doctest::Approx(288));   // 480 - 2 x 96
+	const auto& main = corridor.paths[0].points;
+	const auto& side = corridor.paths[1].points;
+	CHECK(std::abs(main.front().y) < 0.5);
+	CHECK(std::abs(main.back().y) < 0.5);
+	CHECK(std::min(main.front().x, main.back().x) == doctest::Approx(0).epsilon(0.001));
+	CHECK(std::max(main.front().x, main.back().x) == doctest::Approx(2560).epsilon(0.001));
+	CHECK(length(side.front() - Vec3{1024, 0, 8}) < 1);
+	CHECK(length(side.back() - Vec3{1024, 1600, 8}) < 1);
+	CHECK(plan.junctions == 1);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(doc, plan);
+	checkCovered(doc, floor, after);
+	const auto road = roadIn(after, "ROAD/ASPHALT");
+	CHECK(roadAt(road, 1024, 0, 0));
+	CHECK(roadAt(road, 1024, 800, 0));
+	CHECK(roadAt(road, 300, 0, 0));
+	CHECK_FALSE(roadAt(road, 300, 200, 0));
+}
+
+TEST_CASE("road from selection: whole width, selection with a sidewalk, one undo step") {
+	Street street = julius();
+	std::vector<SolidRef> picked = street.floor;
+	picked.push_back(street.sidewalks[0]);   // selected by mistake: another height, stays
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT";
+	o.wholeWidth = true;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(street.doc, street.doc, picked, o, SQUARE, &corridor);
+	REQUIRE(plan.ok());
+	CHECK(corridor.ignored.size() == 1);
+	CHECK(corridor.parking == 0);
+	CHECK(corridor.roadWidth == doctest::Approx(416));
+	CHECK(std::none_of(plan.changed.begin(), plan.changed.end(), [&](const RoadBuildPlan::Replacement& r) { return r.ref == street.sidewalks[0]; }));
+	// The suggestion for the dialog.
+	RoadBuildOptions suggested;
+	const auto paths = roadPathsFromSolids(street.doc, street.floor, &suggested);
+	CHECK(paths.size() == 1);
+	CHECK(suggested.width == doctest::Approx(224));
+	CHECK(suggested.thickness == doctest::Approx(24));
+	CHECK(suggested.material == "CONCRETE/STREET");
 	// One undo step.
+	MapDocument doc = street.doc;
 	const std::string before = doc.serialize();
 	History history;
-	auto [change, made] = edit::applyRoadBuild(doc, planRoadBuild(doc, doc, paths, o, SQUARE, refs));
+	auto [change, made] = edit::applyRoadBuild(doc, planRoadFromSelection(doc, doc, street.floor, RoadBuildOptions{}, SQUARE));
 	CHECK(change.name == "Build road");
 	CHECK_FALSE(made.empty());
 	history.push(std::move(change));
 	CHECK(doc.serialize() != before);
 	history.undo(doc);
-	// The same brushes again (undo puts them back at the end of the list).
 	std::sort(doc.world.solids.begin(), doc.world.solids.end(), [](const Solid& a, const Solid& b) { return a.id < b.id; });
 	CHECK(keyValueDifferences(before, doc.serialize()).empty());
-}
-
-TEST_CASE("road builder: a T of selected blocks gives a main road and a branch that joins it") {
-	MapDocument doc;
-	doc.world.solids.push_back(makeBlock(doc, box({0, -128, -16}, {2048, 128, 0}), "ROAD/ASPHALT"));
-	doc.world.solids.push_back(makeBlock(doc, box({896, 128, -16}, {1152, 1024, 0}), "ROAD/ASPHALT"));
-	std::vector<SolidRef> refs;
-	for (const auto& s : doc.world.solids) refs.push_back({0, s.id});
-	RoadBuildOptions o;
-	const auto paths = roadPathsFromSolids(doc, refs, &o);
-	REQUIRE(paths.size() == 2);
-	o.fit = false;
-	const auto plan = planRoadBuild(doc, doc, paths, o, SQUARE, refs);
-	CHECK(plan.junctions == 1);
-	std::vector<Solid> all = plan.resultSolids();
-	CHECK(allSound(all));
-	CHECK(noOverlaps(all));
-	CHECK(holders(all, {1024, 600, -8}) == 1);
-	CHECK(holders(all, {1024, 0, -8}) == 1);
-}
-
-TEST_CASE("road builder: a mapper's blocked-in road (pieces of different widths, a narrow joint, an L) becomes one road") {
-	// The road of an editor report (6 floor blocks, 24 units thick, 416 to 528 wide).
-	MapDocument doc;
-	for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{-2160, -1168, -16}, {-1472, -688, 8}},
-	                                                            {{-1472, -1168, -16}, {-768, -688, 8}},
-	                                                            {{-768, -1296, -16}, {-624, -688, 8}},
-	                                                            {{-624, -1296, -16}, {784, -880, 8}},
-	                                                            {{256, -2352, -16}, {784, -1296, 8}},
-	                                                            {{256, -2880, -16}, {784, -2352, 8}}}) {
-		doc.world.solids.push_back(makeBlock(doc, box(a, b), "CONCRETE/BLENDROAD_BROKEN01"));
-	}
-	std::vector<SolidRef> refs;
-	for (const auto& s : doc.world.solids) refs.push_back({0, s.id});
-	RoadBuildOptions o;
-	const auto paths = roadPathsFromSolids(doc, refs, &o);
-	REQUIRE(paths.size() == 1);
-	CHECK(o.width == doctest::Approx(480));
-	CHECK(o.thickness == doctest::Approx(24));
-	const auto& points = paths.front().points;
-	REQUIRE(points.size() >= 3);
-	CHECK(length(points.front() - Vec3{-2160, -928, 8}) < 0.01);
-	CHECK(length(points.back() - Vec3{520, -2880, 8}) < 0.01);
-	o.fit = false;
-	o.innerRadius = 128;
-	const auto plan = planRoadBuild(doc, doc, paths, o, SQUARE, refs);
-	CHECK(plan.ok());
-	CHECK(plan.curves >= 1);
-	CHECK(plan.skipped == 0);
-	std::vector<Solid> after = plan.resultSolids();
-	CHECK(allSound(after));
-	CHECK(noOverlaps(after));
-	// Nothing of the old road is lost: every point of it is road or fill.
-	for (const auto& ref : refs) {
-		const auto bounds = buildBrushGeometry(*doc.findSolid(ref)).bounds;
-		for (double x = bounds.min.x + 5; x < bounds.max.x; x += 37) {
-			for (double y = bounds.min.y + 5; y < bounds.max.y; y += 37) CHECK(holders(after, {x, y, 0}) == 1);
-		}
-	}
 }

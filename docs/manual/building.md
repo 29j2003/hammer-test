@@ -335,13 +335,27 @@ one step, with the texture already running along the road and round its curves.
   Each click puts a point on the floor under the mouse (snapped to the grid). **Backspace** takes
   the last point back, **Enter** builds the road, **Esc** stops clicking. The views show the road
   while you click.
-- **Along the selected floor brushes**: block the road in with plain brushes first (as you would in
-  Hammer), select them, right-click and pick **Build road ...**. The road follows them: long blocks
-  give the road's direction, a square block between two of them is a corner, a block joining
-  another one's side is a junction. Width, thickness and material are taken from the blocks. The
-  blocks are replaced; what a curve leaves of them stays, with the ground's material on top (the
-  floor beside the road) or the **Fill material** if you set one. Where blocks of different widths
-  meet off-centre, the road swings over in a gentle S.
+- **Through the selected street**: select the street's floor brushes - any number, any size, as
+  you blocked them in (a few long blocks, many small tiles, the filler pieces a rounded sidewalk
+  corner left) - right-click and pick **Build road ...**. Mapsmith looks at the street they make
+  from above (their tops at the floor's height, minus anything standing on them, like a sidewalk
+  or a wall) and builds the road along its middle:
+  - the road is the street's width where it is narrowest minus a **Parking lane** on each side
+    (96 units by default: room for parked cars), centred exactly between the kerbs on every straight
+    part; tick **Whole width** for no lanes;
+  - every bend becomes the largest curve that keeps the lane clear of the kerbs - round a rounded
+    sidewalk corner the curve runs round the same middle; where the street jogs sideways the road
+    swings over in one gentle S;
+  - a side street (a T) becomes a branch that starts on the main road's centre line; the main road
+    is the straightest way through;
+  - the selected floor is cut around the road like **Carve**: road and what is left beside it fill
+    the street exactly - no holes, nothing doubled. What is left (the parking lanes, the corners)
+    keeps the floor's material; if the floor already had the road material, it gets the **Beside
+    the road** material (a plain asphalt of the game is filled in when there is one).
+  Width, curve radius and thickness come from the street (the width field shows the road's width).
+  Selected brushes at another height (a sidewalk picked by mistake) stay as they are.
+- **Only lay the road texture**: keeps the selected blocks and lays the road material over their
+  tops, running along the road (the same as **Road texture ...**, below).
 
 The settings:
 
@@ -370,10 +384,12 @@ The settings:
   for plain asphalt without lane lines.
 - *More settings*: which way the texture runs (**Texture runs along**, **Flip direction**), the
   **Side material** for the road's open sides and ends, **Kerb material**, **Junction material**,
-  **Fill material**, **Clear above the road**.
+  **Beside the road**, **Clear above the road**.
 
 **Build** makes it one undo step and selects the new road. Nothing is ever refused: a piece that
-would be broken is left out and the note says so.
+would be broken is left out and the note says so. If a road comes out wrong, **Help > Make editor
+report ...** right after building records the selection, the settings and what the builder decided
+(the street's width, its centre line, every curve), so it can be rebuilt exactly.
 
 ## Road texture
 

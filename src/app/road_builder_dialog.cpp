@@ -22,6 +22,8 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <cmath>
+
 namespace sme::app {
 
 namespace {
@@ -54,14 +56,20 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 	m_drawMode = new QRadioButton(tr("Draw a path"), this);
 	m_drawMode->setObjectName("roadBuilderDraw");
 	m_drawMode->setToolTip(tr("Click points along the road's middle in the 3D or top view; every corner becomes a curve"));
-	m_selectionMode = new QRadioButton(tr("Along the selected floor brushes"), this);
+	m_selectionMode = new QRadioButton(tr("Through the selected street"), this);
 	m_selectionMode->setObjectName("roadBuilderFromSelection");
-	m_selectionMode->setToolTip(tr("The road follows the selected blocks (blocked in by hand) and replaces them; what the curves leave of them stays"));
+	m_selectionMode->setToolTip(tr("Select the street's floor brushes (any number and size). The road runs along the middle of the street they make, "
+	                               "with a parking lane on each side; the floor is cut around it like Carve - no holes, nothing doubled"));
+	m_textureMode = new QRadioButton(tr("Only lay the road texture"), this);
+	m_textureMode->setObjectName("roadBuilderTextureOnly");
+	m_textureMode->setToolTip(tr("Keep the selected blocks as they are and lay the road texture over their tops, running along the road (like Road texture ...)"));
 	auto* group = new QButtonGroup(this);
 	group->addButton(m_drawMode);
 	group->addButton(m_selectionMode);
+	group->addButton(m_textureMode);
 	modeRow->addWidget(m_drawMode);
 	modeRow->addWidget(m_selectionMode);
+	modeRow->addWidget(m_textureMode);
 	modeRow->addStretch(1);
 	outer->addLayout(modeRow);
 
@@ -107,6 +115,22 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 		if (const int w = m_preset->currentData().toInt(); w > 0) m_width->setValue(w);
 	});
 	connect(m_width, &QDoubleSpinBox::valueChanged, this, syncPreset);
+
+	// Through a street: the lanes left beside the road (its width follows from the street).
+	m_parking = unitsBox(this, "roadBuilderParking", 0, 1024, settings.value("roadBuilder/parking", 96).toDouble(), 8);
+	m_parking->setToolTip(tr("Through the selected street: room left on each side of the road (where cars park). "
+	                         "The road is the street's width where it is narrowest minus a lane on each side"));
+	m_wholeWidth = new QCheckBox(tr("Whole width"), this);
+	m_wholeWidth->setObjectName("roadBuilderWholeWidth");
+	m_wholeWidth->setToolTip(tr("The road takes the street's whole width (no parking lanes)"));
+	m_wholeWidth->setChecked(settings.value("roadBuilder/wholeWidth", false).toBool());
+	auto* parkingRow = new QWidget(this);
+	auto* parkingLayout = new QHBoxLayout(parkingRow);
+	parkingLayout->setContentsMargins(0, 0, 0, 0);
+	parkingLayout->addWidget(m_parking, 1);
+	parkingLayout->addWidget(m_wholeWidth);
+	form->addRow(tr("Parking lane"), parkingRow);
+	connect(m_wholeWidth, &QCheckBox::toggled, m_parking, [this](bool on) { m_parking->setEnabled(!on && fromSelection()); });
 
 	m_radius = unitsBox(this, "roadBuilderRadius", 0, 8192, settings.value("roadBuilder/radius", 128).toDouble(), 16);
 	m_radius->setSpecialValueText(tr("Tight (0)"));
@@ -223,9 +247,9 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 	moreForm->addRow(tr("Junction material"), materialRow(m_junction, tr("Where the road meets another one, that road's piece in the crossing gets this (plain asphalt, no lane lines)")));
 	m_fill = new QLineEdit(more);
 	m_fill->setObjectName("roadBuilderFillMaterial");
-	m_fill->setPlaceholderText(tr("as it was"));
 	m_fill->setText(settings.value("roadBuilder/fillMaterial").toString());
-	moreForm->addRow(tr("Fill material"), materialRow(m_fill, tr("Along the selected floor brushes: the top of what the curves leave of them")));
+	m_fill->setPlaceholderText(tr("the floor's own (the ground's if it was the road material)"));
+	moreForm->addRow(tr("Beside the road"), materialRow(m_fill, tr("Through a street: the top of the floor left beside the road (the parking lanes, the corners)")));
 	m_clearance = unitsBox(more, "roadBuilderClearance", 0, 4096, settings.value("roadBuilder/clearance", 128).toDouble(), 16);
 	m_clearance->setToolTip(tr("Fit into surroundings: brushes are carved up to this height above the road"));
 	moreForm->addRow(tr("Clear above the road"), m_clearance);
@@ -249,11 +273,12 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 	connect(&m_soon, &QTimer::timeout, this, &RoadBuilderDialog::refresh);
 	const auto later = [this] { m_soon.start(); };
 	for (auto* field : {m_material, m_side, m_junction, m_kerbMaterial, m_fill}) connect(field, &QLineEdit::textChanged, this, later);
-	for (auto* box : {m_width, m_thickness, m_radius, m_crown, m_roughness, m_kerbWidth, m_kerbHeight, m_clearance}) {
+	connect(m_fill, &QLineEdit::textEdited, this, [this] { m_fillEdited = true; });
+	for (auto* box : {m_width, m_thickness, m_radius, m_crown, m_roughness, m_kerbWidth, m_kerbHeight, m_clearance, m_parking}) {
 		connect(box, &QDoubleSpinBox::valueChanged, this, later);
 	}
 	connect(m_segments, &QSpinBox::valueChanged, this, later);
-	for (auto* box : {m_flip, m_displacement, m_kerbs, m_fit}) connect(box, &QCheckBox::toggled, this, later);
+	for (auto* box : {m_flip, m_displacement, m_kerbs, m_fit, m_wholeWidth}) connect(box, &QCheckBox::toggled, this, later);
 	connect(m_along, &QComboBox::currentIndexChanged, this, later);
 	connect(m_power, &QComboBox::currentIndexChanged, this, later);
 	connect(m_displacement, &QCheckBox::toggled, this, [this](bool on) {
@@ -304,6 +329,7 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 		}
 	});
 	connect(m_drawMode, &QRadioButton::toggled, this, &RoadBuilderDialog::modeChanged);
+	connect(m_textureMode, &QRadioButton::toggled, this, &RoadBuilderDialog::modeChanged);
 	connect(editor, &Editor::selectionChanged, this, later);
 	connect(editor, &Editor::documentChanged, this, later);
 
@@ -347,7 +373,22 @@ RoadBuildOptions RoadBuilderDialog::options() const {
 	o.kerbWidth = m_kerbWidth->value();
 	o.kerbHeight = m_kerbHeight->value();
 	o.kerbMaterial = m_kerbMaterial->text().trimmed().toStdString();
+	o.parking = m_parking->value();
+	o.wholeWidth = m_wholeWidth->isChecked();
 	return o;
+}
+
+RoadOptions RoadBuilderDialog::textureOptions() const {
+	RoadOptions o;
+	o.material = m_material->text().trimmed().toStdString();
+	o.along = static_cast<RoadAlong>(m_along->currentData().toInt());
+	o.flip = m_flip->isChecked();
+	o.curveCorners = true;
+	return o;
+}
+
+bool RoadBuilderDialog::textureOnly() const {
+	return m_textureMode->isChecked();
 }
 
 bool RoadBuilderDialog::fromSelection() const {
@@ -356,17 +397,29 @@ bool RoadBuilderDialog::fromSelection() const {
 
 void RoadBuilderDialog::modeChanged() {
 	const bool draw = m_drawMode->isChecked();
+	const bool street = m_selectionMode->isChecked();
+	const bool texture = m_textureMode->isChecked();
 	m_clickPoints->setEnabled(draw);
 	m_undoPoint->setEnabled(draw);
 	m_clearPoints->setEnabled(draw);
-	m_fill->setEnabled(!draw);
+	m_fill->setEnabled(street);
+	m_parking->setEnabled(street && !m_wholeWidth->isChecked());
+	m_wholeWidth->setEnabled(street);
+	// Through a street, its width and corners decide the road's width and curves.
+	m_width->setEnabled(draw);
+	m_preset->setEnabled(draw);
+	m_radius->setEnabled(draw);
+	for (QWidget* w : {static_cast<QWidget*>(m_thickness), static_cast<QWidget*>(m_segments), static_cast<QWidget*>(m_displacement), static_cast<QWidget*>(m_kerbs),
+	                   static_cast<QWidget*>(m_fit)}) {
+		w->setEnabled(!texture);
+	}
 	if (!draw) {
 		stopDrawing();
 		// The selected blocks tell the road's width, thickness and material.
-		RoadBuildOptions suggested;
+		RoadBuildOptions suggested = options();
 		suggested.material = m_material->text().trimmed().toStdString();
 		if (!m_editor->selectedRoadPaths(&suggested).empty()) {
-			m_width->setValue(suggested.width);
+			if (street) m_width->setValue(suggested.width);
 			m_thickness->setValue(suggested.thickness);
 			if (m_material->text().trimmed().isEmpty()) m_material->setText(qs(suggested.material));
 		}
@@ -378,6 +431,11 @@ void RoadBuilderDialog::modeChanged() {
 
 void RoadBuilderDialog::addPoint(const Vec3& point) {
 	m_points.push_back(point);
+	m_soon.start();
+}
+
+void RoadBuilderDialog::setPlainMaterial(const QString& material) {
+	m_plainMaterial = material;
 	m_soon.start();
 }
 
@@ -410,17 +468,56 @@ void RoadBuilderDialog::undoPoint() {
 	if (m_drawing) requestPoint();   // the hint follows
 }
 
+void RoadBuilderDialog::refreshTexture() {
+	auto* ok = m_buttons->button(QDialogButtonBox::Ok);
+	ok->setText(tr("Lay texture"));
+	const auto plan = m_editor->planSelectedRoad(textureOptions());
+	if (plan.empty()) {
+		m_editor->clearBrushPreview();
+		m_note->setText(tr("Select the road's brushes (or their top faces): the faces facing up get the road texture, the blocks stay."));
+		ok->setEnabled(false);
+		return;
+	}
+	std::vector<SolidRef> replaced;
+	m_editor->setBrushPreview(roadPreview(m_editor->doc(), plan, &replaced), replaced);
+	QStringList lines;
+	lines << tr("%n face(s) get %1,", nullptr, plan.faceCount()).arg(qs(plan.material)) + ' ' +
+	             tr("in %n road(s) - pieces that touch run on into each other.", nullptr, plan.chains);
+	if (!plan.corners.empty()) lines << tr("%n corner(s) cut into curve pieces - the lane runs on round the corner.", nullptr, int(plan.corners.size()));
+	lines << tr("The blocks stay as they are. To build a new road through the street instead: Through the selected street.");
+	m_note->setText(lines.join('\n'));
+	ok->setEnabled(true);
+}
+
 void RoadBuilderDialog::refresh() {
 	if (m_finished) return;
 	auto* ok = m_buttons->button(QDialogButtonBox::Ok);
+	if (textureOnly()) {
+		refreshTexture();
+		return;
+	}
+	ok->setText(tr("Build"));
 	const bool selection = fromSelection();
 	std::vector<RoadPath> paths;
 	if (!selection) paths.push_back(RoadPath{m_points});
-	const auto plan = m_editor->planRoadBuilder(options(), paths, selection);
+	RoadCorridor street;
+	const auto plan = m_editor->planRoadBuilder(options(), paths, selection, &street);
+	if (selection && street.ok()) {
+		QSignalBlocker block(m_width);
+		m_width->setValue(street.roadWidth);
+		// The floor is the road material: the lanes beside the road get plain asphalt.
+		const QString road = m_material->text().trimmed().isEmpty() ? qs(street.material) : m_material->text().trimmed();
+		if (!m_fillEdited && m_fill->text().trimmed().isEmpty() && !m_plainMaterial.isEmpty() && road.compare(qs(street.material), Qt::CaseInsensitive) == 0) {
+			QSignalBlocker blockFill(m_fill);
+			m_fill->setText(m_plainMaterial);
+			m_soon.start();   // planned again with it
+			return;
+		}
+	}
 	if (!plan.ok()) {
 		m_editor->clearBrushPreview();
 		if (selection) {
-			m_note->setText(tr("Select the road's floor brushes (blocked in by hand): the road follows them and replaces them."));
+			m_note->setText(tr("Select the street's floor brushes (any number and size): the road runs along its middle with a parking lane on each side."));
 		} else if (m_points.size() == 1) {
 			m_note->setText(tr("1 point - click the next one where the road goes."));
 		} else {
@@ -436,7 +533,15 @@ void RoadBuilderDialog::refresh() {
 	if (!plan.kerbs.empty()) road += ", " + tr("%n kerb(s)", nullptr, int(plan.kerbs.size()));
 	if (!selection) road += " - " + tr("%n point(s)", nullptr, int(m_points.size()));
 	lines << road + '.';
-	if (plan.curves > 0) lines << tr("%n curve(s), inner radius from %1 units; the texture runs on through them.", nullptr, plan.curves).arg(plan.radius, 0, 'g', 4);
+	if (selection) {
+		lines << (street.parking > 0 ? tr("Street %1 wide where it is narrowest: road %2, parking lanes at least %3 on each side.")
+		                                   .arg(street.width)
+		                                   .arg(street.roadWidth)
+		                                   .arg(street.parking)
+		                             : tr("Street %1 wide: the road takes the whole width.").arg(street.width));
+		if (street.paths.size() > 1) lines << tr("%n side street(s) join the main road.", nullptr, int(street.paths.size()) - 1);
+	}
+	if (plan.curves > 0) lines << tr("%n curve(s), inner radius from %1 units; the texture runs on through them.", nullptr, plan.curves).arg(std::round(plan.radius));
 	if (plan.displacements > 0) lines << tr("%n displacement(s), sewn, with nodraw seals underneath.", nullptr, plan.displacements);
 	if (plan.junctions > 0) lines << tr("Meets %n road piece(s) that are already there: it stops at their edge.", nullptr, plan.junctions);
 	if (plan.carved > 0) lines << tr("Carves %n brush(es) around it.", nullptr, plan.carved);
@@ -467,6 +572,14 @@ void RoadBuilderDialog::accept() {
 	settings.setValue("roadBuilder/junctionMaterial", m_junction->text().trimmed());
 	settings.setValue("roadBuilder/fillMaterial", m_fill->text().trimmed());
 	settings.setValue("roadBuilder/clearance", m_clearance->value());
+	settings.setValue("roadBuilder/parking", m_parking->value());
+	settings.setValue("roadBuilder/wholeWidth", m_wholeWidth->isChecked());
+	if (textureOnly()) {
+		m_finished = true;
+		m_editor->applySelectedRoad(textureOptions());   // clears the preview
+		QDialog::accept();
+		return;
+	}
 	const bool selection = fromSelection();
 	std::vector<RoadPath> paths;
 	if (!selection) paths.push_back(RoadPath{m_points});

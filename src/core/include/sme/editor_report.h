@@ -27,6 +27,7 @@
 #include <sme/history.h>
 #include <sme/map.h>
 #include <sme/math.h>
+#include <sme/road_builder.h>
 #include <sme/road_texture.h>
 #include <sme/texture_flow.h>
 
@@ -115,6 +116,13 @@ struct RayHit {
 [[nodiscard]] std::string formatFaces(const std::vector<FaceRef>& faces);
 [[nodiscard]] std::vector<SolidRef> parseSolids(std::string_view text);
 [[nodiscard]] std::vector<FaceRef> parseFaces(std::string_view text);
+/// Road builder settings for replay.txt ("build.mode", "build.parking", ...; the clicked points
+/// in "build.points") and back.
+void addRoadBuildSettings(std::vector<std::pair<std::string, std::string>>& out, const RoadBuildOptions& options, bool fromSelection,
+                          const std::vector<Vec3>& points, std::pair<int, int> textureSize);
+[[nodiscard]] RoadBuildOptions roadBuildSettings(const std::map<std::string, std::string>& settings, bool* fromSelection, std::vector<Vec3>* points,
+                                                 std::pair<int, int>* textureSize);
+
 /// Road and texture flow settings for replay.txt ("road.material", "road.width", ...) and back.
 void addRoadSettings(std::vector<std::pair<std::string, std::string>>& out, const RoadOptions& options, std::pair<int, int> textureSize);
 void addFlowSettings(std::vector<std::pair<std::string, std::string>>& out, const FlowOptions& options, std::pair<int, int> textureSize);
