@@ -20,6 +20,7 @@
 
 #include <sme/choreography.h>
 #include <sme/clipboard.h>
+#include <sme/displacement.h>
 #include <sme/doors.h>
 #include <sme/edge_round.h>
 #include <sme/editor_report.h>
@@ -34,6 +35,7 @@
 #include <sme/instances.h>
 #include <sme/map.h>
 #include <sme/map_tools.h>
+#include <sme/overlay_tools.h>
 #include <sme/shape_fit.h>
 
 namespace sme::app {
@@ -224,6 +226,9 @@ public:
 		double radius = 64;    ///< Brush radius in units
 		int strength = 25;     ///< 1..100 (% of the mode's biggest step)
 		int power = 3;         ///< New displacements: 2, 3 or 4
+		/// Direction of Raise, Noise and Flatten: the face normal, world X/Y/Z or the view.
+		enum class Axis { Normal, X, Y, Z, Camera };
+		Axis axis = Axis::Normal;
 	};
 	[[nodiscard]] const DisplaceSettings& displaceSettings() const { return m_displace; }
 	void setDisplaceSettings(const DisplaceSettings& settings);
@@ -235,6 +240,21 @@ public:
 	void destroySelectedDisplacements();
 	/// Sews the displacements of the selection (nothing selected: all of the map).
 	void sewDisplacements();
+	/// "Blend along selection": paints the blend of the displacements by distance to the selected
+	/// brushes (one undo step). `replacePrevious`: undo the previous blend first if nothing else
+	/// changed since (live settings in the dialog). False if nothing changed.
+	bool blendAlongSelection(const BlendNearOptions& options, bool replacePrevious = false);
+
+	// --- Grid snap and overlays ------------------------------------------------
+	/// Moves the corners of the selected brushes onto the current grid (one undo step).
+	void snapVerticesToGrid();
+	/// One info_overlay with the current material over the selected faces (face mode); `tileSize` > 0 tiles it.
+	bool overlayOnSelectedFaces(double tileSize);
+	/// A strip of overlays with the current material along the selected faces (a chain: road
+	/// pieces, a kerb). `replacePrevious` as for blendAlongSelection. False if nothing was made.
+	bool overlayStripOnSelectedFaces(const OverlayStripOptions& options, bool replacePrevious = false);
+	/// How many overlays the last strip made (for the dialog's note).
+	[[nodiscard]] int lastStripCount() const { return m_lastStripCount; }
 
 	// --- Shapes (block tool) --------------------------------------------------
 	[[nodiscard]] const ShapeOptions& shapeOptions() const { return m_shapeOptions; }
@@ -531,6 +551,10 @@ private:
 		unsigned revision = 0;
 		bool valid = false;
 	} m_lastShape;
+	unsigned m_lastBlendRevision = 0;   ///< History revision right after the last "Blend along selection" (0: none)
+	unsigned m_lastStripRevision = 0;   ///< Same for the last overlay strip
+	Selection m_stripSelection;         ///< The faces the last strip was made from (the strip itself gets selected)
+	int m_lastStripCount = 0;
 };
 
 /// Path helpers between Qt and std::filesystem (UTF-8 safe on Windows).

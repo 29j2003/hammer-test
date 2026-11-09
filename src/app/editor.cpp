@@ -2,6 +2,8 @@
 
 #include "editor.h"
 
+#include <sme/grid_snap.h>
+
 #include "startup_trace.h"
 
 #include "enhancements.h"
@@ -62,6 +64,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_displace.radius = std::clamp(settings.value("displace/radius", 64.0).toDouble(), 4.0, 1024.0);
 	m_displace.strength = std::clamp(settings.value("displace/strength", 25).toInt(), 1, 100);
 	m_displace.power = std::clamp(settings.value("displace/power", 3).toInt(), 2, 4);
+	m_displace.axis = static_cast<DisplaceSettings::Axis>(std::clamp(settings.value("displace/axis", 0).toInt(), 0, int(DisplaceSettings::Axis::Camera)));
 	m_showEntityNames = settings.value("view/entityNames", true).toBool();
 	m_showConnections = settings.value("view/connections", true).toBool();
 	m_hiddenKinds = settings.value("view/hiddenKinds", 0u).toUInt() & ALL_OBJECT_KINDS;
@@ -1549,7 +1552,8 @@ void Editor::setDisplaceSettings(const DisplaceSettings& settings) {
 	next.radius = std::clamp(next.radius, 4.0, 1024.0);
 	next.strength = std::clamp(next.strength, 1, 100);
 	next.power = std::clamp(next.power, 2, 4);
-	if (next.mode == m_displace.mode && next.radius == m_displace.radius && next.strength == m_displace.strength && next.power == m_displace.power) {
+	if (next.mode == m_displace.mode && next.radius == m_displace.radius && next.strength == m_displace.strength && next.power == m_displace.power &&
+	    next.axis == m_displace.axis) {
 		return;
 	}
 	m_displace = next;
@@ -1558,6 +1562,7 @@ void Editor::setDisplaceSettings(const DisplaceSettings& settings) {
 	settingsFile.setValue("displace/radius", next.radius);
 	settingsFile.setValue("displace/strength", next.strength);
 	settingsFile.setValue("displace/power", next.power);
+	settingsFile.setValue("displace/axis", int(next.axis));
 	emit displaceSettingsChanged();
 }
 
@@ -1622,6 +1627,114 @@ void Editor::sewDisplacements() {
 	}
 	commit(std::move(change));
 	emit message(tr("Sewed %n vertex/vertices", nullptr, moved));
+}
+
+bool Editor::blendAlongSelection(const BlendNearOptions& options, bool replacePrevious) {
+	if (replacePrevious && m_lastBlendRevision != 0 && m_history.revision() == m_lastBlendRevision && m_history.undoName() == "Blend along selection") {
+		m_history.undo(m_doc);   // the dialog's previous values: replaced, not stacked
+		m_lastBlendRevision = 0;
+	}
+	int count = 0;
+	auto change = edit::blendAlongSelection(m_doc, m_selection, options, &count);
+	if (change.empty()) {
+		emit documentChanged();   // an undone previous blend must disappear from the view
+		emit message(tr("Select the road or path (brushes, not displacements) - the blend is painted on the displacements around it"));
+		return false;
+	}
+	commit(std::move(change));
+	m_lastBlendRevision = m_history.revision();
+	emit message(tr("Blend painted on %n displacement(s)", nullptr, count));
+	return true;
+}
+
+void Editor::snapVerticesToGrid() {
+	if (!m_selection.hasObjects()) {
+		emit message(tr("Select the brushes whose corners should go onto the grid"));
+		return;
+	}
+	int snapped = 0, refused = 0;
+	auto change = edit::snapToGrid(m_doc, m_selection, m_grid, &snapped, &refused);
+	if (!change.empty()) commit(std::move(change));
+	if (snapped == 0 && refused == 0) {
+		emit message(tr("All corners are on the %1-unit grid already").arg(m_grid));
+	} else if (refused == 0) {
+		emit message(tr("%n brush(es) snapped to the %1-unit grid", nullptr, snapped).arg(m_grid));
+	} else {
+		emit message(tr("%n brush(es) snapped; %1 left as they were (they would lose a face on this grid - try a finer one)", nullptr, snapped).arg(refused));
+	}
+}
+
+namespace {
+
+std::vector<int> selectedSideIds(const Selection& selection) {
+	std::vector<int> out;
+	for (const auto& face : selection.faces) out.push_back(face.sideId);
+	return out;
+}
+
+} // namespace
+
+bool Editor::overlayOnSelectedFaces(double tileSize) {
+	if (m_selection.faces.empty()) {
+		emit message(tr("Select the faces first (face mode, Ctrl+click adds faces)"));
+		return false;
+	}
+	const std::string material = m_currentMaterial.toStdString();
+	double aspect = 1;
+	if (m_game) {
+		const auto [w, h] = materialTextureSize(m_game->files, material);
+		if (w > 0 && h > 0) aspect = double(w) / h;
+	}
+	int dropped = 0;
+	const auto overlay = overlayOnFaces(collectSurfaceFaces(m_doc), selectedSideIds(m_selection), aspect, tileSize, &dropped);
+	if (!overlay) {
+		emit message(tr("No overlay: the selected faces point different ways"));
+		return false;
+	}
+	const auto* definition = entities() ? entities()->find("info_overlay") : nullptr;
+	commit(edit::placeOverlays(m_doc, {*overlay}, material, definition));
+	if (dropped > 0) {
+		emit message(tr("Overlay placed on %n face(s); %1 left out (turned away, or more than 64)", nullptr, int(overlay->sides.size())).arg(dropped));
+	} else {
+		emit message(tr("Overlay placed on %n face(s)", nullptr, int(overlay->sides.size())));
+	}
+	return true;
+}
+
+bool Editor::overlayStripOnSelectedFaces(const OverlayStripOptions& options, bool replacePrevious) {
+	Selection faces = m_selection;
+	if (replacePrevious && m_lastStripRevision != 0 && m_history.revision() == m_lastStripRevision && m_history.undoName() == "Overlay strip") {
+		m_history.undo(m_doc);
+		m_lastStripRevision = 0;
+		faces = m_stripSelection;
+	}
+	m_lastStripCount = 0;
+	if (faces.faces.empty()) {
+		emit documentChanged();
+		emit message(tr("Select the faces the strip runs along (face mode: the road pieces' tops, a kerb)"));
+		return false;
+	}
+	const std::string material = m_currentMaterial.toStdString();
+	OverlayStripOptions o = options;
+	if (m_game) {
+		const auto [w, h] = materialTextureSize(m_game->files, material);
+		if (w > 0 && h > 0) o.textureAspect = double(w) / h;
+	}
+	const auto strip = planOverlayStrip(collectSurfaceFaces(m_doc), selectedSideIds(faces), o);
+	if (strip.empty()) {
+		emit documentChanged();
+		emit message(tr("No strip: the selected faces have no surface under the band"));
+		return false;
+	}
+	const auto* definition = entities() ? entities()->find("info_overlay") : nullptr;
+	auto change = edit::placeOverlays(m_doc, strip, material, definition);
+	change.name = "Overlay strip";
+	commit(std::move(change));
+	m_lastStripRevision = m_history.revision();
+	m_stripSelection = faces;
+	m_lastStripCount = static_cast<int>(strip.size());
+	emit message(tr("Overlay strip of %n piece(s)", nullptr, m_lastStripCount));
+	return true;
 }
 
 void Editor::clipSelection(const Plane& plane, edit::ClipKeep keep) {

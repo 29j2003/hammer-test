@@ -18,6 +18,7 @@ class QToolButton;
 
 #include "camera.h"
 #include "editor.h"
+#include <sme/decals.h>
 #include <sme/displacement.h>
 
 #include "renderer.h"
@@ -142,7 +143,7 @@ protected:
 private:
 	enum class Handle { None, AxisX, AxisY, AxisZ, PlaneXY, PlaneXZ, PlaneYZ, RingX, RingY, RingZ, ScaleMinX, ScaleMaxX, ScaleMinY, ScaleMaxY, ScaleMinZ, ScaleMaxZ, Move2D, Corner, RoomMinX, RoomMaxX, RoomMinY, RoomMaxY, RoomMinZ, RoomMaxZ,
 	                    RadiusMinX, RadiusMaxX, RadiusMinY, RadiusMaxY, RadiusMinZ, RadiusMaxZ };
-	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex, Sculpt };
+	enum class Drag { None, Pan, Orbit, Gizmo, Marquee, BlockBase, BlockHeight, Paint, ClipLine, Vertex, Sculpt, OverlayCorner };
 
 	[[nodiscard]] Ray rayAt(const QPointF& pos) const;
 	[[nodiscard]] double gizmoSize() const;
@@ -269,6 +270,15 @@ private:
 	// Doors (viewport_doors.cpp): how the selected doors move, and the "Test open" animation.
 	[[nodiscard]] std::optional<DoorMotion> doorMotionOf(const Entity& door) const;
 	void drawDoorPreview(std::vector<LineVertex>& lines) const;
+	// Overlays (viewport_overlays.cpp): the corners of the one selected info_overlay as squares to drag.
+	/// The one selected info_overlay (a selection tool active), or nullptr.
+	[[nodiscard]] const Entity* selectedOverlay() const;
+	/// Starts dragging a corner square under the mouse; true if one was hit.
+	bool overlayCornerPress(QMouseEvent* event);
+	void overlayCornerMove(const QPointF& pos);
+	/// Writes the dragged corner (and faces it now reaches) into the overlay: one undo step.
+	void finishOverlayCorner();
+	void drawOverlayCorners(std::vector<LineVertex>& lines) const;
 	/// Ropes (viewport_ropes.cpp): move_rope chains drawn sagging, rebuilt only after a change.
 	void drawRopes(std::vector<LineVertex>& lines);
 	// NPC scenes (viewport_scenes.cpp): the click that places a scene point, the ghost NPC.
@@ -324,6 +334,11 @@ private:
 	std::optional<std::pair<Vec3, Vec3>> m_brushCursor;   ///< Center and surface normal under the mouse
 	Vec3 m_lastDab;
 	Vec3 m_flattenPoint;                           ///< Flatten: where the stroke began
+	Vec3 m_sculptAxis;                             ///< Direction of the stroke (zero: each face's normal)
+	int m_overlayEntity = 0;                       ///< Overlay corner drag: the overlay
+	int m_overlayCorner = -1;                      ///< Its corner (0..3, uv0..uv3)
+	OverlayInfo m_overlayStart, m_overlayDrag;     ///< The overlay before / during the drag
+	Vec3 m_overlayPoint;                           ///< Where the corner is now (world)
 	unsigned m_sculptSeed = 1;
 	/// Model dragged over this view from the browser, and the turn it gets (random yaw: chosen
 	/// once per drag, so the preview shows the turn the drop uses).

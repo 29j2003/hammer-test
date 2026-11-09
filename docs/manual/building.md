@@ -190,11 +190,21 @@ The **Displacement tool (Shift+D)** does everything:
    - **Noise** adds random bumps for rough ground.
    - **Paint blend** paints the second texture of a blend material (shader WorldVertexTransition, e.g. grass to dirt);
      **Shift** + drag paints it away again.
-3. **Size and strength.** **Ctrl + mouse wheel** or **[ ]** changes the radius, the **Strength** slider how much one
-   pass does. A stroke - from pressing the mouse button to letting go - is one undo step.
+3. **Size, strength and direction.** **Ctrl + mouse wheel** or **[ ]** changes the radius, the **Strength** slider
+   how much one pass does. A stroke - from pressing the mouse button to letting go - is one undo step. **Direction**
+   decides which way Raise, Noise and Flatten move the ground: along the face (**Face normal**, the usual), along a
+   world axis (**X**, **Y**, **Z**) or **Towards the camera**. A sideways direction pushes the side of a slope, an
+   embankment or the wall of a cut out or in, which straight up cannot; Flatten then lines everything up with the
+   point where the stroke began along that axis. The line in the middle of the brush circle shows the direction.
 4. **Neighbours.** Displacements next to each other can get a crack where their edges no longer meet. **Sew** moves
    the shared edge points to the same height (the selected displacements, or all of them when nothing is selected).
 5. **Undo it.** **Flat again** turns the selected displacements back into plain faces.
+6. **Blend along a road or path.** Select the road (its brushes, not the displacements) and press **Blend along
+   selection ...** (also in the **Brushes** menu and the right-click menu). Blend displacements next to it get the
+   second material - dirt beside the road, gravel beside a path - fully up to **Width** units away, fading out over
+   **Softness** units; **Noise** frays the border so it does not look drawn with a ruler. The displacements around
+   the selection are found by themselves; select some of them as well to paint only those. Changing a value shows the
+   result at once, **OK** keeps it (one undo step), **Cancel** takes it back. Blend you painted by hand stays.
 
 Tips:
 
@@ -250,6 +260,11 @@ Example: a spiral of 12 pillars. Copy one pillar, *Number of copies* 11, *Offset
 - **Flip** (Brushes > Flip): **left/right (X)** Ctrl+L, **front/back (Y)** Ctrl+Alt+L, **up/down (Z)** Ctrl+I. The
   selection is mirrored around its center; entity angles are mirrored too.
 - **Snap to grid** (Ctrl+B) moves the selection so its corner lies on the grid.
+- **Snap vertices to grid** (Brushes menu, right-click menu) moves every corner of the selected brushes onto the
+  grid. Arches, rounded edges and roads leave corners at fractions of a unit; the compiler rounds them, which can open
+  hairline cracks between neighbours. Neighbours that shared a corner still share it afterwards. A brush that would
+  lose a face on the current grid is left as it is (the message says how many) - try a finer grid. The **Problems**
+  panel lists such brushes once ("corners off the grid") with a **Snap to grid** button for all of them.
 - **Transform ...** (Ctrl+Alt+M): exact numbers for *Move by*, *Rotate by* and *Scale by*, around the selection's
   center, as one undo step.
 - **Drop to floor** (Ctrl+Shift+F) lets the selected objects fall straight down onto what is below them.

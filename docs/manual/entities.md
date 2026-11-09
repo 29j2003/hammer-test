@@ -449,6 +449,23 @@ To place one:
 The decal takes the material as its *Texture*. The overlay gets the clicked face as its only side, lies flat on it,
 starts as big as the texture and is upright seen from the front (on floors the texture's top points along +Y).
 
+**Over several faces.** In Faces mode, select the faces (Ctrl+click adds more), pick the material and choose
+**Overlay on selected faces** (Brushes menu or right-click). One overlay covers all of them - across the seams of
+road pieces, a crossing, a floor made of several brushes - with the texture repeated at its own proportions. Faces
+turned away and faces beyond the compiler's limit of 64 are left out (the message says so).
+
+**A strip along faces.** **Overlay strip ...** lays the material as a band of overlays along the selected faces - the
+top faces of road pieces, a kerb, a path: lane lines, cracks, dirt along an edge. The faces are put in order by
+themselves (they only have to touch), curves get one overlay per piece with mitred joints, no gap and no overlap,
+and the texture runs on along the whole length. **Position** puts the band on the middle line or along the left or
+right edge (**Offset** moves it in from the edge), **Width** sets how wide it is, **Run the other way** swaps left and
+right. Every overlay lands on whatever faces lie under it. The result shows while you change the values; **OK** keeps
+it as one undo step.
+
+**Corners.** With one overlay selected (a selection tool active), its four corners show as small squares. Drag one
+to reshape the overlay (on the grid while snapping is on); faces in the same plane that it now reaches are added to
+its *Brush faces*. One drag is one undo step.
+
 The views draw both on the brushes as the game shows them, see-through parts included; the small box at the entity
 stays for moving it. Clicking the drawn decal or overlay selects it. **Show > Other entities** hides them with the
 other helpers. Decals that the game would bend around a corner are only drawn on the face they sit on.

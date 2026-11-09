@@ -61,6 +61,7 @@ struct Problem {
 		DetailCandidates,       ///< optimization_checks: world brushes that are only details (fix: tie to func_detail)
 		BrokenBrush,            ///< A brush VBSP may drop or leave a hole for: a tiny edge, paper thin (fix: delete)
 		DuplicateBrush,         ///< Two brushes exactly in one place (faces flicker, clicks pick either; fix: delete one)
+		OffGridCorners,         ///< Brushes with corners off the 1-unit grid that can be snapped (fix: snap them; grid_snap)
 		ScenePlan,              ///< choreography: a scene step without an NPC, sound or way (objects = the scene)
 		HiddenFaces,            ///< optimization_checks: faces flat against a func_detail brush nobody sees (fix: nodraw)
 	};

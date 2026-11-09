@@ -2,6 +2,8 @@
 
 #include "tool_panel.h"
 
+#include "surface_dialogs.h"
+
 #include "copy_paste.h"
 #include "editor.h"
 #include "material_cache.h"
@@ -831,8 +833,19 @@ QWidget* makeDisplaceBox(Editor* editor) {
 	power->addItem(QObject::tr("3 - 8 x 8 cells"), 3);
 	power->addItem(QObject::tr("4 - 16 x 16 cells"), 4);
 	power->setToolTip(QObject::tr("Detail of new displacements: more cells follow the brush more finely but cost more"));
+	auto* axis = new QComboBox;
+	axis->setObjectName("displaceAxis");
+	using Axis = Editor::DisplaceSettings::Axis;
+	axis->addItem(QObject::tr("Face normal"), int(Axis::Normal));
+	axis->addItem(QObject::tr("X (world)"), int(Axis::X));
+	axis->addItem(QObject::tr("Y (world)"), int(Axis::Y));
+	axis->addItem(QObject::tr("Z (up)"), int(Axis::Z));
+	axis->addItem(QObject::tr("Towards the camera"), int(Axis::Camera));
+	axis->setToolTip(QObject::tr("Which way Raise, Noise and Flatten move the ground: along the face (default), along a world axis "
+	                             "(push a slope or the side of a cut sideways), or towards the view"));
 	form->addRow(QObject::tr("Radius"), radiusRow);
 	form->addRow(QObject::tr("Strength"), strengthRow);
+	form->addRow(QObject::tr("Direction"), axis);
 	form->addRow(QObject::tr("Power"), power);
 	v->addLayout(form);
 	auto* actions = new QHBoxLayout;
@@ -848,8 +861,16 @@ QWidget* makeDisplaceBox(Editor* editor) {
 	action(QObject::tr("Sew"), "displaceSew", QObject::tr("Close the cracks between neighbouring displacements (selected, or all)"), [editor] { editor->sewDisplacements(); });
 	action(QObject::tr("Flat again"), "displaceDestroy", QObject::tr("The selected displacements become flat faces again"), [editor] { editor->destroySelectedDisplacements(); });
 	v->addLayout(actions);
+	auto* blend = new QPushButton(QObject::tr("Blend along selection ..."));
+	blend->setObjectName("displaceBlendAlong");
+	blend->setToolTip(QObject::tr("Select the road or path: the blend displacements around it get the second material next to it, fading out"));
+	QObject::connect(blend, &QPushButton::clicked, box, [editor, box] {
+		auto* dialog = new BlendAlongDialog(editor, box->window());
+		dialog->show();
+	});
+	v->addWidget(blend);
 
-	const auto sync = [editor, group, radius, radiusText, strength, strengthText, power] {
+	const auto sync = [editor, group, radius, radiusText, strength, strengthText, power, axis] {
 		const auto& settings = editor->displaceSettings();
 		const QSignalBlocker b1(group), b2(radius), b3(strength), b4(power);
 		if (auto* button = group->button(int(settings.mode))) button->setChecked(true);
@@ -858,6 +879,8 @@ QWidget* makeDisplaceBox(Editor* editor) {
 		strength->setValue(settings.strength);
 		strengthText->setText(QStringLiteral("%1 %").arg(settings.strength));
 		power->setCurrentIndex(power->findData(settings.power));
+		const QSignalBlocker b5(axis);
+		axis->setCurrentIndex(axis->findData(int(settings.axis)));
 	};
 	const auto change = [editor](auto&& set) {
 		auto settings = editor->displaceSettings();
@@ -868,6 +891,8 @@ QWidget* makeDisplaceBox(Editor* editor) {
 	QObject::connect(radius, &QSlider::valueChanged, box, [change](int value) { change([value](auto& s) { s.radius = value; }); });
 	QObject::connect(strength, &QSlider::valueChanged, box, [change](int value) { change([value](auto& s) { s.strength = value; }); });
 	QObject::connect(power, &QComboBox::currentIndexChanged, box, [change, power](int) { change([power](auto& s) { s.power = power->currentData().toInt(); }); });
+	QObject::connect(axis, &QComboBox::currentIndexChanged, box,
+	                 [change, axis](int) { change([axis](auto& s) { s.axis = Editor::DisplaceSettings::Axis(axis->currentData().toInt()); }); });
 	QObject::connect(editor, &Editor::displaceSettingsChanged, box, sync);
 	sync();
 	return box;
