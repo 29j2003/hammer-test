@@ -379,6 +379,10 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   (neutrale Grautöne, ein Orange). Werkzeugleisten: „Pages“ (Seiten), „Tools“ (nur Icons, Taste in der Ecke, eigene
   Spalte über `addToolBarBreak`), „Main“ (Spiel, Undo/Redo, Objects/Faces als Segment, Raster, Snap, Drehschritt,
   Texture lock, 1/4 Ansichten, Ansicht-Schalter `view:*`, Check, „Run map“ orange, Panel-Schalter links/unten/rechts).
+  Passt „Main“ nicht in die Fensterbreite (Qts Überlauf-Knopf `qt_toolbar_ext_button` wäre sichtbar), nimmt
+  `MainWindow::fitTopBar` die Beschriftungen nacheinander weg (Hide tools, 1/4 views, Show, Texture lock, Check, Object
+  snap, Snap, Faces, Objects – Tooltip bleibt), zuletzt das „Mod:“ vor dem Spielnamen; „Run map“ behält seinen Text.
+  Läuft nach Show/Resize der Leiste per `QTimer::singleShot(0)` (vorher ist sie weder gestylt noch gelegt); Test „main bar …“.
   Docks links (Tool, Outliner, VisGroups, Map Look) und unten (Asset Browser, Sounds, Particles, Compile, Problems,
   History, Log) haben keine Titelleiste (Tabs benennen sie), rechts nur „Object Properties“ mit schmalem Kopf. Brush-Aktionen stehen im Werkzeug-Panel (Kasten „selectionTools“), nicht mehr rechts.
   Ansicht-Optionen im Editor: `showGrid3D`, `showEntityNames` (2D, ab 64 Einheiten ≥ 18 px, max. 400), `showConnections`

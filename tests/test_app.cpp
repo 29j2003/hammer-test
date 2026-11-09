@@ -75,6 +75,7 @@
 #include <QOpenGLWidget>
 #include <QSplitter>
 #include <QStandardPaths>
+#include <QToolBar>
 #include <QToolButton>
 #include <QWheelEvent>
 
@@ -10598,4 +10599,64 @@ TEST_CASE("measure, fill gap, place props, command search: the helpers around a 
 	settle();
 	CHECK(editor.brushPreview().empty());
 	CHECK(editor.doc().world.solids.size() == brushesBefore);
+}
+
+TEST_CASE("main bar: in a narrow window the labels give way, Check, Run map and Play from here stay on screen") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.resize(2600, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	auto* bar = window.findChild<QToolBar*>("Main");
+	REQUIRE(bar);
+	const auto button = [bar](const QString& text) -> QToolButton* {
+		for (auto* b : bar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+			if (b->text() == text) return b;
+		}
+		return nullptr;
+	};
+	auto* check = button("Check");
+	auto* run = button("Run map");
+	auto* here = bar->findChild<QToolButton*>("playFromHere");
+	REQUIRE(check);
+	REQUIRE(run);
+	REQUIRE(here);
+	// Wide: every label is there (only where the virtual screen lets the window be that wide).
+	const bool wide = window.width() >= 2500;
+	if (wide) {
+		CHECK(check->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
+		CHECK(button("Texture lock")->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
+	}
+	const auto onScreen = [bar](QWidget* w) { return w->isVisible() && w->geometry().right() <= bar->width(); };
+	for (const int width : {1600, 1366}) {
+		window.resize(width, 900);
+		settle();
+		QTest::qWait(50);
+		settle();
+		CAPTURE(width);
+		CHECK(onScreen(check));
+		CHECK(onScreen(run));
+		CHECK(onScreen(here));
+		CHECK(run->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);   // Run map keeps its label
+		CHECK(button("Hide tools")->toolButtonStyle() == Qt::ToolButtonIconOnly);
+	}
+	// Wide again: the labels come back.
+	window.resize(2600, 900);
+	settle();
+	QTest::qWait(50);
+	settle();
+	if (wide) {
+		CHECK(check->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
+		CHECK(button("Hide tools")->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
+	}
 }

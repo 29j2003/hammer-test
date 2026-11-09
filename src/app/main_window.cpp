@@ -901,7 +901,65 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
 	if (watched == m_pages && (event->type() == QEvent::Resize || event->type() == QEvent::Move)) {
 		placeCornerGrips();
 	}
+	if (watched == m_topBar && (event->type() == QEvent::Resize || event->type() == QEvent::Show) && !m_fitTopBarQueued) {
+		// After the event: the buttons are styled and laid out by then.
+		m_fitTopBarQueued = true;
+		QTimer::singleShot(0, this, [this] {
+			m_fitTopBarQueued = false;
+			fitTopBar();
+		});
+	}
 	return QMainWindow::eventFilter(watched, event);
+}
+
+// Below the width the main bar needs with all its labels, labelled buttons show only their icon
+// (their tooltips still name them), least important first and only as many as needed, so Check,
+// Run map and Play from here never fall off the right edge. Run map keeps its label.
+void MainWindow::fitTopBar() {
+	if (!m_topBar || m_fittingTopBar || !m_topBar->isVisible()) return;
+	// The bar does not fit when Qt shows its overflow button (the items behind it are hidden).
+	auto* overflow = m_topBar->findChild<QToolButton*>("qt_toolbar_ext_button");
+	if (!overflow) return;
+	const auto overflows = [this, overflow] {
+		m_topBar->layout()->invalidate();
+		m_topBar->layout()->activate();
+		return !overflow->isHidden();
+	};
+	m_fittingTopBar = true;
+	// Labels go least important first, and only as many as needed.
+	const QStringList order = {tr("Hide tools"), tr("1 / 4 views"), tr("Show"), tr("Texture lock"), tr("Check"),
+	                           tr("Object snap"), tr("Snap"), tr("Faces"), tr("Objects")};
+	QList<QToolButton*> buttons;
+	for (const auto& text : order) {
+		for (auto* button : m_topBar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+			if (button->text() == text && !button->icon().isNull()) buttons << button;
+		}
+	}
+	for (auto* button : buttons) button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	if (m_gameButton) {
+		const QString full = m_gameButton->property("fullText").toString();
+		if (!full.isEmpty()) m_gameButton->setText(full);
+		m_gameButton->setProperty("fullText", QVariant());
+		m_gameButton->setMinimumWidth(std::max(260, m_gameButton->sizeHint().width()));
+	}
+	if (overflows()) {
+		for (auto* button : buttons) {
+			if (!overflows()) break;
+			button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+		}
+		if (m_gameButton && overflows()) {
+			// The mod name last: without the "Mod:" in front, never cut off.
+			const QString full = m_gameButton->text();
+			const QString prefix = tr("Mod:  ");
+			if (full.startsWith(prefix)) {
+				m_gameButton->setProperty("fullText", full);
+				m_gameButton->setText(full.mid(prefix.size()));
+			}
+			m_gameButton->setMinimumWidth(std::min(260, m_gameButton->sizeHint().width()));
+		}
+		overflows();
+	}
+	m_fittingTopBar = false;
 }
 
 void MainWindow::placeCornerGrips() {
@@ -1337,6 +1395,8 @@ void MainWindow::createActions() {
 	top->setIconSize(QSize(18, 18));
 	top->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 	addToolBar(Qt::TopToolBarArea, top);
+	m_topBar = top;
+	top->installEventFilter(this);
 	m_gameButton = new QToolButton;
 	m_gameButton->setPopupMode(QToolButton::InstantPopup);
 	m_gameButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -1873,6 +1933,8 @@ void MainWindow::refreshGames() {
 	});
 	const GameEntry* current = m_editor->gameEntry();
 	m_gameButton->setText(current ? tr("Mod:  %1  ▾").arg(entryText(*current).trimmed()) : tr("Choose your mod or game ...  ▾"));
+	m_gameButton->setProperty("fullText", QVariant());
+	QTimer::singleShot(0, this, [this] { fitTopBar(); });   // a longer name may need room
 }
 
 void MainWindow::selectGame(const QString& key) {

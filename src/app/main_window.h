@@ -173,6 +173,7 @@ protected:
 	void contextMenuEvent(QContextMenuEvent* event) override;
 	/// Keeps the corner handles on the views' corners when the views change size.
 	bool eventFilter(QObject* watched, QEvent* event) override;
+	void fitTopBar();
 
 private:
 	void createActions();
@@ -226,6 +227,9 @@ private:
 	std::array<QSplitter*, 2> m_columns{};
 	QStackedWidget* m_pages = nullptr;       ///< The side bar's pages: Map (the views), Materials, ...
 	QToolBar* m_pageBar = nullptr;
+	QToolBar* m_topBar = nullptr;   // the main bar; text buttons turn into icons when it does not fit (fitTopBar)
+	bool m_fitTopBarQueued = false;
+	bool m_fittingTopBar = false;    // fitTopBar re-lays the bar out (no recursion from its resize)
 	QActionGroup* m_pageGroup = nullptr;
 	ModPage* m_modPage = nullptr;           ///< Project page, tab "Overview"
 	ModelsPage* m_modelsPage = nullptr;     ///< Models page: browser and 3D view of the game's models
