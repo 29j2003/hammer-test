@@ -307,6 +307,23 @@ CompileSettings CompileSettings::parse(std::string_view text) {
 	return s;
 }
 
+CompileSettings playFromHereSettings(const CompileSettings& saved, bool light) {
+	CompileSettings s = saved;
+	s.vbsp = true;
+	s.detail = true;
+	s.water = true;
+	s.vvis = true;
+	s.visFast = true;
+	s.vrad = light;
+	s.lightQuality = CompileQuality::Fast;
+	if (s.light == LightLevel::Both) s.light = LightLevel::Hdr;
+	s.copy = true;
+	s.cubemaps = false;
+	s.run = true;
+	s.cheats = true;
+	return s;
+}
+
 std::vector<std::string> toolArguments(const CompileSettings& s, CompileTool tool, std::string_view launchOptions) {
 	std::vector<std::string> out;
 	switch (tool) {

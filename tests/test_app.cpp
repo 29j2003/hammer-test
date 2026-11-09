@@ -3438,6 +3438,17 @@ TEST_CASE("safety and search: autosave, crash recovery, .vmx backup, undo histor
 		CHECK(crash->afterCrash);
 		CHECK(crash->mapPath == mapPath);
 
+		// The journal for a report after a crash: written when it changed, kept after a crash.
+		saver.writeJournal();
+		saver.waitForWrites();
+		REQUIRE(QFile::exists(Autosaver::journalPath()));
+		CHECK(lastSessionCrashed());
+		const QString journal = takeCrashJournal();
+		CHECK(journal.contains("== Edits =="));
+		CHECK(journal.contains("Create block"));
+		CHECK(QFile::exists(Autosaver::crashJournalPath()));
+		CHECK_FALSE(QFile::exists(Autosaver::journalPath()));
+
 		// Restoring keeps the map's own path and counts as unsaved work.
 		REQUIRE(editor.openRecovered(written, mapPath, &error));
 		CHECK(editor.filePath() == mapPath);
@@ -3451,6 +3462,8 @@ TEST_CASE("safety and search: autosave, crash recovery, .vmx backup, undo histor
 		CHECK_FALSE(recoveryForMap(mapPath));   // the file is now the newest
 		saver.endSession();
 		CHECK_FALSE(QFile::exists(Autosaver::markerPath()));
+		CHECK_FALSE(QFile::exists(Autosaver::journalPath()));
+		CHECK_FALSE(lastSessionCrashed());
 		CHECK_FALSE(recoveryAfterCrash());
 		CHECK(editor.doc().solidCount() == solids);
 	}
@@ -9971,4 +9984,77 @@ TEST_CASE("round edge: every face of a rounded curb can be clicked, a stacked co
 	CHECK(offer.contains("Merge and round"));
 	CHECK(editor.doc().world.solids.size() == 1);
 	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+}
+
+TEST_CASE("play from here: a copy with the player at the camera is compiled, the map stays as it is") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	const QString mapPath = fromPath(f.mod / "mapsrc/demo.vmf");
+	REQUIRE(window.openMap(mapPath));
+	settle();
+	QFile original(mapPath);
+	REQUIRE(original.open(QIODevice::ReadOnly));
+	const QByteArray before = original.readAll();
+	original.close();
+	// An unsaved change goes into the copy, not into the file.
+	auto [made, ref] = edit::createBlock(editor.doc(), box({4000, 4000, 0}, {4064, 4064, 64}), "DEMO/BRICKWALL001");
+	editor.commit(std::move(made));
+	CHECK(editor.modified());
+
+	auto* button = window.findChild<QToolButton*>("playFromHere");
+	REQUIRE(button);
+	auto* lightOption = button->menu()->findChild<QAction*>("playHere/light");
+	REQUIRE(lightOption);
+	lightOption->setChecked(false);   // quickest: no VRAD
+	CHECK_FALSE(QSettings().value("playHere/light").toBool());
+
+	auto& camera = window.view3D()->camera();
+	camera.position = QVector3D(48, -80, 3000);
+	camera.yaw = 135;
+	camera.pitch = -20;
+	button->defaultAction()->trigger();
+	settle();
+	const QString copyPath = fromPath(f.mod / "mapsrc/demo_here.vmf");
+	REQUIRE(QFile::exists(copyPath));
+	QFile copy(copyPath);
+	REQUIRE(copy.open(QIODevice::ReadOnly));
+	const QByteArray text = copy.readAll();
+	const auto doc = MapDocument::parse(std::string_view(text.constData(), static_cast<std::size_t>(text.size())));
+	std::vector<const Entity*> starts;
+	for (const auto& e : doc.entities) {
+		if (e.classname() == "info_player_start") starts.push_back(&e);
+	}
+	REQUIRE(starts.size() == 1);
+	CHECK(starts[0]->origin().x == doctest::Approx(48));
+	CHECK(starts[0]->origin().y == doctest::Approx(-80));
+	CHECK(starts[0]->get("angles") == "20 135 0");
+	CHECK(doc.solidCount() == editor.doc().solidCount());
+	// The map file and the editor are as before.
+	REQUIRE(original.open(QIODevice::ReadOnly));
+	CHECK(original.readAll() == before);
+	CHECK(editor.modified());
+	CHECK(editor.filePath() == mapPath);
+	// The compile runs the copy (the fixture has no compile tools, so it stops there).
+	if (window.compiler().running()) {
+		QSignalSpy done(&window.compiler(), &CompileRunner::finished);
+		window.compiler().cancel();
+		done.wait(5000);
+	}
+	auto* log = window.findChild<LogPanel*>();
+	REQUIRE(log);
+	CHECK(log->toPlainText().contains("demo_here.vmf"));
 }

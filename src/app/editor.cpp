@@ -1835,16 +1835,19 @@ const char* Editor::toolName(Tool tool) {
 }
 
 void Editor::notePick(const PickTrace& trace) {
+	++m_journalRevision;
 	m_pickJournal.push_back(formatPickTrace(trace, ++m_pickCount));
 	while (m_pickJournal.size() > 50) m_pickJournal.pop_front();
 }
 
 void Editor::noteDrag(const std::string& line) {
+	++m_journalRevision;
 	m_pickJournal.push_back(line + "\n");
 	while (m_pickJournal.size() > 50) m_pickJournal.pop_front();
 }
 
 void Editor::noteEdit(const std::string& text, bool merged) {
+	++m_journalRevision;
 	const std::string entry = "#" + std::to_string(m_editCounter) + " " + text;
 	// A paint stroke merges into one undo step: one entry, the latest.
 	if (merged && !m_editJournal.empty() && m_editJournal.back().find(text.substr(0, text.find('\n'))) != std::string::npos) {
@@ -1858,6 +1861,7 @@ void Editor::noteEdit(const std::string& text, bool merged) {
 void Editor::notePlan(std::string text) const {
 	// The live preview plans on every change of the dialog: the same plan once.
 	if (!m_planJournal.empty() && m_planJournal.back() == text) return;
+	++m_journalRevision;
 	m_planJournal.push_back(std::move(text));
 	while (m_planJournal.size() > 6) m_planJournal.pop_front();
 }

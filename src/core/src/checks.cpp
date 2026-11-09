@@ -720,6 +720,7 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 			return edit::placeEntity(doc, "info_player_start", spot, definition).first;
 		}
 		case Problem::Kind::DetailCandidates:
+		case Problem::Kind::HiddenFaces:
 			return applyOptimizationFix(doc, problem, entities);
 		default:
 			return applyLayoutFix(doc, problem, entities);

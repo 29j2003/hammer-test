@@ -268,6 +268,7 @@ const char* SHORTCUT_HELP = R"(<h3>Camera</h3>
 <tr><td><b>Ctrl+D</b></td><td>Duplicate</td><td><b>Del</b></td><td>Delete</td></tr>
 <tr><td><b>F5 / F6 / F8, F7</b></td><td>Unlit / lighting preview / wireframe, shadows on/off</td><td><b>F2 F3 F4</b></td><td>Top / front / side view</td></tr>
 <tr><td><b>Shift+Alt+Z</b></td><td>One view / four views</td><td><b>F9</b></td><td>Compile and run</td></tr>
+<tr><td><b>Shift+F9</b></td><td>Play from here (player at the camera)</td><td></td><td></td></tr>
 </table>)";
 
 } // namespace
@@ -1524,6 +1525,34 @@ void MainWindow::createActions() {
 	run->setToolTip(tr("Compile with VBSP/VVIS/VRAD and start the game (F9)"));
 	connect(run, &QAction::triggered, this, &MainWindow::compile);
 	top->widgetForAction(run)->setProperty("accent", true);
+	// Play from here: the player starts where the 3D camera is (quick compile of a copy).
+	auto* here = new QToolButton(top);
+	here->setObjectName("playFromHere");
+	here->setIcon(icon("playHere"));
+	here->setText(tr("Play from here"));
+	here->setToolButtonStyle(Qt::ToolButtonIconOnly);
+	here->setPopupMode(QToolButton::MenuButtonPopup);
+	auto* hereAction = action(tr("Play from here"), QKeySequence("Shift+F9"), [this] { playFromHere(); });
+	hereAction->setIcon(icon("playHere"));
+	hereAction->setToolTip(tr("Quick compile of a copy of the map with the player at the 3D camera, then play (Shift+F9). "
+	                          "Your map file is not changed."));
+	here->setDefaultAction(hereAction);
+	auto* hereMenu = new QMenu(here);
+	hereMenu->setToolTipsVisible(true);
+	const auto hereOption = [this, hereMenu](const QString& text, const QString& key, bool fallback, const QString& tip) {
+		auto* option = hereMenu->addAction(text);
+		option->setObjectName("playHere/" + key);
+		option->setCheckable(true);
+		option->setChecked(QSettings().value("playHere/" + key, fallback).toBool());
+		option->setToolTip(tip);
+		connect(option, &QAction::toggled, this, [key](bool on) { QSettings().setValue("playHere/" + key, on); });
+	};
+	hereOption(tr("Only the area around the camera"), "area", false,
+	           tr("Compile only what is within 2048 units of the camera (sealed with sky): much quicker on big maps"));
+	hereOption(tr("Lighting (quick VRAD)"), "light", true, tr("Off: no VRAD - the map is full bright, the quickest test"));
+	hereOption(tr("Start with the suit"), "suit", true, tr("An item_suit at the start: HUD, flashlight and sprint (Half-Life 2)"));
+	here->setMenu(hereMenu);
+	top->addWidget(here);
 	top->addSeparator();
 	// Panels on and off.
 	const auto panelToggle = [&](const QString& iconName, const QString& tip, std::function<QList<QDockWidget*>()> docks) {
@@ -1607,6 +1636,7 @@ void MainWindow::createActions() {
 	map->addSeparator();
 	map->addAction(check);
 	map->addAction(run);
+	map->addAction(hereAction);
 	// After testing the map in the game: something looked wrong there -> a report to send.
 	auto* report = action(tr("Make report from the game"), QKeySequence(), [this] { makeReport(); });
 	report->setObjectName("makeReport");
@@ -2110,6 +2140,58 @@ void MainWindow::compile() {
 	}
 	m_log->append(tr("--- Compiling %1 ---").arg(QFileInfo(vmf).fileName()), QColor(140, 180, 255));
 	m_compiler.start(vmf, gameDir, m_editor->gameSettings(), dialog.options());
+}
+
+void MainWindow::playFromHere() {
+	if (!m_editor->game()) {
+		QMessageBox::information(this, tr("Play from here"), tr("Choose a game first."));
+		return;
+	}
+	if (m_compiler.running()) {
+		QMessageBox::information(this, tr("Play from here"), tr("A compile is running - wait for it or stop it in the Compile panel first."));
+		return;
+	}
+	// The copy lies next to the map (func_instance files are found from there), so the map
+	// needs a place; unsaved changes go into the copy without saving.
+	if (m_editor->filePath().isEmpty() && !save(false)) {
+		return;
+	}
+	const Camera& camera = m_views[0]->camera();
+	PlayFromHere options;
+	options.eye = {camera.position.x(), camera.position.y(), camera.position.z()};
+	options.yaw = camera.yaw;
+	options.pitch = -camera.pitch;   // Source: positive looks down
+	QSettings settings;
+	options.area = settings.value("playHere/area", false).toBool() ? 2048 : 0;
+	options.suit = settings.value("playHere/suit", true).toBool();
+	const bool light = settings.value("playHere/light", true).toBool();
+	const auto copy = playFromHereCopy(m_editor->doc(), options, m_editor->cordons(), m_editor->entities());
+	if (copy.inSolid &&
+	    QMessageBox::question(this, tr("Play from here"),
+	                          tr("The 3D camera is inside a brush - the player would be stuck there. Play anyway?")) != QMessageBox::Yes) {
+		return;
+	}
+	const QFileInfo info(m_editor->filePath());
+	const QString vmf = info.absolutePath() + "/" + info.completeBaseName() + "_here.vmf";
+	QFile file(vmf);
+	const auto text = copy.doc.serialize();
+	if (!file.open(QIODevice::WriteOnly) || file.write(text.data(), static_cast<qint64>(text.size())) != static_cast<qint64>(text.size())) {
+		QMessageBox::warning(this, tr("Play from here"), tr("Could not write %1").arg(vmf));
+		return;
+	}
+	file.close();
+	for (auto* view : m_views) {
+		view->setLeakLine({});
+	}
+	raiseDock("Compile");
+	const QColor note(255, 200, 100);
+	m_log->append(tr("--- Play from here: %1 (your map is not changed) ---").arg(QFileInfo(vmf).fileName()), QColor(140, 180, 255));
+	if (!copy.onFloor) m_log->append(tr("No floor below the camera: the player starts at the camera and falls."), note);
+	if (copy.cordoned) m_log->append(tr("Only the area around the start is compiled (sealed with sky)."), note);
+	if (copy.outsideCordons) m_log->append(tr("The camera is outside the cordons - compiling the whole map."), note);
+	if (!light) m_log->append(tr("No lighting (VRAD off): the map is full bright."), note);
+	const QString gameDir = QString::fromStdString(displayPath(m_editor->game()->entry.gameDir));
+	m_compiler.start(vmf, gameDir, m_editor->gameSettings(), playFromHereSettings(loadCompileOptions(m_editor->gameKey()), light));
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos) {

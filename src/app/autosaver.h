@@ -8,6 +8,10 @@
 // A small marker file says "the editor is running with this map". A clean exit removes it; if it
 // is still there at the next start, the editor did not close normally and the newest autosave
 // (when it is newer than the map file) is offered back.
+//
+// Next to the marker the editor report's journal (last clicks, edits, road plans) is written a few
+// seconds after it changed. After a crash it is kept as "last-crash-journal.txt" and offered as an
+// editor report, so the clicks that led to the crash reach the report too.
 
 #pragma once
 
@@ -17,6 +21,7 @@
 #include <QThreadPool>
 #include <QTimer>
 
+#include <functional>
 #include <optional>
 
 class QWidget;
@@ -58,6 +63,11 @@ public:
 	[[nodiscard]] static QString mapNameFor(const QString& mapPath);
 	/// The marker file of a running session.
 	[[nodiscard]] static QString markerPath();
+	/// The running session's journal (see the file comment) and the one kept after a crash.
+	[[nodiscard]] static QString journalPath();
+	[[nodiscard]] static QString crashJournalPath();
+	/// Writes the journal now if it changed since the last write (also every few seconds).
+	void writeJournal();
 
 	/// Marks the session as running (with the current map). Called by the constructor.
 	void startSession();
@@ -69,20 +79,31 @@ private:
 
 	Editor* m_editor;
 	QTimer m_timer;
+	QTimer m_journalTimer;
+	unsigned m_journalWritten = 0;    ///< Editor::journalRevision() of the last journal write
 	QThreadPool m_pool;               ///< One thread: writes happen in order
 	unsigned m_savedRevision = 0;     ///< History revision of the last autosave
 	QString m_markerMap;              ///< Map path written into the marker
 	bool m_sessionOpen = false;
 };
 
+/// Whether the last session did not end normally (its marker is still there). Call before an
+/// Autosaver starts the new session.
+[[nodiscard]] bool lastSessionCrashed();
+/// The journal of the crashed session (empty if none), kept as crashJournalPath() so the new
+/// session does not overwrite it. Call before an Autosaver starts the new session.
+[[nodiscard]] QString takeCrashJournal();
 /// Autosaves of the last session if it did not end normally and they are newer than its map.
 /// Call before an Autosaver starts the new session (it overwrites the marker).
 [[nodiscard]] std::optional<RecoveryOffer> recoveryAfterCrash();
 /// Autosaves of `mapPath` that are newer than the file itself.
 [[nodiscard]] std::optional<RecoveryOffer> recoveryForMap(const QString& mapPath);
 /// Asks whether to restore one of the offered autosaves and opens it if so. Returns true when an
-/// autosave was opened.
-bool offerRecovery(Editor* editor, QWidget* parent, const RecoveryOffer& offer);
+/// autosave was opened. After a crash with `makeReport`, a box offers an editor report as well
+/// (made after the restore, so it holds the restored map).
+bool offerRecovery(Editor* editor, QWidget* parent, const RecoveryOffer& offer, const std::function<void()>& makeReport = {});
+/// After a crash without autosaves to restore: asks whether to make an editor report.
+void offerCrashReport(QWidget* parent, const std::function<void()>& makeReport);
 /// Opens a map, but first offers a newer autosave of it if there is one.
 bool openMapWithRecovery(Editor* editor, QWidget* parent, const QString& path, QString* error = nullptr);
 

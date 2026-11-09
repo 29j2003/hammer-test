@@ -252,6 +252,70 @@ Bounds roomAround(const MapDocument& doc, const Vec3& point, double maxDistance)
 	return box;
 }
 
+bool isGeneratedMapCopy(std::string_view fileName) {
+	const auto name = toLower(fileName);
+	return name.ends_with("_cordon.vmf") || name.ends_with("_here.vmf");
+}
+
+PlayFromHereCopy playFromHereCopy(const MapDocument& doc, const PlayFromHere& options, const CordonSet& cordons, const EntityCatalog* catalog) {
+	PlayFromHereCopy out;
+	// The floor below the camera: the player stands on it (a camera flying high above would
+	// otherwise drop the player to its death).
+	constexpr double EYE_HEIGHT = 64, REACH = 2048;
+	const Bounds room = roomAround(doc, options.eye, REACH);
+	const double below = options.eye.z - room.min.z;
+	out.onFloor = below < REACH - 0.5;
+	out.start = options.eye;
+	out.start.z = out.onFloor ? room.min.z + 1 : options.eye.z - EYE_HEIGHT;
+	// Inside a wall: the middle of the player (36 units up) lies in a solid brush.
+	const Vec3 middle = out.start + Vec3{0, 0, 36};
+	const auto solidAt = [&](const Entity& owner, const Solid& solid) { return !passable(owner, solid) && containsPoint(solid, middle); };
+	out.inSolid = std::any_of(doc.world.solids.begin(), doc.world.solids.end(), [&](const Solid& s) { return solidAt(doc.world, s); });
+	for (const auto& entity : doc.entities) {
+		if (toLower(entity.classname()).starts_with("func_")) {
+			for (const auto& solid : entity.solids) out.inSolid = out.inSolid || solidAt(entity, solid);
+		}
+	}
+
+	CordonSet limit;
+	if (options.area > 0) {
+		const Vec3 r{options.area, options.area, options.area};
+		limit.active = true;
+		limit.cordons.push_back({"play from here", {out.start - r, out.start + r + Vec3{0, 0, EYE_HEIGHT}}, true});
+	} else if (cordons.active) {
+		for (const auto& cordon : cordons.cordons) {
+			if (!cordon.active) continue;
+			limit.cordons.push_back(cordon);
+			const auto& b = cordon.box;
+			if (middle.x >= b.min.x && middle.x <= b.max.x && middle.y >= b.min.y && middle.y <= b.max.y && middle.z >= b.min.z && middle.z <= b.max.z) {
+				limit.active = true;
+			}
+		}
+		out.outsideCordons = !limit.cordons.empty() && !limit.active;
+	}
+	out.cordoned = limit.active;
+	out.doc = limit.active ? cordonedCopy(doc, limit, catalog) : doc;
+
+	const auto before = out.doc.entities.size();
+	std::erase_if(out.doc.entities, [](const Entity& e) { return iequals(e.classname(), "info_player_start"); });
+	out.removedStarts = static_cast<int>(before - out.doc.entities.size());
+	const auto place = [&](const std::string& classname, const Vec3& origin, std::vector<std::pair<std::string, std::string>> keys) {
+		Entity entity;
+		entity.id = out.doc.newEntityId();
+		entity.set("classname", classname);
+		entity.set("origin", formatVec3(origin));
+		for (auto& [key, value] : keys) entity.set(key, std::move(value));
+		out.doc.entities.push_back(std::move(entity));
+	};
+	const double pitch = std::clamp(options.pitch, -89.0, 89.0);
+	// "Master" (spawnflag 1): the start the game takes when there are several.
+	place("info_player_start", out.start, {{"angles", formatVec3({pitch, options.yaw, 0})}, {"spawnflags", "1"}});
+	if (options.suit && (!catalog || catalog->find("item_suit"))) {
+		place("item_suit", out.start + Vec3{0, 0, 8}, {{"spawnflags", "1"}});
+	}
+	return out;
+}
+
 namespace edit {
 
 std::pair<Change, int> setCubemapRoomBox(MapDocument& doc, int cubemapId, const Bounds& box, const EntityClass* obbClass) {

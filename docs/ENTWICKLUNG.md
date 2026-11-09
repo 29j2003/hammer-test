@@ -112,7 +112,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `recent_projects` | Liste „zuletzt bearbeitet“ für die Startseite: `rememberProject` (neueste oben, je Karte einmal, Pfad ohne Groß-/Kleinschreibung und Slash-Richtung), Text `zeit\tspiel\tpfad` je Zeile |
 | `soundscape_area` | Wo ein Soundscape-Entity zu hören ist: Kugel (`radius`, −1 = überall; `soundscapeRadius`) oder Block (`trigger_soundscape`, dessen Key `soundscape` den Namen trägt; `soundscapeTrigger`). `setSoundscapeRadius`, `makeSoundscapeBlock` (macht `env_soundscape` zu `env_soundscape_triggerable`, vergibt einen Namen, legt den Trigger an oder ändert seine Größe), `removeSoundscapeBlock` (zurück zur Kugel) – je ein Undo-Schritt |
 | `layout_checks` | Prüfungen zur Lage (von `checkMap` angehängt, Fixes über `applyFix`): Spielerstart im Brush (Hülle 32 × 32 × 72 über dem Origin gegen Welt + `func_detail`, Hint/Skip/Trigger/Wasser blockieren nicht; Fix hebt auf die Oberkante), Punkt-Entities außerhalb der Welt-Box (Leak), Props mit Ursprung im Brush (werden schwarz; `lightingorigin` gesetzt: ok), Lightmap-Scale < 4 / > 128 (Werkzeug-Flächen nicht; Fix 16 / 64), laufende NPCs ohne `info_node` (Fix: 3 × 3 Knoten im Abstand 96 um jedes NPC, nur auf freiem Boden, `nodeSpotsAround`). Box-gegen-Brush: Trennung über die Brush-Ebenen und die Box-Achsen |
-| `optimization_checks` | Prüfungen zu Engine-Limits und Kompilierzeit (von `checkMap` angehängt): ab 85 % eines Limits aus `map_budget` Warnung, darüber Fehler (Grenzen des Spiels über `CheckContext::limits`, sonst SDK 2013); Weltbrushes, die nur Detail sind (`detailCandidates`: ab 9 Seiten = runde Form, oder größte Ausdehnung ≤ 16 = kleines Teil; Tool-Brushes außer nodraw nie), Info mit Fix „Make func_detail“ (`tieToEntity`, ein Undo-Schritt) |
+| `optimization_checks` | Prüfungen zu Engine-Limits und Kompilierzeit (von `checkMap` angehängt): ab 85 % eines Limits aus `map_budget` Warnung, darüber Fehler (Grenzen des Spiels über `CheckContext::limits`, sonst SDK 2013); Weltbrushes, die nur Detail sind (`detailCandidates`: ab 9 Seiten = runde Form, oder größte Ausdehnung ≤ 16 = kleines Teil; Tool-Brushes außer nodraw nie), Info mit Fix „Make func_detail“ (`tieToEntity`, ein Undo-Schritt); unsichtbare Flächen (`hiddenFaces`): Fläche eines func_detail-Brushes flach an einem Welt-/func_detail-Brush oder Weltfläche flach an einem func_detail – VBSP baut Flächen nur an Portalen zwischen leer und fest, func_detail gehört nicht zum BSP, also bleiben sie samt Lightmap; Welt gegen Welt entfernt VBSP selbst (nicht gemeldet). Nur ganz von einer undurchsichtigen Fläche bedeckt (konvexes Polygon enthält alle Ecken, Gegennormale, Abstand ≤ 0,05), Deckender ohne Werkzeug-Material außer nodraw/toolsblack, keine Displacements, nie andere Brush-Entities (Türen bewegen sich); durchsichtig: mit Spieldateien `$translucent`/`$alphatest`/`$additive`/`$alpha` < 1/Water-/Refract-Shader (`CheckCache::seeThrough`), sonst Wörter im Namen (`seeThroughByName`); Fix „Make nodraw“ (`applyMaterial`, ein Undo-Schritt). Paare über Sweep nach X |
 | `map_helpers` | Seile: `edit::makeRope` (move_rope + keyframe_ropes, `NextKey`, FGD-Standards, Slack), `ropePointsOf` (Origins bzw. Oberkante von Brushes), `ropeCurves` + `ropeSag` (Parabel: Länge ≈ Spannweite + 8·Durchhang²/(3·Spannweite)); Leitern: `edit::makeLadder` (dünne Achse = Tiefe, Vorderseite = Seite mit Platz für den Spieler; `func_useableladder` mit `point0`/`point1` 18 Einheiten davor, `info_ladder_dismount` oben hinter der Kante und unten einen Schritt zurück) |
 | `checks` | Prüfungen mit Autofix, Leak aus `.lin`; Prop-Klasse passend zum Modell (`betterPropClass`), `ambient_generic` „Is NOT Looped“ gegen die WAV, mehrere `sky_camera`; `CheckCache` (im Problems-Panel) liest jedes Modell und jeden Sound nur einmal je Spiel; Spiegelungen: glänzende Materialien (`$envmap env_cubemap`, je Material einmal gelesen) ohne `env_cubemap` → `NoCubemap` (Autofix setzt eins über den Spielerstart), kompilierte Karte (`CheckContext::compiledMap`, nur wenn nicht älter als die `.vmf`; `readBspCubemaps` aus `compile_log`, erneut nur bei geänderter Datei) mit Samples aber ohne gebaute Cubemaps → `CubemapsNotBuilt` mit `Problem::action` „buildCubemaps“ (keine Kartenänderung: `ProblemsPanel::actionRequested` → `MainWindow::buildCubemapsInCompile` öffnet den Compile-Dialog mit Cubemaps an); Brushes: `BrokenBrush` (gültig, aber `brushProblem` – Kante < 0,25 oder dünner als 0,5; Autofix löschen), `DuplicateBrush` (gleiche Ebenen im selben Entity, Reihenfolge egal: Flächen flackern, Klicks treffen einen von beiden; Autofix löscht das Doppel) |
 | `doors` | Türen: `DoorSettings` ↔ Keys (`readDoor`, `edit::setDoor`), Rahmen aus der Brush-Box (`doorFrame`: dünne Seite = vorn, rechts = rechte Hand, wenn man auf die Vorderseite schaut), Scharnier-Origin (`hingePoint`), `movedir` ↔ Richtung, Schiebeweg wie `CBaseDoor::Spawn` (Größe − 2 − Lip), Vorschau-Bewegung (`doorMotion`: Scharnier, Drehungen gegen den Uhrzeigersinn, bei „away from player“ beide; Prop-Türen: vorwärts = −distance wie `CPropDoorRotating`), `edit::makeDoor` (Brush-Türen behalten die Brushes, Doppeltür per `splitSolid` in der Mitte, gleiche `targetname`; Prop-Tür ersetzt den Block, Gierwinkel aus der Modell-Box, ohne Box HL2-Konvention Blatt entlang +Y), Tür-Sounds/-Modelle, `uniqueTargetName`, Areaportal finden/verknüpfen |
@@ -194,7 +194,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `new_mod_dialog` | „New mod …“: neue Mod aus Karten; bei New project zusätzlich „First map“ (Tutorial-Karte oder leerer Raum, `showFirstMapChoice`); `addOpenModBaseFiles` (Leser: `features/template` und das Dateisystem des offenen Spiels, dann lose Dateien einer HL2-Installation, App 220) |
 | `find_dialog`, `replace_materials_dialog` | Entities finden + Entity-Bericht; Materialien ersetzen |
 | `shortcut_dialog` | Tastenkürzel-Editor |
-| `autosaver` | Autosave, Wiederherstellen nach Absturz |
+| `autosaver` | Autosave, Wiederherstellen nach Absturz, Journal für den Editor-Bericht nach einem Absturz |
 | `updater` | Update-Prüfung, Download, Installation |
 | `copy_paste` | Strg+C/V-Helfer für Namen und Key/Values |
 | `icons`, `style`, `toggle_switch` | gezeichnete Icons, dunkles Theme, Ein/Aus-Schalter |
@@ -592,6 +592,17 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   eigene Parameter) auf denselben `CompileOptions`; gespeichert pro Spiel in QSettings `compile/<spiel>` (Text aus
   `serialize`), die zuletzt gewählte Ansicht in `compile/advanced`.
   Mit aktiven Cordons wird `<karte>_cordon.vmf` geschrieben und kompiliert.
+- **Play from here** (Shift+F9, Knopf neben *Run map* mit Menü): `MainWindow::playFromHere` nimmt die 3D-Kamera
+  (Source-Pitch = −`Camera::pitch`), `playFromHereCopy` (`map_tools`) macht die Kopie – das Original bleibt unberührt, auch
+  ungespeicherte Änderungen kommen mit –: alle `info_player_start` raus, einer mit Master-Flag (spawnflags 1) auf den Boden
+  unter der Kamera (`roomAround` nach unten, bis 2048; sonst Augenhöhe − 64, fällt), optional `item_suit` (nur wenn die FGD
+  ihn kennt), optional nur ein Würfel ±2048 um den Start (`cordonedCopy`), sonst die aktiven Cordons, wenn der Start darin
+  liegt (`outsideCordons` sonst). Start im Brush (`inSolid`: Mitte des Spielers in einem Welt-/func_-Brush) → Nachfrage.
+  Geschrieben als `<karte>_here.vmf` neben der Karte (Instanzen finden ihre Dateien relativ dazu), kompiliert mit
+  `playFromHereSettings` (`compile_options`: Einstellungen des Spiels, aber VVIS -fast, VRAD fast oder aus, Both → HDR,
+  keine Cubemaps, Kopieren + Spiel mit Cheats; Zusatz-Parameter bleiben), Spiel startet `<karte>_here`. Optionen in
+  QSettings `playHere/area|light|suit`. `isGeneratedMapCopy` lässt `_cordon.vmf`/`_here.vmf` aus Kartenlisten (Maps-Tab,
+  Game enhancements). Nicht im Spiel getestet: Startrichtung (Pitch) und Suit beim Spawn.
 - Partikel: `particleSystems()` liest `particles_manifest.txt` und die PCFs mit dem DMX-Leser von sourcepp (`kvpp::DMX`).
   Kern-Modul `particles`: `readParticleDefinitions` macht daraus Systeme mit ihren Werten und Teilen (emitters,
   initializers, operators, renderers, forces, constraints, children; Werte als Text + Zahlen). `ParticleSimulation`
@@ -613,7 +624,12 @@ Wenn im Editor etwas nicht stimmt (ein Brush lässt sich nicht anklicken, die St
 **Editor-Bericht**: *Help › Make editor report …* oder der Knopf über dem Log. Ein Klick fragt nach dem Ort (Desktop,
 sonst Dokumente; zuletzt benutzter Ordner in `report/folder`), schreibt `mapsmith_report_<Datum>.zip` und meldet
 „Report saved – send this file“ mit *Open folder*. Nichts wird verschickt, nichts läuft im Hintergrund mit: das Journal
-liegt nur im Speicher (`Editor::notePick`, `noteDrag`, `noteEdit`, `notePlan`) und wird nur beim Klick geschrieben. Pfade
+liegt im Speicher (`Editor::notePick`, `noteDrag`, `noteEdit`, `notePlan`); für Abstürze schreibt der `Autosaver` es
+höchstens alle 3 s, wenn es sich geändert hat (`Editor::journalRevision`), nach `<AppData>/session-journal.txt` (lokal,
+beim normalen Beenden gelöscht). Nach einem Absturz (`lastSessionCrashed`) wird es zu `last-crash-journal.txt`
+(`takeCrashJournal`, vor dem Anlegen des Autosavers), `MainWindow::setCrashJournal` hängt es als `last_session.log` an
+den nächsten Bericht, und der Start bietet den Bericht an (Kästchen im Wiederherstellen-Dialog, ohne Autosaves
+`offerCrashReport`). Pfade
 werden maskiert (`maskPersonalText`: Home-Ordner → `~`, `Users/<name>` und `home/<name>` → `<user>`). Der Bericht für
 das Spiel (*Make report*, `fidelity_report`) ist etwas anderes und bleibt getrennt.
 
@@ -628,6 +644,7 @@ Inhalt der ZIP:
 | `edits.log` | die letzten 30 Änderungen (je bis 12 Brushes mit allen Ebenenpunkten vorher/nachher, `INVALID`/`POINTS INWARD`), Undo/Redo |
 | `road.log` | die letzten Straßen-/Flow-Pläne (Live-Vorschau und angewendet) mit `RoadPlan::notes`: Stücke, Nachbarn mit Kantenlänge, Ecke rund/eckig, Kreuzung, Bordstein, Ketten, Breiten, Kurvenschnitt geglückt oder nicht, jede Fläche mit Achsen/Shift/Scale |
 | `log.txt`, `problems.txt` | Log- und Problems-Panel als Text |
+| `last_session.log` | nur nach einem Absturz: Klicks, Änderungen und Pläne der abgestürzten Sitzung |
 | `view<N>_<art>.png` | Bild jeder sichtbaren Ansicht |
 
 **Nachspielen:** `sme-probe editor-report mapsmith_report_….zip` lädt `scene.vmf` und `replay.txt`, schickt jeden
@@ -951,7 +968,7 @@ Quellen: Valve Developer Community (Compile Errors, Leak, Node graph, info_node,
 
 Erledigt (Branch `research`): häufige Kompilierfehler erklärt; Spielerstart im Brush (Fix), Entities im Nichts, extreme Lightmap-Scales (Fix), NPCs ohne `info_node` (Fix: Knoten setzen); Make rope (mit hängender Vorschau, wie Hammer++); Make ladder.
 
-1. **Play from here**: Karte mit dem Spieler an der Kameraposition starten (temporärer `info_player_start` mit Master-Flag in einer Kopie der VMF, schnelles Kompilieren). Hoher Nutzen, mittlerer Aufwand.
+1. ✓ **Play from here** (09.11.2026, Shift+F9): siehe „Kompilieren“ unten.
 2. **Nodegraph sichtbar machen**: Verbindungen der `info_node`s (Sichtlinie + Bodenabstand wie `ai_show_connect`) im Viewport, unverbundene Knoten rot; Knoten-Malwerkzeug (Klick setzt Knoten im Raster). Hoch / mittel.
 3. **Visleaf-/Portal-Ansicht** aus der `.prt` (wie Hammer „Load portal file“), mit Hinweisen zu `func_detail`/Hint. Mittel / mittel.
 4. **Areaportal-Prüfung vor dem Kompilieren**: Areaportal muss die Öffnung ganz füllen und Welt-Brushes berühren (nicht `func_detail`). Mittel / mittel.

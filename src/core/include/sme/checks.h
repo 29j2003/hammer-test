@@ -62,6 +62,7 @@ struct Problem {
 		BrokenBrush,            ///< A brush VBSP may drop or leave a hole for: a tiny edge, paper thin (fix: delete)
 		DuplicateBrush,         ///< Two brushes exactly in one place (faces flicker, clicks pick either; fix: delete one)
 		ScenePlan,              ///< choreography: a scene step without an NPC, sound or way (objects = the scene)
+		HiddenFaces,            ///< optimization_checks: faces flat against a func_detail brush nobody sees (fix: nodraw)
 	};
 
 	Severity severity = Severity::Warning;
@@ -89,6 +90,7 @@ struct CheckCache {
 	std::map<std::string, std::optional<bool>> soundLoops;         ///< By lower-case sound name
 	std::optional<std::vector<SoundScriptEntry>> soundScripts;     ///< Read on first use
 	std::map<std::string, bool> reflective;                        ///< By material name: $envmap env_cubemap
+	std::map<std::string, bool> seeThrough;                        ///< By material name: translucent, alpha tested, water
 	/// The compiled map's cubemaps, read again only when the file changed.
 	std::filesystem::path compiledPath;
 	std::filesystem::file_time_type compiledTime{};

@@ -38,6 +38,9 @@ file, it asks **Restore an autosave?** and lists the copies with their time:
 
 - **Restore selected** opens the chosen copy. Save it to make it the map again.
 - **Open the file as it is** ignores the autosaves.
+- **Also make an editor report about the crash** (only after a crash) saves a report with your last clicks and edits
+  before the crash, to send; see [Reporting a problem](troubleshooting.html#reporting-a-problem). Without autosaves to
+  restore, Mapsmith only asks whether to make that report.
 
 **One step back on disk.** Every time you save, the previous version of the map is kept as `<map>.vmx` next to it. To
 use it, rename it to `.vmf` (or copy it to a new name) and open it.

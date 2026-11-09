@@ -7,6 +7,7 @@
 #include <sme/brush.h>
 #include <sme/checks.h>
 #include <sme/compile_log.h>
+#include <sme/history.h>
 #include <sme/layout_checks.h>
 #include <sme/map_helpers.h>
 #include <sme/optimization_checks.h>
@@ -297,4 +298,68 @@ TEST_CASE("layout: a prop with its origin inside a brush is reported (it would b
 	CHECK(found[0].entityId == sunk);
 	CHECK(found[0].severity == Problem::Severity::Warning);
 	CHECK(found[0].howToFix.find("info_lighting") != std::string::npos);
+}
+
+TEST_CASE("optimization: faces flat against func_detail brushes nobody sees become nodraw") {
+	MapDocument doc = floorMap();
+	const auto detailEntity = [&](const Bounds& b, const std::string& material) {
+		const int id = addEntity(doc, {{"classname", "func_detail"}});
+		auto* e = doc.findEntity(id);
+		e->solids.push_back(makeBlock(doc, b, material));
+		return SolidRef{id, e->solids.back().id};
+	};
+	const auto sideFacing = [&](const SolidRef& ref, const Vec3& normal) {
+		for (const auto& side : doc.findSolid(ref)->sides) {
+			if (length(side.plane().normal - normal) < 1e-6) return side.id;
+		}
+		FAIL("no side");
+		return 0;
+	};
+	// A detail pillar on the world floor: its bottom is hidden; the floor's top is only partly covered.
+	const auto pillar = detailEntity(box({0, 0, 0}, {64, 64, 128}), "CONCRETE/CONCRETEWALL001A");
+	// A detail platform with a world box on top: the box's bottom is hidden, the platform's top only partly.
+	const auto platform = detailEntity(box({200, 0, 0}, {328, 128, 32}), "CONCRETE/CONCRETEWALL001A");
+	doc.world.solids.push_back(makeBlock(doc, box({232, 32, 32}, {264, 64, 64}), "WOOD/CRATE001A"));
+	const SolidRef crate{0, doc.world.solids.back().id};
+	// Not listed: a world box on the world floor (VBSP drops that face), a glass detail brush, a box on
+	// glass, a door, a box on a clip brush.
+	doc.world.solids.push_back(makeBlock(doc, box({-200, -200, 0}, {-136, -136, 64}), "WOOD/CRATE001A"));
+	const auto glass = detailEntity(box({-400, 0, 0}, {-300, 16, 128}), "GLASS/GLASSWINDOW001A");
+	(void)glass;
+	doc.world.solids.push_back(makeBlock(doc, box({-380, 0, 128}, {-340, 16, 160}), "WOOD/CRATE001A"));
+	const int door = addEntity(doc, {{"classname", "func_door"}});
+	doc.findEntity(door)->solids.push_back(makeBlock(doc, box({400, 0, 0}, {416, 64, 128}), "METAL/METALDOOR001A"));
+	const auto clip = detailEntity(box({0, 300, 0}, {64, 364, 64}), "TOOLS/TOOLSPLAYERCLIP");
+	(void)clip;
+	doc.world.solids.push_back(makeBlock(doc, box({16, 316, 64}, {48, 348, 96}), "WOOD/CRATE001A"));
+
+	const auto faces = hiddenFaces(doc);
+	REQUIRE(faces.size() == 3);   // world faces first, then func_detail ones (the platform's bottom lies on the floor)
+	CHECK(faces[0] == FaceRef{crate, sideFacing(crate, {0, 0, -1})});
+	CHECK(faces[1] == FaceRef{pillar, sideFacing(pillar, {0, 0, -1})});
+	CHECK(faces[2] == FaceRef{platform, sideFacing(platform, {0, 0, -1})});
+
+	auto found = problemsOf(doc, Problem::Kind::HiddenFaces);
+	REQUIRE(found.size() == 1);
+	CHECK(found[0].severity == Problem::Severity::Info);
+	CHECK(found[0].fixLabel == "Make nodraw");
+	auto change = applyFix(doc, found[0], nullptr);
+	const auto materialOf = [&](const FaceRef& f) {
+		for (const auto& side : doc.findSolid(f.solid)->sides) {
+			if (side.id == f.sideId) return side.material;
+		}
+		return std::string();
+	};
+	CHECK(materialOf(faces[0]) == "TOOLS/TOOLSNODRAW");
+	CHECK(materialOf(faces[1]) == "TOOLS/TOOLSNODRAW");
+	CHECK(problemsOf(doc, Problem::Kind::HiddenFaces).empty());
+	History history;
+	history.push(std::move(change));
+	REQUIRE(history.undo(doc));
+	CHECK(materialOf(faces[1]) == "CONCRETE/CONCRETEWALL001A");
+
+	// The game's material decides when it is known: an opaque "glass" stays a cover.
+	CHECK(hiddenFaces(doc, [](const std::string&) { return false; }).size() == 5);
+	CHECK(seeThroughByName("glass/glasswindow001a"));
+	CHECK_FALSE(seeThroughByName("concrete/concretefloor001a"));
 }

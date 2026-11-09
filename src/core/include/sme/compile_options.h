@@ -87,6 +87,11 @@ struct CompileCommand {
 	bool detached = false;             ///< The game is started and left running
 };
 
+/// Settings for "Play from here": the game's own settings (extra parameters, window, light
+/// level) made quick - VVIS -fast, VRAD fast (or no VRAD: the map is full bright), no
+/// cubemaps, copy and start the game with cheats. Light "Both" becomes HDR (the game's default).
+[[nodiscard]] CompileSettings playFromHereSettings(const CompileSettings& saved, bool light = true);
+
 /// The arguments a tool gets from the settings, without -game and the map (for the preview).
 [[nodiscard]] std::vector<std::string> toolArguments(const CompileSettings& settings, CompileTool tool, std::string_view launchOptions = {});
 /// Every step in order. `mapBase` is the .vmf path without the extension; `launchOptions` the

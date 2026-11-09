@@ -31,6 +31,29 @@ Press **F9** or the orange **Run map** button in the top bar. Mapsmith then:
 
 Press F9 again while a compile runs to cancel it.
 
+## Play from here (Shift+F9)
+
+To try a spot quickly, fly the 3D camera there, look the way you want to start and press **Shift+F9** (or the
+**▷●** button next to *Run map*). Mapsmith then:
+
+1. writes a copy of the map, `<map>_here.vmf`, next to it, with unsaved changes included. Your map file is not
+   changed or saved;
+2. in the copy, leaves out the map's `info_player_start` and puts one on the floor below the camera, facing where the
+   camera looks. If there is no floor within 2048 units below, the player starts at the camera and falls;
+3. compiles the copy quickly with your compile settings for the game: VVIS `-fast`, VRAD fast, no cubemaps. Your extra
+   parameters, such as `-lights`, stay;
+4. starts the game with `<map>_here`, with cheats on (`noclip`, `impulse 101`).
+
+The small arrow next to the button has three options, which are kept:
+
+- **Only the area around the camera**: compiles only what is within 2048 units of the camera, sealed with sky like a
+  cordon. This is much quicker on big maps. Without it, cordons that are on apply when the camera is inside them.
+- **Lighting (quick VRAD)**: off skips VRAD, so the map is full bright. This is the quickest test.
+- **Start with the suit**: puts an `item_suit` at the start (Half-Life 2: HUD, flashlight, sprint).
+
+If the camera is inside a brush, Mapsmith asks first. Logic that moves the player when the map starts, such as a
+`point_teleport` on `OnMapSpawn`, still runs in the copy.
+
 {: .note }
 The compile tools and the game executable come from the [game settings](getting-started.html#game-settings) (the **⚙** next to the
 game). If a step says *no program set*, set its path there.
@@ -137,6 +160,7 @@ selects the objects in the map, and often a button that fixes it right away. The
 | The map uses 85 % or more of an engine limit (brushes, brush sides, planes, entities, overlays, ...), or is over one - VBSP would stop with `MAX_MAP_...` | — (the line says what helps; **Map Budget** shows all limits) |
 | World brushes that are only details - round shapes (9 or more sides) and small pieces (16 units or less) - make VVIS slow (hint) | **Make func_detail** (keep a brush world if it closes the map off from the void: detail brushes do not seal) |
 | NPCs that walk, but no `info_node` in the map (they cannot find paths: they stand still or walk into walls) | **Place nodes around the NPCs** (a few on the free floor around each NPC - add more along the ways they should walk) |
+| Faces that lie flat against a `func_detail` brush, and faces of `func_detail` brushes that lie flat against another brush: nobody sees them, but VBSP keeps them with lightmaps (it removes such faces only between world brushes). Only faces fully covered by an opaque, static brush are listed: never doors, glass, water, fences or tool brushes (hint) | **Make nodraw** |
 | No light entities (hint) | — |
 | The map leaks | — |
 

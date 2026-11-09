@@ -169,7 +169,9 @@ int main(int argc, char** argv) {
 	startupMark("games found");
 	// Did the last session crash? Asked before the autosaver starts the new session.
 	const bool automated = parser.isSet("screenshot") || parser.isSet("no-update-check") || qEnvironmentVariableIsSet("SME_NO_UPDATE_CHECK");
-	const auto recovery = automated ? std::nullopt : recoveryAfterCrash();
+	const bool crashed = !automated && lastSessionCrashed();
+	const QString crashJournal = crashed ? takeCrashJournal() : QString();
+	const auto recovery = crashed ? recoveryAfterCrash() : std::nullopt;
 	Autosaver autosaver(&editor);
 	MainWindow window(&editor);
 	startupMark("window built");
@@ -311,8 +313,12 @@ int main(int argc, char** argv) {
 			editor.setTool(TOOLS.value(parser.value("tool").toLower(), Editor::Tool::Select));
 		}
 	});
+	window.setCrashJournal(crashJournal);
+	const auto makeReport = [&window] { window.makeEditorReport(); };
 	if (recovery) {
-		QTimer::singleShot(0, &window, [&] { offerRecovery(&editor, &window, *recovery); });
+		QTimer::singleShot(0, &window, [&, makeReport] { offerRecovery(&editor, &window, *recovery, makeReport); });
+	} else if (crashed) {
+		QTimer::singleShot(0, &window, [&window, makeReport] { offerCrashReport(&window, makeReport); });
 	}
 	// Newer version on GitHub? Asked once at start (Help > Check for updates at start turns it off).
 	if (!automated && QSettings().value("update/checkOnStart", true).toBool()) {

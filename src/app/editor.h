@@ -301,6 +301,9 @@ public:
 	[[nodiscard]] std::string pickJournal() const;
 	[[nodiscard]] std::string editJournal() const;
 	[[nodiscard]] std::string planJournal() const;
+	/// Counts every new journal entry (the autosaver writes the journal to disk when it changed,
+	/// so a report after a crash still has the last clicks and edits).
+	[[nodiscard]] unsigned journalRevision() const { return m_journalRevision; }
 	/// The state the replay needs (replay.txt): hidden objects, selection, last road / texture
 	/// flow settings with the texture size and selection they were planned for, snapping.
 	[[nodiscard]] std::vector<std::pair<std::string, std::string>> replaySettings() const;
@@ -469,6 +472,7 @@ private:
 	// The report's journal (notePick ...); mutable: planning (const) notes its plan.
 	std::deque<std::string> m_pickJournal;
 	int m_pickCount = 0;
+	mutable unsigned m_journalRevision = 0;
 	std::deque<std::string> m_editJournal;
 	mutable std::deque<std::string> m_planJournal;
 	mutable std::vector<std::pair<std::string, std::string>> m_roadReplay, m_flowReplay;

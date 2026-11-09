@@ -144,6 +144,7 @@ The Tool tab's key tables follow your own shortcuts.
 | Ctrl+Alt+E | Export for other programs ... |
 | Ctrl+Shift+K | Add cordon around selection |
 | F9 | Run map (compile and run; again: cancel) |
+| Shift+F9 | Play from here: quick compile with the player at the 3D camera, then play |
 | F1 | Shortcuts |
 
 On macOS, Ctrl is the Command key wherever the system uses it.
