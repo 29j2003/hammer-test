@@ -170,6 +170,8 @@ bool MainWindow::writeEditorReport(const QString& path, QString* error) {
 	add("picks.log", m_editor->pickJournal());
 	add("edits.log", m_editor->editJournal());
 	add("road.log", m_editor->planJournal());
+	// After a crash: the clicks and edits of the session that crashed (autosaver.h).
+	if (!m_crashJournal.isEmpty()) add("last_session.log", m_crashJournal.toStdString());
 	add("log.txt", m_log->toPlainText().toStdString());
 	add("problems.txt", m_problems->problemsText().toStdString());
 	add("README.txt", "Mapsmith editor report. Replay: sme-probe editor-report <this zip> (docs/ENTWICKLUNG.md, \"Editor-Bericht\").\n");

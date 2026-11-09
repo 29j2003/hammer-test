@@ -150,8 +150,11 @@ something strange – make an **editor report** right after it happened:
 The report holds the part of the map around the selection (the whole map when it is small), the editor's settings and
 views, your last clicks and drags with what the editor found under the mouse, your last edits, the last road or
 texture flow plans, the Log and Problems texts and a picture of each view. Your user name and home folder are replaced
-by `<user>` and `~`. Nothing is sent anywhere by Mapsmith: the file stays on your PC until you send it yourself, and
-nothing is recorded to disk until you make a report.
+by `<user>` and `~`. Nothing is sent anywhere by Mapsmith: the file stays on your PC until you send it yourself.
+
+While Mapsmith runs, it keeps the last clicks and edits in a small file in its own data folder, and deletes it when it
+closes normally. After a crash it keeps that file and offers a report at the next start: the report then also holds
+the clicks and edits that led to the crash (`last_session.log`).
 
 This is not the same as **Make report** in the Map menu, which packs what `fidelity_report` wrote while you played.
 

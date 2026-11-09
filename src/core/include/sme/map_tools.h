@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <sme/editing.h>
@@ -39,6 +40,38 @@ void writeCordons(MapDocument& doc, const CordonSet& cordons);
 /// cordon, each cordon sealed by six brushes of `sealMaterial` around it.
 [[nodiscard]] MapDocument cordonedCopy(const MapDocument& doc, const CordonSet& cordons, const EntityCatalog* catalog,
                                        const std::string& sealMaterial = "TOOLS/TOOLSSKYBOX");
+
+/// Copies of a map that Mapsmith writes next to it for a compile ("x_cordon.vmf" with cordons
+/// on, "x_here.vmf" for Play from here): not maps of their own, left out of map lists.
+[[nodiscard]] bool isGeneratedMapCopy(std::string_view fileName);
+
+/// "Play from here": the player starts where the camera is, looking the same way.
+struct PlayFromHere {
+	Vec3 eye;                 ///< Camera position
+	double yaw = 0;           ///< Source yaw in degrees (0 = looking along +X)
+	double pitch = 0;         ///< Source pitch in degrees (positive = looking down)
+	double area = 0;          ///< > 0: compile only a box this far around the start (each way), sealed like a cordon
+	bool suit = true;         ///< Put an item_suit at the start (HL2: HUD, flashlight, sprint)
+};
+
+/// The map as "Play from here" compiles it.
+struct PlayFromHereCopy {
+	MapDocument doc;
+	Vec3 start;                   ///< Where the player stands (feet)
+	bool onFloor = false;         ///< A floor was found below the camera (else the player falls from eye height)
+	bool inSolid = false;         ///< The start is inside a brush (the camera is in a wall)
+	int removedStarts = 0;        ///< info_player_start entities left out of the copy
+	bool cordoned = false;        ///< Only part of the map is compiled (the area or the map's cordons)
+	bool outsideCordons = false;  ///< The map's cordons are on but the start is outside them: compiled whole
+};
+
+/// A copy of `doc` (the original is never changed) where the player starts at the camera: the
+/// map's info_player_start entities are left out and one is put on the floor below the camera
+/// (within 2048 units, else at eye height minus 64), facing the camera's yaw and pitch. With an
+/// area, only what touches a box around the start is kept and the box is sealed with sky
+/// brushes; else the map's active cordons apply (when the start is inside them).
+[[nodiscard]] PlayFromHereCopy playFromHereCopy(const MapDocument& doc, const PlayFromHere& options, const CordonSet& cordons,
+                                                const EntityCatalog* catalog);
 
 /// All entities of the path the entity belongs to (path_track, path_corner, ...): following
 /// "target" forward and the entities that target it backward.

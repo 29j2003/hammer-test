@@ -25,6 +25,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <sme/map_tools.h>
 #include <sme/assets.h>
 #include <sme/game.h>
 #include <sme/map.h>
@@ -228,7 +229,7 @@ void MapsPanel::buildRows() {
 		int count = 0;
 		while (it.hasNext() && count < 5000) {
 			const QString path = it.next();
-			if (path.endsWith(QLatin1String("_cordon.vmf"))) continue;   // made by compiling with cordons
+			if (isGeneratedMapCopy(QFileInfo(path).fileName().toStdString())) continue;   // made by compiling with cordons / Play from here
 			auto* item = new QTreeWidgetItem(m_table);
 			item->setData(NameColumn, PathRole, path);
 			item->setFlags(item->flags() | Qt::ItemIsUserCheckable);

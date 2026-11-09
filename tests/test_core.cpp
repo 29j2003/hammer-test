@@ -531,3 +531,32 @@ TEST_CASE("compile settings: steps, presets, game window, extra parameters, savi
 	const auto broken = CompileSettings::parse("width=abc\nnonsense\nunknown=1\nvrad+=\n");
 	CHECK(broken.serialize() == CompileSettings{}.serialize());
 }
+
+TEST_CASE("play from here: quick settings from the game's own, the copy compiled and started") {
+	CompileSettings saved;
+	saved.applyPreset(CompileSettings::Preset::Final);
+	saved.light = LightLevel::Both;
+	saved.cubemaps = true;
+	saved.run = false;
+	saved.cheats = false;
+	saved.vvis = false;
+	saved.extraFor(CompileTool::Vrad).push_back("-lights fidelity_lights.rad");
+	saved.width = 1280;
+	const auto quick = playFromHereSettings(saved);
+	CHECK(quick.vvis);
+	CHECK(quick.visFast);
+	CHECK(quick.vrad);
+	CHECK(quick.lightQuality == CompileQuality::Fast);
+	CHECK(quick.light == LightLevel::Hdr);
+	CHECK_FALSE(quick.cubemaps);
+	CHECK(quick.copy);
+	CHECK(quick.run);
+	CHECK(quick.cheats);
+	CHECK(quick.width == 1280);
+	CHECK(quick.extraFor(CompileTool::Vrad) == saved.extraFor(CompileTool::Vrad));
+	const auto steps = sme::compileCommands(quick, "/maps/src/arena_here", "/game/mod");
+	REQUIRE(steps.size() == 5);
+	CHECK(steps[3].arguments.back() == "/game/mod/maps/arena_here.bsp");
+	CHECK(steps[4].arguments.back() == "arena_here");
+	CHECK_FALSE(playFromHereSettings(saved, false).vrad);   // full bright, quickest
+}

@@ -524,3 +524,80 @@ TEST_CASE("recent projects: newest first, one entry per map, kept as text") {
 	CHECK(forgetProject(list, "/M/19.VMF").size() == 11);
 	CHECK(writeRecentProjects({{"bad\tkey", "/a.vmf", 1}}).empty());
 }
+
+TEST_CASE("play from here: the player starts on the floor below the camera, the original stays untouched") {
+	MapDocument doc;
+	History history;
+	history.push(edit::starterRoom(doc, {}, {512, 384, 256}));
+	addEntity(doc, {{"classname", "info_player_start"}, {"angles", "0 90 0"}}, {0, -96, 1});
+	const auto before = doc.serialize();
+
+	PlayFromHere options;
+	options.eye = {100, 50, 200};
+	options.yaw = 30;
+	options.pitch = 10;
+	const auto copy = playFromHereCopy(doc, options, {}, nullptr);
+	CHECK(doc.serialize() == before);
+	CHECK(copy.onFloor);
+	CHECK_FALSE(copy.inSolid);
+	CHECK_FALSE(copy.cordoned);
+	CHECK(copy.removedStarts == 2);   // the starter room's and the extra one
+	CHECK(copy.start == Vec3{100, 50, 1});
+	std::vector<const Entity*> starts;
+	for (const auto& e : copy.doc.entities) {
+		if (e.classname() == "info_player_start") starts.push_back(&e);
+	}
+	REQUIRE(starts.size() == 1);
+	CHECK(starts[0]->origin() == Vec3{100, 50, 1});
+	CHECK(starts[0]->get("angles") == "10 30 0");
+	CHECK(starts[0]->get("spawnflags") == "1");
+	CHECK(std::any_of(copy.doc.entities.begin(), copy.doc.entities.end(), [](const Entity& e) { return e.classname() == "item_suit"; }));
+	CHECK(copy.doc.world.solids.size() == doc.world.solids.size());
+
+	// No floor below (flying outside the room, looking far down): eye height minus 64.
+	options.eye = {5000, 0, 300};
+	options.suit = false;
+	const auto air = playFromHereCopy(doc, options, {}, nullptr);
+	CHECK_FALSE(air.onFloor);
+	CHECK(air.start == Vec3{5000, 0, 236});
+	CHECK(std::none_of(air.doc.entities.begin(), air.doc.entities.end(), [](const Entity& e) { return e.classname() == "item_suit"; }));
+
+	// Camera inside a wall.
+	options.eye = {0, -200, 100};
+	CHECK(playFromHereCopy(doc, options, {}, nullptr).inSolid);
+}
+
+TEST_CASE("play from here: only an area around the start, or the map's cordons when the start is inside them") {
+	MapDocument doc;
+	History history;
+	history.push(edit::starterRoom(doc, {}, {512, 384, 256}));
+	// A far away block that the area leaves out.
+	doc.world.solids.push_back(makeBlock(doc, box({3000, 3000, 0}, {3100, 3100, 100}), "BRICK/WALL"));
+	PlayFromHere options;
+	options.eye = {0, 0, 64};
+	options.area = 1024;
+	const auto near = playFromHereCopy(doc, options, {}, nullptr);
+	CHECK(near.cordoned);
+	CHECK(std::none_of(near.doc.world.solids.begin(), near.doc.world.solids.end(), [](const Solid& s) { return s.sides.front().material == "BRICK/WALL"; }));
+	CHECK(near.doc.world.solids.size() == 6 + 6);   // the room and six sealing slabs
+
+	options.area = 0;
+	CordonSet cordons;
+	cordons.active = true;
+	cordons.cordons.push_back({"far", box({2900, 2900, -10}, {3200, 3200, 200}), true});
+	const auto outside = playFromHereCopy(doc, options, cordons, nullptr);
+	CHECK(outside.outsideCordons);
+	CHECK_FALSE(outside.cordoned);
+	CHECK(outside.doc.world.solids.size() == doc.world.solids.size());
+	cordons.cordons.push_back({"room", box({-300, -300, -100}, {300, 300, 300}), true});
+	const auto inside = playFromHereCopy(doc, options, cordons, nullptr);
+	CHECK(inside.cordoned);
+	CHECK_FALSE(inside.outsideCordons);
+}
+
+TEST_CASE("generated map copies are not maps of their own") {
+	CHECK(isGeneratedMapCopy("arena_cordon.vmf"));
+	CHECK(isGeneratedMapCopy("Arena_HERE.vmf"));
+	CHECK_FALSE(isGeneratedMapCopy("arena.vmf"));
+	CHECK_FALSE(isGeneratedMapCopy("where.vmf"));
+}

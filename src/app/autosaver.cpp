@@ -4,6 +4,7 @@
 
 #include "editor.h"
 
+#include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -77,6 +78,10 @@ Autosaver::Autosaver(Editor* editor, QObject* parent) : QObject(parent), m_edito
 	connect(editor, &Editor::documentChanged, this, [this] {
 		if (m_sessionOpen && m_editor->filePath() != m_markerMap) updateMarker();
 	});
+	// The journal for a report after a crash: written a few seconds after it changed.
+	m_journalWritten = editor->journalRevision();
+	connect(&m_journalTimer, &QTimer::timeout, this, &Autosaver::writeJournal);
+	m_journalTimer.start(3000);
 	connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] {
 		waitForWrites();
 		endSession();
@@ -121,6 +126,30 @@ QString Autosaver::markerPath() {
 	return QDir(appDataFolder()).filePath("session-open.txt");
 }
 
+QString Autosaver::journalPath() {
+	return QDir(appDataFolder()).filePath("session-journal.txt");
+}
+
+QString Autosaver::crashJournalPath() {
+	return QDir(appDataFolder()).filePath("last-crash-journal.txt");
+}
+
+void Autosaver::writeJournal() {
+	const unsigned revision = m_editor->journalRevision();
+	if (!m_sessionOpen || revision == m_journalWritten) return;
+	m_journalWritten = revision;
+	auto text = std::make_shared<const std::string>("== Clicks and drags ==\n" + m_editor->pickJournal() + "\n== Edits ==\n" + m_editor->editJournal() +
+	                                                "\n== Road and texture flow plans ==\n" + m_editor->planJournal());
+	const QString path = journalPath();
+	m_pool.start([text, path] {
+		QDir().mkpath(QFileInfo(path).absolutePath());
+		QSaveFile out(path);
+		if (out.open(QIODevice::WriteOnly) && out.write(text->data(), static_cast<qint64>(text->size())) == static_cast<qint64>(text->size())) {
+			out.commit();
+		}
+	});
+}
+
 QString Autosaver::autosaveNow(bool force) {
 	const unsigned revision = m_editor->history().revision();
 	if (!force && (!m_editor->modified() || revision == m_savedRevision)) {
@@ -162,6 +191,7 @@ void Autosaver::startSession() {
 void Autosaver::endSession() {
 	m_sessionOpen = false;
 	QFile::remove(markerPath());
+	QFile::remove(journalPath());
 }
 
 void Autosaver::updateMarker() {
@@ -172,6 +202,20 @@ void Autosaver::updateMarker() {
 		marker.write(m_markerMap.toUtf8());
 		marker.commit();
 	}
+}
+
+bool lastSessionCrashed() {
+	return QFileInfo::exists(Autosaver::markerPath());
+}
+
+QString takeCrashJournal() {
+	QFile journal(Autosaver::journalPath());
+	if (!journal.open(QIODevice::ReadOnly)) return {};
+	const QString text = QString::fromUtf8(journal.readAll());
+	journal.close();
+	QFile::remove(Autosaver::crashJournalPath());
+	QFile::rename(Autosaver::journalPath(), Autosaver::crashJournalPath());
+	return text;
 }
 
 std::optional<RecoveryOffer> recoveryAfterCrash() {
@@ -192,7 +236,7 @@ std::optional<RecoveryOffer> recoveryForMap(const QString& mapPath) {
 	return newerAutosaves(mapPath);
 }
 
-bool offerRecovery(Editor* editor, QWidget* parent, const RecoveryOffer& offer) {
+bool offerRecovery(Editor* editor, QWidget* parent, const RecoveryOffer& offer, const std::function<void()>& makeReport) {
 	QDialog dialog(parent);
 	dialog.setWindowTitle(QObject::tr("Restore an autosave?"));
 	auto* layout = new QVBoxLayout(&dialog);
@@ -214,6 +258,12 @@ bool offerRecovery(Editor* editor, QWidget* parent, const RecoveryOffer& offer) 
 	}
 	list->setCurrentRow(0);
 	layout->addWidget(list);
+	QCheckBox* report = nullptr;
+	if (offer.afterCrash && makeReport) {
+		report = new QCheckBox(QObject::tr("Also make an editor report about the crash (a file to send: your last clicks and edits before it)"));
+		report->setObjectName("crashReport");
+		layout->addWidget(report);
+	}
 	auto* buttons = new QDialogButtonBox;
 	auto* restore = buttons->addButton(QObject::tr("Restore selected"), QDialogButtonBox::AcceptRole);
 	restore->setProperty("accent", true);
@@ -223,15 +273,30 @@ bool offerRecovery(Editor* editor, QWidget* parent, const RecoveryOffer& offer) 
 	QObject::connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
 	layout->addWidget(buttons);
 	dialog.resize(520, 320);
-	if (dialog.exec() != QDialog::Accepted || !list->currentItem()) {
-		return false;
+	const bool accepted = dialog.exec() == QDialog::Accepted && list->currentItem();
+	const bool wantsReport = report && report->isChecked();
+	bool restored = false;
+	if (accepted) {
+		QString error;
+		restored = editor->openRecovered(list->currentItem()->data(Qt::UserRole).toString(), offer.mapPath, &error);
+		if (!restored) QMessageBox::warning(parent, QObject::tr("Restore an autosave"), QObject::tr("Could not open the autosave:\n%1").arg(error));
 	}
-	QString error;
-	if (!editor->openRecovered(list->currentItem()->data(Qt::UserRole).toString(), offer.mapPath, &error)) {
-		QMessageBox::warning(parent, QObject::tr("Restore an autosave"), QObject::tr("Could not open the autosave:\n%1").arg(error));
-		return false;
-	}
-	return true;
+	if (wantsReport) makeReport();
+	return restored;
+}
+
+void offerCrashReport(QWidget* parent, const std::function<void()>& makeReport) {
+	QMessageBox box(parent);
+	box.setObjectName("crashReportQuestion");
+	box.setIcon(QMessageBox::Question);
+	box.setWindowTitle(QObject::tr("Editor report"));
+	box.setText(QObject::tr("Mapsmith did not close normally last time."));
+	box.setInformativeText(QObject::tr("Make an editor report about it? It is a file to send that holds your last clicks and edits before the crash. "
+	                                   "Nothing is sent anywhere."));
+	auto* yes = box.addButton(QObject::tr("Make editor report ..."), QMessageBox::AcceptRole);
+	box.addButton(QObject::tr("Not now"), QMessageBox::RejectRole);
+	box.exec();
+	if (box.clickedButton() == yes) makeReport();
 }
 
 bool openMapWithRecovery(Editor* editor, QWidget* parent, const QString& path, QString* error) {

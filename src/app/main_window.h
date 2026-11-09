@@ -133,6 +133,9 @@ public:
 	/// the last clicks, edits and road plans, Log, Problems and a picture of each view, paths
 	/// masked. False with `error` when it could not be written.
 	bool writeEditorReport(const QString& path, QString* error = nullptr);
+	/// The journal of the session before, when it crashed (autosaver.h): goes into the editor
+	/// report as last_session.log.
+	void setCrashJournal(const QString& text) { m_crashJournal = text; }
 	/// "Import ..." (pages, File › Import into the mod): the import dialog for a kind of file.
 	ImportDialog* openImport(ImportDialog::Kind kind);
 	/// File › Import into the mod › Imported files: the list of imports, each can be removed.
@@ -177,6 +180,9 @@ private:
 	bool maybeSave();
 	bool save(bool saveAs);
 	void compile();
+	/// Play from here: a quick compile of a copy of the map where the player starts at the 3D
+	/// camera, then the game (options: only the area around, lighting, suit; QSettings "playHere/...").
+	void playFromHere();
 	/// Compile with the Cubemaps step switched on (Problems: "Build cubemaps").
 	void buildCubemapsInCompile();
 	void showContextMenu(const QPoint& globalPos);
@@ -245,6 +251,7 @@ private:
 	ParticleBrowser* m_particles = nullptr;
 	CompileWindow* m_compileWindow = nullptr;
 	StartPage* m_startPage = nullptr;
+	QString m_crashJournal;     ///< The crashed session's clicks and edits (editor report)
 	QString m_pickedMaterial;   ///< Picked in the browser while mapping (the Materials page opens it)
 	QString m_editorAtPick;     ///< The material editor's material at that moment
 	MaterialEditor* m_materialEditor;

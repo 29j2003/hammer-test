@@ -11,6 +11,7 @@
 #include <sme/texture.h>
 #include <sme/filesystem.h>
 #include <sme/keyvalues.h>
+#include <sme/map_tools.h>
 #include <sme/material.h>
 #include <sme/relief_pattern.h>
 #include <sme/text.h>
@@ -521,7 +522,7 @@ std::vector<std::filesystem::path> mapSourceFiles(const std::filesystem::path& m
 		}
 		const std::string name = toLower(path.filename().string());
 		// Timestamped autosave copies ("map.20261028-084357.vmf") are not maps of their own, wherever they lie.
-		if (name.ends_with(".vmf") && !name.ends_with("_cordon.vmf") && !parseAutosaveName(path)) out.push_back(path);
+		if (name.ends_with(".vmf") && !isGeneratedMapCopy(name) && !parseAutosaveName(path)) out.push_back(path);
 	}
 	std::sort(out.begin(), out.end());
 	return out;

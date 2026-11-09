@@ -393,6 +393,16 @@ void drawIcon(QPainter& p, const QString& name) {
 		p.drawPolygon(QPolygonF{{18, 10}, {54, 32}, {18, 54}});
 		return;
 	}
+	if (name == "playHere") {
+		// Play triangle starting from a marked spot (the camera).
+		p.setPen(pen(LINE, 5));
+		p.setBrush(Qt::NoBrush);
+		p.drawPolygon(QPolygonF{{26, 10}, {56, 30}, {26, 50}});
+		p.setPen(Qt::NoPen);
+		p.setBrush(LINE);
+		p.drawEllipse(QPointF(14, 48), 8, 8);
+		return;
+	}
 	if (name == "gear") {
 		p.setPen(Qt::NoPen);
 		p.setBrush(LINE);
