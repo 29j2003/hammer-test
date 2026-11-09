@@ -131,6 +131,9 @@
 #include "compile_window.h"
 #include "properties_panel.h"
 #include "road_builder_dialog.h"
+#include "surface_dialogs.h"
+#include <sme/grid_snap.h>
+#include <sme/overlay_tools.h>
 #include "road_dialog.h"
 #include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
@@ -9971,4 +9974,278 @@ TEST_CASE("round edge: every face of a rounded curb can be clicked, a stacked co
 	CHECK(offer.contains("Merge and round"));
 	CHECK(editor.doc().world.solids.size() == 1);
 	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+}
+
+namespace {
+
+/// A flat-coloured VTF + VMT pair in the fixture mod (for blend and overlay materials).
+void writeColourTexture(const test::Fixture& f, const std::string& name, int r, int g, int b, bool stripe = false) {
+	ImageRgba image;
+	image.width = image.height = 64;
+	image.pixels.resize(std::size_t(64) * 64 * 4);
+	for (int y = 0; y < 64; ++y) {
+		for (int x = 0; x < 64; ++x) {
+			auto* px = &image.pixels[(std::size_t(y) * 64 + x) * 4];
+			const int shade = (x * 7 + y * 11) % 19;
+			const bool line = stripe && y >= 24 && y < 40;
+			px[0] = std::byte(line ? 240 : std::min(255, r + shade));
+			px[1] = std::byte(line ? 60 : std::min(255, g + shade));
+			px[2] = std::byte(line ? 200 : std::min(255, b + shade));
+			px[3] = std::byte(stripe && !line ? 0 : 255);
+		}
+	}
+	const auto vtf = encodeVtf(image, false, false, 64);
+	REQUIRE(vtf);
+	const auto path = f.mod / "materials" / (name + ".vtf");
+	std::filesystem::create_directories(path.parent_path());
+	std::ofstream out(path, std::ios::binary);
+	out.write(reinterpret_cast<const char*>(vtf->data()), std::streamsize(vtf->size()));
+}
+
+} // namespace
+
+TEST_CASE("surface tools: blend along the road, an overlay strip round its curve, an overlay over two faces, a corner dragged, vertices snapped, sculpting sideways") {
+	// World of Level Design roads, parts 2 and 7: blended terrain next to the road, overlays over the seams.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	writeColourTexture(f, "nature/test_grass", 60, 120, 40);
+	writeColourTexture(f, "nature/test_dirt", 120, 90, 60);
+	writeColourTexture(f, "decals/test_line", 0, 0, 0, true);
+	test::writeText(f.mod / "materials/nature/test_blend.vmt",
+	                "\"WorldVertexTransition\"\n{\n\t\"$basetexture\" \"nature/test_grass\"\n\t\"$basetexture2\" \"nature/test_dirt\"\n}\n");
+	test::writeText(f.mod / "materials/decals/test_line.vmt",
+	                "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"decals/test_line\"\n\t\"$translucent\" \"1\"\n\t\"$decal\" \"1\"\n}\n");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+
+	// Ground: 4 x 4 blend displacements; on it an L road (top at z = 8).
+	std::vector<FaceRef> groundTops;
+	for (int i = 0; i < 4; ++i) {
+		for (int j = 0; j < 4; ++j) {
+			auto [change, ref] = edit::createBlock(editor.doc(), box({-1024.0 + 768 * i, -1024.0 + 768 * j, -32}, {-256.0 + 768 * i, -256.0 + 768 * j, 0}),
+			                                       "NATURE/TEST_BLEND");
+			editor.commit(std::move(change));
+			for (const auto& face : buildBrushGeometry(*editor.doc().findSolid(ref)).faces) {
+				if (face.normal.z > 0.9) groundTops.push_back({ref, editor.doc().findSolid(ref)->sides[static_cast<std::size_t>(face.sideIndex)].id});
+			}
+		}
+	}
+	editor.commit(edit::createDisplacements(editor.doc(), groundTops, 3));
+	RoadBuildOptions road;
+	road.material = "ROAD/DEMO_ROAD";
+	road.width = 256;
+	road.thickness = 8;
+	road.innerRadius = 128;
+	road.segments = 8;
+	road.fit = false;
+	const auto plan = planRoadBuild(editor.doc(), editor.doc(), {RoadPath{{{0, 0, 8}, {1024, 0, 8}, {1024, 1024, 8}}}},
+	                                road, [](const std::string&) { return std::pair<int, int>{256, 512}; });
+	auto [built, roadRefs] = edit::applyRoadBuild(editor.doc(), plan);
+	editor.commit(std::move(built));
+	REQUIRE(roadRefs.size() == 10);
+
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(700, -900, 1300);
+	view->camera().yaw = 80;
+	view->camera().pitch = -50;
+	view->update();
+	settle();
+
+	// 1. Blend along selection: the road selected, Brushes > Blend along selection ... paints at once.
+	Selection roadSelection;
+	roadSelection.solids = roadRefs;
+	editor.setSelection(roadSelection);
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		CHECK(menu->findChild<QAction*>("contextBlendAlong") != nullptr);
+		CHECK(menu->findChild<QAction*>("contextSnapVertices") != nullptr);
+		CHECK(menu->findChild<QAction*>("contextOverlayStrip") == nullptr);   // faces only
+	}
+	const std::size_t historyBefore = editor.history().index();
+	window.findChild<QAction*>("brushesBlendAlong")->trigger();
+	settle();
+	auto* blend = window.findChild<BlendAlongDialog*>("blendAlongDialog");
+	REQUIRE(blend);
+	INFO("note: " << blend->note().toStdString());
+	CHECK(blend->note().startsWith("Painted"));
+	CHECK(editor.history().index() == historyBefore + 1);
+	const auto blendedVertices = [&] {
+		int count = 0;
+		double nearRoad = 0;
+		for (const auto& ref : groundTops) {
+			const Solid* solid = editor.doc().findSolid(ref.solid);
+			for (const auto& side : solid->sides) {
+				if (side.id != ref.sideId) continue;
+				const auto d = readDisplacement(side);
+				for (const double a : d->alphas) count += a > 0 ? 1 : 0;
+				// The vertex under the road's start (0, 0) is fully blended.
+				for (const auto& face : buildBrushGeometry(*solid).faces) {
+					if (solid->sides[static_cast<std::size_t>(face.sideIndex)].id != side.id) continue;
+					const auto positions = displacementPositions(*d, face);
+					for (std::size_t i = 0; i < positions.size(); ++i) {
+						if (std::abs(positions[i].x - 128) < 1 && std::abs(positions[i].y + 64) < 1) nearRoad = d->alphas[i];
+					}
+				}
+			}
+		}
+		return std::pair{count, nearRoad};
+	};
+	const auto first = blendedVertices();
+	CHECK(first.first > 20);
+	CHECK(first.second == doctest::Approx(255));
+	// Wider: replaces the first try (still one undo step).
+	blend->findChild<QDoubleSpinBox*>("blendWidth")->setValue(128);
+	QTest::qWait(250);
+	settle();
+	CHECK(editor.history().index() == historyBefore + 1);
+	CHECK(blendedVertices().first > first.first);
+	blend->accept();
+	settle();
+	CHECK(window.findChild<BlendAlongDialog*>("blendAlongDialog") == nullptr);
+
+	// 2. Overlay strip: the road's top faces (face mode), Overlay strip ... along the left edge.
+	editor.setCurrentMaterial("DECALS/TEST_LINE");
+	Selection tops;
+	for (const auto& ref : roadRefs) {
+		const Solid* solid = editor.doc().findSolid(ref);
+		for (const auto& face : buildBrushGeometry(*solid).faces) {
+			if (face.normal.z > 0.9) tops.faces.push_back({ref, solid->sides[static_cast<std::size_t>(face.sideIndex)].id});
+		}
+	}
+	REQUIRE(tops.faces.size() == 10);
+	editor.setSelection(tops);
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		CHECK(menu->findChild<QAction*>("contextOverlayStrip") != nullptr);
+		CHECK(menu->findChild<QAction*>("contextOverlayFaces") != nullptr);
+	}
+	const auto overlays = [&] {
+		std::vector<const Entity*> out;
+		for (const auto& e : editor.doc().entities) {
+			if (e.classname() == "info_overlay") out.push_back(&e);
+		}
+		return out;
+	};
+	window.findChild<QAction*>("brushesOverlayStrip")->trigger();
+	settle();
+	auto* strip = window.findChild<OverlayStripDialog*>("overlayStripDialog");
+	REQUIRE(strip);
+	INFO("strip note: " << strip->note().toStdString());
+	CHECK(overlays().size() == 10);
+	strip->findChild<QComboBox*>("stripAlign")->setCurrentIndex(1);   // left edge
+	strip->findChild<QDoubleSpinBox*>("stripWidth")->setValue(16);
+	strip->findChild<QDoubleSpinBox*>("stripOffset")->setValue(12);
+	QTest::qWait(250);
+	settle();
+	CHECK(overlays().size() == 10);   // replaced, not added
+	CHECK(strip->note().contains("10 overlay"));
+	for (const auto* o : overlays()) {
+		const auto info = readOverlay(*o);
+		REQUIRE(info);
+		CHECK_FALSE(info->sides.empty());
+		CHECK(o->get("material") == "DECALS/TEST_LINE");
+	}
+	strip->accept();
+	settle();
+
+	// 3. One overlay over two neighbouring road pieces (across their seam).
+	Selection two;
+	two.faces = {tops.faces[0], tops.faces[1]};
+	editor.setSelection(two);
+	window.findChild<QAction*>("brushesOverlayFaces")->trigger();
+	settle();
+	REQUIRE(overlays().size() == 11);
+	const Entity* seam = overlays().back();
+	const auto seamInfo = readOverlay(*seam);
+	REQUIRE(seamInfo);
+	CHECK(seamInfo->sides.size() == 2);
+
+	// 4. Its corner dragged with the mouse in a top view (one undo step).
+	Selection overlaySelection;
+	overlaySelection.entities = {seam->id};
+	editor.setSelection(overlaySelection);
+	editor.setTool(Editor::Tool::Select);
+	view->camera().position = QVector3D(float(seamInfo->origin.x), float(seamInfo->origin.y), 1800);
+	view->camera().yaw = 90;
+	view->camera().pitch = -89;
+	view->update();
+	settle();
+	const auto corners = overlayCorners(*seamInfo);
+	const Vec3 from = corners[2];
+	const Vec3 to = from + normalize(from - seamInfo->origin) * 96;
+	const std::size_t beforeDrag = editor.history().index();
+	QTest::mousePress(view, Qt::LeftButton, {}, screen(view, from));
+	QTest::mouseMove(view, screen(view, (from + to) * 0.5));
+	QTest::mouseMove(view, screen(view, to));
+	QTest::mouseRelease(view, Qt::LeftButton, {}, screen(view, to));
+	settle();
+	CHECK(editor.history().index() == beforeDrag + 1);
+	CHECK(editor.history().undoName() == "Move overlay corner");
+	const auto dragged = readOverlay(*editor.doc().findEntity(seam->id));
+	REQUIRE(dragged);
+	CHECK(length(overlayCorners(*dragged)[2] - to) < 24);   // on the grid near the mouse
+	CHECK(editor.selection().entities == std::vector<int>{seam->id});   // still selected, not a new click
+
+	// 5. Snap vertices to grid: a road piece of the curve has corners at fractions; snapping keeps it whole.
+	Selection curvePiece;
+	curvePiece.solids = {roadRefs[3]};
+	editor.setSelection(curvePiece);
+	REQUIRE(offGridCorners(*editor.doc().findSolid(roadRefs[3])) > 0);
+	editor.setGrid(1);
+	window.findChild<QAction*>("brushesSnapVertices")->trigger();
+	settle();
+	CHECK(offGridCorners(*editor.doc().findSolid(roadRefs[3])) == 0);
+	CHECK(brushProblem(*editor.doc().findSolid(roadRefs[3])).empty());
+
+	// 6. The displacement box: direction X makes Raise push sideways.
+	editor.setTool(Editor::Tool::Displace);
+	settle();
+	auto* axis = window.findChild<QComboBox*>("displaceAxis");
+	REQUIRE(axis);
+	axis->setCurrentIndex(axis->findData(int(Editor::DisplaceSettings::Axis::X)));
+	CHECK(editor.displaceSettings().axis == Editor::DisplaceSettings::Axis::X);
+	REQUIRE(window.findChild<QPushButton*>("displaceBlendAlong"));
+
+	// The picture: road, blended dirt along it, the white line along the left edge.
+	editor.setTool(Editor::Tool::Select);
+	editor.setSelection({});
+	view->camera().position = QVector3D(500, -700, 900);
+	view->camera().yaw = 70;
+	view->camera().pitch = -40;
+	view->update();
+	settle();
+	QTest::qWait(400);   // textures load in the background
+	settle();
+	view->grabFramebuffer().save(shotDir + "/surface_tools.png");
+	view->camera().position = QVector3D(1150, 120, 420);
+	view->camera().yaw = 120;
+	view->camera().pitch = -55;
+	view->update();
+	settle();
+	QTest::qWait(200);
+	settle();
+	view->grabFramebuffer().save(shotDir + "/surface_tools_curve.png");
+
+	// Undo all of it: snap, corner, overlay, strip, blend.
+	for (int i = 0; i < 5; ++i) editor.undo();
+	settle();
+	CHECK(overlays().empty());
+	CHECK(blendedVertices().first == 0);
 }

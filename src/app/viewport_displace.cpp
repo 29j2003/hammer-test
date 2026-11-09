@@ -47,6 +47,23 @@ double dabStrength(Editor::DisplaceMode mode, int strength) {
 	return 0;
 }
 
+/// The direction of Raise / Noise / Flatten for the setting (zero: the face normal). Camera: towards
+/// the viewer, so Raise pulls the ground towards the camera (a cliff face, the side of a slope).
+Vec3 sculptAxis(Editor::DisplaceSettings::Axis axis, const Camera& camera) {
+	using Axis = Editor::DisplaceSettings::Axis;
+	switch (axis) {
+		case Axis::X: return {1, 0, 0};
+		case Axis::Y: return {0, 1, 0};
+		case Axis::Z: return {0, 0, 1};
+		case Axis::Camera: {
+			const QVector3D f = camera.forward();
+			return normalize(Vec3{-f.x(), -f.y(), -f.z()});
+		}
+		case Axis::Normal: break;
+	}
+	return {};
+}
+
 SculptMode sculptMode(Editor::DisplaceMode mode) {
 	switch (mode) {
 		case Editor::DisplaceMode::Smooth: return SculptMode::Smooth;
@@ -108,6 +125,7 @@ bool Viewport::displaceMousePress(QMouseEvent* event) {
 	}
 	m_drag = Drag::Sculpt;
 	m_flattenPoint = hit->point;
+	m_sculptAxis = sculptAxis(settings.axis, m_camera);
 	++m_sculptSeed;
 	m_brushCursor = std::pair{hit->point, hit->normal};
 	sculptDab(hit->point);
@@ -136,6 +154,8 @@ void Viewport::sculptDab(const Vec3& point) {
 	brush.strength = dabStrength(settings.mode, settings.strength);
 	brush.invert = (m_pressModifiers & Qt::ShiftModifier) || (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
 	brush.seed = m_sculptSeed * 7919u + static_cast<unsigned>(std::llround(point.x) * 31 + std::llround(point.y));
+	brush.axis = m_sculptAxis;
+	brush.flattenPoint = m_flattenPoint;
 	const SculptMode mode = sculptMode(settings.mode);
 	bool any = false;
 	makeCurrent();
@@ -216,8 +236,11 @@ void Viewport::drawBrushCursor(std::vector<LineVertex>& lines) const {
 	};
 	ring(r, BRUSH_COLOR);
 	ring(r * 0.5, BRUSH_INNER);   // where the falloff is half
+	// The arrow shows which way Raise moves the ground (the face normal, or the chosen axis).
+	Vec3 arrow = sculptAxis(m_editor->displaceSettings().axis, m_camera);
+	if (length(arrow) < 1e-9) arrow = n;
 	lines.push_back({toQt(c), BRUSH_COLOR});
-	lines.push_back({toQt(c + n * std::max(8.0, r * 0.25)), BRUSH_COLOR});
+	lines.push_back({toQt(c + arrow * std::max(8.0, r * 0.25)), BRUSH_COLOR});
 }
 
 bool Viewport::displaceWheel(QWheelEvent* event) {

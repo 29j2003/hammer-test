@@ -328,6 +328,9 @@ bool sculpt(Displacement& d, const FaceGeometry& face, SculptMode mode, const Sc
 	const auto positions = displacementPositions(d, face);
 	if (positions.empty()) return false;
 	const Vec3 n = planeHeightAxis(face);
+	// Raise, Noise and Flatten move along the chosen axis; the brush circle stays in the face plane.
+	const bool ownAxis = length(brush.axis) > 1e-9;
+	const Vec3 axis = ownAxis ? normalize(brush.axis) : n;
 	const int size = d.size();
 	const double sign = brush.invert ? -1.0 : 1.0;
 	// Weights first: smoothing reads the neighbours' old values.
@@ -347,15 +350,21 @@ bool sculpt(Displacement& d, const FaceGeometry& face, SculptMode mode, const Sc
 		if (w <= 0) continue;
 		switch (mode) {
 			case SculptMode::Raise:
-				d.setVector(i, before.vector(i) + n * (sign * brush.strength * w));
+				d.setVector(i, before.vector(i) + axis * (sign * brush.strength * w));
 				break;
 			case SculptMode::Noise:
-				d.setVector(i, before.vector(i) + n * (noiseValue(i, brush.seed) * brush.strength * w));
+				d.setVector(i, before.vector(i) + axis * (noiseValue(i, brush.seed) * brush.strength * w));
 				break;
 			case SculptMode::Flatten: {
-				const double h = heightOf(before, i, n);
 				const double f = std::clamp(brush.strength, 0.0, 1.0) * w;
-				d.setVector(i, before.vector(i) + n * ((brush.flattenHeight - h) * f));
+				if (ownAxis) {
+					// Along another axis: towards the stroke start's level on that axis (a wall of a cut, a terrace).
+					const double h = dot(positions[i], axis), target = dot(brush.flattenPoint, axis);
+					d.setVector(i, before.vector(i) + axis * ((target - h) * f));
+				} else {
+					const double h = heightOf(before, i, n);
+					d.setVector(i, before.vector(i) + n * ((brush.flattenHeight - h) * f));
+				}
 				break;
 			}
 			case SculptMode::Smooth: {
@@ -385,6 +394,102 @@ bool sculpt(Displacement& d, const FaceGeometry& face, SculptMode mode, const Sc
 		          std::abs(d.alphas[i] - before.alphas[i]) > 1e-9;
 	}
 	if (changed && mode != SculptMode::PaintAlpha) updateTriangleTags(d, face);
+	return changed;
+}
+
+namespace {
+
+/// Distance from `p` to the segment a-b.
+double segmentDistance(const Vec3& p, const Vec3& a, const Vec3& b) {
+	const Vec3 ab = b - a;
+	const double len2 = dot(ab, ab);
+	const double t = len2 > 1e-12 ? std::clamp(dot(p - a, ab) / len2, 0.0, 1.0) : 0.0;
+	return length(p - (a + ab * t));
+}
+
+/// Smooth value noise in -1..1 over the plane (repeatable, about one wave per 64 units), so a
+/// frayed blend border has bays and tongues instead of single-vertex spikes.
+double smoothNoise(const Vec3& p, unsigned seed) {
+	constexpr double CELL = 64;
+	const double x = p.x / CELL, y = p.y / CELL + p.z / CELL * 0.37;
+	const double fx = std::floor(x), fy = std::floor(y);
+	const auto lattice = [seed](long long ix, long long iy) {
+		return noiseValue(static_cast<std::size_t>(ix * 73856093LL ^ iy * 19349663LL), seed);
+	};
+	const double tx = x - fx, ty = y - fy;
+	const double sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+	const auto ix = static_cast<long long>(fx), iy = static_cast<long long>(fy);
+	const double a = lattice(ix, iy) + (lattice(ix + 1, iy) - lattice(ix, iy)) * sx;
+	const double b = lattice(ix, iy + 1) + (lattice(ix + 1, iy + 1) - lattice(ix, iy + 1)) * sx;
+	return a + (b - a) * sy;
+}
+
+} // namespace
+
+double distanceToBrush(const BrushGeometry& brush, const Vec3& point) {
+	if (brush.faces.empty()) return std::numeric_limits<double>::infinity();
+	// Inside every face plane: inside the brush.
+	bool inside = true;
+	for (const auto& face : brush.faces) {
+		if (face.vertices.empty()) continue;
+		if (dot(point - face.vertices.front(), normalize(face.normal)) > 1e-6) {
+			inside = false;
+			break;
+		}
+	}
+	if (inside) return 0;
+	double best = std::numeric_limits<double>::infinity();
+	for (const auto& face : brush.faces) {
+		const auto& v = face.vertices;
+		if (v.size() < 3) continue;
+		const Vec3 n = normalize(face.normal);
+		const double h = dot(point - v.front(), n);
+		const Vec3 onPlane = point - n * h;
+		// Projected point inside the (convex, counter-clockwise) polygon: the plane distance.
+		bool within = true;
+		for (std::size_t i = 0; i < v.size() && within; ++i) {
+			within = dot(cross(v[(i + 1) % v.size()] - v[i], onPlane - v[i]), n) >= -1e-9;
+		}
+		if (within) {
+			best = std::min(best, std::abs(h));
+			continue;
+		}
+		for (std::size_t i = 0; i < v.size(); ++i) best = std::min(best, segmentDistance(point, v[i], v[(i + 1) % v.size()]));
+	}
+	return best;
+}
+
+double blendNearAlpha(double distance, const BlendNearOptions& options) {
+	const double width = std::max(0.0, options.width), soft = std::max(0.0, options.softness);
+	double share = 1;
+	if (distance > width) {
+		if (soft <= 1e-9) {
+			share = 0;
+		} else {
+			const double t = std::clamp((distance - width) / soft, 0.0, 1.0);
+			share = 1 - t * t * (3 - 2 * t);   // smoothstep: no visible ring where the fade starts or ends
+		}
+	}
+	return options.secondMaterialNear ? 255.0 * share : 255.0 * (1 - share);
+}
+
+bool blendNear(Displacement& d, const FaceGeometry& face, const std::vector<BrushGeometry>& targets, const BlendNearOptions& options) {
+	const auto positions = displacementPositions(d, face);
+	if (positions.empty() || targets.empty()) return false;
+	bool changed = false;
+	for (std::size_t i = 0; i < positions.size(); ++i) {
+		double distance = std::numeric_limits<double>::infinity();
+		for (const auto& target : targets) distance = std::min(distance, distanceToBrush(target, positions[i]));
+		if (!std::isfinite(distance)) continue;
+		if (options.noise > 0) distance = std::max(0.0, distance + smoothNoise(positions[i], options.seed) * options.noise);
+		const double alpha = blendNearAlpha(distance, options);
+		// The stronger paint toward the near material wins: hand-painted patches stay.
+		const double next = options.secondMaterialNear ? std::max(d.alphas[i], alpha) : std::min(d.alphas[i], alpha);
+		if (std::abs(next - d.alphas[i]) > 1e-6) {
+			d.alphas[i] = next;
+			changed = true;
+		}
+	}
 	return changed;
 }
 
@@ -508,6 +613,75 @@ Change sewDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces, int
 			}
 		}
 	}
+	return t.finish();
+}
+
+Change blendAlongSelection(MapDocument& doc, const Selection& selection, const BlendNearOptions& options, int* count) {
+	Transaction t(doc, "Blend along selection");
+	if (count) *count = 0;
+	// Targets: the selected brushes without displacements (the road, the path).
+	std::vector<BrushGeometry> targets;
+	Bounds reach;
+	const auto addTarget = [&](const Solid& solid) {
+		if (std::any_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; })) return;
+		auto geometry = buildBrushGeometry(solid);
+		if (!geometry.valid) return;
+		reach.add(geometry.bounds.min);
+		reach.add(geometry.bounds.max);
+		targets.push_back(std::move(geometry));
+	};
+	for (const auto& ref : selection.solids) {
+		if (const Solid* solid = doc.findSolid(ref)) addTarget(*solid);
+	}
+	for (const int id : selection.entities) {
+		if (const Entity* entity = doc.findEntity(id)) {
+			for (const auto& solid : entity->solids) addTarget(solid);
+		}
+	}
+	if (targets.empty()) return t.finish();
+	// The displacements: the selected ones, else every one near enough to be touched.
+	auto faces = displacementFaces(doc, selection);
+	if (faces.empty()) {
+		const double margin = std::max(0.0, options.width) + std::max(0.0, options.softness) + std::max(0.0, options.noise) + 1;
+		const Vec3 m{margin, margin, margin};
+		const Bounds area{reach.min - m, reach.max + m};
+		const auto consider = [&](const Solid& solid, const SolidRef& ref) {
+			for (const auto& side : solid.sides) {
+				if (!side.dispInfo()) continue;
+				const auto geometry = buildBrushGeometry(solid);
+				const Bounds& b = geometry.bounds;
+				// The displacement may stand out of its brush: allow for it (sculpting rarely goes beyond 512).
+				const double up = 512;
+				if (b.max.x + up < area.min.x || b.min.x - up > area.max.x || b.max.y + up < area.min.y || b.min.y - up > area.max.y ||
+				    b.max.z + up < area.min.z || b.min.z - up > area.max.z) {
+					return;
+				}
+				faces.push_back({ref, side.id});
+			}
+		};
+		for (const auto& solid : doc.world.solids) consider(solid, {0, solid.id});
+		for (const auto& entity : doc.entities) {
+			for (const auto& solid : entity.solids) consider(solid, {entity.id, solid.id});
+		}
+	}
+	int changed = 0;
+	for (const auto& ref : faces) {
+		Solid* solid = doc.findSolid(ref.solid);
+		if (!solid) continue;
+		const auto geometry = buildBrushGeometry(*solid);
+		const FaceGeometry* face = faceOfSide(geometry, *solid, ref.sideId);
+		const auto it = std::find_if(solid->sides.begin(), solid->sides.end(), [&](const Side& s) { return s.id == ref.sideId; });
+		if (!face || it == solid->sides.end()) continue;
+		auto d = readDisplacement(*it);
+		if (!d || !blendNear(*d, *face, targets, options)) continue;
+		t.touchSolid(ref.solid);
+		// touchSolid may copy: find the side again.
+		for (auto& side : doc.findSolid(ref.solid)->sides) {
+			if (side.id == ref.sideId) storeDisplacement(side, *d);
+		}
+		++changed;
+	}
+	if (count) *count = changed;
 	return t.finish();
 }
 

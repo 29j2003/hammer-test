@@ -78,12 +78,38 @@ struct SculptBrush {
 	bool invert = false;       ///< Lower instead of raise, erase alpha instead of paint
 	double flattenHeight = 0;  ///< Flatten: height above the face plane to move towards
 	unsigned seed = 1;         ///< Noise
+	/// Direction Raise, Noise and Flatten move the vertices in (unit length). Zero: the face
+	/// normal (Hammer's default). Another axis (world X/Y/Z, the camera) pushes a slope or an
+	/// embankment sideways, which the normal cannot.
+	Vec3 axis;
+	/// Flatten along `axis`: the point whose height along the axis everything moves towards.
+	Vec3 flattenPoint;
 };
 
 /// How much a vertex at `distance` from the brush center is affected (1 at the center, 0 at the rim).
 [[nodiscard]] double sculptFalloff(double distance, double radius);
 /// Applies one dab to a displacement. Returns true if a vertex changed.
 bool sculpt(Displacement& displacement, const FaceGeometry& face, SculptMode mode, const SculptBrush& brush);
+
+/// How "Blend along selection" paints: full blend up to `width` units from the target brushes,
+/// fading out over `softness` units; `noise` (units) frays the border so it does not look drawn
+/// with a ruler.
+struct BlendNearOptions {
+	double width = 32;
+	double softness = 64;
+	double noise = 0;
+	unsigned seed = 1;
+	bool secondMaterialNear = true;   ///< Near the targets: the second material (alpha 255), else the first (alpha 0)
+};
+
+/// Distance from `point` to a convex brush (0 inside). Exact: nearest face, edge or corner.
+[[nodiscard]] double distanceToBrush(const BrushGeometry& brush, const Vec3& point);
+/// The blend alpha at `distance` from the targets (0..255; see BlendNearOptions).
+[[nodiscard]] double blendNearAlpha(double distance, const BlendNearOptions& options);
+/// Paints the blend alpha of a displacement by distance to the target brushes. Existing paint
+/// toward the near material is kept (the stronger one wins), so painting twice does not undo
+/// hand work. Returns true if a vertex changed.
+bool blendNear(Displacement& displacement, const FaceGeometry& face, const std::vector<BrushGeometry>& targets, const BlendNearOptions& options);
 
 /// One displacement with its face, for sewing.
 struct SewItem {
@@ -104,6 +130,11 @@ namespace edit {
 /// Sews the displacements among `faces` together (see sewDisplacements). One undo step;
 /// `moved` gets the number of vertices that moved.
 [[nodiscard]] Change sewDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces, int* moved = nullptr);
+/// "Blend along selection": the selected brushes that are not displacements (a road, a path) are
+/// the targets; the selected displacements, or, if none is selected, every displacement within
+/// reach of the targets, get their blend alpha painted by distance (see blendNear). One undo
+/// step; `count` gets the number of displacements changed.
+[[nodiscard]] Change blendAlongSelection(MapDocument& doc, const Selection& selection, const BlendNearOptions& options, int* count = nullptr);
 /// Every displacement face of the brushes (and brush entities) in the selection, plus selected faces that are displacements.
 [[nodiscard]] std::vector<FaceRef> displacementFaces(const MapDocument& doc, const Selection& selection);
 

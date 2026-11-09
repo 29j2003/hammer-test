@@ -187,6 +187,10 @@ private:
 	void roadBuilderDialog();
 	/// "Texture flow ...": the texture flow tool over the selection (`material`: to start with).
 	void textureFlowDialog(const QString& material = {});
+	/// "Blend along selection ...": paints blend displacements next to the selected road/path.
+	void blendAlongDialog();
+	/// "Overlay strip ...": a band of overlays along the selected faces.
+	void overlayStripDialog();
 	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).
 	void pasteHere();
 	/// Brushes > Transform: exact move, rotation and scale.

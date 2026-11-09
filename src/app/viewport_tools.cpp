@@ -133,6 +133,7 @@ void Viewport::applyClip() {
 
 void Viewport::resetToolState() {
 	if (m_drag == Drag::Sculpt) finishSculpt();
+	if (m_drag == Drag::OverlayCorner) m_drag = Drag::None;   // a tool change drops the drag
 	if (m_editor->tool() != Editor::Tool::Displace) m_brushCursor.reset();
 	const bool hadPreview = !m_clipPoints.empty() || m_drag == Drag::Vertex;
 	m_clipPoints.clear();

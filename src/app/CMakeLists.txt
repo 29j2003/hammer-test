@@ -38,7 +38,7 @@ add_library(smeapp STATIC
 	panels.cpp
 	particle_browser.cpp
 	properties_panel.cpp
-	class_picker.cpp samples_folder.cpp wheel_guard.cpp dock_layout.cpp startup_trace.cpp lazy_refresh.cpp dialog_fit.cpp import_dialog.cpp round_edge_dialog.cpp road_dialog.cpp road_builder_dialog.cpp texture_flow_dialog.cpp model_export_dialog.cpp plural_text.cpp text_copy.cpp start_page.cpp
+	class_picker.cpp samples_folder.cpp wheel_guard.cpp dock_layout.cpp startup_trace.cpp lazy_refresh.cpp dialog_fit.cpp import_dialog.cpp round_edge_dialog.cpp road_dialog.cpp road_builder_dialog.cpp texture_flow_dialog.cpp surface_dialogs.cpp model_export_dialog.cpp plural_text.cpp text_copy.cpp start_page.cpp
 	replace_materials_dialog.cpp
 	properties_instance.cpp
 	properties_door.cpp
@@ -61,6 +61,7 @@ add_library(smeapp STATIC
 	viewport_tools.cpp
 	main_window_report.cpp
 	viewport_doors.cpp
+	viewport_overlays.cpp
 	viewport_ropes.cpp
 	viewport_scenes.cpp
 	editor_helpers.cpp

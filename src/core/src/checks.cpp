@@ -1,6 +1,7 @@
 // checks.cpp - Map problem checks and autofixes (see checks.h).
 
 #include <sme/checks.h>
+#include <sme/grid_snap.h>
 
 #include <sme/assets.h>
 #include <sme/brush.h>
@@ -149,7 +150,20 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		}
 		p.from = std::to_string(ref.entityId) + ":" + std::to_string(ref.solidId);
 	};
+	// Corners off the grid (arches, rounded edges): one note for all, only brushes that can be snapped.
+	Problem offGrid;
+	offGrid.kind = Problem::Kind::OffGridCorners;
+	offGrid.severity = Problem::Severity::Info;
+	int offGridCount = 0;
 	forEachSolid(doc, [&](const SolidRef& ref, const Solid& solid) {
+		if (isConvexValid(solid) && offGridCorners(solid) > 0 && snapSolidToGrid(solid)) {
+			++offGridCount;
+			if (ref.entityId == 0) {
+				offGrid.objects.solids.push_back(ref);
+			} else if (std::find(offGrid.objects.entities.begin(), offGrid.objects.entities.end(), ref.entityId) == offGrid.objects.entities.end()) {
+				offGrid.objects.entities.push_back(ref.entityId);
+			}
+		}
 		if (isConvexValid(solid)) {
 			if (const std::string why = brushProblem(solid); !why.empty()) {
 				Problem p;
@@ -245,6 +259,13 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		badScale.howToFix = "Reset the texture scale to 0.25.";
 		badScale.fixLabel = "Reset scale";
 		problems.push_back(std::move(badScale));
+	}
+	if (offGridCount > 0) {
+		offGrid.message = std::to_string(offGridCount) + (offGridCount == 1 ? " brush has" : " brushes have") +
+		                  " corners off the grid (arches, rounded edges): VBSP rounds them, which can open hairline cracks and adds planes.";
+		offGrid.howToFix = "Snap their corners to the 1-unit grid (only brushes that keep their shape are listed).";
+		offGrid.fixLabel = "Snap to grid";
+		problems.push_back(std::move(offGrid));
 	}
 
 	// Entities.
@@ -597,6 +618,10 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 				std::erase_if(entity->solids, [&](const Solid& s) { return s.id == ref.solidId; });
 			}
 			return t.finish();
+		}
+		case Problem::Kind::OffGridCorners: {
+			int snapped = 0, refused = 0;
+			return edit::snapToGrid(doc, problem.objects, 1, &snapped, &refused);
 		}
 		case Problem::Kind::MissingMaterial: {
 			if (problem.to.empty()) {

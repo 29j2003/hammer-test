@@ -631,6 +631,7 @@ void Viewport::paintGL() {
 	drawConnections(lines);
 	drawConnectLine(lines);
 	drawDoorPreview(lines);
+	drawOverlayCorners(lines);
 	drawSceneLines(lines);
 	drawSceneStartLines(lines);
 	drawGizmo(lines);
@@ -1481,6 +1482,10 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 		return;
 	}
 
+	// The corner squares of a selected overlay come before the gizmo: they lie on the surface.
+	if (overlayCornerPress(event)) {
+		return;
+	}
 	const Handle handle = hitHandle(event->position());
 	if (handle != Handle::None) {
 		beginGizmoDrag(handle, event->position());
@@ -1599,6 +1604,9 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 		case Drag::Paint:
 			paintAt(pos);
 			return;
+		case Drag::OverlayCorner:
+			overlayCornerMove(pos);
+			return;
 		case Drag::Sculpt:
 			displaceMouseMove(pos);
 			return;
@@ -1652,6 +1660,10 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 	}
 	if (drag == Drag::Sculpt) {
 		if (event->button() == Qt::LeftButton) finishSculpt();
+		return;
+	}
+	if (drag == Drag::OverlayCorner) {
+		if (event->button() == Qt::LeftButton) finishOverlayCorner();
 		return;
 	}
 	if (event->button() != Qt::LeftButton) {

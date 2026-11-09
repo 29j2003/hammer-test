@@ -36,6 +36,7 @@
 #include "road_builder_dialog.h"
 #include "road_dialog.h"
 #include "texture_flow_dialog.h"
+#include "surface_dialogs.h"
 #include "round_edge_dialog.h"
 #include "shortcut_dialog.h"
 #include "sound_browser.h"
@@ -1128,6 +1129,25 @@ void MainWindow::createActions() {
 	flow->setObjectName("brushesTextureFlow");
 	flow->setToolTip(tr("Lets the texture run on over the selected faces or brushes: wrapped over edges, round curves, along strips, or continuing a neighbour"));
 	brushes->addAction(flow);
+	brushes->addSeparator();
+	auto* snapVertices = action(tr("Snap vertices to grid"), QKeySequence(), [this] { m_editor->snapVerticesToGrid(); });
+	snapVertices->setObjectName("brushesSnapVertices");
+	snapVertices->setToolTip(tr("Moves the corners of the selected brushes onto the grid (arches and rounded edges leave fractions that can open cracks); "
+	                        "brushes that would lose a face stay as they are"));
+	brushes->addAction(snapVertices);
+	auto* blend = action(tr("Blend along selection ..."), QKeySequence(), [this] { blendAlongDialog(); });
+	blend->setObjectName("brushesBlendAlong");
+	blend->setToolTip(tr("Paints the second material of blend displacements next to the selected road or path, fading out (World of Level Design roads, part 7)"));
+	brushes->addAction(blend);
+	auto* overlayFaces = action(tr("Overlay on selected faces"), QKeySequence(), [this] { m_editor->overlayOnSelectedFaces(QSettings().value("strip/tile", 128.0).toDouble()); });
+	overlayFaces->setObjectName("brushesOverlayFaces");
+	overlayFaces->setToolTip(tr("One overlay with the current material over all selected faces (across brush seams), tiled at the texture's proportions"));
+	brushes->addAction(overlayFaces);
+	auto* strip = action(tr("Overlay strip ..."), QKeySequence(), [this] { overlayStripDialog(); });
+	strip->setObjectName("brushesOverlayStrip");
+	strip->setToolTip(tr("A band of overlays with the current material along the selected faces: lines, cracks or dirt along a road or kerb, round curves"));
+	brushes->addAction(strip);
+	brushes->addSeparator();
 	auto* water = action(tr("Make water"), QKeySequence(), [this] { m_editor->makeWaterFromSelection(m_assets->materialNames()); });
 	water->setToolTip(tr("Top face water, the other faces nodraw; adds a water_lod_control and a cubemap above the water if missing"));
 	brushes->addAction(water);
@@ -2227,6 +2247,16 @@ QMenu* MainWindow::buildContextMenu() {
 			menu.addAction(tr("Road texture ..."), this, [this] { roadDialog(); })->setObjectName("contextRoad");
 			menu.addAction(tr("Texture flow ..."), this, [this] { textureFlowDialog(); })->setObjectName("contextTextureFlow");
 		}
+		if (!selection.solids.empty() || !selection.entities.empty()) {
+			menu.addAction(tr("Snap vertices to grid"), this, [this] { m_editor->snapVerticesToGrid(); })->setObjectName("contextSnapVertices");
+			if (!selection.solids.empty()) menu.addAction(tr("Blend along selection ..."), this, [this] { blendAlongDialog(); })->setObjectName("contextBlendAlong");
+		}
+		if (!selection.faces.empty()) {
+			menu.addAction(tr("Overlay on selected faces"), this, [this] {
+				m_editor->overlayOnSelectedFaces(QSettings().value("strip/tile", 128.0).toDouble());
+			})->setObjectName("contextOverlayFaces");
+			menu.addAction(tr("Overlay strip ..."), this, [this] { overlayStripDialog(); })->setObjectName("contextOverlayStrip");
+		}
 		if (selection.entities.size() == 1 && selection.solids.empty() && selection.entities.front() != 0) {
 			menu.addSeparator();
 			const int id = selection.entities.front();
@@ -2551,6 +2581,18 @@ void MainWindow::textureFlowDialog(const QString& material) {
 	m_flowDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_flowDialog->show();
 	if (m_active) m_flowDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::blendAlongDialog() {
+	auto* dialog = new BlendAlongDialog(m_editor, this);
+	dialog->show();
+	if (m_active) dialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::overlayStripDialog() {
+	auto* dialog = new OverlayStripDialog(m_editor, this);
+	dialog->show();
+	if (m_active) dialog->move(m_active->mapToGlobal(QPoint(16, 16)));
 }
 
 void MainWindow::checkForUpdates(bool manual) {

@@ -6,6 +6,9 @@
 #include <sme/displacement.h>
 #include <sme/editing.h>
 
+#include <algorithm>
+#include <cmath>
+
 using namespace sme;
 
 namespace {
@@ -381,4 +384,120 @@ TEST_CASE("displacement: stretching and turning a displacement brush keeps its s
 	mesh = buildDisplacement(sideOf(doc, front), faceOf(doc, front));
 	REQUIRE(mesh);
 	for (const auto& p : mesh->positions) CHECK(p.x == doctest::Approx(-688));
+}
+
+TEST_CASE("displacement sculpt: Raise along another axis pushes sideways; Flatten along it levels to the stroke start") {
+	MapDocument doc;
+	auto [create, ref] = edit::createBlock(doc, box({0, 0, 0}, {256, 256, 16}), "NATURE/GRASS");
+	(void)create;
+	const FaceRef top = topFace(doc, ref);
+	const FaceGeometry face = faceOf(doc, top);
+	auto d = makeDisplacement(face, 2);
+	REQUIRE(d);
+	const auto before = displacementPositions(*d, face);
+	SculptBrush brush;
+	brush.center = {128, 128, 16};
+	brush.radius = 100;
+	brush.strength = 10;
+	brush.axis = {1, 0, 0};
+	REQUIRE(sculpt(*d, face, SculptMode::Raise, brush));
+	const auto after = displacementPositions(*d, face);
+	bool movedX = false;
+	for (std::size_t i = 0; i < after.size(); ++i) {
+		CHECK(after[i].z == doctest::Approx(before[i].z));
+		CHECK(after[i].y == doctest::Approx(before[i].y));
+		movedX = movedX || after[i].x > before[i].x + 1;
+	}
+	CHECK(movedX);
+	// Flatten along X towards x = 128: the middle vertex moves back onto x = 128.
+	brush.flattenPoint = {128, 128, 16};
+	brush.strength = 1;
+	for (int k = 0; k < 20; ++k) sculpt(*d, face, SculptMode::Flatten, brush);
+	const auto flat = displacementPositions(*d, face);
+	CHECK(flat[12].x == doctest::Approx(128).epsilon(0.01));   // the centre of a 5 x 5 grid
+	// No axis: as before, along the face normal.
+	auto e = makeDisplacement(face, 2);
+	SculptBrush up;
+	up.center = {128, 128, 16};
+	up.radius = 100;
+	up.strength = 10;
+	REQUIRE(sculpt(*e, face, SculptMode::Raise, up));
+	CHECK(displacementPositions(*e, face)[12].z == doctest::Approx(26));
+}
+
+TEST_CASE("blend along selection: alpha by distance to the road, soft border, hand paint kept, one undo step") {
+	MapDocument doc;
+	History history;
+	auto [ground, groundRef] = edit::createBlock(doc, box({0, 0, 0}, {512, 512, 16}), "NATURE/BLENDGRASSDIRT");
+	history.push(std::move(ground));
+	const FaceRef top = topFace(doc, groundRef);
+	history.push(edit::createDisplacements(doc, {top}, 3));
+	auto [road, roadRef] = edit::createBlock(doc, box({0, 0, 16}, {64, 512, 24}), "ROAD/ASPHALT");
+	history.push(std::move(road));
+	// Hand paint far from the road stays.
+	{
+		Solid* solid = doc.findSolid(groundRef);
+		for (auto& side : solid->sides) {
+			if (side.id != top.sideId) continue;
+			auto d = readDisplacement(side);
+			const auto at = displacementPositions(*d, faceOf(doc, top));
+			for (std::size_t i = 0; i < at.size(); ++i) {
+				if (std::abs(at[i].x - 512) < 0.01 && std::abs(at[i].y) < 0.01) d->alphas[i] = 200;   // the far corner
+			}
+			storeDisplacement(side, *d);
+		}
+	}
+	CHECK(distanceToBrush(buildBrushGeometry(*doc.findSolid(roadRef)), {128, 100, 16}) == doctest::Approx(64));
+	CHECK(distanceToBrush(buildBrushGeometry(*doc.findSolid(roadRef)), {10, 100, 20}) == doctest::Approx(0));
+	CHECK(distanceToBrush(buildBrushGeometry(*doc.findSolid(roadRef)), {100, 600, 24}) == doctest::Approx(std::hypot(36.0, 88.0)));
+
+	BlendNearOptions options;
+	options.width = 32;
+	options.softness = 64;
+	Selection selection;
+	selection.solids = {roadRef};
+	int count = 0;
+	history.push(edit::blendAlongSelection(doc, selection, options, &count));
+	CHECK(count == 1);
+	const auto d = readDisplacement(sideOf(doc, top));
+	REQUIRE(d);
+	// Vertices every 64 units along x (columns run along the face's second corner direction; find by position).
+	const auto positions = displacementPositions(*d, faceOf(doc, top));
+	for (std::size_t i = 0; i < positions.size(); ++i) {
+		const double x = positions[i].x;
+		if (x <= 64.01) {
+			CHECK(d->alphas[i] == doctest::Approx(255));
+		} else if (std::abs(x - 128) < 0.01) {
+			CHECK(d->alphas[i] == doctest::Approx(127.5));
+		} else if (x >= 191.99 && std::abs(x - 512) > 0.01) {
+			CHECK(d->alphas[i] == doctest::Approx(0));
+		}
+	}
+	bool handPaintKept = false;
+	for (std::size_t i = 0; i < positions.size(); ++i) {
+		if (std::abs(positions[i].x - 512) < 0.01 && d->alphas[i] == doctest::Approx(200)) handPaintKept = true;
+	}
+	CHECK(handPaintKept);
+	CHECK(history.undo(doc));
+	const auto undone = readDisplacement(sideOf(doc, top));
+	CHECK(std::count_if(undone->alphas.begin(), undone->alphas.end(), [](double a) { return a > 0; }) == 1);
+	// Nothing selected but displacements: nothing to measure from.
+	Selection none;
+	none.faces = {top};
+	CHECK(edit::blendAlongSelection(doc, none, options, &count).empty());
+}
+
+TEST_CASE("blend along selection: the first material near the road when asked, noise frays the border") {
+	BlendNearOptions o;
+	o.width = 0;
+	o.softness = 100;
+	o.secondMaterialNear = false;
+	CHECK(blendNearAlpha(0, o) == doctest::Approx(0));
+	CHECK(blendNearAlpha(50, o) == doctest::Approx(127.5));
+	CHECK(blendNearAlpha(200, o) == doctest::Approx(255));
+	o.secondMaterialNear = true;
+	o.softness = 0;
+	o.width = 10;
+	CHECK(blendNearAlpha(10, o) == doctest::Approx(255));
+	CHECK(blendNearAlpha(10.5, o) == doctest::Approx(0));
 }
