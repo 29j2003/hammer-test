@@ -2070,7 +2070,7 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 		++index;
 	}
 	jv->addLayout(jg);
-	auto* road = new QPushButton(tr("Road ..."));
+	auto* road = new QPushButton(tr("Road texture ..."));
 	road->setObjectName("faceRoad");
 	road->setToolTip(tr("Lay a road material along the selected faces: along the road, across its width, on through curves and ramps"));
 	connect(road, &QPushButton::clicked, this, &PropertiesPanel::roadRequested);

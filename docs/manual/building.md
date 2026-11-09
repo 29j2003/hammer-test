@@ -257,7 +257,7 @@ Example: a spiral of 12 pillars. Copy one pillar, *Number of copies* 11, *Offset
 ## Texture flow
 
 **Texture flow ...** (right-click on selected faces or brushes, the **Brushes** menu, and next to
-**Road ...** under **Justify** in the face panel) lets a texture run on correctly from face to face.
+**Road texture ...** under **Justify** in the face panel) lets a texture run on correctly from face to face.
 *Mode: Auto* picks what fits the faces; you can choose another:
 
 - **Wrap**: the texture starts on the first face you picked (Faces mode: click it first, then
@@ -281,11 +281,61 @@ curve* when most of the edges between the faces are small bends (a rounded edge,
 cylinder), else *Wrap*. The views show the result while you change the settings; OK applies it as
 one undo step. Empty *Material* keeps the first face's material (Match: the neighbour's).
 
-## Roads
+## Building a road
 
-Select the floor brushes of a road (or their top faces in Faces mode), right-click and pick
-**Road ...** (also in the **Brushes** menu, under **Justify** in the face panel, and as **Apply as
-road to selection ...** on a material in the Asset Browser). Pick the road material and press OK.
+**Brushes > Build road ...** makes the road's brushes for you, the way roads are built by hand in
+Hammer (blocked in with brushes, turns from arch pieces, a displacement for a raised middle) - in
+one step, with the texture already running along the road and round its curves.
+
+- **Draw a path** (nothing selected): click points along the road's middle in the 3D or top view.
+  Each click puts a point on the floor under the mouse (snapped to the grid). **Backspace** takes
+  the last point back, **Enter** builds the road, **Esc** stops clicking. The views show the road
+  while you click.
+- **Along the selected floor brushes**: block the road in with plain brushes first (as you would in
+  Hammer), select them, right-click and pick **Build road ...**. The road follows them: long blocks
+  give the road's direction, a square block between two of them is a corner, a block joining
+  another one's side is a junction. Width, thickness and material are taken from the blocks. The
+  blocks are replaced; what a curve leaves of them stays (with the **Fill material** on top, if you
+  set one).
+
+The settings:
+
+- **Width**: kerb to kerb - 256 units for two lanes, 1024 for four (or any width).
+- **Curve radius**: the radius of a curve's inner edge (0: as tight as it gets). Every corner becomes
+  a curve of arch pieces (**Curve pieces per 90°**). Where two corners are too close for the radius,
+  the curve gets the largest radius that fits; where even that does not fit, the pieces meet at an
+  angle (the note says so).
+- **Road material**: the texture runs along the road with one scale for all of it, its middle on the
+  road's centre line; on a curve every piece turns with it and the lane lines meet at every joint.
+  Heights follow the points, so a road between points at different heights becomes a ramp or a
+  sloped curve.
+- **Displacement with a raised middle**: every road piece becomes a displacement (power 2 or 3), the
+  middle raised by **Middle up** units like a real road, with optional **Uneven** bumps. The pieces
+  meet exactly and you can sculpt them with the Displacement tool afterwards. Nodraw brushes
+  underneath keep the map sealed (displacements do not seal a map).
+- **Kerbs along both sides**: strips beside the road (wider ones are sidewalks) that follow it round
+  the curves.
+- **Fit into surroundings** (on by default): brushes the road reaches into - the floor it is sunk
+  into, a sidewalk in a curve's way, a low wall across it - are carved around it, like **Carve**, up
+  to **Clear above the road** units above it. Pieces left over are joined again where they form one
+  brush. Sky, tool brushes and displacements are left alone.
+- **Junctions**: a road whose path ends on (or crosses) a road that is already there - a brush with
+  the same road material on top at the same height - stops at its edge; the old road runs through.
+  With a **Junction material** (under *More settings*) the old road's piece in the crossing gets it,
+  for plain asphalt without lane lines.
+- *More settings*: which way the texture runs (**Texture runs along**, **Flip direction**), the
+  **Side material** for the road's open sides and ends, **Kerb material**, **Junction material**,
+  **Fill material**, **Clear above the road**.
+
+**Build** makes it one undo step and selects the new road. Nothing is ever refused: a piece that
+would be broken is left out and the note says so.
+
+## Road texture
+
+To lay a road material onto floor brushes that are already there, select them (or their top faces in
+Faces mode), right-click and pick **Road texture ...** (also in the **Brushes** menu, under
+**Justify** in the face panel, and as **Apply as road to selection ...** on a material in the Asset
+Browser). Pick the road material and press OK.
 
 - Pieces that touch become one road with **one scale**: the texture runs **along** it, spans the
   **road's width** (or *Fit width* times) and carries on from piece to piece, so the lane line has

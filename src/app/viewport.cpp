@@ -2682,6 +2682,10 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
 		m_editor->cancelScenePoint();
 		return;
 	}
+	if (m_editor->scenePointPending() && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter || event->key() == Qt::Key_Backspace)) {
+		m_editor->pressScenePointKey(event->key());   // the road builder: finish / take back a point
+		return;
+	}
 	if (toolKey(event)) {
 		return;
 	}

@@ -33,6 +33,7 @@
 #include "particle_browser.h"
 #include "properties_panel.h"
 #include "choreography_panel.h"
+#include "road_builder_dialog.h"
 #include "road_dialog.h"
 #include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
@@ -1115,7 +1116,11 @@ void MainWindow::createActions() {
 	brushes->addAction(carve);
 	brushes->addAction(mergeAction);
 	brushes->addAction(round);
-	auto* road = action(tr("Road ..."), QKeySequence(), [this] { roadDialog(); });
+	auto* build = action(tr("Build road ..."), QKeySequence(), [this] { roadBuilderDialog(); });
+	build->setObjectName("brushesBuildRoad");
+	build->setToolTip(tr("Builds a road: click points along it (or select floor blocks), corners become curves with the texture running on, optionally displacements with a raised middle, kerbs, fitted into the floor"));
+	brushes->addAction(build);
+	auto* road = action(tr("Road texture ..."), QKeySequence(), [this] { roadDialog(); });
 	road->setObjectName("brushesRoad");
 	road->setToolTip(tr("Lays a road material along the selected floor brushes: along the road, across its width, on through curves and ramps"));
 	brushes->addAction(road);
@@ -2218,7 +2223,8 @@ QMenu* MainWindow::buildContextMenu() {
 		}
 		// Brushes or faces: the road tool lays a road material along them.
 		if (!selection.solids.empty() || !selection.faces.empty()) {
-			menu.addAction(tr("Road ..."), this, [this] { roadDialog(); })->setObjectName("contextRoad");
+			if (!selection.solids.empty()) menu.addAction(tr("Build road ..."), this, [this] { roadBuilderDialog(); })->setObjectName("contextBuildRoad");
+			menu.addAction(tr("Road texture ..."), this, [this] { roadDialog(); })->setObjectName("contextRoad");
 			menu.addAction(tr("Texture flow ..."), this, [this] { textureFlowDialog(); })->setObjectName("contextTextureFlow");
 		}
 		if (selection.entities.size() == 1 && selection.solids.empty() && selection.entities.front() != 0) {
@@ -2500,6 +2506,31 @@ void MainWindow::roadDialog(const QString& material) {
 	m_roadDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_roadDialog->show();
 	if (m_active) m_roadDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::roadBuilderDialog() {
+	if (m_roadBuilderDialog) {
+		m_roadBuilderDialog->raise();
+		m_roadBuilderDialog->activateWindow();
+		return;
+	}
+	// A road material of the game to start with (asphalt first), unless one is picked.
+	QString material;
+	if (m_editor->selectedRoadPaths().empty()) {
+		QString road;
+		for (const auto& name : m_assets->materialNames()) {
+			const QString n = QString::fromStdString(name);
+			if (n.startsWith("tools/", Qt::CaseInsensitive)) continue;
+			if (material.isEmpty() && n.contains("asphalt", Qt::CaseInsensitive)) material = n.toUpper();
+			if (road.isEmpty() && n.contains("road", Qt::CaseInsensitive)) road = n.toUpper();
+		}
+		if (material.isEmpty()) material = road;
+	}
+	// Beside the map, not in front of it: the views show the road while it is drawn.
+	m_roadBuilderDialog = new RoadBuilderDialog(m_editor, material, this);
+	m_roadBuilderDialog->setAttribute(Qt::WA_DeleteOnClose);
+	m_roadBuilderDialog->show();
+	if (m_active) m_roadBuilderDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
 }
 
 void MainWindow::textureFlowDialog(const QString& material) {
