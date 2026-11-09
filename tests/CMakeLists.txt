@@ -1,6 +1,7 @@
 # Test sources contain UTF-8 text (umlauts in expected strings): MSVC must read them as UTF-8.
+# /bigobj: test_app.cpp has more sections than MSVC's default object format allows.
 if(MSVC)
-	add_compile_options(/utf-8)
+	add_compile_options(/utf-8 /bigobj)
 endif()
 
 # Unit tests (doctest). The fixture library also feeds sme-make-fixture,
