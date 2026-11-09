@@ -38,6 +38,8 @@ namespace sme::app {
 class RoundEdgeDialog;
 class RoadDialog;
 class RoadBuilderDialog;
+class GapFillDialog;
+class PropPlacementDialog;
 class TextureFlowDialog;
 class AssetBrowser;
 class DockLayout;
@@ -185,6 +187,12 @@ private:
 	void roadDialog(const QString& material = {});
 	/// "Build road ...": along the selected floor brushes, or clicked points without a selection.
 	void roadBuilderDialog();
+	/// "Fill gap ...": the space between the selected brushes, with a live preview.
+	void gapFillDialog();
+	/// "Place props ...": many props along a path or scattered over faces, with a live preview.
+	void propPlacementDialog();
+	/// Ctrl+K: search every menu entry, tool, page, material, model and entity class.
+	void commandSearch();
 	/// "Texture flow ...": the texture flow tool over the selection (`material`: to start with).
 	void textureFlowDialog(const QString& material = {});
 	/// Ctrl+V: pastes the copied objects under the mouse (or where they were copied).
@@ -231,6 +239,8 @@ private:
 	QPointer<ImportDialog> m_importDialog;     ///< The open import dialog
 	QPointer<RoadDialog> m_roadDialog;          ///< The open "Road" dialog
 	QPointer<RoadBuilderDialog> m_roadBuilderDialog;   ///< The open "Build road" dialog
+	QPointer<GapFillDialog> m_gapFillDialog;    ///< The open "Fill gap" dialog
+	QPointer<PropPlacementDialog> m_propsDialog;   ///< The open "Place props" dialog
 	QPointer<TextureFlowDialog> m_flowDialog;   ///< The open "Texture flow" dialog
 	QPointer<RoundEdgeDialog> m_roundDialog;   ///< The open "Round or bevel edge" dialog
 	bool m_reloadPending = false;               ///< The game is read again soon (the mod's files changed)

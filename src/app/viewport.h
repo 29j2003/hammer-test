@@ -276,6 +276,13 @@ private:
 	void drawSceneStartLines(std::vector<LineVertex>& lines) const;
 	void drawSceneGhosts(const SceneRenderer::Params& params);
 	void drawSceneLabels(OverlayRecorder& p) const;
+	// Measure tool and the props preview (viewport_measure.cpp).
+	[[nodiscard]] std::optional<Vec3> measurePointAt(const QPointF& pos, bool snapToGrid) const;
+	bool measureMousePress(QMouseEvent* event);
+	void measureMouseMove(const QPointF& pos, Qt::KeyboardModifiers modifiers);
+	void drawMeasureLines(std::vector<LineVertex>& lines) const;
+	void drawMeasureLabels(OverlayRecorder& p) const;
+	void drawPropPreview(const SceneRenderer::Params& params, std::vector<LineVertex>& lines);
 	/// Floor point under the mouse for a scene step (walls drop to the floor below).
 	[[nodiscard]] std::optional<Vec3> scenePointAt(const QPointF& pos) const;
 	/// Left click: delivers a requested scene point or selects a clicked step marker.

@@ -34,6 +34,21 @@ Flip Y, Flip Z, Snap to grid, Drop to floor, Select similar and Hide. They are d
 
 ![The Select tool with a brush selected and its actions](images/select-tool.png)
 
+## Measure
+
+The **Measure** tool (M, the ruler) measures between two points: click the first (on a surface in 3D, or in a 2D view),
+move the mouse - the line and its numbers follow - and click the second. A third click starts a new line, **Esc**
+clears it. Points snap to the grid along the surface (Ctrl+click: exactly where you click).
+
+Beside the line: the distance, how far across and how high, the slope - and what the player can do there:
+
+- a mostly level line: whether the slope is walkable (up to 45.6°), whether the player steps up (18 units) or gets up
+  with a crouch jump (56 units), whether it is wide enough (32);
+- a mostly vertical line (floor to ceiling, a window's height): whether a standing (72) or crouching (36) player fits.
+
+A blue box at each end is a standing player (32 wide, 72 high, with lines at eye height 64 and step height 18), so
+you see the scale at a glance.
+
 ## Moving, rotating and scaling
 
 All three tools work with a **gizmo** in the 3D view and by dragging in the 2D views.
@@ -214,6 +229,20 @@ These are in the **Tool** tab (Select tool), in the **Brushes** menu and in the 
   Carve can produce many small brushes; for clean geometry, prefer building around openings with separate brushes.
 - **Merge** (Ctrl+Shift+M) makes one convex brush around all selected brushes. If they did not fill that shape
   completely, the gaps are filled too, and the editor tells you so.
+
+## Fill gap
+
+Select the brushes around a gap - two or more - and use **Brushes > Fill gap ...** (or the right-click menu). The
+empty space between them becomes a brush, shown at once in the views before you press **Fill**:
+
+- **Follow the brushes** fills between the faces that face each other: a wedge where two road pieces meet at an angle,
+  a slope between a low and a high floor, a plain block between two walls. The inside of an L stays open.
+- **Square box** fills only the box between them, as high as the lower of the two.
+
+Anything already standing in the gap (a post, a pillar) is cut out of the fill, so nothing overlaps. Each face of the
+fill continues the texture of a selected brush face lying in the same plane (a floor's top runs on over the fill);
+other faces get the material the selected brushes use most, or the one you type in **Material**. The fill is one undo
+step.
 
 ## Brush entities: Tie to and Move to world
 

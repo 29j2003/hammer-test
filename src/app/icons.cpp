@@ -282,6 +282,22 @@ void drawIcon(QPainter& p, const QString& name) {
 		for (const auto& q : penta) p.drawEllipse(q, 4.5, 4.5);
 		return;
 	}
+	if (name == "tool:measure") {
+		// A ruler lying across the icon, ticks along its edge.
+		p.save();
+		p.translate(32, 32);
+		p.rotate(-35);
+		p.setPen(pen(LINE, 3.5));
+		p.setBrush(QColor(222, 227, 234, 40));
+		p.drawRect(QRectF(-27, -9, 54, 18));
+		p.setPen(pen(ACCENT, 3));
+		for (int i = 0; i < 6; ++i) {
+			const double x = -21 + i * 8.4;
+			p.drawLine(QPointF(x, -9), QPointF(x, i % 2 == 0 ? 1 : -3));
+		}
+		p.restore();
+		return;
+	}
 	if (name == "tool:displace") {
 		// A hill on a grid: terrain made from a face.
 		p.setPen(pen(LINE, 2.5));

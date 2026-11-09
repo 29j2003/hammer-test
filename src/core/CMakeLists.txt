@@ -58,6 +58,9 @@ add_library(smecore STATIC
 	src/relief_pattern.cpp
 	src/road_texture.cpp
 	src/road_builder.cpp
+	src/gap_fill.cpp
+	src/prop_placement.cpp
+	src/command_search.cpp
 	src/texture_flow.cpp
 	src/history.cpp
 	src/keyvalues.cpp

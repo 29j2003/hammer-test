@@ -49,6 +49,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSlider>
 #include <QSemaphore>
 #include <QSettings>
@@ -131,6 +132,9 @@
 #include "compile_window.h"
 #include "properties_panel.h"
 #include "road_builder_dialog.h"
+#include "gap_fill_dialog.h"
+#include "prop_placement_dialog.h"
+#include "command_palette.h"
 #include "road_dialog.h"
 #include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
@@ -9971,4 +9975,264 @@ TEST_CASE("round edge: every face of a rounded curb can be clicked, a stacked co
 	CHECK(offer.contains("Merge and round"));
 	CHECK(editor.doc().world.solids.size() == 1);
 	for (const auto& solid : editor.doc().world.solids) CHECK(brushProblem(solid).empty());
+}
+
+TEST_CASE("measure, fill gap, place props, command search: the helpers around a road scene") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QSignalSpy indexed(window.assets(), &AssetBrowser::materialsIndexed);
+	window.setQuadLayout(false);
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	const auto addBlock = [&](Vec3 a, Vec3 b, const char* material) {
+		auto [change, ref] = edit::createBlock(editor.doc(), box(a, b), material);
+		editor.commit(std::move(change));
+		return ref;
+	};
+	const SolidRef floor = addBlock({-1024, -1024, -32}, {2048, 2048, 0}, "CONCRETE/FLOOR01");
+	const SolidRef left = addBlock({0, 0, 0}, {256, 256, 32}, "CONCRETE/WALL01");
+	const SolidRef right = addBlock({384, 0, 0}, {640, 256, 64}, "CONCRETE/WALL01");
+	Viewport* view = window.view3D();
+	view->camera().position = QVector3D(320, 128, 2400);
+	view->camera().yaw = 90;
+	view->camera().pitch = -89;
+	view->update();
+	settle();
+
+	// --- Measure (M): two clicks, the second point follows the mouse until clicked; Esc clears.
+	auto* measureAction = window.findChild<QAction*>("Measure");
+	REQUIRE(measureAction);
+	CHECK(measureAction->shortcut() == QKeySequence("M"));
+	measureAction->trigger();
+	CHECK(editor.tool() == Editor::Tool::Measure);
+	const QPoint onFloor = screen(view, {-400, 128, 0});
+	const QPoint onBlock = screen(view, {128, 128, 32});
+	QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, onFloor);
+	settle();
+	REQUIRE(editor.measureLine().a);
+	CHECK(editor.measureLine().a->z == doctest::Approx(0).epsilon(0.01));
+	CHECK_FALSE(editor.measureLine().b);
+	CHECK(editor.selection().empty());   // measuring selects nothing
+	QTest::mouseMove(view, onBlock);
+	settle();
+	REQUIRE(editor.measureLine().hover);
+	CHECK(editor.measureLine().hover->z == doctest::Approx(32).epsilon(0.01));
+	QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, onBlock);
+	settle();
+	REQUIRE(editor.measureLine().b);
+	const auto m = measure(*editor.measureLine().a, *editor.measureLine().b);
+	CHECK(m.height == doctest::Approx(32).epsilon(0.01));
+	CHECK(m.horizontal == doctest::Approx(528).epsilon(0.02));
+	CHECK_FALSE(m.stepUp);
+	CHECK(m.jumpUp);
+	view->camera().position = QVector3D(-700, -500, 380);
+	view->camera().yaw = 35;
+	view->camera().pitch = -18;
+	view->update();
+	settle();
+	view->grabFramebuffer().save(shotDir + "/measure.png");
+	view->setFocus();
+	QTest::keyClick(view, Qt::Key_Escape);
+	settle();
+	CHECK_FALSE(editor.measureLine().a);
+	editor.measureClick({0, 0, 0});
+	editor.setTool(Editor::Tool::Select);
+	CHECK_FALSE(editor.measureLine().a);   // another tool: the line goes
+
+	// --- Fill gap: the two blocks selected, Brushes > Fill gap ... shows the slope between them.
+	const std::size_t brushesBefore = editor.doc().world.solids.size();
+	Selection pair;
+	pair.solids = {left, right};
+	editor.setSelection(pair);
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		CHECK(menu->findChild<QAction*>("contextFillGap") != nullptr);
+	}
+	auto* fillAction = window.findChild<QAction*>("brushesFillGap");
+	REQUIRE(fillAction);
+	fillAction->trigger();
+	settle();
+	auto* fill = window.findChild<GapFillDialog*>("gapFillDialog");
+	REQUIRE(fill);
+	QTest::qWait(200);
+	settle();
+	const std::string fillNote = fill->note().toStdString();
+	INFO("note: " << fillNote);
+	CHECK(fill->note().contains("Fills 1 brush"));
+	REQUIRE(editor.brushPreview().size() == 1);
+	CHECK(editor.doc().world.solids.size() == brushesBefore);   // only the preview so far
+	CHECK(solidVolume(editor.brushPreview().front()) == doctest::Approx(128.0 * 256 * 48).epsilon(0.01));   // 32 -> 64 over 128
+	view->camera().position = QVector3D(320, -500, 300);
+	view->camera().yaw = 90;
+	view->camera().pitch = -25;
+	view->update();
+	settle();
+	view->grabFramebuffer().save(shotDir + "/fill_gap.png");
+	fill->findChild<QRadioButton*>("gapFillBox")->setChecked(true);
+	QTest::qWait(200);
+	settle();
+	REQUIRE(editor.brushPreview().size() == 1);
+	CHECK(solidVolume(editor.brushPreview().front()) == doctest::Approx(128.0 * 256 * 32).epsilon(0.01));
+	fill->findChild<QRadioButton*>("gapFillHull")->setChecked(true);
+	QTest::qWait(200);
+	settle();
+	fill->accept();
+	settle();
+	CHECK(editor.brushPreview().empty());
+	CHECK(editor.doc().world.solids.size() == brushesBefore + 1);
+	REQUIRE(editor.selection().solids.size() == 1);
+	const Solid* filled = editor.doc().findSolid(editor.selection().solids.front());
+	REQUIRE(filled);
+	CHECK(brushProblem(*filled).empty());
+	for (const auto& s : editor.doc().world.solids) {
+		if (s.id != filled->id) CHECK(sharedVolume(s, *filled) < 0.5);
+	}
+	editor.undo();
+	settle();
+	CHECK(editor.doc().world.solids.size() == brushesBefore);
+
+	// --- Place props along a path: a post every 128 units, turned along the path.
+	test::writeStudioModel(f.mod / "models/props_demo/post.mdl", test::makeStudioModel({{-4, -4, 0, 4, 4, 64}}, {"idle"}, "", "metal001", "demo/"));
+	for (const char* ext : {".mdl", ".vvd", ".dx90.vtx"}) editor.game()->files.noteWrittenFile(f.mod / (std::string("models/props_demo/post") + ext));
+	editor.setSelection({});
+	const std::size_t entitiesBefore = editor.doc().entities.size();
+	auto* propsAction = window.findChild<QAction*>("mapPlaceProps");
+	REQUIRE(propsAction);
+	propsAction->trigger();
+	settle();
+	auto* props = window.findChild<PropPlacementDialog*>("propPlacementDialog");
+	REQUIRE(props);
+	CHECK_FALSE(props->scatterMode());
+	CHECK(editor.scenePointPending());   // clicking points starts at once
+	props->findChild<QLineEdit*>("propsModel")->setText("models/props_demo/post.mdl");
+	// A click in the view adds a point on the floor.
+	view->camera().position = QVector3D(320, 128, 2400);
+	view->camera().yaw = 90;
+	view->camera().pitch = -89;
+	view->update();
+	settle();
+	QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, screen(view, {-512, -512, 0}));
+	settle();
+	REQUIRE(props->points().size() == 1);
+	CHECK(props->points().front().z == doctest::Approx(0).epsilon(0.01));
+	props->addPoint({0, -512, 0});
+	props->addPoint({0, 0, 0});
+	props->findChild<QDoubleSpinBox*>("propsSpacing")->setValue(128);
+	QTest::qWait(200);
+	settle();
+	const std::string propsNote = props->note().toStdString();
+	INFO("props note: " << propsNote);
+	CHECK(editor.propPreview().size() == 9);   // 0 .. 1024 every 128
+	CHECK(editor.propPreviewModel() == "models/props_demo/post.mdl");
+	CHECK(editor.doc().entities.size() == entitiesBefore);
+	QTest::qWait(300);   // the model loads in the background
+	view->camera().position = QVector3D(-700, -900, 500);
+	view->camera().yaw = 45;
+	view->camera().pitch = -25;
+	view->update();
+	settle();
+	view->grabFramebuffer().save(shotDir + "/props_path.png");
+	// Enter in the view places them.
+	view->setFocus();
+	QTest::keyClick(view, Qt::Key_Return);
+	settle();
+	CHECK(window.findChild<PropPlacementDialog*>("propPlacementDialog") == nullptr);
+	CHECK(editor.propPreview().empty());
+	REQUIRE(editor.doc().entities.size() == entitiesBefore + 9);
+	CHECK(editor.selection().entities.size() == 9);
+	const Entity& last = editor.doc().entities.back();
+	CHECK(last.classname() == "prop_static");
+	CHECK(last.get("model") == "models/props_demo/post.mdl");
+	CHECK(last.get("angles") == "0 90 0");   // along the second leg (+y)
+	editor.undo();
+	settle();
+	CHECK(editor.doc().entities.size() == entitiesBefore);
+
+	// --- Scatter over the floor's top, kept off the left block.
+	Selection top;
+	const Solid* floorSolid = editor.doc().findSolid(floor);
+	REQUIRE(floorSolid);
+	for (const auto& side : floorSolid->sides) {
+		if (side.plane().normal.z > 0.9) top.faces.push_back({floor, side.id});
+	}
+	editor.setSelection(top);
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		CHECK(menu->findChild<QAction*>("contextPlaceProps") != nullptr);
+	}
+	propsAction->trigger();
+	settle();
+	props = window.findChild<PropPlacementDialog*>("propPlacementDialog");
+	REQUIRE(props);
+	CHECK(props->scatterMode());   // faces selected: scatter over them
+	CHECK_FALSE(editor.scenePointPending());
+	CHECK(props->findChild<QLineEdit*>("propsModel")->text() == "models/props_demo/post.mdl");   // remembered
+	Selection avoid;
+	avoid.solids = {left};
+	editor.setSelection(avoid);
+	props->useSelectedAvoid();
+	props->findChild<QDoubleSpinBox*>("propsDensity")->setValue(3);
+	props->findChild<QDoubleSpinBox*>("propsKeepAway")->setValue(64);
+	QTest::qWait(200);
+	settle();
+	const auto scattered = props->placements();
+	CHECK(scattered.size() == std::size_t(std::llround(3.0 * 3072 * 3072 / (512.0 * 512))));
+	CHECK(editor.propPreview().size() == scattered.size());
+	for (const auto& p : scattered) {
+		CHECK(p.origin.z == doctest::Approx(0).epsilon(0.01));
+		const bool near = p.origin.x > -64 && p.origin.x < 320 && p.origin.y > -64 && p.origin.y < 320;
+		CHECK_FALSE(near);
+	}
+	props->accept();
+	settle();
+	CHECK(editor.doc().entities.size() == entitiesBefore + scattered.size());
+	editor.undo();
+	settle();
+	CHECK(editor.doc().entities.size() == entitiesBefore);
+
+	// --- Command search (Ctrl+K): typed words find menu entries, tools and materials; Enter runs it.
+	REQUIRE((indexed.count() > 0 || indexed.wait(10000)));
+	auto* searchAction = window.findChild<QAction*>("Command search ...");
+	REQUIRE(searchAction);
+	CHECK(searchAction->shortcut() == QKeySequence("Ctrl+K"));
+	editor.setSelection(pair);
+	searchAction->trigger();
+	settle();
+	auto* palette = window.findChild<CommandPalette*>("commandPalette");
+	REQUIRE(palette);
+	palette->setQuery("measure");
+	CHECK(palette->listed().contains("Measure"));
+	palette->setQuery("place pro");
+	REQUIRE_FALSE(palette->listed().isEmpty());
+	CHECK(palette->listed().front() == "Place props ...");
+	palette->setQuery("wall02");
+	CHECK(palette->listed().contains("concrete/wall02", Qt::CaseInsensitive));   // materials from three letters on
+	palette->setQuery("fill gap");
+	REQUIRE_FALSE(palette->listed().isEmpty());
+	palette->grab().save(shotDir + "/command_search.png");
+	CHECK(palette->listed().front() == "Fill gap ...");
+	QTest::keyClick(palette->findChild<QLineEdit*>("commandQuery"), Qt::Key_Return);
+	settle();
+	CHECK(window.findChild<CommandPalette*>("commandPalette") == nullptr);
+	fill = window.findChild<GapFillDialog*>("gapFillDialog");
+	REQUIRE(fill);   // Enter ran it
+	fill->reject();
+	settle();
+	CHECK(editor.brushPreview().empty());
+	CHECK(editor.doc().world.solids.size() == brushesBefore);
 }

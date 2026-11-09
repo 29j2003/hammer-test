@@ -653,6 +653,7 @@ void Editor::setTool(Tool tool) {
 	}
 	if (m_tool != tool) {
 		cancelScenePoint();
+		if (m_tool == Tool::Measure) clearMeasure();
 		m_tool = tool;
 		emit toolChanged();
 	}
@@ -1497,6 +1498,89 @@ EdgeRoundPlan Editor::planSelectedEdgeRound(double radius, int segments, bool al
 	return planEdgeRounds(m_doc, scratch, m_selection.faces, radius, segments, EdgeRoundOptions{allowMerge});
 }
 
+GapFillPlan Editor::planSelectedGapFill(const GapFillOptions& options) const {
+	MapDocument scratch;   // ids for the preview only (the map's own when applying)
+	return planGapFill(m_doc, scratch, m_selection.solids, options);
+}
+
+bool Editor::applySelectedGapFill(const GapFillOptions& options) {
+	clearBrushPreview();
+	const auto plan = planGapFill(m_doc, m_doc, m_selection.solids, options);
+	if (!plan.ok()) {
+		emit message(tr("Nothing to fill: %1").arg(plan.notes.empty() ? tr("select the brushes around the gap") : QString::fromStdString(plan.notes.front())));
+		return false;
+	}
+	auto [change, refs] = applyGapFill(m_doc, plan);
+	commit(std::move(change));
+	Selection selection;
+	selection.solids = refs;
+	setSelection(std::move(selection));
+	emit message(tr("Gap filled: %n brush(es)", nullptr, int(refs.size())));
+	return true;
+}
+
+void Editor::setPropPreview(const QString& model, std::vector<PropPlacement> placements) {
+	if (placements.empty() && m_propPreview.empty()) return;
+	m_propPreviewModel = model;
+	m_propPreview = std::move(placements);
+	emit propPreviewChanged();
+}
+
+int Editor::placeProps(const QString& classname, const QString& model, const std::vector<PropPlacement>& placements) {
+	clearPropPreview();
+	if (placements.empty() || model.isEmpty()) return 0;
+	// The class's FGD defaults, as the entity tool gives them (spawnflags included).
+	std::vector<std::pair<std::string, std::string>> defaults;
+	if (const auto* catalog = entities()) {
+		if (const auto* definition = catalog->find(classname.toStdString())) {
+			for (const auto& property : definition->properties) {
+				if (property.kind == EntityProperty::Kind::Flags) {
+					std::uint64_t flags = 0;
+					for (const auto& flag : property.flags) flags |= flag.enabledByDefault ? flag.value : 0;
+					defaults.emplace_back(property.name, std::to_string(flags));
+				} else if (!property.defaultValue.empty() && !iequals(property.name, "origin")) {
+					defaults.emplace_back(property.name, property.defaultValue);
+				}
+			}
+		}
+	}
+	auto entities = makePropEntities(m_doc, placements, classname.toStdString(), model.toStdString(), defaults);
+	auto [change, ids] = applyPropPlacements(m_doc, std::move(entities), "Place props");
+	commit(std::move(change));
+	Selection selection;
+	selection.entities = ids;
+	setSelection(std::move(selection));
+	emit message(tr("%n prop(s) placed", nullptr, int(ids.size())));
+	return int(ids.size());
+}
+
+std::vector<Vec3> Editor::selectedEdgePath() const {
+	return edgeChainPath(m_doc, selectedEdges());
+}
+
+void Editor::measureClick(const Vec3& point) {
+	if (!m_measure.a || m_measure.b) {
+		m_measure = {point, std::nullopt, std::nullopt};
+	} else {
+		m_measure.b = point;
+		m_measure.hover.reset();
+	}
+	emit measureChanged();
+}
+
+void Editor::setMeasureHover(std::optional<Vec3> point) {
+	if (!m_measure.a || m_measure.b) point.reset();
+	if (point == m_measure.hover) return;
+	m_measure.hover = point;
+	emit measureChanged();
+}
+
+void Editor::clearMeasure() {
+	if (!m_measure.a && !m_measure.b) return;
+	m_measure = {};
+	emit measureChanged();
+}
+
 void Editor::setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced) {
 	if (solids.empty() && replaced.empty() && m_brushPreview.empty() && m_previewReplaced.empty()) {
 		return;
@@ -1830,6 +1914,7 @@ const char* Editor::toolName(Tool tool) {
 		case Tool::Vertex: return "Vertex";
 		case Tool::Polygon: return "Polygon";
 		case Tool::Displace: return "Displace";
+		case Tool::Measure: return "Measure";
 	}
 	return "?";
 }

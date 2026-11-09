@@ -379,6 +379,27 @@ this head** on the citizen.
 
 ![An NPC in the 3D view](images/npc.png)
 
+## Placing many props at once
+
+**Map > Place props ...** places a model many times in one step, shown as see-through props in the views while you
+change the settings. **Place** adds them (one undo step) and selects them, **Cancel** leaves the map as it was.
+
+- **Model**: select a prop in the map (or a model in the asset browser) and click **Use selected**. **Entity** is
+  `prop_static` by default; scale only works with `prop_dynamic` and `prop_physics` in most Source 1 games.
+- **Along a path** - fences, kerb stones, lamp posts, bollards: click points in the views (Enter places, Backspace
+  takes the last point back), or select edges with the Vertex tool (a kerb's top edge) and click **Use selected
+  edges**. One prop every **Spacing** units along the path, curves included; **Model length** sets the spacing to the
+  model's length so fence pieces line up end to end. **Turn along the path** turns each prop with the path, **Extra
+  turn** adds a fixed angle (90 for a model that faces sideways), **Beside the path** moves them to the right (negative:
+  left), e.g. lamps along a road's edge.
+- **Scatter over faces** - trees, bushes, rocks: select the ground (faces or displacements in Faces mode, or brushes for
+  their tops) and click **Use selected faces**. **How many** counts props per 512x512 units, **Apart at least** keeps
+  them from standing in each other, **Steepest ground** leaves out slopes that are too steep. To keep them off a road,
+  select the road and click **Keep off selected**; **Off the kept-off brushes** is how far. **Tilt with the ground**
+  lays rocks on the slope; trees stay upright.
+- **Scale** picks a random size between the two values for each prop, **Random turn** a random angle. **Variation**
+  (Shuffle) gives other random choices; the same number always gives the same result.
+
 ## Ropes and ladders
 
 **Make rope** (Brushes menu): select two or more objects - entities or brushes - and a rope hangs between them, in the

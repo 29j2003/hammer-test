@@ -176,6 +176,8 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	connect(editor, &Editor::connectModeChanged, this, &Viewport::requestFrame);
 	connect(editor, &Editor::sceneFocusChanged, this, &Viewport::requestFrame);
 	connect(editor, &Editor::scenePointRequestChanged, this, &Viewport::requestFrame);
+	connect(editor, &Editor::propPreviewChanged, this, &Viewport::requestFrame);
+	connect(editor, &Editor::measureChanged, this, &Viewport::requestFrame);
 	connect(editor->poser(), &ScenePoser::ready, this, &Viewport::requestFrame);
 	connect(editor, &Editor::doorTestRequested, this, &Viewport::startDoorTest);
 	connect(editor, &Editor::toolChanged, this, &Viewport::resetToolState);
@@ -608,6 +610,7 @@ void Viewport::paintGL() {
 		boxLines(lines, m_ghost->box, {0.3f, 1.0f, 0.5f, 0.9f});
 	}
 	drawSceneGhosts(params);
+	drawPropPreview(params, lines);
 	if (m_drag == Drag::BlockBase || m_drag == Drag::BlockHeight) {
 		boxLines(lines, m_blockBox, {1.0f, 0.75f, 0.2f, 0.5f});
 		m_renderer.drawPreviewSolids(params);
@@ -633,6 +636,7 @@ void Viewport::paintGL() {
 	drawDoorPreview(lines);
 	drawSceneLines(lines);
 	drawSceneStartLines(lines);
+	drawMeasureLines(lines);
 	drawGizmo(lines);
 	drawSnapHit(lines);
 	m_renderer.drawLines(lines, viewProj, true, 2.f);
@@ -1134,6 +1138,7 @@ void Viewport::drawOverlay() {
 	}
 
 	drawSceneLabels(p);
+	drawMeasureLabels(p);
 
 	const bool changed = p.items != m_overlayItems || m_overlayImage.size() != size() * devicePixelRatio();
 	if (changed) {
@@ -1607,6 +1612,9 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 	}
 	if (m_editor->tool() == Editor::Tool::Displace) {
 		updateBrushCursor(pos);
+	}
+	if (m_editor->tool() == Editor::Tool::Measure) {
+		measureMouseMove(pos, event->modifiers());
 	}
 	if (!m_camera.is2D()) {
 		showHoverInfo(pos);
@@ -2687,6 +2695,10 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
 		return;
 	}
 	if (toolKey(event)) {
+		return;
+	}
+	if (event->key() == Qt::Key_Escape && m_editor->tool() == Editor::Tool::Measure && m_editor->measureLine().a) {
+		m_editor->clearMeasure();
 		return;
 	}
 	if (event->key() == Qt::Key_Escape) {

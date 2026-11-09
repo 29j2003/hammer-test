@@ -23,6 +23,8 @@
 #include <sme/doors.h>
 #include <sme/edge_round.h>
 #include <sme/editor_report.h>
+#include <sme/gap_fill.h>
+#include <sme/prop_placement.h>
 #include <sme/road_builder.h>
 #include <sme/road_texture.h>
 #include <sme/texture_flow.h>
@@ -56,7 +58,7 @@ class Editor : public QObject {
 	Q_OBJECT
 
 public:
-	enum class Tool { Select, Move, Rotate, Scale, Block, Entity, Clip, Vertex, Polygon, Displace };
+	enum class Tool { Select, Move, Rotate, Scale, Block, Entity, Clip, Vertex, Polygon, Displace, Measure };
 	enum class SelectMode { Object, Face };
 	enum class RenderMode { Lit, Unlit, Wireframe, LightmapDensity };
 
@@ -304,6 +306,31 @@ public:
 	/// The state the replay needs (replay.txt): hidden objects, selection, last road / texture
 	/// flow settings with the texture size and selection they were planned for, snapping.
 	[[nodiscard]] std::vector<std::pair<std::string, std::string>> replaySettings() const;
+	/// Fill gap (gap_fill.h): the brush between the selected brushes, not yet applied (preview).
+	[[nodiscard]] GapFillPlan planSelectedGapFill(const GapFillOptions& options) const;
+	/// Adds the fill (one undo step, "Fill gap") and selects it; clears the preview.
+	bool applySelectedGapFill(const GapFillOptions& options);
+	/// Props shown where they would be placed (prop_placement.h), drawn as ghosts of `model`.
+	void setPropPreview(const QString& model, std::vector<PropPlacement> placements);
+	void clearPropPreview() { setPropPreview({}, {}); }
+	[[nodiscard]] const std::vector<PropPlacement>& propPreview() const { return m_propPreview; }
+	[[nodiscard]] const QString& propPreviewModel() const { return m_propPreviewModel; }
+	/// Places the props (one undo step, "Place props") with the class's FGD defaults and selects
+	/// them; clears the preview. Returns how many.
+	int placeProps(const QString& classname, const QString& model, const std::vector<PropPlacement>& placements);
+	/// The path along the selected edges (vertex tool or two selected faces), for props along a kerb.
+	[[nodiscard]] std::vector<Vec3> selectedEdgePath() const;
+	/// Measure tool: the two points (the second follows the mouse until clicked).
+	struct MeasureLine {
+		std::optional<Vec3> a, b;
+		std::optional<Vec3> hover;   ///< Where the mouse points while the second point is not set
+		[[nodiscard]] std::optional<Vec3> end() const { return b ? b : hover; }
+	};
+	[[nodiscard]] const MeasureLine& measureLine() const { return m_measure; }
+	/// A click with the measure tool: first point, second point, then a new line.
+	void measureClick(const Vec3& point);
+	void setMeasureHover(std::optional<Vec3> point);
+	void clearMeasure();
 	/// Brushes shown as they would become (a live preview); `replaced` are hidden meanwhile.
 	void setBrushPreview(std::vector<Solid> solids, std::vector<SolidRef> replaced);
 	void clearBrushPreview() { setBrushPreview({}, {}); }
@@ -446,6 +473,10 @@ signals:
 	void scenePointRequestChanged();
 	/// Enter / Backspace in a view while a point is requested (the road builder finishes / takes back a point).
 	void scenePointKey(int key);
+	/// The props preview changed (setPropPreview).
+	void propPreviewChanged();
+	/// The measure tool's line changed.
+	void measureChanged();
 
 private:
 	/// lookValue() with the map's own values already read (mapLookValues).
@@ -488,6 +519,9 @@ private:
 	std::uint32_t m_hiddenKinds = 0;
 	mutable Selection m_hiddenAll;        ///< m_hidden plus the filtered kinds, made when needed
 	mutable bool m_hiddenDirty = true;
+	std::vector<PropPlacement> m_propPreview;   ///< Props shown before they are placed
+	QString m_propPreviewModel;
+	MeasureLine m_measure;
 	std::vector<Solid> m_brushPreview;        ///< Live preview of an edit (see setBrushPreview)
 	std::vector<SolidRef> m_previewReplaced;  ///< Brushes the preview stands in for (hidden meanwhile)
 	Tool m_tool = Tool::Select;

@@ -34,6 +34,11 @@
 #include "properties_panel.h"
 #include "choreography_panel.h"
 #include "road_builder_dialog.h"
+#include "gap_fill_dialog.h"
+#include "prop_placement_dialog.h"
+#include "command_palette.h"
+
+#include <sme/command_search.h>
 #include "road_dialog.h"
 #include "texture_flow_dialog.h"
 #include "round_edge_dialog.h"
@@ -1075,6 +1080,9 @@ void MainWindow::createActions() {
 	editMenu->addAction(action(tr("Delete"), QKeySequence::Delete, [this] { m_editor->deleteSelection(); }));
 	editMenu->addAction(action(tr("Duplicate"), QKeySequence("Ctrl+D"), [this] { m_editor->duplicateSelection(); }));
 	editMenu->addAction(action(tr("Select all"), QKeySequence::SelectAll, [this] { m_editor->selectAll(); }));
+	auto* search = action(tr("Command search ..."), QKeySequence("Ctrl+K"), [this] { commandSearch(); });
+	search->setToolTip(tr("Find any menu entry, tool, page, material, model or entity by typing a few letters"));
+	editMenu->addAction(search);
 	editMenu->addAction(action(tr("Select nothing"), QKeySequence("Ctrl+Shift+D"), [this] { m_editor->clearSelection(); }));
 	editMenu->addAction(action(tr("Select similar"), QKeySequence("Ctrl+Alt+O"), [this] { m_editor->selectSimilar(); }));
 	editMenu->addAction(action(tr("Go to ID ..."), QKeySequence("Ctrl+Shift+G"), [this] {
@@ -1112,9 +1120,13 @@ void MainWindow::createActions() {
 	auto* mergeAction = action(tr("Merge into one brush"), QKeySequence("Ctrl+Shift+M"), [this] { m_editor->mergeSelection(); });
 	auto* round = action(tr("Round or bevel edge ..."), QKeySequence("Ctrl+Shift+R"), [this] { roundEdgeDialog(); });
 	round->setToolTip(tr("Select the two faces next to an edge (Faces mode, Ctrl+click), then round or bevel the edge"));
+	auto* fillGap = action(tr("Fill gap ..."), QKeySequence(), [this] { gapFillDialog(); });
+	fillGap->setObjectName("brushesFillGap");
+	fillGap->setToolTip(tr("Select the brushes around a gap: the empty space between them becomes a brush (a wedge at an angled joint, a slope between two heights)"));
 	brushes->addAction(hollow);
 	brushes->addAction(carve);
 	brushes->addAction(mergeAction);
+	brushes->addAction(fillGap);
 	brushes->addAction(round);
 	auto* build = action(tr("Build road ..."), QKeySequence(), [this] { roadBuilderDialog(); });
 	build->setObjectName("brushesBuildRoad");
@@ -1273,6 +1285,7 @@ void MainWindow::createActions() {
 	toolAction("tool:vertex", tr("Vertex"), QKeySequence("Shift+V"), Editor::Tool::Vertex);
 	toolAction("tool:polygon", tr("Polygon"), QKeySequence("Shift+P"), Editor::Tool::Polygon);
 	toolAction("tool:displace", tr("Displacement"), QKeySequence("Shift+D"), Editor::Tool::Displace);
+	toolAction("tool:measure", tr("Measure"), QKeySequence("M"), Editor::Tool::Measure);
 	m_modeGroup = new QActionGroup(this);
 	const auto modeAction = [&](const QString& iconName, const QString& name, const QKeySequence& key, Editor::SelectMode mode) {
 		auto* a = new QAction(icon(iconName), name, this);
@@ -1604,6 +1617,10 @@ void MainWindow::createActions() {
 		raiseDock("Object Properties");
 	}));
 	map->addAction(objectSnapAction);
+	auto* props = action(tr("Place props ..."), QKeySequence(), [this] { propPlacementDialog(); });
+	props->setObjectName("mapPlaceProps");
+	props->setToolTip(tr("Many props at once: along a path (fences, kerb stones, lamps) or scattered over faces (trees, rocks)"));
+	map->addAction(props);
 	map->addSeparator();
 	map->addAction(check);
 	map->addAction(run);
@@ -2221,6 +2238,17 @@ QMenu* MainWindow::buildContextMenu() {
 			menu.addSeparator();
 			menu.addMenu(m_doorMenu);
 		}
+		if (selection.solids.size() >= 2 && selection.entities.empty()) {
+			menu.addAction(tr("Fill gap ..."), this, [this] { gapFillDialog(); })->setObjectName("contextFillGap");
+		}
+		const bool oneProp = selection.entities.size() == 1 && selection.solids.empty() &&
+		                     [&] {
+			                     const Entity* e = m_editor->doc().findEntity(selection.entities.front());
+			                     return e && !e->get("model").empty() && e->get("model").front() != '*';
+		                     }();
+		if (!selection.faces.empty() || oneProp) {
+			menu.addAction(tr("Place props ..."), this, [this] { propPlacementDialog(); })->setObjectName("contextPlaceProps");
+		}
 		// Brushes or faces: the road tool lays a road material along them.
 		if (!selection.solids.empty() || !selection.faces.empty()) {
 			if (!selection.solids.empty()) menu.addAction(tr("Build road ..."), this, [this] { roadBuilderDialog(); })->setObjectName("contextBuildRoad");
@@ -2531,6 +2559,96 @@ void MainWindow::roadBuilderDialog() {
 	m_roadBuilderDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_roadBuilderDialog->show();
 	if (m_active) m_roadBuilderDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::gapFillDialog() {
+	if (m_gapFillDialog) {
+		m_gapFillDialog->raise();
+		m_gapFillDialog->activateWindow();
+		return;
+	}
+	m_gapFillDialog = new GapFillDialog(m_editor, this);
+	m_gapFillDialog->setAttribute(Qt::WA_DeleteOnClose);
+	m_gapFillDialog->show();
+	if (m_active) m_gapFillDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::propPlacementDialog() {
+	if (m_propsDialog) {
+		m_propsDialog->raise();
+		m_propsDialog->activateWindow();
+		return;
+	}
+	// The model picked in the asset browser's model tab.
+	const auto browserModel = [this]() -> QString {
+		if (!m_assets || !m_assets->modelView()) return {};
+		const QModelIndex index = m_assets->modelView()->currentIndex();
+		return index.isValid() ? index.data(Qt::UserRole).toString() : QString();
+	};
+	m_propsDialog = new PropPlacementDialog(m_editor, browserModel, this);
+	m_propsDialog->setAttribute(Qt::WA_DeleteOnClose);
+	m_propsDialog->show();
+	if (m_active) m_propsDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::commandSearch() {
+	std::vector<Command> fixed = CommandPalette::menuCommands(menuBar());
+	const auto addGroup = [&fixed](QActionGroup* group, const QString& where) {
+		if (!group) return;
+		for (QAction* a : group->actions()) {
+			QPointer<QAction> guarded(a);
+			fixed.push_back({a->text().remove('&'), where, a->shortcut().toString(QKeySequence::NativeText),
+			                 [guarded] {
+				                 if (guarded) guarded->trigger();
+			                 },
+			                 a->isEnabled()});
+		}
+	};
+	addGroup(m_toolGroup, tr("Tool"));
+	addGroup(m_modeGroup, tr("Mode"));
+	addGroup(m_pageGroup, tr("Page"));
+	// Assets and entity classes from three letters on (there are thousands).
+	const auto more = [this](const QString& query) {
+		std::vector<Command> out;
+		const std::string q = query.toStdString();
+		const auto best = [&q](const std::vector<std::string>& names, std::size_t limit) { return rankCommands(q, names, {}, limit); };
+		if (m_assets) {
+			const auto materials = m_assets->materialNames();
+			for (const std::size_t i : best(materials, 25)) {
+				const QString name = QString::fromStdString(materials[i]);
+				out.push_back({name, tr("Material"), {}, [this, name] {
+					               m_editor->setCurrentMaterial(name);
+					               m_assets->selectMaterial(name);
+				               }});
+			}
+			std::vector<std::string> models;
+			for (const auto& m : m_assets->modelNames()) models.push_back(m.toStdString());
+			for (const std::size_t i : best(models, 25)) {
+				const QString name = QString::fromStdString(models[i]);
+				out.push_back({name, tr("Model"), {}, [this, name] {
+					               raiseDock("Asset Browser");
+					               m_assets->selectModel(name);
+				               }});
+			}
+		}
+		if (const auto* catalog = m_editor->entities()) {
+			std::vector<std::string> classes;
+			for (const auto* c : catalog->placeable()) classes.push_back(c->name);
+			for (const std::size_t i : best(classes, 25)) {
+				const QString name = QString::fromStdString(classes[i]);
+				out.push_back({name, tr("Entity"), {}, [this, name] {
+					               m_editor->setCurrentEntityClass(name);
+					               m_editor->setTool(Editor::Tool::Entity);
+				               }});
+			}
+		}
+		return out;
+	};
+	auto* palette = new CommandPalette(std::move(fixed), more, this);
+	// At the top of the window, in the middle (like Source 2's and most editors' command search).
+	const QPoint top = mapToGlobal(QPoint((width() - palette->width()) / 2, 60));
+	palette->move(top);
+	palette->show();
 }
 
 void MainWindow::textureFlowDialog(const QString& material) {
