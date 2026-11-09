@@ -552,8 +552,11 @@ RoadPath chainPath(const std::vector<FloorPiece>& pieces, const std::vector<std:
 			const Vec3 da = travel[*last], db = travel[i];
 			if (std::abs(cross2(da, db)) < 0.02) {
 				if (std::abs(cross2(da, flat(b.centre - a.centre))) > 1) {
-					add(a.centre + da * half(*last), a);   // a jog sideways: both ends
-					add(b.centre - db * half(i), b);
+					// A jog sideways: from a little before the first piece's end to a little after
+					// the second's start, so the S between them is not tighter than it has to be.
+					const double pullA = std::min(a.across / 2, half(*last) / 2), pullB = std::min(b.across / 2, half(i) / 2);
+					add(a.centre + da * (half(*last) - pullA), a);
+					add(b.centre - db * (half(i) - pullB), b);
 				}
 			} else if (const auto corner = crossing(a.centre, da, b.centre, db)) {
 				// The corner's height: the piece between them if there is one, else the first.
@@ -894,7 +897,7 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 						const bool insideOfCurve = dot(leftAxis * sideSign, flat(span.centre - mid)) > 0;
 						if (insideOfCurve) {
 							const double room = span.radius - hw;
-							if (room < 1) continue;
+							if (room < std::min(o.kerbWidth, 4.0)) continue;   // no room on a tight curve's inside
 							outer = hw + std::min(o.kerbWidth, room);
 						}
 					}
@@ -1112,6 +1115,30 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 		}
 	}
 	if (unfit > 0) plan.notes.push_back(std::to_string(unfit) + " brush(es) beside the road were not carved (it would leave a sliver): check them");
+	// The ground beside the road: the top material most floors near the road's height have.
+	std::string groundMaterial;
+	{
+		std::map<std::string, int> count;
+		double roadTop = 0;
+		int tops = 0;
+		for (const auto& piece : roads) {
+			roadTop += piece.topZ;
+			++tops;
+		}
+		if (tops > 0) roadTop /= tops;
+		for (const NearbySolid* n : others) {
+			const Side* top = topSide(*n->solid);
+			if (top && !isToolMaterial(top->material) && std::abs(n->bounds.max.z - roadTop) < 32) ++count[top->material];
+		}
+		int most = 0;
+		for (const auto& [material, n] : count) {
+			if (n > most) {
+				most = n;
+				groundMaterial = material;
+			}
+		}
+		if (groundMaterial.empty() && o.kerbs) groundMaterial = kerbMaterial;
+	}
 	// The selected floor the road is built from: what is left of it stays (fill).
 	for (const auto& ref : replace) {
 		const Solid* solid = doc.findSolid(ref);
@@ -1120,13 +1147,13 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 		carveByColumns(*solid, pieces);
 		tidyCarved(ids, *solid, pieces, mainMaterial(*solid));
 		std::erase_if(pieces, [](const Solid& s) { return !brushProblem(s).empty(); });
-		if (!o.fillMaterial.empty()) {
-			for (auto& piece : pieces) {
-				for (auto& side : piece.sides) {
-					if (side.plane().normal.z > 0.7) {
-						side.material = o.fillMaterial;
-						alignToWorld(side);
-					}
+		// What is left beside a curve was road: it gets the fill material, else the ground's.
+		const std::string fill = !o.fillMaterial.empty() ? o.fillMaterial : groundMaterial;
+		for (auto& piece : pieces) {
+			for (auto& side : piece.sides) {
+				if (side.plane().normal.z > 0.7 && (!o.fillMaterial.empty() || sameMaterial(side.material, plan.material)) && !fill.empty()) {
+					side.material = fill;
+					alignToWorld(side);
 				}
 			}
 		}

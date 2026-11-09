@@ -139,8 +139,11 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 	m_material = new QLineEdit(this);
 	m_material->setObjectName("roadBuilderMaterial");
 	QString start = material;
-	if (start.isEmpty() && m_editor->currentMaterial().compare(UNTOUCHED_MATERIAL, Qt::CaseInsensitive) != 0) start = m_editor->currentMaterial();
-	if (start.isEmpty()) start = settings.value("roadBuilder/material").toString();
+	// Along selected blocks their material is used (filled in below); else the picked one or the last.
+	if (start.isEmpty() && m_editor->selectedRoadPaths().empty()) {
+		if (m_editor->currentMaterial().compare(UNTOUCHED_MATERIAL, Qt::CaseInsensitive) != 0) start = m_editor->currentMaterial();
+		if (start.isEmpty()) start = settings.value("roadBuilder/material").toString();
+	}
 	m_material->setText(start);
 	form->addRow(tr("Road material"), materialRow(m_material, tr("The material picked in the browser")));
 
@@ -300,36 +303,20 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 			});
 		}
 	});
-	connect(m_drawMode, &QRadioButton::toggled, this, [this](bool draw) {
-		m_clickPoints->setEnabled(draw);
-		m_undoPoint->setEnabled(draw);
-		m_clearPoints->setEnabled(draw);
-		m_fill->setEnabled(!draw);
-		if (!draw) {
-			stopDrawing();
-			// The selected blocks tell the road's width, thickness and material.
-			RoadBuildOptions suggested;
-			suggested.material = m_material->text().trimmed().toStdString();
-			if (!m_editor->selectedRoadPaths(&suggested).empty()) {
-				m_width->setValue(suggested.width);
-				m_thickness->setValue(suggested.thickness);
-				if (m_material->text().trimmed().isEmpty()) m_material->setText(qs(suggested.material));
-			}
-		} else if (m_points.size() < 2) {
-			m_clickPoints->setChecked(true);
-		}
-		m_soon.start();
-	});
+	connect(m_drawMode, &QRadioButton::toggled, this, &RoadBuilderDialog::modeChanged);
 	connect(editor, &Editor::selectionChanged, this, later);
 	connect(editor, &Editor::documentChanged, this, later);
 
 	// Floor brushes selected: build along them; else start clicking.
-	const bool fromSelection = !m_editor->selectedRoadPaths().empty();
-	if (fromSelection) {
-		m_selectionMode->setChecked(true);
-	} else {
-		m_drawMode->setChecked(true);
+	{
+		QSignalBlocker block(m_drawMode);
+		if (!m_editor->selectedRoadPaths().empty()) {
+			m_selectionMode->setChecked(true);
+		} else {
+			m_drawMode->setChecked(true);
+		}
 	}
+	modeChanged();
 	refresh();
 }
 
@@ -365,6 +352,28 @@ RoadBuildOptions RoadBuilderDialog::options() const {
 
 bool RoadBuilderDialog::fromSelection() const {
 	return m_selectionMode->isChecked();
+}
+
+void RoadBuilderDialog::modeChanged() {
+	const bool draw = m_drawMode->isChecked();
+	m_clickPoints->setEnabled(draw);
+	m_undoPoint->setEnabled(draw);
+	m_clearPoints->setEnabled(draw);
+	m_fill->setEnabled(!draw);
+	if (!draw) {
+		stopDrawing();
+		// The selected blocks tell the road's width, thickness and material.
+		RoadBuildOptions suggested;
+		suggested.material = m_material->text().trimmed().toStdString();
+		if (!m_editor->selectedRoadPaths(&suggested).empty()) {
+			m_width->setValue(suggested.width);
+			m_thickness->setValue(suggested.thickness);
+			if (m_material->text().trimmed().isEmpty()) m_material->setText(qs(suggested.material));
+		}
+	} else if (m_points.size() < 2) {
+		m_clickPoints->setChecked(true);
+	}
+	m_soon.start();
 }
 
 void RoadBuilderDialog::addPoint(const Vec3& point) {

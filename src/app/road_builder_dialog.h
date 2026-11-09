@@ -55,6 +55,9 @@ private:
 	/// Asks the views for the next point (while drawing).
 	void requestPoint();
 	void stopDrawing();
+	/// Draw / along the selection switched: the point buttons follow, the selection's blocks give
+	/// the width, thickness and material.
+	void modeChanged();
 	void undoPoint();
 
 	Editor* m_editor;

@@ -295,8 +295,9 @@ one step, with the texture already running along the road and round its curves.
   Hammer), select them, right-click and pick **Build road ...**. The road follows them: long blocks
   give the road's direction, a square block between two of them is a corner, a block joining
   another one's side is a junction. Width, thickness and material are taken from the blocks. The
-  blocks are replaced; what a curve leaves of them stays (with the **Fill material** on top, if you
-  set one).
+  blocks are replaced; what a curve leaves of them stays, with the ground's material on top (the
+  floor beside the road) or the **Fill material** if you set one. Where blocks of different widths
+  meet off-centre, the road swings over in a gentle S.
 
 The settings:
 
