@@ -301,9 +301,11 @@ public:
 	[[nodiscard]] RoadPlan planSelectedRoad(const RoadOptions& options) const;
 	/// Applies the road (one undo step, "Road"); clears the preview.
 	void applySelectedRoad(const RoadOptions& options);
-	/// Road builder (road_builder.h): the road along `paths`, or (fromSelection) along the selected
-	/// floor brushes, which it replaces; not yet applied (live preview, scratch ids).
-	[[nodiscard]] RoadBuildPlan planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) const;
+	/// Road builder (road_builder.h): the road along `paths`, or (fromSelection) through the street
+	/// the selected floor brushes make (middle, parking lanes beside it), which it replaces; not
+	/// yet applied (live preview, scratch ids). `corridor` gets the street. Noted for the report.
+	[[nodiscard]] RoadBuildPlan planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection,
+	                                            RoadCorridor* corridor = nullptr) const;
 	/// Builds it (one undo step, "Build road") and selects the new road; clears the preview.
 	void applyRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection);
 	/// The paths through the selected floor brushes; `suggested` gets their width, thickness and material.
@@ -526,7 +528,7 @@ private:
 	mutable unsigned m_journalRevision = 0;
 	std::deque<std::string> m_editJournal;
 	mutable std::deque<std::string> m_planJournal;
-	mutable std::vector<std::pair<std::string, std::string>> m_roadReplay, m_flowReplay;
+	mutable std::vector<std::pair<std::string, std::string>> m_roadReplay, m_flowReplay, m_buildReplay;
 	void noteEdit(const std::string& text, bool merged = false);
 	void notePlan(std::string text) const;
 	QString m_filePath;

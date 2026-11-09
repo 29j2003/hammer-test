@@ -5,8 +5,8 @@
 // with brushes 256 units wide for two lanes, 1024 for four; turns from arch pieces with the
 // texture aligned to each piece; a plain piece where roads meet; displacements for a raised
 // middle), but in one step and with the texture already continuous:
-// - Path: points along the road's centre line (clicked in the views, or taken from selected floor
-//   brushes). Every corner becomes a curve: arch pieces round a circle whose inner edge has the
+// - Path: points along the road's centre line, clicked in the views or found in the street the
+//   selected floor brushes make (roadCorridorFromSolids, below). Every corner becomes a curve: arch pieces round a circle whose inner edge has the
 //   chosen radius, each piece's texture runs along it with ONE scale for the whole road, the
 //   texture's middle on the centre line and the shift carried on, so the lane lines run through
 //   the curve without jumps. Heights follow the points (ramps, sloped curves).
@@ -43,6 +43,10 @@ namespace sme {
 /// A road's centre line: points in order (their height is the road's top there).
 struct RoadPath {
 	std::vector<Vec3> points;
+	/// Per point (only corners count): the inner radius of the curve there; empty or below 0:
+	/// RoadBuildOptions::innerRadius. Set by the street finder so each curve keeps clear of the
+	/// kerbs (a rounded sidewalk corner gets a curve round the same middle).
+	std::vector<double> innerRadius;
 };
 
 /// Settings of the road builder.
@@ -63,7 +67,9 @@ struct RoadBuildOptions {
 	double roughness = 0;            ///< Displacement: unevenness in units
 	bool fit = true;                 ///< Carve the brushes the road reaches into
 	double clearance = 128;          ///< Fit: carved this high above the road
-	std::string fillMaterial;        ///< From selection: top of the old floor left beside a curve; empty: as it was
+	std::string fillMaterial;        ///< From selection: top of the old floor left beside the road (parking); empty: the ground's
+	double parking = 96;             ///< From selection: a lane left on each side of the road (cars park there)
+	bool wholeWidth = false;         ///< From selection: the road takes the street's whole width (no parking lanes)
 	bool kerbs = false;
 	double kerbWidth = 16;
 	double kerbHeight = 8;
@@ -99,12 +105,46 @@ struct RoadBuildPlan {
 	[[nodiscard]] std::vector<SolidRef> replacedRefs() const;
 };
 
-/// Road paths from selected floor brushes: long pieces give the centre line, square pieces
-/// between them are corners, a piece with three or more neighbours a junction (the longest
-/// road is built first, the others join it). `suggested` gets the width, thickness and material
-/// the pieces have (others unchanged). Empty if the brushes have no floor to go on.
+/// The street that selected floor brushes make, seen from above, and the road through it.
+/// Any number and size of blocks: their tops (at one height; the height most of the area has)
+/// are joined into one area, minus what stands on it (a sidewalk, a wall). The road runs along
+/// the middle of that area (its medial axis: as far from both kerbs as it gets), straight parts
+/// centred exactly between the kerbs, every bend a curve that keeps `parking` clear of the kerbs
+/// (round a rounded sidewalk corner: the same middle), side streets as branches that join the
+/// main road. The road is the street's width where it is narrowest minus a parking lane on each
+/// side, so the lanes are at least that wide everywhere.
+struct RoadCorridor {
+	std::vector<RoadPath> paths;     ///< Main road first, then branches (they start on it)
+	std::vector<SolidRef> floor;     ///< Selected brushes the street is made of (the road replaces them)
+	std::vector<SolidRef> ignored;   ///< Selected brushes left alone (another height, no top)
+	double width = 0;                ///< Street, kerb to kerb, where it is narrowest (the road is sized from it)
+	double roadWidth = 0;            ///< Road (the street minus the parking lanes)
+	double parking = 0;              ///< Each side, as used
+	double thickness = 0;            ///< The floor's (bottom to top)
+	double top = 0;                  ///< The floor's top
+	double area = 0;                 ///< The street's area (square units)
+	double cell = 0;                 ///< Raster used to find the middle
+	std::string material;            ///< The top material most of the floor has
+	std::vector<std::string> notes;
+	[[nodiscard]] bool ok() const { return !paths.empty(); }
+};
+[[nodiscard]] RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<SolidRef>& solids, const RoadBuildOptions& options);
+/// The street as text (road.log): floor, widths, centre lines with their curve radii, notes.
+[[nodiscard]] std::string describeRoadCorridor(const RoadCorridor& corridor);
+
+/// Road paths from selected floor brushes (roadCorridorFromSolids). `suggested` gets the road
+/// width, thickness and material the street gives (others unchanged). Empty if the brushes have
+/// no floor to go on.
 [[nodiscard]] std::vector<RoadPath> roadPathsFromSolids(const MapDocument& doc, const std::vector<SolidRef>& solids, RoadBuildOptions* suggested = nullptr,
                                                         std::vector<std::string>* notes = nullptr);
+
+/// The whole plan for selected floor brushes: the street (roadCorridorFromSolids) and the road
+/// through it, the floor carved so that road and what is left beside it fill the street exactly.
+/// `options.width` is ignored (the street gives it). `corridor` (optional) gets the street.
+[[nodiscard]] RoadBuildPlan planRoadFromSelection(const MapDocument& doc, MapDocument& ids, const std::vector<SolidRef>& solids, const RoadBuildOptions& options,
+                                                  const TextureSizeFn& textureSize, RoadCorridor* corridor = nullptr);
+/// A plan as text (road.log): counts, centre lines, pieces, notes.
+[[nodiscard]] std::string describeRoadBuild(const RoadBuildPlan& plan);
 
 /// Plans the road along `paths` (see the file comment). `replace`: brushes the road is built from
 /// (they are carved by the road; what is left stays as fill). Reads `doc` only; new ids come from

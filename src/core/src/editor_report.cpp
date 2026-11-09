@@ -364,6 +364,37 @@ void addRoadSettings(std::vector<std::pair<std::string, std::string>>& out, cons
 	out.emplace_back("road.texture", std::to_string(textureSize.first) + "x" + std::to_string(textureSize.second));
 }
 
+void addRoadBuildSettings(std::vector<std::pair<std::string, std::string>>& out, const RoadBuildOptions& o, bool fromSelection, const std::vector<Vec3>& points,
+                          std::pair<int, int> textureSize) {
+	out.emplace_back("build.mode", fromSelection ? "selection" : "path");
+	out.emplace_back("build.material", o.material);
+	out.emplace_back("build.width", number(o.width));
+	out.emplace_back("build.thickness", number(o.thickness));
+	out.emplace_back("build.radius", number(o.innerRadius));
+	out.emplace_back("build.segments", std::to_string(o.segments));
+	out.emplace_back("build.parking", number(o.parking));
+	out.emplace_back("build.wholeWidth", o.wholeWidth ? "1" : "0");
+	out.emplace_back("build.along", o.along == RoadAlong::Auto ? "auto" : o.along == RoadAlong::U ? "U" : "V");
+	out.emplace_back("build.flip", o.flip ? "1" : "0");
+	out.emplace_back("build.sideMaterial", o.sideMaterial);
+	out.emplace_back("build.junctionMaterial", o.junctionMaterial);
+	out.emplace_back("build.fillMaterial", o.fillMaterial);
+	out.emplace_back("build.displacement", o.displacement ? "1" : "0");
+	out.emplace_back("build.power", std::to_string(o.power));
+	out.emplace_back("build.crown", number(o.crown));
+	out.emplace_back("build.roughness", number(o.roughness));
+	out.emplace_back("build.fit", o.fit ? "1" : "0");
+	out.emplace_back("build.clearance", number(o.clearance));
+	out.emplace_back("build.kerbs", o.kerbs ? "1" : "0");
+	out.emplace_back("build.kerbWidth", number(o.kerbWidth));
+	out.emplace_back("build.kerbHeight", number(o.kerbHeight));
+	out.emplace_back("build.kerbMaterial", o.kerbMaterial);
+	std::string pts;
+	for (const auto& p : points) pts += (pts.empty() ? "" : ";") + number(p.x) + " " + number(p.y) + " " + number(p.z);
+	out.emplace_back("build.points", pts);
+	out.emplace_back("build.texture", std::to_string(textureSize.first) + "x" + std::to_string(textureSize.second));
+}
+
 void addFlowSettings(std::vector<std::pair<std::string, std::string>>& out, const FlowOptions& options, std::pair<int, int> textureSize) {
 	out.emplace_back("flow.mode", flowModeName(options.mode));
 	out.emplace_back("flow.preset", flowPresetName(options.preset));
@@ -404,6 +435,51 @@ RoadOptions roadSettings(const std::map<std::string, std::string>& settings, std
 	return options;
 }
 
+RoadBuildOptions roadBuildSettings(const std::map<std::string, std::string>& settings, bool* fromSelection, std::vector<Vec3>* points, std::pair<int, int>* textureSize) {
+	RoadBuildOptions o;
+	const auto num = [&](const char* key, double fallback) {
+		const std::string v = setting(settings, key);
+		return v.empty() ? fallback : std::atof(v.c_str());
+	};
+	const auto flag = [&](const char* key, bool fallback) {
+		const std::string v = setting(settings, key);
+		return v.empty() ? fallback : v == "1";
+	};
+	o.material = setting(settings, "build.material");
+	o.width = num("build.width", o.width);
+	o.thickness = num("build.thickness", o.thickness);
+	o.innerRadius = num("build.radius", o.innerRadius);
+	o.segments = int(num("build.segments", o.segments));
+	o.parking = num("build.parking", o.parking);
+	o.wholeWidth = flag("build.wholeWidth", o.wholeWidth);
+	const std::string along = setting(settings, "build.along");
+	o.along = along == "U" ? RoadAlong::U : along == "V" ? RoadAlong::V : RoadAlong::Auto;
+	o.flip = flag("build.flip", false);
+	o.sideMaterial = setting(settings, "build.sideMaterial");
+	o.junctionMaterial = setting(settings, "build.junctionMaterial");
+	o.fillMaterial = setting(settings, "build.fillMaterial");
+	o.displacement = flag("build.displacement", false);
+	o.power = int(num("build.power", o.power));
+	o.crown = num("build.crown", o.crown);
+	o.roughness = num("build.roughness", o.roughness);
+	o.fit = flag("build.fit", o.fit);
+	o.clearance = num("build.clearance", o.clearance);
+	o.kerbs = flag("build.kerbs", false);
+	o.kerbWidth = num("build.kerbWidth", o.kerbWidth);
+	o.kerbHeight = num("build.kerbHeight", o.kerbHeight);
+	o.kerbMaterial = setting(settings, "build.kerbMaterial");
+	if (fromSelection) *fromSelection = setting(settings, "build.mode") != "path";
+	if (points) {
+		points->clear();
+		for (const auto& part : splitTrimmed(setting(settings, "build.points"), ';')) {
+			Vec3 p;
+			if (std::sscanf(part.c_str(), "%lf %lf %lf", &p.x, &p.y, &p.z) == 3) points->push_back(p);
+		}
+	}
+	if (textureSize) *textureSize = parseSize(setting(settings, "build.texture"));
+	return o;
+}
+
 FlowOptions flowSettings(const std::map<std::string, std::string>& settings, std::pair<int, int>* textureSize) {
 	FlowOptions options;
 	const std::string mode = setting(settings, "flow.mode");
@@ -439,7 +515,7 @@ std::optional<std::string> replayEditorReport(const std::filesystem::path& zip, 
 	const auto settings = parseSettings(readZipEntry(zip, "replay.txt").value_or(""));
 	std::string out = "scene: " + std::to_string(doc.solidCount()) + " brush(es), " + std::to_string(doc.entities.size()) + " entit(ies)\n";
 	for (const auto& [key, value] : settings) {
-		if (key.rfind("road.", 0) == 0 || key.rfind("flow.", 0) == 0) continue;
+		if (key.rfind("road.", 0) == 0 || key.rfind("flow.", 0) == 0 || key.rfind("build.", 0) == 0) continue;
 		out += key + ": " + (value.size() > 200 ? value.substr(0, 200) + " ..." : value) + "\n";
 	}
 	Selection hidden;
@@ -475,6 +551,22 @@ std::optional<std::string> replayEditorReport(const std::filesystem::path& zip, 
 		const Selection selection = selectionFor("road.");
 		const auto plan = planRoad(doc, roadFaces(doc, selection), options, [size](const std::string&) { return size; });
 		out += "\nroad replayed with the recorded settings and selection:\n" + describeRoadPlan(plan, options);
+	}
+	if (settings.contains("build.mode")) {
+		std::pair<int, int> size{512, 512};
+		bool fromSelection = true;
+		std::vector<Vec3> points;
+		const RoadBuildOptions options = roadBuildSettings(settings, &fromSelection, &points, &size);
+		const auto sizeFn = [size](const std::string&) { return size; };
+		MapDocument ids = doc;
+		out += "\nroad builder replayed with the recorded settings and selection:\n";
+		if (fromSelection) {
+			RoadCorridor corridor;
+			const auto plan = planRoadFromSelection(doc, ids, selectionFor("build.").solids, options, sizeFn, &corridor);
+			out += describeRoadCorridor(corridor) + describeRoadBuild(plan);
+		} else {
+			out += describeRoadBuild(planRoadBuild(doc, ids, {RoadPath{points}}, options, sizeFn));
+		}
 	}
 	if (settings.contains("flow.mode")) {
 		std::pair<int, int> size{512, 512};

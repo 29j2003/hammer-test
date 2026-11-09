@@ -1417,14 +1417,28 @@ std::vector<RoadPath> Editor::selectedRoadPaths(RoadBuildOptions* suggested) con
 	return roadPathsFromSolids(m_doc, m_selection.solids, suggested);
 }
 
-RoadBuildPlan Editor::planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) const {
+RoadBuildPlan Editor::planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection, RoadCorridor* corridor) const {
 	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
 	const auto size = [files](const std::string& material) {
 		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
 	};
 	MapDocument scratch;   // ids for the preview only; building plans again with the map's own
-	if (fromSelection) return planRoadBuild(m_doc, scratch, selectedRoadPaths(), options, size, m_selection.solids);
-	return planRoadBuild(m_doc, scratch, paths, options, size);
+	RoadBuildPlan plan;
+	RoadCorridor street;
+	if (fromSelection) {
+		plan = planRoadFromSelection(m_doc, scratch, m_selection.solids, options, size, &street);
+	} else {
+		plan = planRoadBuild(m_doc, scratch, paths, options, size);
+	}
+	// For the editor report: the settings and selection (replayed by sme-probe) and the plan.
+	std::vector<Vec3> points;
+	if (!fromSelection && !paths.empty()) points = paths.front().points;
+	m_buildReplay.clear();
+	addRoadBuildSettings(m_buildReplay, options, fromSelection, points, size(options.material.empty() ? street.material : options.material));
+	m_buildReplay.emplace_back("build.solids", formatSolids(m_selection.solids));
+	notePlan((fromSelection ? describeRoadCorridor(street) : std::string()) + describeRoadBuild(plan));
+	if (corridor) *corridor = std::move(street);
+	return plan;
 }
 
 void Editor::applyRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) {
@@ -1433,20 +1447,13 @@ void Editor::applyRoadBuilder(const RoadBuildOptions& options, const std::vector
 	const auto size = [files](const std::string& material) {
 		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
 	};
-	const auto replace = fromSelection ? m_selection.solids : std::vector<SolidRef>{};
-	const auto plan = planRoadBuild(m_doc, m_doc, fromSelection ? selectedRoadPaths() : paths, options, size, replace);
+	RoadCorridor street;
+	const auto plan = fromSelection ? planRoadFromSelection(m_doc, m_doc, m_selection.solids, options, size, &street) : planRoadBuild(m_doc, m_doc, paths, options, size);
 	if (!plan.ok()) {
-		emit message(tr("No road: click at least two points (or select the road's floor brushes)"));
+		emit message(tr("No road: click at least two points (or select the street's floor brushes)"));
 		return;
 	}
-	std::string text = "road builder: " + std::to_string(plan.road.size()) + " road brushes, " + std::to_string(plan.kerbs.size()) + " kerbs, " +
-	                   std::to_string(plan.curves) + " curves, " + std::to_string(plan.junctions) + " junctions, " + std::to_string(plan.carved) + " carved";
-	for (const auto& line : plan.centreLines) {
-		text += "\nline:";
-		for (const auto& p : line) text += " (" + formatVec3(p) + ")";
-	}
-	for (const auto& note : plan.notes) text += "\nnote: " + note;
-	notePlan(text);
+	notePlan("applied:\n" + (fromSelection ? describeRoadCorridor(street) : std::string()) + describeRoadBuild(plan));
 	auto [change, refs] = edit::applyRoadBuild(m_doc, plan);
 	commit(std::move(change));
 	Selection selection;
@@ -2105,6 +2112,7 @@ std::vector<std::pair<std::string, std::string>> Editor::replaySettings() const 
 	out.emplace_back("objectSnap", m_objectSnap ? "1" : "0");
 	out.emplace_back("textureLock", m_textureLock ? "1" : "0");
 	out.insert(out.end(), m_roadReplay.begin(), m_roadReplay.end());
+	out.insert(out.end(), m_buildReplay.begin(), m_buildReplay.end());
 	out.insert(out.end(), m_flowReplay.begin(), m_flowReplay.end());
 	return out;
 }

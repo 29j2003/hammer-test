@@ -90,6 +90,7 @@
 #include <sme/asset_import.h>
 #include <sme/asset_refs.h>
 #include <sme/brush.h>
+#include <sme/editing.h>
 #include <sme/displacement.h>
 #include <sme/doors.h>
 #include <sme/map_helpers.h>
@@ -7932,6 +7933,230 @@ TEST_CASE("road builder: click points on the floor, Enter builds a curved road s
 	settle();
 	CHECK(editor.doc().world.solids.size() == 1);
 	CHECK(buildBrushGeometry(editor.doc().world.solids.front()).bounds.max.z == doctest::Approx(0));
+}
+
+namespace {
+
+/// Julius' street (editor report 01.11.2026) as a map: floor blocks (top at 8, textured with the
+/// road texture already, like his), sidewalks beside them (top at 16). `kind`: "street" (as he
+/// blocked it), "small" (the same floor in small blocks), "rounded" (the inside corner of the L
+/// rounded), "tee" (a T street).
+std::string streetMap(const std::string& kind) {
+	MapDocument doc;
+	const auto block = [&](Vec3 a, Vec3 b, const char* material) {
+		Bounds box;
+		box.add(a);
+		box.add(b);
+		doc.world.solids.push_back(makeBlock(doc, box, material));
+		return SolidRef{0, doc.world.solids.back().id};
+	};
+	if (kind == "tee") {
+		block({0, -240, -16}, {2560, 240, 8}, "ROAD/DEMO_ROAD");
+		block({784, 240, -16}, {1264, 1600, 8}, "ROAD/DEMO_ROAD");
+		block({0, 240, -16}, {784, 336, 16}, "CONCRETE/WALL01");
+		block({1264, 240, -16}, {2560, 336, 16}, "CONCRETE/WALL01");
+		block({0, -336, -16}, {2560, -240, 16}, "CONCRETE/WALL01");
+		block({688, 336, -16}, {784, 1600, 16}, "CONCRETE/WALL01");
+		block({1264, 336, -16}, {1360, 1600, 16}, "CONCRETE/WALL01");
+		return doc.serialize();
+	}
+	const std::vector<std::pair<Vec3, Vec3>> floor{{{-2160, -1168, -16}, {-1472, -688, 8}}, {{-1472, -1168, -16}, {-768, -688, 8}},
+	                                               {{-768, -1296, -16}, {-624, -688, 8}},   {{-624, -1296, -16}, {784, -880, 8}},
+	                                               {{256, -2352, -16}, {784, -1296, 8}},    {{256, -2880, -16}, {784, -2352, 8}}};
+	for (const auto& [a, b] : floor) {
+		if (kind != "small") {
+			block(a, b, "ROAD/DEMO_ROAD");
+			continue;
+		}
+		for (double x = a.x; x < b.x; x += 128) {
+			for (double y = a.y; y < b.y; y += 96) block({x, y, a.z}, {std::min(b.x, x + 128), std::min(b.y, y + 96), b.z}, "ROAD/DEMO_ROAD");
+		}
+	}
+	SolidRef inner;
+	for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{-2160, -688, -16}, {-624, -592, 16}},  {{-624, -880, -16}, {-528, -592, 16}},
+	                                                            {{-528, -880, -16}, {880, -784, 16}},   {{784, -2880, -16}, {880, -880, 16}},
+	                                                            {{-2160, -1264, -16}, {-768, -1168, 16}}, {{-768, -1392, -16}, {256, -1296, 16}},
+	                                                            {{160, -2880, -16}, {256, -1392, 16}}}) {
+		const SolidRef ref = block(a, b, "CONCRETE/WALL01");
+		if (a.x == -768 && a.y == -1392) inner = ref;
+	}
+	if (kind == "rounded") {
+		const auto facing = [&](Vec3 normal) {
+			for (const auto& side : doc.findSolid(inner)->sides) {
+				if (dot(side.plane().normal, normal) > 0.999) return FaceRef{inner, side.id};
+			}
+			return FaceRef{};
+		};
+		REQUIRE(edit::roundEdge(doc, facing({1, 0, 0}), facing({0, 1, 0}), 128, 0));
+	}
+	return doc.serialize();
+}
+
+} // namespace
+
+TEST_CASE("road builder through a street: select the floor, Build road ... - centred road, parking lanes, no holes; texture only; undo") {
+	// Julius (09.11.2026, screenshots): building from his street's floor blocks gave thin "pipes"
+	// across it; two corner blocks a bad curve; a hole beside a rounded sidewalk. He wants the road
+	// in the middle with parking on both sides, the floor cut like Carve, any block sizes.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	{
+		// A plain asphalt (no lines): offered for the parking lanes.
+		ImageRgba image;
+		image.width = image.height = 64;
+		image.pixels.resize(std::size_t(64) * 64 * 4);
+		for (int i = 0; i < 64 * 64; ++i) {
+			const int v = 70 + (i * 37 % 13);
+			image.pixels[std::size_t(i) * 4] = image.pixels[std::size_t(i) * 4 + 1] = std::byte(v);
+			image.pixels[std::size_t(i) * 4 + 2] = std::byte(v + 6);
+			image.pixels[std::size_t(i) * 4 + 3] = std::byte(255);
+		}
+		const auto vtf = encodeVtf(image, false, false, 64);
+		REQUIRE(vtf);
+		std::filesystem::create_directories(f.mod / "materials/concrete");
+		std::ofstream out(f.mod / "materials/concrete/demo_asphalt.vtf", std::ios::binary);
+		out.write(reinterpret_cast<const char*>(vtf->data()), std::streamsize(vtf->size()));
+		out.close();
+		test::writeText(f.mod / "materials/concrete/demo_asphalt.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"concrete/demo_asphalt\"\n}\n");
+	}
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1900, 1150);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	Viewport* view = window.view3D();
+	const auto shoot = [&](const QString& name, QVector3D position, float pitch) {
+		editor.setSelection({});
+		view->camera().position = position;
+		view->camera().yaw = 90;
+		view->camera().pitch = pitch;
+		view->update();
+		settle();
+		QTest::qWait(250);   // textures load in the background
+		settle();
+		view->grabFramebuffer().save(shotDir + "/" + name + ".png");
+	};
+	const auto selectFloor = [&] {
+		Selection selection;
+		for (const auto& s : editor.doc().world.solids) {
+			if (std::abs(buildBrushGeometry(s).bounds.max.z - 8) < 0.01) selection.solids.push_back({0, s.id});
+		}
+		editor.setSelection(selection);
+		return selection.solids.size();
+	};
+	const auto noHoles = [&](const std::string& before) {
+		// Every point of the old floor is in exactly one brush now.
+		const MapDocument old = MapDocument::parse(before);
+		int holes = 0, doubled = 0;
+		for (const auto& s : old.world.solids) {
+			const auto b = buildBrushGeometry(s).bounds;
+			if (std::abs(b.max.z - 8) > 0.01) continue;
+			for (double x = b.min.x + 3.3; x < b.max.x; x += 23.7) {
+				for (double y = b.min.y + 2.9; y < b.max.y; y += 23.7) {
+					const Vec3 p{x, y, 0};
+					int strict = 0, loose = 0;
+					for (const auto& a : editor.doc().world.solids) {
+						strict += solidContains(a, p, -0.05) ? 1 : 0;
+						loose += solidContains(a, p, 0.05) ? 1 : 0;
+					}
+					holes += loose == 0 ? 1 : 0;
+					doubled += strict > 1 ? 1 : 0;
+				}
+			}
+		}
+		CHECK(holes == 0);
+		CHECK(doubled == 0);
+	};
+	auto* action = window.findChild<QAction*>("brushesBuildRoad");
+	REQUIRE(action);
+	struct Case {
+		const char* kind;
+		QVector3D perspective, top;
+	};
+	const QVector3D streetView(-700, -3600, 1500), streetTop(-650, -1780, 3500);
+	for (const Case& c : {Case{"street", streetView, streetTop}, Case{"small", streetView, streetTop}, Case{"rounded", streetView, streetTop},
+	                      Case{"tee", QVector3D(1280, -1500, 1200), QVector3D(1280, 650, 2900)}}) {
+		CAPTURE(c.kind);
+		const QString path = QDir(home.path()).filePath(QString("%1.vmf").arg(c.kind));
+		{
+			std::ofstream out(path.toStdString());
+			out << streetMap(c.kind);
+		}
+		REQUIRE(window.openMap(path));
+		settle();
+		const std::string before = editor.doc().serialize();
+		shoot(QString("road2_%1_before").arg(c.kind), c.perspective, -40);
+		REQUIRE(selectFloor() > 0);
+		action->trigger();
+		settle();
+		auto* dialog = window.findChild<RoadBuilderDialog*>("roadBuilderDialog");
+		REQUIRE(dialog);
+		CHECK(dialog->fromSelection());
+		QTest::qWait(150);
+		settle();
+		INFO("note: " << dialog->note().toStdString());
+		auto* width = dialog->findChild<QDoubleSpinBox*>("roadBuilderWidth");
+		CHECK_FALSE(width->isEnabled());   // the street decides
+		if (std::string(c.kind) == "tee") {
+			CHECK(width->value() == doctest::Approx(288));
+			CHECK(dialog->note().contains("1 side street"));
+		} else {
+			CHECK(width->value() == doctest::Approx(224));
+			CHECK(dialog->note().contains("parking lanes at least 96"));
+		}
+		CHECK(dialog->findChild<QLineEdit*>("roadBuilderMaterial")->text() == "ROAD/DEMO_ROAD");   // the floor's
+		CHECK(dialog->findChild<QLineEdit*>("roadBuilderFillMaterial")->text() == "CONCRETE/DEMO_ASPHALT");   // plain, beside the road
+		if (std::string(c.kind) == "street") {
+			// Only lay the texture: the blocks would stay.
+			dialog->findChild<QRadioButton*>("roadBuilderTextureOnly")->setChecked(true);
+			QTest::qWait(150);
+			settle();
+			CHECK(dialog->note().contains("The blocks stay"));
+			CHECK(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->text() == "Lay texture");
+			dialog->findChild<QRadioButton*>("roadBuilderFromSelection")->setChecked(true);
+			QTest::qWait(150);
+			settle();
+			CHECK(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->text() == "Build");
+		}
+		CHECK(editor.doc().serialize() == before);   // only the preview so far
+		dialog->accept();
+		settle();
+		for (const auto& s : editor.doc().world.solids) CHECK(brushProblem(s).empty());
+		noHoles(before);
+		if (std::string(c.kind) != "tee") {
+			// The parking lane beside the first part: plain asphalt.
+			const Vec3 lane{-1800, -688 - 40, 0};
+			const auto it = std::find_if(editor.doc().world.solids.begin(), editor.doc().world.solids.end(), [&](const Solid& s) { return solidContains(s, lane, -0.05); });
+			REQUIRE(it != editor.doc().world.solids.end());
+			bool asphalt = false;
+			for (const auto& side : it->sides) asphalt = asphalt || (side.plane().normal.z > 0.7 && side.material == "CONCRETE/DEMO_ASPHALT");
+			CHECK(asphalt);
+		}
+		// The road.log of the editor report has the street and the plan.
+		CHECK(editor.planJournal().find("street:") != std::string::npos);
+		CHECK(editor.planJournal().find("parking") != std::string::npos);
+		shoot(QString("road2_%1_after").arg(c.kind), c.perspective, -40);
+		shoot(QString("road2_%1_top").arg(c.kind), c.top, -89);
+		// One undo step.
+		editor.undo();
+		settle();
+		std::vector<Solid> now = editor.doc().world.solids;
+		MapDocument sorted = editor.doc();
+		std::sort(sorted.world.solids.begin(), sorted.world.solids.end(), [](const Solid& a, const Solid& b) { return a.id < b.id; });
+		CHECK(keyValueDifferences(before, sorted.serialize()).empty());
+	}
 }
 
 TEST_CASE("picking: a copy pasted in place and stretched far stays clickable everywhere") {
