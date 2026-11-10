@@ -308,6 +308,40 @@ public:
 	                                            RoadCorridor* corridor = nullptr) const;
 	/// Builds it (one undo step, "Build road") and selects the new road; clears the preview.
 	void applyRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection);
+	/// Everything a road builder plan needs, taken from the editor now: the live preview plans it on
+	/// another thread (runRoadBuildJob) while the map stays usable. The map is shared, not copied
+	/// again, until it changes.
+	struct RoadBuildJob {
+		std::shared_ptr<const MapDocument> doc;   ///< The map as it was
+		std::pair<int, int> idCounters;           ///< Its id counters then: the plan gets the ids the map would hand out
+		unsigned serial = 0;                      ///< Which state of the map (see roadJobCurrent)
+		unsigned revision = 0;
+		std::vector<SolidRef> solids;             ///< The selected brushes
+		std::vector<RoadPath> paths;
+		RoadBuildOptions options;
+		bool fromSelection = false;
+		std::map<std::string, std::pair<int, int>> textureSizes;   ///< Read here (the game's files are not read on the other thread)
+	};
+	struct RoadBuildResult {
+		RoadBuildPlan plan;
+		RoadCorridor street;
+		std::string error;   ///< Planning failed (an exception): what it said
+		double milliseconds = 0;
+	};
+	[[nodiscard]] RoadBuildJob roadBuildJob(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) const;
+	/// Plans a job; reads nothing but the job (safe on another thread). Never throws.
+	[[nodiscard]] static RoadBuildResult runRoadBuildJob(const RoadBuildJob& job);
+	/// The job's settings and selection as one text (two jobs with the same text plan the same road).
+	[[nodiscard]] static std::string roadJobKey(const RoadBuildJob& job);
+	/// Whether the map is still as it was when the job was taken.
+	[[nodiscard]] bool roadJobCurrent(const RoadBuildJob& job) const;
+	/// For the editor report and the crash journal: a plan is started (settings and selection, so a
+	/// planning that never ends still shows), or done.
+	void noteRoadBuildStarted(const RoadBuildJob& job) const;
+	void noteRoadBuildDone(const RoadBuildJob& job, const RoadBuildResult& result) const;
+	/// Builds a finished job's plan (one undo step): as planned if the map is unchanged, else planned
+	/// again now. Selects the new road; clears the preview.
+	void applyRoadBuildJob(const RoadBuildJob& job, const RoadBuildResult& result);
 	/// The paths through the selected floor brushes; `suggested` gets their width, thickness and material.
 	[[nodiscard]] std::vector<RoadPath> selectedRoadPaths(RoadBuildOptions* suggested = nullptr) const;
 	/// Texture flow (see texture_flow.h) over the selected faces (or all faces of the selected
@@ -520,6 +554,9 @@ private:
 	/// When each brush was last changed (by solid key, see editStamp): on a surface two brushes
 	/// share, a click takes the one changed last.
 	std::unordered_map<long long, std::uint64_t> m_editStamps;
+	unsigned m_docSerial = 0;   ///< Counts documentChanged (a road plan made before is stale)
+	mutable std::shared_ptr<const MapDocument> m_docSnapshot;   ///< The map shared with plans on other threads
+	mutable unsigned m_docSnapshotSerial = ~0u;
 	std::uint64_t m_editCounter = 0;
 	void stampEdits(const Change& change);
 	// The report's journal (notePick ...); mutable: planning (const) notes its plan.

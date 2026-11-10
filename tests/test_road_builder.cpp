@@ -14,6 +14,12 @@
 #include <sme/road_builder.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <cmath>
 #include <numbers>
 
@@ -415,9 +421,13 @@ void checkCovered(const MapDocument& before, const std::vector<SolidRef>& floor,
 		const Solid* solid = before.findSolid(ref);
 		REQUIRE(solid);
 		const auto b = buildBrushGeometry(*solid).bounds;
+		const Side* t = top(*solid);
+		const Plane plane = t ? t->plane() : Plane{{0, 0, 1}, b.max.z};
 		for (double x = b.min.x + 1.3; x < b.max.x; x += 7.7) {
 			for (double y = b.min.y + 1.7; y < b.max.y; y += 7.7) {
-				const Vec3 p{x, y, b.max.z - 4};
+				// Just below the top (a ramp's top slopes).
+				const double z = std::abs(plane.normal.z) > 1e-6 ? (plane.dist - plane.normal.x * x - plane.normal.y * y) / plane.normal.z : b.max.z;
+				const Vec3 p{x, y, z - 4};
 				if (!solidContains(*solid, p, -0.05)) continue;
 				++samples;
 				int strict = 0, loose = 0;
@@ -903,4 +913,406 @@ TEST_CASE("road from selection: one parking lane round Julius' L street - no hol
 			for (const Solid* r : roadIn(after, "ROAD/ASPHALT")) CHECK(sharedVolume(*r, *after.findSolid(ref)) < 1);
 		}
 	}
+}
+
+// --- Big angled streets (Julius' report of 10.11.2026): speed, holes, raised sides, ramps ------
+
+namespace {
+
+/// A street along a polyline (centre points), mitred at the bends: floor 24 thick (top at the
+/// points' height), cut into tiles about `tile` long and two strips across, sidewalks `walk` wide
+/// and 8 higher on both sides. `halfWidth`: kerb to the middle.
+struct AngledStreet {
+	MapDocument doc;
+	std::vector<SolidRef> floor;
+	std::vector<SolidRef> sidewalks;
+	std::vector<Vec3> centre;
+};
+
+Vec3 mitred(const std::vector<Vec3>& p, std::size_t i, double d) {
+	const Vec3 a = i > 0 ? normalize(flat(p[i] - p[i - 1])) : normalize(flat(p[1] - p[0]));
+	const Vec3 b = i + 1 < p.size() ? normalize(flat(p[i + 1] - p[i])) : a;
+	const Vec3 la{-a.y, a.x, 0}, lb{-b.y, b.x, 0};
+	const double denom = 1 + dot(a, b);
+	return p[i] + (denom > 1e-3 ? (la + lb) * (d / denom) : la * d);
+}
+
+void addStrip(AngledStreet& s, const std::vector<Vec3>& p, double d0, double d1, double lift, double tile, const std::string& material, std::vector<SolidRef>& into) {
+	for (std::size_t i = 0; i + 1 < p.size(); ++i) {
+		const double len = length(flat(p[i + 1] - p[i]));
+		const int count = std::max(1, int(std::lround(len / tile)));
+		for (int k = 0; k < count; ++k) {
+			const double t0 = double(k) / count, t1 = double(k + 1) / count;
+			std::vector<Vec3> points;
+			for (const auto& [t, d] : std::vector<std::pair<double, double>>{{t0, d0}, {t1, d0}, {t1, d1}, {t0, d1}}) {
+				const Vec3 v = mitred(p, i, d) * (1 - t) + mitred(p, i + 1, d) * t;
+				points.push_back({v.x, v.y, v.z + lift});
+				points.push_back({v.x, v.y, v.z - 24});
+			}
+			auto solid = solidFromPoints(s.doc, points, material);
+			REQUIRE(solid);
+			s.doc.world.solids.push_back(std::move(*solid));
+			into.push_back({0, s.doc.world.solids.back().id});
+		}
+	}
+}
+
+AngledStreet angledStreet(std::vector<Vec3> centre, double halfWidth = 208, double tile = 512, double walk = 96) {
+	AngledStreet s;
+	s.centre = centre;
+	addStrip(s, centre, -halfWidth, 0, 0, tile, "CONCRETE/STREET", s.floor);
+	addStrip(s, centre, 0, halfWidth, 0, tile * 0.75, "CONCRETE/STREET", s.floor);
+	addStrip(s, centre, halfWidth, halfWidth + walk, 8, 1024, "CONCRETE/SIDEWALK", s.sidewalks);
+	addStrip(s, centre, -halfWidth - walk, -halfWidth, 8, 1024, "CONCRETE/SIDEWALK", s.sidewalks);
+	return s;
+}
+
+/// Julius' larger street with angled parts: straight, 30° left, 45° more, 45° back.
+std::vector<Vec3> angledCentre() {
+	std::vector<Vec3> p{{-3000, 0, 0}, {0, 0, 0}};
+	double angle = 0;
+	for (const auto& [turn, len] : std::vector<std::pair<double, double>>{{30, 2048}, {45, 1800}, {-45, 1600}}) {
+		angle += turn * std::numbers::pi / 180;
+		p.push_back(p.back() + Vec3{std::cos(angle) * len, std::sin(angle) * len, 0});
+	}
+	return p;
+}
+
+/// Julius' settings in the report (10.11.2026).
+RoadBuildOptions juliusSettings() {
+	RoadBuildOptions o;
+	o.material = "CONCRETE/BLENDROAD_BROKEN01";
+	o.parkingSides = RoadParkingSides::None;
+	o.segments = 10;
+	o.thickness = 24;
+	o.displacement = true;
+	o.power = 3;
+	o.crown = 4;
+	o.fit = true;
+	o.kerbs = false;
+	return o;
+}
+
+} // namespace
+
+TEST_CASE("road from selection: a big angled street (30°, 45°) - no holes, nothing doubled, every brush sound") {
+	for (const double tile : {512.0, 100000.0}) {
+		for (const auto sides : {RoadParkingSides::None, RoadParkingSides::Both, RoadParkingSides::Left}) {
+			for (const bool disp : {false, true}) {
+				CAPTURE(tile);
+				CAPTURE(int(sides));
+				CAPTURE(disp);
+				AngledStreet s = angledStreet(angledCentre(), 208, tile);
+				RoadBuildOptions o = juliusSettings();
+				o.parkingSides = sides;
+				o.displacement = disp;
+				RoadCorridor corridor;
+				const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+				INFO(describeRoadCorridor(corridor));
+				INFO(describeRoadBuild(plan));
+				REQUIRE(plan.ok());
+				CHECK(plan.skipped == 0);
+				CHECK(allSound(plan.resultSolids()));
+				const MapDocument after = applied(s.doc, plan);
+				checkCovered(s.doc, s.floor, after);
+			}
+		}
+	}
+}
+
+TEST_CASE("road from selection: big streets and squares plan quickly (the live preview never waits long)") {
+	// Julius' report of 10.11.2026: a selection that took 54 s (joining hundreds of cut pieces again
+	// pair by pair, from the start after every join). Generous bounds: well under a second each here.
+	const auto timed = [](const MapDocument& doc, const std::vector<SolidRef>& floor, const RoadBuildOptions& o) {
+		MapDocument scratch;
+		scratch.copyIdCounters(doc);
+		RoadCorridor corridor;
+		const auto t0 = std::chrono::steady_clock::now();
+		const auto plan = planRoadFromSelection(doc, scratch, floor, o, SQUARE, &corridor);
+		const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		CHECK(plan.ok());
+		return ms;
+	};
+	for (const double tile : {512.0, 100000.0}) {
+		AngledStreet s = angledStreet(angledCentre(), 208, tile);
+		const double ms = timed(s.doc, s.floor, juliusSettings());
+		MESSAGE("angled street, tiles " << tile << ": " << ms << " ms");
+		CHECK(ms < 2500);
+	}
+	{
+		// A square of floor blocks with pillars standing on it: many ways through, many cuts.
+		MapDocument doc;
+		std::vector<SolidRef> floor;
+		for (double x = -1500; x < 1500; x += 500) {
+			for (double y = -1000; y < 1000; y += 400) {
+				doc.world.solids.push_back(makeBlock(doc, box({x, y, -24}, {x + 500, y + 400, 0}), "CONCRETE/STREET"));
+				floor.push_back({0, doc.world.solids.back().id});
+			}
+		}
+		for (double x = -1200; x < 1200; x += 400) {
+			for (double y = -700; y < 700; y += 350) doc.world.solids.push_back(makeBlock(doc, box({x, y, 0}, {x + 32, y + 32, 128}), "CONCRETE/PILLAR"));
+		}
+		const double ms = timed(doc, floor, juliusSettings());
+		MESSAGE("square with pillars: " << ms << " ms");
+		CHECK(ms < 2500);
+	}
+	{
+		// One big slab the road winds through: every curve piece cuts it (hundreds of pieces to join).
+		MapDocument doc;
+		doc.world.solids.push_back(makeBlock(doc, box({-2048, -2048, -64}, {2048, 2048, 0}), "CONCRETE/STREET"));
+		RoadBuildOptions o = juliusSettings();
+		o.width = 256;
+		o.innerRadius = 64;
+		o.fit = true;
+		MapDocument scratch;
+		scratch.copyIdCounters(doc);
+		const auto t0 = std::chrono::steady_clock::now();
+		const auto plan = planRoadBuild(doc, scratch, {path({{-1800, -1800, 0}, {1800, -1800, 0}, {1800, -600, 0}, {-1800, -600, 0}, {-1800, 600, 0}, {1800, 600, 0}, {1800, 1800, 0}})}, o, SQUARE);
+		const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		MESSAGE("winding road through one slab: " << ms << " ms, " << plan.changed.size() << " changed");
+		CHECK(plan.ok());
+		CHECK(ms < 2500);
+	}
+}
+
+TEST_CASE("road builder: planning can be stopped (a newer preview is wanted)") {
+	AngledStreet s = angledStreet(angledCentre());
+	RoadBuildOptions o = juliusSettings();
+	int asked = 0;
+	o.cancelled = [&asked] { return ++asked > 1; };
+	MapDocument scratch;
+	const auto plan = planRoadFromSelection(s.doc, scratch, s.floor, o, SQUARE);
+	CHECK_FALSE(plan.ok());
+	CHECK(asked >= 2);
+	CHECK(std::find(plan.notes.begin(), plan.notes.end(), "stopped") != plan.notes.end());
+}
+
+TEST_CASE("road from selection: a road narrower than the street - the floor beside it rises to the sidewalk, no holes") {
+	for (const auto sides : {RoadParkingSides::None, RoadParkingSides::Both}) {
+		CAPTURE(int(sides));
+		Street street = julius();
+		RoadBuildOptions o;
+		o.material = "ROAD/ASPHALT";
+		o.parkingSides = sides;
+		o.parking = 48;
+		o.streetRoadWidth = 160;
+		o.kerbs = true;
+		o.kerbMaterial = "CONCRETE/KERB";
+		RoadCorridor corridor;
+		const auto plan = planRoadFromSelection(street.doc, street.doc, street.floor, o, SQUARE, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		INFO(describeRoadBuild(plan));
+		REQUIRE(plan.ok());
+		CHECK(corridor.roadWidth == doctest::Approx(160));
+		CHECK(corridor.raisedSides);
+		CHECK(plan.skipped == 0);
+		CHECK(allSound(plan.resultSolids()));
+		const MapDocument after = applied(street.doc, plan);
+		checkCovered(street.doc, street.floor, after);
+		CHECK(noOverlaps(after.world.solids));
+		const auto road = roadIn(after, "ROAD/ASPHALT");
+		const double flatHalf = 80 + (sides == RoadParkingSides::Both ? 48 : 0);
+		// Along the first part (centre y = -928): the road, the flat lanes, then raised floor up to the sidewalk (top 16).
+		for (const double x : {-2000.0, -1600.0}) {
+			CHECK(roadAt(road, x, -928, 0));
+			CHECK_FALSE(roadAt(road, x, -928 + 100, 0));
+			const auto solidAt = [&](double y, double z) {
+				return std::any_of(after.world.solids.begin(), after.world.solids.end(), [&](const Solid& s) { return solidContains(s, {x, y, z}, -0.05); });
+			};
+			CHECK_FALSE(solidAt(-928 + flatHalf - 8, 12));   // flat street: open above its top (8)
+			CHECK(solidAt(-928 + flatHalf + 20, 12));        // beyond it: raised to 16
+			CHECK_FALSE(solidAt(-928 + flatHalf + 20, 18));
+			CHECK(solidAt(-928 - flatHalf - 20, 12));
+		}
+		// The raised floor's face towards the road is the kerb.
+		bool kerbFace = false;
+		for (const auto& s : after.world.solids) {
+			for (const auto& side : s.sides) kerbFace = kerbFace || side.material == "CONCRETE/KERB";
+		}
+		CHECK(kerbFace);
+	}
+}
+
+TEST_CASE("road from selection: narrower road through a big angled street - raised sides, no holes") {
+	AngledStreet s = angledStreet(angledCentre(), 208, 512);
+	RoadBuildOptions o = juliusSettings();
+	o.streetRoadWidth = 224;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(corridor.raisedSides);
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(s.doc, plan);
+	checkCovered(s.doc, s.floor, after);
+	// Beside the first part (along x): raised to the sidewalk's top (8).
+	const auto solidAt = [&](double x, double y, double z) {
+		return std::any_of(after.world.solids.begin(), after.world.solids.end(), [&](const Solid& q) { return solidContains(q, {x, y, z}, -0.05); });
+	};
+	CHECK(solidAt(-1500, 180, 4));
+	CHECK(solidAt(-1500, -180, 4));
+	CHECK_FALSE(solidAt(-1500, 80, 4));
+}
+
+namespace {
+
+/// A street that ramps up: flat at 0 (x 0..1024), a ramp to 128 (x 1024..2048), flat at 128
+/// (x 2048..3072), 416 wide, cut into blocks; sidewalks 96 wide and 8 higher, sloping with it.
+/// `leg`: an L - after the top level, a part along y that slopes down again to 64.
+struct RampStreet {
+	MapDocument doc;
+	std::vector<SolidRef> floor, sidewalks;
+};
+
+RampStreet rampStreet(bool leg = false) {
+	RampStreet s;
+	const auto slab = [&](double x0, double x1, double y0, double y1, double z0, double z1, double lift, const char* material, std::vector<SolidRef>& into,
+	                      bool alongY = false) {
+		// Top rises from z0 to z1 along x (or along y), the brush 24 thick under it.
+		std::vector<Vec3> points;
+		for (const double x : {x0, x1}) {
+			for (const double y : {y0, y1}) {
+				const double f = alongY ? (y - y0) / (y1 - y0) : (x - x0) / (x1 - x0);
+				const double z = z0 + (z1 - z0) * f + lift;
+				points.push_back({x, y, z});
+				points.push_back({x, y, z - 24 - lift});
+			}
+		}
+		auto solid = solidFromPoints(s.doc, points, material);
+		REQUIRE(solid);
+		s.doc.world.solids.push_back(std::move(*solid));
+		into.push_back({0, s.doc.world.solids.back().id});
+	};
+	for (const auto& [x0, x1, z0, z1] : std::vector<std::array<double, 4>>{{0, 512, 0, 0}, {512, 1024, 0, 0}, {1024, 1536, 0, 64}, {1536, 2048, 64, 128},
+	                                                                    {2048, 2560, 128, 128}, {2560, 3072, 128, 128}}) {
+		slab(x0, x1, -208, 0, z0, z1, 0, "CONCRETE/STREET", s.floor);
+		slab(x0, x1, 0, 208, z0, z1, 0, "CONCRETE/STREET", s.floor);
+		slab(x0, x1, 208, 304, z0, z1, 8, "CONCRETE/SIDEWALK", s.sidewalks);
+		if (!leg || x1 < 3072) slab(x0, x1, -304, -208, z0, z1, 8, "CONCRETE/SIDEWALK", s.sidewalks);
+	}
+	if (leg) {
+		// From the top level's end (x 2656..3072 wide) along -y, sloping down to 64.
+		slab(2656, 3072, -1232, -208, 64, 128, 0, "CONCRETE/STREET", s.floor, true);
+		slab(2560, 2656, -1232, -304, 72, 136, 0, "CONCRETE/SIDEWALK", s.sidewalks, true);
+	}
+	return s;
+}
+
+} // namespace
+
+TEST_CASE("road from selection: a street that ramps up between two levels - the road follows the ground") {
+	for (const bool disp : {false, true}) {
+		CAPTURE(disp);
+		RampStreet s = rampStreet();
+		RoadBuildOptions o = juliusSettings();
+		o.displacement = disp;
+		o.parkingSides = RoadParkingSides::Both;
+		o.parking = 64;
+		RoadCorridor corridor;
+		const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		INFO(describeRoadBuild(plan));
+		REQUIRE(plan.ok());
+		CHECK(corridor.floor.size() == s.floor.size());   // the ramp joins both levels: one street
+		CHECK(corridor.ignored.empty());
+		CHECK(plan.skipped == 0);
+		CHECK(allSound(plan.resultSolids()));
+		const MapDocument after = applied(s.doc, plan);
+		checkCovered(s.doc, s.floor, after);
+		CHECK(noOverlaps(after.world.solids));
+		// The road's top on the ground: along the middle at several places (1 unit below / above).
+		const auto road = roadIn(after, o.material);
+		for (const auto& [x, z] : std::vector<std::pair<double, double>>{{300, 0}, {900, 0}, {1280, 32}, {1536, 64}, {1900, 109.5}, {2700, 128}}) {
+			CAPTURE(x);
+			CHECK(roadAt(road, x, 0, z - 1));
+			if (!disp) CHECK_FALSE(roadAt(road, x, 0, z + 1));
+		}
+	}
+}
+
+TEST_CASE("road from selection: an L street with a sloped leg - curve and slope, no holes") {
+	RampStreet s = rampStreet(true);
+	RoadBuildOptions o = juliusSettings();
+	o.displacement = false;
+	o.parkingSides = RoadParkingSides::None;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(corridor.ignored.empty());
+	CHECK(plan.curves >= 1);
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(s.doc, plan);
+	checkCovered(s.doc, s.floor, after);
+	CHECK(noOverlaps(after.world.solids));
+	const auto road = roadIn(after, o.material);
+	// Down the leg: the ground falls from 128 (y -208) to 64 (y -1232).
+	const double zLeg = 64 + 64 * (1232.0 - 1100) / 1024;   // 72.25 at y = -1100
+	CHECK(roadAt(road, 2864, -1100, zLeg - 1));
+	CHECK_FALSE(roadAt(road, 2864, -1100, zLeg + 1));
+}
+
+TEST_CASE("road from selection: kerbs at the edge of a ramp street follow the slope, flush with the sidewalk") {
+	RampStreet s = rampStreet();
+	RoadBuildOptions o = edgeKerbOptions();
+	o.parking = 64;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	checkEdgeKerbs(s.doc, s.floor, plan);
+	const MapDocument after = applied(s.doc, plan);
+	// On the flat start, half way up the ramp and on the top level: a kerb against the sidewalk,
+	// its top flush with the sidewalk's (8 above the ground).
+	for (const auto& [x, z] : std::vector<std::pair<double, double>>{{300, 0}, {1280, 32}, {1800, 97}, {2800, 128}}) {
+		CAPTURE(x);
+		CHECK(kerbAt(after, x, 208 - 8, z + 4));
+		CHECK_FALSE(kerbAt(after, x, 208 - 8, z + 9));
+	}
+}
+
+TEST_CASE("road from selection: kerbs at the edge round the bends of a big angled street - no holes") {
+	for (const double parking : {64.0, 96.0}) {
+		CAPTURE(parking);
+		AngledStreet s = angledStreet(angledCentre(), 208, 512);
+		RoadBuildOptions o = edgeKerbOptions();
+		o.parking = parking;
+		RoadCorridor corridor;
+		const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		INFO(describeRoadBuild(plan));
+		REQUIRE(plan.ok());
+		checkEdgeKerbs(s.doc, s.floor, plan);
+	}
+}
+
+TEST_CASE("road from selection: a cut a hair from a corner never drops a big piece of the floor") {
+	// The picture test of 10.11.2026: the floor with the road material on top, kerbs at the edge, a
+	// 256 x 512 texture: a parking lane piece of 16 549 square units came out with an edge of a
+	// hundredth of a unit (two cut planes almost alike) and was left out as a "sliver" - a hole.
+	AngledStreet s = angledStreet(angledCentre(), 208, 512);
+	for (auto& solid : s.doc.world.solids) {
+		for (auto& side : solid.sides) {
+			if (side.material == "CONCRETE/STREET") side.material = "ROAD/ASPHALT";
+		}
+	}
+	RoadBuildOptions o = edgeKerbOptions();
+	o.thickness = 24;
+	o.parking = 64;
+	o.fillMaterial.clear();
+	const TextureSizeFn tall = [](const std::string&) { return std::pair<int, int>{256, 512}; };
+	RoadCorridor corridor;
+	MapDocument ids;
+	ids.copyIdCounters(s.doc);
+	const auto plan = planRoadFromSelection(s.doc, ids, s.floor, o, tall, &corridor);
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(std::none_of(plan.notes.begin(), plan.notes.end(), [](const std::string& n) { return n.find("sliver") != std::string::npos; }));
+	CHECK(allSound(plan.resultSolids()));
+	checkCovered(s.doc, s.floor, applied(s.doc, plan));
 }

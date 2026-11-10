@@ -355,8 +355,22 @@ one step, with the texture already running along the road and round its curves.
     the street exactly - no holes, nothing doubled. What is left (the parking lanes, the corners)
     keeps the floor's material, or gets the **Parking lane material**; if the floor already had the
     road material, a plain asphalt of the game is filled in there when there is one.
-  Width, curve radius and thickness come from the street (the width field shows the road's width).
-  Selected brushes at another height (a sidewalk picked by mistake) stay as they are.
+  Curve radius and thickness come from the street. The **Width** starts *From the street* (the
+  field shows what the street gives) and can be changed:
+  - narrower: the floor beyond the road and its parking lanes rises to the height of what it
+    borders - the sidewalk's top (the sidewalk then reaches the road), a kerb's **Height** before a
+    wall, flush where the street runs on at its own height. Its edge towards the road is the kerb
+    (with *Kerbs: At the edge of the street* it gets the **Kerb material**);
+  - wider: the road reaches into what is beside it, which is carved around it (**Fit into
+    surroundings**).
+  Pick *From the street* in the list again to go back to the street's width.
+  Streets that change height work too: a ramp joins the floor below and the floor above into one
+  street, and the road follows the ground - a joint wherever the slope changes, curves at the
+  ground's height, kerbs along a ramp flush with its sidewalk. Selected brushes that do not join the
+  street at its height (a sidewalk picked by mistake, a step) stay as they are.
+  The preview is planned in the background: the map stays usable while a big street is worked out,
+  and selecting other brushes while the dialog is open starts over for them at once (the preview
+  always shows the road for what is selected now).
 - **Only lay the road texture**: keeps the selected blocks and lays the road material over their
   tops, running along the road (the same as **Road texture ...**, below).
 

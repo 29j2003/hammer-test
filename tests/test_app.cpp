@@ -7855,6 +7855,7 @@ TEST_CASE("road builder: click points on the floor, Enter builds a curved road s
 	dialog->addPoint({1024, 0, 0});
 	dialog->addPoint({1024, 1024, 0});
 	QTest::qWait(150);
+	dialog->waitForPlan();
 	settle();
 	const std::string firstNote = dialog->note().toStdString();
 	INFO("note: " << firstNote);
@@ -7895,6 +7896,7 @@ TEST_CASE("road builder: click points on the floor, Enter builds a curved road s
 	dialog->addPoint({400, 900, 0});
 	dialog->addPoint({400, 0, 0});
 	QTest::qWait(150);
+	dialog->waitForPlan();
 	settle();
 	const std::string secondNote = dialog->note().toStdString();
 	INFO("note: " << secondNote);
@@ -8117,10 +8119,12 @@ TEST_CASE("road builder through a street: select the floor, Build road ... - cen
 		REQUIRE(dialog);
 		CHECK(dialog->fromSelection());
 		QTest::qWait(150);
+		dialog->waitForPlan();
 		settle();
 		INFO("note: " << dialog->note().toStdString());
 		auto* width = dialog->findChild<QDoubleSpinBox*>("roadBuilderWidth");
-		CHECK_FALSE(width->isEnabled());   // the street decides
+		CHECK(width->isEnabled());   // the street gives it, it can be changed
+		CHECK(dialog->findChild<QComboBox*>("roadBuilderPreset")->currentIndex() == 0);   // from the street
 		if (std::string(c.kind) == "tee") {
 			CHECK(width->value() == doctest::Approx(288));
 			CHECK(dialog->note().contains("1 side street"));
@@ -8170,6 +8174,7 @@ TEST_CASE("road builder through a street: select the floor, Build road ... - cen
 			CHECK(sides->currentIndex() == 0);   // both sides by default
 			sides->setCurrentIndex(1);
 			QTest::qWait(150);
+			dialog->waitForPlan();
 			settle();
 			CHECK(width->value() == doctest::Approx(320));
 			{
@@ -8185,12 +8190,14 @@ TEST_CASE("road builder through a street: select the floor, Build road ... - cen
 			}
 			sides->setCurrentIndex(3);
 			QTest::qWait(150);
+			dialog->waitForPlan();
 			settle();
 			CHECK(width->value() == doctest::Approx(416));
 			CHECK_FALSE(dialog->findChild<QDoubleSpinBox*>("roadBuilderParking")->isEnabled());
 			CHECK_FALSE(dialog->findChild<QLineEdit*>("roadBuilderFillMaterial")->isEnabled());
 			sides->setCurrentIndex(0);
 			QTest::qWait(150);
+			dialog->waitForPlan();
 			settle();
 			CHECK(width->value() == doctest::Approx(224));
 		}
@@ -8198,11 +8205,13 @@ TEST_CASE("road builder through a street: select the floor, Build road ... - cen
 			// Only lay the texture: the blocks would stay.
 			dialog->findChild<QRadioButton*>("roadBuilderTextureOnly")->setChecked(true);
 			QTest::qWait(150);
+			dialog->waitForPlan();
 			settle();
 			CHECK(dialog->note().contains("The blocks stay"));
 			CHECK(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->text() == "Lay texture");
 			dialog->findChild<QRadioButton*>("roadBuilderFromSelection")->setChecked(true);
 			QTest::qWait(150);
+			dialog->waitForPlan();
 			settle();
 			CHECK(dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->text() == "Build");
 		}
@@ -10975,4 +10984,317 @@ TEST_CASE("main bar: in a narrow window the labels give way, Check, Run map and 
 		CHECK(check->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
 		CHECK(button("Hide tools")->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
 	}
+}
+
+TEST_CASE("road builder: the selection changes while the dialog is open - the preview follows, the map stays usable, a narrower road raises the sides") {
+	// Julius (10.11.2026): the lower part of his street selected, the dialog open (displacement, power
+	// 3, 10 pieces per curve, no parking), then another part selected: Mapsmith stopped responding.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1600, 1000);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	// A long street along x: floor in blocks (top at 0, 24 thick), sidewalks 8 higher on both sides;
+	// the lower part (x < 0) and the upper part (x > 0) selected in turn.
+	std::vector<SolidRef> lower, upper;
+	{
+		MapDocument& doc = editor.doc();
+		Transaction t(doc, "street");
+		const auto prism = [&](std::vector<Vec3> outline, double top, double bottom, const char* material) {
+			std::vector<Vec3> points;
+			for (const auto& p : outline) {
+				points.push_back({p.x, p.y, top});
+				points.push_back({p.x, p.y, bottom});
+			}
+			auto solid = solidFromPoints(doc, points, material);
+			REQUIRE(solid);
+			doc.world.solids.push_back(std::move(*solid));
+			t.touchSolid({0, doc.world.solids.back().id});
+			return SolidRef{0, doc.world.solids.back().id};
+		};
+		for (double x = -3072; x < 0; x += 512) {
+			lower.push_back(prism({{x, -208, 0}, {x + 512, -208, 0}, {x + 512, 208, 0}, {x, 208, 0}}, 0, -24, "ROAD/DEMO_ROAD"));
+			prism({{x, 208, 0}, {x + 512, 208, 0}, {x + 512, 304, 0}, {x, 304, 0}}, 8, -24, "CONCRETE/WALL01");
+			prism({{x, -304, 0}, {x + 512, -304, 0}, {x + 512, -208, 0}, {x, -208, 0}}, 8, -24, "CONCRETE/WALL01");
+		}
+		// The upper part: on along x.
+		for (double x = 0; x < 3072; x += 512) {
+			upper.push_back(prism({{x, -208, 0}, {x + 512, -208, 0}, {x + 512, 208, 0}, {x, 208, 0}}, 0, -24, "ROAD/DEMO_ROAD"));
+			prism({{x, 208, 0}, {x + 512, 208, 0}, {x + 512, 304, 0}, {x, 304, 0}}, 8, -24, "CONCRETE/WALL01");
+			prism({{x, -304, 0}, {x + 512, -304, 0}, {x + 512, -208, 0}, {x, -208, 0}}, 8, -24, "CONCRETE/WALL01");
+		}
+		editor.commit(t.finish());
+	}
+	REQUIRE(lower.size() == 6);
+	settle();
+	const auto preview = [&] { return editor.brushPreview(); };
+	// The lower part selected, the dialog open with Julius' settings.
+	{
+		Selection s;
+		s.solids = lower;
+		editor.setSelection(s);
+	}
+	auto* action = window.findChild<QAction*>("brushesBuildRoad");
+	REQUIRE(action);
+	action->trigger();
+	settle();
+	auto* dialog = window.findChild<RoadBuilderDialog*>("roadBuilderDialog");
+	REQUIRE(dialog);
+	CHECK(dialog->fromSelection());
+	dialog->findChild<QComboBox*>("roadBuilderParkingSides")->setCurrentIndex(3);   // none
+	dialog->findChild<QSpinBox*>("roadBuilderSegments")->setValue(10);
+	dialog->findChild<QDoubleSpinBox*>("roadBuilderThickness")->setValue(24);
+	dialog->findChild<QCheckBox*>("roadBuilderDisplacement")->setChecked(true);
+	dialog->findChild<QComboBox*>("roadBuilderPower")->setCurrentIndex(1);   // power 3
+	QTest::qWait(100);
+	dialog->waitForPlan();
+	settle();
+	INFO("note: " << dialog->note().toStdString());
+	REQUIRE_FALSE(preview().empty());
+	const auto replacedNow = [&] {
+		std::vector<SolidRef> refs;
+		const auto& hidden = editor.hidden().solids;
+		refs.assign(hidden.begin(), hidden.end());
+		return refs;
+	};
+	const auto within = [](const std::vector<SolidRef>& refs, const std::vector<SolidRef>& set) {
+		return std::all_of(refs.begin(), refs.end(), [&](const SolidRef& r) { return std::find(set.begin(), set.end(), r) != set.end(); });
+	};
+	CHECK(within(replacedNow(), lower));
+	// Now the other part: the old preview is gone at once (never a road for the blocks selected
+	// before), the new one is planned on another thread and follows.
+	{
+		Selection s;
+		s.solids = upper;
+		editor.setSelection(s);
+	}
+	QElapsedTimer clock;
+	clock.start();
+	QTest::qWait(80);   // the dialog's short delay
+	QApplication::processEvents();
+	CHECK(clock.elapsed() < 1500);   // the event loop kept running
+	CHECK((preview().empty() || within(replacedNow(), upper)));   // never the old selection's road
+	dialog->waitForPlan();
+	settle();
+	CHECK_FALSE(preview().empty());
+	CHECK(within(replacedNow(), upper));
+	// Quick changes one after another: only the last selection's road is shown.
+	for (int round = 0; round < 3; ++round) {
+		Selection s;
+		s.solids = round % 2 == 0 ? lower : upper;
+		editor.setSelection(s);
+		QTest::qWait(70);
+	}
+	dialog->waitForPlan();
+	settle();
+	CHECK_FALSE(preview().empty());
+	CHECK(within(replacedNow(), lower));
+	// The width can be changed: narrower than the street, the floor beside the road rises to the
+	// sidewalk.
+	auto* width = dialog->findChild<QDoubleSpinBox*>("roadBuilderWidth");
+	REQUIRE(width->isEnabled());
+	CHECK(width->value() == doctest::Approx(416));   // the street's width (no parking lanes)
+	dialog->findChild<QCheckBox*>("roadBuilderDisplacement")->setChecked(false);
+	width->setValue(224);
+	QTest::qWait(100);
+	dialog->waitForPlan();
+	settle();
+	INFO("note: " << dialog->note().toStdString());
+	CHECK(dialog->note().contains("as you set it"));
+	CHECK(dialog->note().contains("rises to the sidewalk"));
+	CHECK(dialog->findChild<QComboBox*>("roadBuilderPreset")->currentText() == "Custom");
+	const std::string before = editor.doc().serialize();
+	dialog->accept();
+	settle();
+	CHECK(editor.doc().serialize() != before);
+	for (const auto& s : editor.doc().world.solids) CHECK(brushProblem(s).empty());
+	const auto solidAt = [&](double x, double y, double z) {
+		return std::any_of(editor.doc().world.solids.begin(), editor.doc().world.solids.end(), [&](const Solid& s) { return solidContains(s, {x, y, z}, -0.05); });
+	};
+	CHECK(solidAt(-1500, 0, -4));        // the road
+	CHECK_FALSE(solidAt(-1500, 0, 4));   // nothing on it
+	CHECK(solidAt(-1500, 160, 4));       // beside it: raised to the sidewalk (top 8)
+	CHECK(solidAt(-1500, -160, 4));
+	CHECK_FALSE(solidAt(-1500, 160, 10));
+	// The plan for the report: the selection and settings were noted when planning started.
+	CHECK(editor.planJournal().find("road builder: planning through the selected street") != std::string::npos);
+	CHECK(editor.planJournal().find("build.streetRoadWidth = 224") != std::string::npos);
+}
+
+TEST_CASE("road builder through a street: pictures of a big angled street, a narrower road with raised sides, a ramp") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1900, 1150);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	Viewport* view = window.view3D();
+	const auto shoot = [&](const QString& name, QVector3D position, float yaw, float pitch) {
+		const Selection kept = editor.selection();
+		editor.setSelection({});
+		view->camera().position = position;
+		view->camera().yaw = yaw;
+		view->camera().pitch = pitch;
+		view->update();
+		settle();
+		QTest::qWait(250);
+		settle();
+		view->grabFramebuffer().save(shotDir + "/" + name + ".png");
+		editor.setSelection(kept);
+	};
+	// Streets along a centre polyline, mitred at the bends: floor blocks (road texture, like Julius'
+	// floor), sidewalks 8 higher. `z`: per centre point (a ramp between two of them).
+	const auto buildStreet = [&](const std::vector<Vec3>& centre, double half, double tile) {
+		editor.newMap();
+		settle();
+		MapDocument& doc = editor.doc();
+		Transaction t(doc, "street");
+		std::vector<SolidRef> floor;
+		const auto mitred = [&](std::size_t i, double d) {
+			const Vec3 a = i > 0 ? normalize(Vec3{centre[i].x - centre[i - 1].x, centre[i].y - centre[i - 1].y, 0})
+			                     : normalize(Vec3{centre[1].x - centre[0].x, centre[1].y - centre[0].y, 0});
+			const Vec3 b = i + 1 < centre.size() ? normalize(Vec3{centre[i + 1].x - centre[i].x, centre[i + 1].y - centre[i].y, 0}) : a;
+			const Vec3 la{-a.y, a.x, 0}, lb{-b.y, b.x, 0};
+			const double denom = 1 + dot(a, b);
+			return centre[i] + (denom > 1e-3 ? (la + lb) * (d / denom) : la * d);
+		};
+		const auto strip = [&](double d0, double d1, double lift, double length, const char* material, bool isFloor) {
+			for (std::size_t i = 0; i + 1 < centre.size(); ++i) {
+				const double len = std::hypot(centre[i + 1].x - centre[i].x, centre[i + 1].y - centre[i].y);
+				const int count = std::max(1, int(std::lround(len / length)));
+				for (int k = 0; k < count; ++k) {
+					const double t0 = double(k) / count, t1 = double(k + 1) / count;
+					std::vector<Vec3> points;
+					for (const auto& [tt, d] : std::vector<std::pair<double, double>>{{t0, d0}, {t1, d0}, {t1, d1}, {t0, d1}}) {
+						const Vec3 v = mitred(i, d) * (1 - tt) + mitred(i + 1, d) * tt;
+						points.push_back({v.x, v.y, v.z + lift});
+						points.push_back({v.x, v.y, v.z - 24});
+					}
+					auto solid = solidFromPoints(doc, points, material);
+					REQUIRE(solid);
+					doc.world.solids.push_back(std::move(*solid));
+					t.touchSolid({0, doc.world.solids.back().id});
+					if (isFloor) floor.push_back({0, doc.world.solids.back().id});
+				}
+			}
+		};
+		strip(-half, 0, 0, tile, "ROAD/DEMO_ROAD", true);
+		strip(0, half, 0, tile * 0.75, "ROAD/DEMO_ROAD", true);
+		strip(half, half + 96, 8, 1024, "CONCRETE/WALL01", false);
+		strip(-half - 96, -half, 8, 1024, "CONCRETE/WALL01", false);
+		editor.commit(t.finish());
+		settle();
+		Selection s;
+		s.solids = floor;
+		editor.setSelection(s);
+		return floor.size();
+	};
+	auto* action = window.findChild<QAction*>("brushesBuildRoad");
+	REQUIRE(action);
+	const auto build = [&](double width, bool kerbs) {
+		action->trigger();
+		settle();
+		auto* dialog = window.findChild<RoadBuilderDialog*>("roadBuilderDialog");
+		REQUIRE(dialog);
+		REQUIRE(dialog->fromSelection());
+		dialog->findChild<QLineEdit*>("roadBuilderMaterial")->setText("ROAD/DEMO_ROAD");
+		dialog->findChild<QComboBox*>("roadBuilderParkingSides")->setCurrentIndex(0);
+		dialog->findChild<QDoubleSpinBox*>("roadBuilderParking")->setValue(64);
+		dialog->findChild<QComboBox*>("roadBuilderKerbPlace")->setCurrentIndex(kerbs ? 1 : 0);
+		dialog->findChild<QLineEdit*>("roadBuilderKerbMaterial")->setText("CONCRETE/WALL01");
+		if (width > 0) dialog->findChild<QDoubleSpinBox*>("roadBuilderWidth")->setValue(width);
+		QTest::qWait(100);
+		dialog->waitForPlan();
+		settle();
+		INFO("note: " << dialog->note().toStdString());
+		const std::string note = dialog->note().toStdString();
+		dialog->accept();
+		settle();
+		for (const auto& s : editor.doc().world.solids) CHECK(brushProblem(s).empty());
+		return note;
+	};
+	// 1. The big angled street (straight, 30° left, 45° more, 45° back).
+	std::vector<Vec3> centre{{-3000, 0, 0}, {0, 0, 0}};
+	{
+		double angle = 0;
+		for (const auto& [turn, len] : std::vector<std::pair<double, double>>{{30, 2048}, {45, 1800}, {-45, 1600}}) {
+			angle += turn * std::numbers::pi / 180;
+			centre.push_back(centre.back() + Vec3{std::cos(angle) * len, std::sin(angle) * len, 0});
+		}
+	}
+	// Every point of the old floor in exactly one brush afterwards.
+	const auto covered = [&](const std::string& before) {
+		const MapDocument old = MapDocument::parse(before);
+		int holes = 0, doubled = 0;
+		for (const auto& s : old.world.solids) {
+			const auto b = buildBrushGeometry(s).bounds;
+			if (b.max.z > 1) continue;   // the floor (top at 0 here)
+			for (double x = b.min.x + 3.3; x < b.max.x; x += 11.7) {
+				for (double y = b.min.y + 2.9; y < b.max.y; y += 11.7) {
+					const Vec3 p{x, y, -4};
+					if (!solidContains(s, p, -0.05)) continue;
+					int strict = 0, loose = 0;
+					for (const auto& a : editor.doc().world.solids) {
+						strict += solidContains(a, p, -0.05) ? 1 : 0;
+						loose += solidContains(a, p, 0.05) ? 1 : 0;
+					}
+					if (loose == 0 && holes++ < 5) MESSAGE("hole at " << x << " " << y);
+					if (strict > 1 && doubled++ < 5) MESSAGE("doubled at " << x << " " << y);
+				}
+			}
+		}
+		CHECK(holes == 0);
+		CHECK(doubled == 0);
+	};
+	REQUIRE(buildStreet(centre, 208, 512) > 0);
+	shoot("road3_angled_before", QVector3D(-200, -2600, 3400), 70, -50);
+	shoot("road3_angled_top_before", QVector3D(400, 1600, 7600), 90, -89);
+	const std::string angledBefore = editor.doc().serialize();
+	build(0, true);
+	covered(angledBefore);
+	MESSAGE(editor.planJournal());
+	shoot("road3_angled_after", QVector3D(-200, -2600, 3400), 70, -50);
+	shoot("road3_angled_top", QVector3D(400, 1600, 7600), 90, -89);
+	shoot("road3_angled_corner", QVector3D(1200, 1500, 1300), 60, -45);
+	shoot("road3_angled_bend", QVector3D(2700, 400, 900), 150, -40);
+	// 2. The same street, the road narrower: the sides rise to the sidewalk.
+	REQUIRE(buildStreet(centre, 208, 512) > 0);
+	const std::string narrow = build(192, true);
+	CHECK(narrow.find("rise to the sidewalk") != std::string::npos);
+	shoot("road3_narrow_after", QVector3D(-1800, -900, 700), 70, -35);
+	shoot("road3_narrow_corner", QVector3D(1200, 1500, 1300), 60, -45);
+	// 3. A ramp: flat, up 128 over 1024, flat again, then a curve.
+	std::vector<Vec3> ramp{{-2048, 0, 0}, {-1024, 0, 0}, {0, 0, 128}, {1024, 0, 128}, {1024 + 1500, 1500, 128}};
+	REQUIRE(buildStreet(ramp, 208, 512) > 0);
+	shoot("road3_ramp_before", QVector3D(-2400, -1500, 900), 40, -25);
+	build(0, true);
+	shoot("road3_ramp_after", QVector3D(-2400, -1500, 900), 40, -25);
+	shoot("road3_ramp_side", QVector3D(-500, -1600, 400), 90, -10);
 }

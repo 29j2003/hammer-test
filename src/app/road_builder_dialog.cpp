@@ -23,6 +23,9 @@
 #include <QShortcut>
 #include <QSpinBox>
 #include <QVBoxLayout>
+#include <QApplication>
+#include <QCoreApplication>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <cmath>
 
@@ -95,12 +98,15 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 
 	m_preset = new QComboBox(this);
 	m_preset->setObjectName("roadBuilderPreset");
+	m_preset->addItem(tr("From the street"), -1);
+	m_preset->setItemData(0, tr("Through the selected street: as wide as the street leaves it (its narrowest part minus the parking lanes)"), Qt::ToolTipRole);
 	m_preset->addItem(tr("2 lanes (256)"), 256);
 	m_preset->addItem(tr("Wide 2 lanes (512)"), 512);
 	m_preset->addItem(tr("4 lanes (1024)"), 1024);
 	m_preset->addItem(tr("Custom"), 0);
 	m_width = unitsBox(this, "roadBuilderWidth", 16, 8192, settings.value("roadBuilder/width", 256).toDouble(), 16);
-	m_width->setToolTip(tr("Kerb to kerb. Typical: 256 for two lanes, 1024 for four"));
+	m_width->setToolTip(tr("Kerb to kerb. Typical: 256 for two lanes, 1024 for four. Through a street: narrower than the street, what is left "
+	                       "beside the road rises to the sidewalk (or what else borders it); wider, it is cut into what is beside it"));
 	auto* widthRow = new QWidget(this);
 	auto* widthLayout = new QHBoxLayout(widthRow);
 	widthLayout->setContentsMargins(0, 0, 0, 0);
@@ -108,13 +114,25 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 	widthLayout->addWidget(m_width, 1);
 	form->addRow(tr("Width"), widthRow);
 	const auto syncPreset = [this] {
+		// Typed or stepped by the user: through a street the road keeps that width.
+		if (m_selectionMode && m_selectionMode->isChecked()) m_widthSet = true;
 		const int index = m_preset->findData(int(m_width->value()));
 		QSignalBlocker block(m_preset);
 		m_preset->setCurrentIndex(index >= 0 ? index : m_preset->count() - 1);
 	};
-	syncPreset();
+	{
+		const int index = m_preset->findData(int(m_width->value()));
+		m_preset->setCurrentIndex(index >= 0 ? index : m_preset->count() - 1);
+	}
 	connect(m_preset, &QComboBox::currentIndexChanged, this, [this] {
-		if (const int w = m_preset->currentData().toInt(); w > 0) m_width->setValue(w);
+		const int w = m_preset->currentData().toInt();
+		if (w < 0) {
+			// From the street again.
+			m_widthSet = false;
+			m_soon.start();
+		} else if (w > 0) {
+			m_width->setValue(w);
+		}
 	});
 	connect(m_width, &QDoubleSpinBox::valueChanged, this, syncPreset);
 
@@ -350,6 +368,7 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 	connect(m_textureMode, &QRadioButton::toggled, this, &RoadBuilderDialog::modeChanged);
 	connect(editor, &Editor::selectionChanged, this, later);
 	connect(editor, &Editor::documentChanged, this, later);
+	connect(&m_watcher, &QFutureWatcher<Editor::RoadBuildResult>::finished, this, &RoadBuilderDialog::planFinished);
 
 	// Floor brushes selected: build along them; else start clicking.
 	{
@@ -365,6 +384,8 @@ RoadBuilderDialog::RoadBuilderDialog(Editor* editor, const QString& material, QW
 }
 
 RoadBuilderDialog::~RoadBuilderDialog() {
+	// A plan still running is told to stop; it has its own copy of everything it reads.
+	if (m_stop) m_stop->store(true);
 	if (m_drawing) m_editor->cancelScenePoint();
 	if (!m_finished) m_editor->clearBrushPreview();
 }
@@ -394,6 +415,7 @@ RoadBuildOptions RoadBuilderDialog::options() const {
 	o.kerbMaterial = m_kerbMaterial->text().trimmed().toStdString();
 	o.parking = m_parking->value();
 	o.parkingSides = static_cast<RoadParkingSides>(m_parkingSides->currentData().toInt());
+	o.streetRoadWidth = m_selectionMode->isChecked() && m_widthSet ? m_width->value() : 0;
 	return o;
 }
 
@@ -425,9 +447,9 @@ void RoadBuilderDialog::modeChanged() {
 	m_parkingSides->setEnabled(street);
 	m_parking->setEnabled(street && lanes);
 	m_fill->setEnabled(street && lanes);
-	// Through a street, its width and corners decide the road's width and curves.
-	m_width->setEnabled(draw);
-	m_preset->setEnabled(draw);
+	// Through a street, its corners decide the curves; the width it gives can be changed.
+	m_width->setEnabled(draw || street);
+	m_preset->setEnabled(draw || street);
 	m_radius->setEnabled(draw);
 	for (QWidget* w : {static_cast<QWidget*>(m_thickness), static_cast<QWidget*>(m_segments), static_cast<QWidget*>(m_displacement), static_cast<QWidget*>(m_kerbPlace),
 	                   static_cast<QWidget*>(m_fit)}) {
@@ -439,7 +461,6 @@ void RoadBuilderDialog::modeChanged() {
 		RoadBuildOptions suggested = options();
 		suggested.material = m_material->text().trimmed().toStdString();
 		if (!m_editor->selectedRoadPaths(&suggested).empty()) {
-			if (street) m_width->setValue(suggested.width);
 			m_thickness->setValue(suggested.thickness);
 			if (m_material->text().trimmed().isEmpty()) m_material->setText(qs(suggested.material));
 		}
@@ -476,6 +497,22 @@ void RoadBuilderDialog::setPlainMaterial(const QString& material) {
 
 QString RoadBuilderDialog::note() const {
 	return m_note->text();
+}
+
+bool RoadBuilderDialog::planning() const {
+	return m_running.has_value() || m_again;
+}
+
+void RoadBuilderDialog::waitForPlan() {
+	for (int round = 0; round < 50; ++round) {
+		if (m_soon.isActive()) {
+			m_soon.stop();
+			refresh();
+		}
+		if (!m_running && !m_again && !m_soon.isActive()) return;
+		m_watcher.waitForFinished();
+		QCoreApplication::processEvents();   // the watcher's "finished" (planFinished)
+	}
 }
 
 void RoadBuilderDialog::requestPoint() {
@@ -528,6 +565,8 @@ void RoadBuilderDialog::refresh() {
 	if (m_finished) return;
 	auto* ok = m_buttons->button(QDialogButtonBox::Ok);
 	if (textureOnly()) {
+		if (m_stop) m_stop->store(true);
+		m_again = false;
 		refreshTexture();
 		return;
 	}
@@ -535,11 +574,61 @@ void RoadBuilderDialog::refresh() {
 	const bool selection = fromSelection();
 	std::vector<RoadPath> paths;
 	if (!selection) paths.push_back(RoadPath{m_points});
-	RoadCorridor street;
-	const auto plan = m_editor->planRoadBuilder(options(), paths, selection, &street);
+	auto job = m_editor->roadBuildJob(options(), paths, selection);
+	// The preview belongs to one selection of one map: for another it is gone at once (never a road
+	// planned for the blocks selected before).
+	if (job.solids != m_previewSolids || job.serial != m_previewSerial) {
+		m_editor->clearBrushPreview();
+		m_shown.reset();
+		m_shownKey.clear();
+		ok->setEnabled(false);
+		m_previewSolids = job.solids;
+		m_previewSerial = job.serial;
+		if (selection && !job.solids.empty()) m_note->setText(tr("Planning the road through the selected street ..."));
+	}
+	if (m_running) {
+		// Planned again when the running one ends (told to stop now): the newest wins.
+		m_again = true;
+		if (m_stop) m_stop->store(true);
+		return;
+	}
+	const std::string key = Editor::roadJobKey(job);
+	if (m_shown && key == m_shownKey && m_editor->roadJobCurrent(m_shown->first)) return;   // nothing changed
+	m_stop = std::make_shared<std::atomic<bool>>(false);
+	job.options.cancelled = [stop = m_stop] { return stop->load(); };
+	m_editor->noteRoadBuildStarted(job);
+	m_running = job;
+	m_watcher.setFuture(QtConcurrent::run([job] { return Editor::runRoadBuildJob(job); }));
+}
+
+void RoadBuilderDialog::planFinished() {
+	if (!m_running) return;
+	const Editor::RoadBuildJob job = std::move(*m_running);
+	m_running.reset();
+	if (m_finished) return;
+	const Editor::RoadBuildResult result = m_watcher.result();
+	if (m_again || !m_editor->roadJobCurrent(job) || job.solids != m_editor->selection().solids) {
+		// Something changed while it ran: that plan is for an older state; the newest is wanted.
+		m_again = false;
+		refresh();
+		return;
+	}
+	m_editor->noteRoadBuildDone(job, result);
+	showPlan(job, result);
+}
+
+void RoadBuilderDialog::showPlan(const Editor::RoadBuildJob& job, const Editor::RoadBuildResult& result) {
+	auto* ok = m_buttons->button(QDialogButtonBox::Ok);
+	const auto& plan = result.plan;
+	const auto& street = result.street;
+	const bool selection = job.fromSelection;
 	if (selection && street.ok()) {
-		QSignalBlocker block(m_width);
-		m_width->setValue(street.roadWidth);
+		if (!m_widthSet) {
+			QSignalBlocker block(m_width);
+			QSignalBlocker blockPreset(m_preset);
+			m_width->setValue(street.roadWidth);
+			m_preset->setCurrentIndex(0);   // from the street
+		}
 		// The floor is the road material: the lanes beside the road get plain asphalt.
 		const QString road = m_material->text().trimmed().isEmpty() ? qs(street.material) : m_material->text().trimmed();
 		if (!m_fillEdited && m_fill->text().trimmed().isEmpty() && !m_plainMaterial.isEmpty() && road.compare(qs(street.material), Qt::CaseInsensitive) == 0) {
@@ -548,6 +637,14 @@ void RoadBuilderDialog::refresh() {
 			m_soon.start();   // planned again with it
 			return;
 		}
+	}
+	m_shown = std::make_pair(job, result);
+	m_shownKey = Editor::roadJobKey(job);
+	if (!result.error.empty()) {
+		m_editor->clearBrushPreview();
+		m_note->setText(tr("The road could not be planned (%1). Change a setting or the selection; the map is unchanged.").arg(qs(result.error)));
+		ok->setEnabled(false);
+		return;
 	}
 	if (!plan.ok()) {
 		m_editor->clearBrushPreview();
@@ -566,14 +663,19 @@ void RoadBuilderDialog::refresh() {
 	QString road = tr("%n road brush(es)", nullptr, int(plan.road.size()) - plan.seals);
 	if (plan.seals > 0) road += ", " + tr("%n nodraw seal(s) below", nullptr, plan.seals);
 	if (!plan.kerbs.empty()) road += ", " + tr("%n kerb(s)", nullptr, int(plan.kerbs.size()));
-	if (!selection) road += " - " + tr("%n point(s)", nullptr, int(m_points.size()));
+	if (!selection) road += " - " + tr("%n point(s)", nullptr, int(job.paths.empty() ? 0 : job.paths.front().points.size()));
 	lines << road + '.';
 	if (selection) {
-		lines << (street.parking > 0 ? tr("Street %1 wide where it is narrowest: road %2, parking lanes at least %3 on each side.")
-		                                   .arg(street.width)
-		                                   .arg(street.roadWidth)
-		                                   .arg(street.parking)
-		                             : tr("Street %1 wide: the road takes the whole width.").arg(street.width));
+		if (job.options.streetRoadWidth > 0) {
+			lines << tr("Street %1 wide where it is narrowest: road %2 as you set it.").arg(street.width).arg(street.roadWidth) +
+			             (street.raisedSides ? ' ' + tr("Beside it the floor rises to the sidewalk.") : QString());
+		} else {
+			lines << (street.parking > 0 ? tr("Street %1 wide where it is narrowest: road %2, parking lanes at least %3 on each side.")
+			                                   .arg(street.width)
+			                                   .arg(street.roadWidth)
+			                                   .arg(street.parking)
+			                             : tr("Street %1 wide: the road takes the whole width.").arg(street.width));
+		}
 		if (street.paths.size() > 1) lines << tr("%n side street(s) join the main road.", nullptr, int(street.paths.size()) - 1);
 	}
 	if (plan.curves > 0) lines << tr("%n curve(s), inner radius from %1 units; the texture runs on through them.", nullptr, plan.curves).arg(std::round(plan.radius));
@@ -621,13 +723,33 @@ void RoadBuilderDialog::accept() {
 	std::vector<RoadPath> paths;
 	if (!selection) paths.push_back(RoadPath{m_points});
 	stopDrawing();
+	const auto wanted = m_editor->roadBuildJob(options(), paths, selection);
+	const std::string key = Editor::roadJobKey(wanted);
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	if (m_running) {
+		if (!m_again && Editor::roadJobKey(*m_running) == key) {
+			// The plan wanted is being made: wait for it.
+			m_watcher.waitForFinished();
+			m_shown = std::make_pair(*m_running, m_watcher.result());
+			m_shownKey = key;
+		} else if (m_stop) {
+			m_stop->store(true);
+		}
+		m_running.reset();
+	}
 	m_finished = true;
-	m_editor->applyRoadBuilder(options(), paths, selection);   // clears the preview
+	if (m_shown && m_shownKey == key && m_editor->roadJobCurrent(m_shown->first)) {
+		m_editor->applyRoadBuildJob(m_shown->first, m_shown->second);   // as previewed; clears the preview
+	} else {
+		m_editor->applyRoadBuilder(options(), paths, selection);   // planned now; clears the preview
+	}
+	QApplication::restoreOverrideCursor();
 	QDialog::accept();
 }
 
 void RoadBuilderDialog::done(int result) {
 	m_soon.stop();
+	if (m_stop) m_stop->store(true);
 	stopDrawing();
 	if (!m_finished) {
 		m_finished = true;

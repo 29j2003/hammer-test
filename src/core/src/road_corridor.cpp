@@ -297,7 +297,7 @@ double median(std::vector<double> v) {
 struct Street {
 	std::vector<FloorTop> tops;
 	std::vector<const Solid*> obstacles;   ///< Brushes standing on the floor
-	double top = 0;
+	double top = 0;                        ///< The floor's usual height (most of its area)
 	Grid grid;
 
 	/// Whether a point is on the street (exactly: the brushes, not the raster).
@@ -311,7 +311,7 @@ struct Street {
 			}
 		}
 		if (!any) return false;
-		const Vec3 p{x, y, top + 1};
+		const Vec3 p{x, y, zAt(x, y) + 1};
 		for (const Solid* o : obstacles) {
 			if (solidContains(*o, p, -0.01)) return false;
 		}
@@ -573,29 +573,53 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 	}
 	if (tops.empty()) return corridor;
 	{
-		std::map<long, double> areaAt;   // 4-unit height bands
-		for (const auto& t : tops) areaAt[std::lround(t.z / 4)] += t.area;
-		long band = 0;
-		double most = -1;
-		for (const auto& [b, area] : areaAt) {
-			// Neighbouring bands count together (a top at 7.9 and one at 8.1).
-			const double around = area + (areaAt.contains(b - 1) ? areaAt[b - 1] : 0) + (areaAt.contains(b + 1) ? areaAt[b + 1] : 0);
-			if (around > most) {
-				most = around;
-				band = b;
+		// The street: tops that join into one surface - they touch along an edge at the same height
+		// there (a ramp joins the floor below and the one above; a sidewalk beside the street is a
+		// step and does not). The joined set with the most area is the street.
+		const std::size_t n = tops.size();
+		std::vector<std::size_t> parent(n);
+		for (std::size_t i = 0; i < n; ++i) parent[i] = i;
+		const auto root = [&](std::size_t i) {
+			while (parent[i] != i) i = parent[i] = parent[parent[i]];
+			return i;
+		};
+		const auto joined = [&](const FloorTop& a, const FloorTop& b) {
+			if (a.box.max.x < b.box.min.x - 0.5 || b.box.max.x < a.box.min.x - 0.5 || a.box.max.y < b.box.min.y - 0.5 || b.box.max.y < a.box.min.y - 0.5) return false;
+			for (const auto* pair : {&a, &b}) {
+				const FloorTop& from = *pair;
+				const FloorTop& to = pair == &a ? b : a;
+				for (std::size_t k = 0; k < from.poly.size(); ++k) {
+					const Vec3 p = from.poly[k], q = from.poly[(k + 1) % from.poly.size()];
+					for (const double t : {0.1, 0.3, 0.5, 0.7, 0.9}) {
+						const Vec3 m = p + (q - p) * t;
+						if (!to.contains(m.x, m.y, 0.5)) continue;
+						if (std::abs(from.zAt(m.x, m.y) - to.zAt(m.x, m.y)) < 2) return true;
+					}
+				}
+			}
+			return false;
+		};
+		for (std::size_t i = 0; i < n; ++i) {
+			for (std::size_t j = i + 1; j < n; ++j) {
+				if (root(i) != root(j) && joined(tops[i], tops[j])) parent[root(i)] = root(j);
 			}
 		}
-		const double z = double(band) * 4;
+		std::map<std::size_t, double> areaOf;
+		for (std::size_t i = 0; i < n; ++i) areaOf[root(i)] += tops[i].area;
+		std::size_t best = root(0);
+		for (const auto& [r, area] : areaOf) {
+			if (area > areaOf[best]) best = r;
+		}
 		int other = 0;
-		for (auto& t : tops) {
-			if (std::abs(t.z - z) <= 6) {
-				street.tops.push_back(t);
+		for (std::size_t i = 0; i < n; ++i) {
+			if (root(i) == best) {
+				street.tops.push_back(tops[i]);
 			} else {
-				corridor.ignored.push_back(t.ref);
+				corridor.ignored.push_back(tops[i].ref);
 				++other;
 			}
 		}
-		if (other > 0) corridor.notes.push_back(std::to_string(other) + " selected brush(es) at another height stay as they are (a sidewalk, a step)");
+		if (other > 0) corridor.notes.push_back(std::to_string(other) + " selected brush(es) not joined to the street at its height stay as they are (a sidewalk, a step)");
 	}
 	{
 		std::vector<double> zs, thick;
@@ -607,7 +631,22 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 			corridor.floor.push_back(t.ref);
 			corridor.area += t.area;
 		}
-		street.top = median(zs);
+		{
+			// The usual height: where most of the area is (4-unit bands).
+			std::map<long, double> areaAt;
+			for (const auto& t : street.tops) areaAt[std::lround(t.z / 4)] += t.area;
+			long band = areaAt.begin()->first;
+			for (const auto& [k, area] : areaAt) {
+				if (area > areaAt[band]) band = k;
+			}
+			street.top = median(zs);
+			for (const auto& t : street.tops) {
+				if (std::lround(t.z / 4) == band) {
+					street.top = t.z;
+					break;
+				}
+			}
+		}
 		corridor.top = street.top;
 		corridor.thickness = std::max(2.0, std::round(median(thick)));
 		double most = -1;
@@ -625,12 +664,19 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 	}
 	// What stands on the floor (a sidewalk, a wall): not street.
 	{
+		double low = 1e30, high = -1e30;
+		for (const auto& t : street.tops) {
+			for (const auto& v : t.poly) {
+				low = std::min(low, v.z);
+				high = std::max(high, v.z);
+			}
+		}
 		Bounds around = box;
-		around.min.z = street.top - 1;
-		around.max.z = street.top + 2;
+		around.min.z = low - 1;
+		around.max.z = high + 2;
 		std::vector<SolidRef> skip = corridor.floor;
 		for (const auto& n : solidsNear(doc, around, 0, skip)) {
-			if (n.bounds.min.z >= street.top + 1 || n.bounds.max.z <= street.top + 1) continue;
+			if (n.bounds.min.z >= high + 1 || n.bounds.max.z <= low + 1) continue;
 			if (n.ref.entityId != 0) {
 				const Entity* e = doc.findEntity(n.ref.entityId);
 				const std::string cls = e ? e->classname() : std::string();
@@ -658,13 +704,17 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		j0 = std::max(0, int(std::floor((b.min.y - g.y0) / g.cell)));
 		j1 = std::min(g.ny - 1, int(std::ceil((b.max.y - g.y0) / g.cell)));
 	};
+	std::vector<float> cellZ(g.in.size(), float(street.top));   // the floor's height in each cell
 	for (const auto& t : street.tops) {
 		int i0, i1, j0, j1;
 		cellRange(t.box, i0, i1, j0, j1);
 		for (int j = j0; j <= j1; ++j) {
 			for (int i = i0; i <= i1; ++i) {
 				const Vec3 c = g.centre(i, j);
-				if (t.contains(c.x, c.y, 1e-6)) g.in[std::size_t(g.index(i, j))] = 1;
+				if (t.contains(c.x, c.y, 1e-6)) {
+					g.in[std::size_t(g.index(i, j))] = 1;
+					cellZ[std::size_t(g.index(i, j))] = float(t.zAt(c.x, c.y));
+				}
 			}
 		}
 	}
@@ -675,7 +725,7 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		for (int j = j0; j <= j1; ++j) {
 			for (int i = i0; i <= i1; ++i) {
 				const Vec3 c = g.centre(i, j);
-				if (g.in[std::size_t(g.index(i, j))] && solidContains(*o, {c.x, c.y, street.top + 1}, -0.01)) g.in[std::size_t(g.index(i, j))] = 0;
+				if (g.in[std::size_t(g.index(i, j))] && solidContains(*o, {c.x, c.y, double(cellZ[std::size_t(g.index(i, j))]) + 1}, -0.01)) g.in[std::size_t(g.index(i, j))] = 0;
 			}
 		}
 	}
@@ -692,6 +742,7 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		}
 	}
 
+	if (options.cancelled && options.cancelled()) return corridor;
 	// 3. The middle: thinned cells; the main road the longest way through them, branches after.
 	std::vector<std::uint8_t> skel = thin(g);
 	std::vector<int> cells;
@@ -932,10 +983,20 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 	corridor.parking = parking;
 	corridor.sides = parking > 0 ? sides : RoadParkingSides::None;
 	corridor.roadWidth = corridor.width - lanes * parking;
-	const double hw = corridor.roadWidth / 2;
 	// A lane on one side only: the road moves over to the other side (left of the direction: +).
 	const double pLeft = laneLeft ? parking : 0, pRight = laneRight ? parking : 0;
-	const double off = (pRight - pLeft) / 2;
+	if (options.streetRoadWidth > 0) {
+		// The width the user set: narrower, the floor beyond the road and its lanes rises to what
+		// borders it (planRoadBuild, raiseBeyond...); wider, the road reaches into the neighbours.
+		corridor.roadWidth = std::round(std::max(16.0, options.streetRoadWidth));
+		if (corridor.roadWidth + pLeft + pRight < corridor.width - 1) {
+			corridor.raisedSides = true;
+			corridor.flatLeft = corridor.roadWidth / 2 + pLeft;
+			corridor.flatRight = corridor.roadWidth / 2 + pRight;
+		}
+	}
+	const double hw = corridor.roadWidth / 2;
+	const double off = corridor.raisedSides ? 0.0 : (pRight - pLeft) / 2;
 	corridor.offset = off;
 
 	// 5. Curves: per corner the largest one whose edges keep the lane clear of the kerbs.
@@ -1037,6 +1098,56 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 			}
 			path.points = std::move(moved);
 		}
+		// The ground along the way: where its slope changes (a ramp), the road follows.
+		{
+			std::vector<Vec3> samples;
+			std::vector<double> along;
+			std::vector<bool> keep;
+			double walked = 0;
+			const double step = std::max(4.0, g.cell / 2);
+			for (std::size_t k = 0; k + 1 < path.points.size(); ++k) {
+				const Vec3 a = path.points[k], b = path.points[k + 1];
+				const double len = length(flat(b - a));
+				const int count = std::max(1, int(std::ceil(len / step)));
+				for (int m = k == 0 ? 0 : 1; m <= count; ++m) {
+					const double t = double(m) / count;
+					Vec3 p = a + (b - a) * t;
+					p.z = street.zAt(p.x, p.y);
+					samples.push_back(p);
+					along.push_back(walked + len * t);
+					keep.push_back(m == 0 || m == count);   // the path's own points stay
+				}
+				walked += len;
+			}
+			// Douglas-Peucker on (distance along, height): only the bends of the slope.
+			bool sloped = false;
+			std::vector<std::pair<std::size_t, std::size_t>> stack{{0, samples.size() - 1}};
+			while (!stack.empty() && samples.size() > 2) {
+				const auto [i0, i1] = stack.back();
+				stack.pop_back();
+				double worst = 0;
+				std::size_t at = i0;
+				for (std::size_t m = i0 + 1; m < i1; ++m) {
+					const double f = (along[m] - along[i0]) / std::max(1e-9, along[i1] - along[i0]);
+					const double off = std::abs(samples[m].z - (samples[i0].z + (samples[i1].z - samples[i0].z) * f));
+					if (off > worst) {
+						worst = off;
+						at = m;
+					}
+				}
+				if (worst > 0.25) {
+					keep[at] = true;
+					sloped = true;
+					stack.push_back({i0, at});
+					stack.push_back({at, i1});
+				}
+			}
+			if (sloped) {
+				for (std::size_t m = 0; m < samples.size(); ++m) {
+					if (keep[m]) path.profile.push_back(samples[m]);
+				}
+			}
+		}
 		corridor.paths.push_back(std::move(path));
 	}
 	if (tight > 0) corridor.notes.push_back(std::to_string(tight) + " curve(s) reach into the parking lane: the street is too tight there for the lane");
@@ -1089,14 +1200,26 @@ RoadBuildPlan planRoadFromSelection(const MapDocument& doc, MapDocument& ids, co
                                     const TextureSizeFn& textureSize, RoadCorridor* corridorOut) {
 	RoadCorridor corridor = roadCorridorFromSolids(doc, solids, options);
 	RoadBuildPlan plan;
-	if (corridor.ok()) {
+	if (options.cancelled && options.cancelled()) {
+		plan.notes.push_back("stopped");
+	} else if (corridor.ok()) {
 		RoadBuildOptions o = options;
 		o.width = corridor.roadWidth;
 		if (o.material.empty()) o.material = corridor.material;
 		// Kerbs at the street's edge (between parking lane and sidewalk) are cut from what is left of
 		// the floor afterwards; without parking lanes the road reaches the edge: kerbs beside it.
-		const bool edgeKerbs = o.kerbs && !o.kerbsAlongRoad && corridor.parking > 0;
+		const bool edgeKerbs = o.kerbs && !o.kerbsAlongRoad && corridor.parking > 0 && !corridor.raisedSides;
 		if (edgeKerbs) o.kerbs = false;
+		if (corridor.raisedSides) {
+			// A road narrower than the street: what is left beside it rises to the sidewalk; its edge is
+			// the kerb (kerbs "at the edge of the street" give that edge the kerb material).
+			o.raiseBeyondLeft = corridor.flatLeft;
+			o.raiseBeyondRight = corridor.flatRight;
+			if (o.kerbs && !o.kerbsAlongRoad) {
+				o.kerbs = false;
+				o.raisedEdgeKerb = true;
+			}
+		}
 		plan = planRoadBuild(doc, ids, corridor.paths, o, textureSize, corridor.floor);
 		if (edgeKerbs) {
 			o.kerbs = true;

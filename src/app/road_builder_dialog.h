@@ -6,13 +6,23 @@
 // once (Editor::setBrushPreview); Build applies it as one undo step, Cancel or closing leaves the
 // map as it was. While drawing, each click in a 3D or top view adds a point (Enter builds,
 // Backspace takes the last point back, Esc stops clicking).
+// The plan is made on another thread (Editor::runRoadBuildJob): the map stays usable while a big
+// street is planned; a newer change stops the running plan and the newest one wins; the preview
+// always belongs to the current selection (a plan for an older one is never shown or built).
 
 #pragma once
 
 #include <QDialog>
+#include <QFutureWatcher>
 #include <QTimer>
 
+#include <atomic>
+#include <memory>
+#include <optional>
+
 #include <sme/road_builder.h>
+
+#include "editor.h"
 
 class QCheckBox;
 class QComboBox;
@@ -51,6 +61,10 @@ public:
 	void addPoint(const Vec3& point);
 	/// The line under the fields (what the road will be, or why nothing).
 	[[nodiscard]] QString note() const;
+	/// A plan is being made (on another thread).
+	[[nodiscard]] bool planning() const;
+	/// Waits for the running plan and shows it (tests).
+	void waitForPlan();
 	/// A plain asphalt of the game (no lane lines): through a street whose floor has the road
 	/// material, what is left beside the road gets it unless a material is set there.
 	void setPlainMaterial(const QString& material);
@@ -64,6 +78,10 @@ public slots:
 private:
 	/// Plans again and shows the preview (soon after a change, not on every key press).
 	void refresh();
+	/// A plan finished: shown if it is still the one wanted, else the newest is started.
+	void planFinished();
+	/// Shows a finished plan (preview, fields, the note).
+	void showPlan(const Editor::RoadBuildJob& job, const Editor::RoadBuildResult& result);
 	void refreshTexture();
 	/// Asks the views for the next point (while drawing).
 	void requestPoint();
@@ -111,6 +129,16 @@ private:
 	bool m_finished = false;
 	QString m_plainMaterial;
 	bool m_fillEdited = false;   ///< The user set a parking lane material
+	bool m_widthSet = false;     ///< Through a street: the user set the road's width (else the street gives it)
+	QFutureWatcher<Editor::RoadBuildResult> m_watcher;
+	std::shared_ptr<std::atomic<bool>> m_stop;   ///< Tells the running plan to stop
+	std::optional<Editor::RoadBuildJob> m_running;   ///< The job being planned
+	bool m_again = false;                         ///< Something changed while it ran: plan again
+	/// The last plan shown (Build uses it when nothing changed since).
+	std::optional<std::pair<Editor::RoadBuildJob, Editor::RoadBuildResult>> m_shown;
+	std::string m_shownKey;   ///< Settings and selection of the plan the preview shows
+	std::vector<SolidRef> m_previewSolids;   ///< The selection the preview belongs to
+	unsigned m_previewSerial = ~0u;
 };
 
 } // namespace sme::app

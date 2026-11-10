@@ -25,6 +25,112 @@ namespace {
 constexpr double PI = std::numbers::pi;
 const std::string NODRAW = "TOOLS/TOOLSNODRAW";
 
+/// A brush whose only fault is a speck - two corners less than a third of a unit apart (a cut that
+/// passed a hair from a corner), a face of almost no area - rebuilt from its corners with those
+/// merged (it changes by less than that third of a unit), each face keeping the look of the face in
+/// its plane. nullopt if that does not give a sound brush of about the same volume.
+std::optional<Solid> mendSpecks(MapDocument& ids, const Solid& solid) {
+	const double before = solidVolume(solid);
+	const double allowed = std::max(1.0, 1e-4 * before);   // the brush hardly grows (never into a neighbour by more than a speck)
+	{
+		// Two sides in almost the same plane (two cuts a hundredth apart): the one with the smaller
+		// face goes, the other bounds the brush alone.
+		Solid trimmed = solid;
+		for (bool again = true; again;) {
+			again = false;
+			const auto geometry = buildBrushGeometry(trimmed);
+			if (!geometry.valid) break;
+			std::vector<double> area(trimmed.sides.size(), 0);
+			for (const auto& face : geometry.faces) {
+				Vec3 sum;
+				for (std::size_t i = 1; i + 1 < face.vertices.size(); ++i) sum += cross(face.vertices[i] - face.vertices[0], face.vertices[i + 1] - face.vertices[0]);
+				area[std::size_t(face.sideIndex)] = length(sum) / 2;
+			}
+			for (std::size_t i = 0; i < trimmed.sides.size() && !again; ++i) {
+				for (std::size_t j = i + 1; j < trimmed.sides.size() && !again; ++j) {
+					const Plane a = trimmed.sides[i].plane(), b = trimmed.sides[j].plane();
+					if (dot(a.normal, b.normal) < 0.99999 || std::abs(a.dist - b.dist) > 0.05) continue;
+					Solid next = trimmed;
+					next.sides.erase(next.sides.begin() + std::ptrdiff_t(area[i] < area[j] ? i : j));
+					removeUnusedSides(next);
+					if (!buildBrushGeometry(next).valid || solidVolume(next) - before > allowed) continue;
+					trimmed = std::move(next);
+					again = true;
+				}
+			}
+		}
+		if (trimmed.sides.size() < solid.sides.size() && brushProblem(trimmed).empty()) return trimmed;
+	}
+	std::vector<Vec3> corners = solidCorners(solid);
+	if (corners.size() < 4) return std::nullopt;
+	std::vector<Vec3> merged;
+	std::vector<int> weight;
+	for (const auto& c : corners) {
+		bool joined = false;
+		for (std::size_t k = 0; k < merged.size(); ++k) {
+			if (length(merged[k] - c) < 0.34) {
+				merged[k] = (merged[k] * double(weight[k]) + c) / double(weight[k] + 1);
+				++weight[k];
+				joined = true;
+				break;
+			}
+		}
+		if (!joined) {
+			merged.push_back(c);
+			weight.push_back(1);
+		}
+	}
+	// An edge that should stand upright but leans by a hair (its ends a hundredth apart seen from
+	// above): the upper end above the lower one.
+	for (std::size_t i = 0; i < merged.size(); ++i) {
+		for (std::size_t j = 0; j < merged.size(); ++j) {
+			if (i == j || merged[j].z <= merged[i].z + 1) continue;
+			const double dx = merged[j].x - merged[i].x, dy = merged[j].y - merged[i].y;
+			if (dx * dx + dy * dy < 0.02 * 0.02) {
+				merged[j].x = merged[i].x;
+				merged[j].y = merged[i].y;
+			}
+		}
+	}
+	if (merged.size() < 4) return std::nullopt;
+	auto hull = solidFromPoints(ids, merged, solid.sides.front().material);
+	if (!hull || !brushProblem(*hull).empty()) return std::nullopt;
+	const double after = solidVolume(*hull);
+	if (std::abs(after - before) > allowed) return std::nullopt;
+	for (auto& side : hull->sides) {
+		const Plane plane = side.plane();
+		const Side* best = nullptr;
+		double bestScore = -1e30;
+		for (const auto& old : solid.sides) {
+			const Plane p = old.plane();
+			const double score = dot(p.normal, plane.normal) - std::abs(p.dist - plane.dist) * 0.01;
+			if (score > bestScore) {
+				bestScore = score;
+				best = &old;
+			}
+		}
+		if (best) {
+			side.material = best->material;
+			side.u = best->u;
+			side.v = best->v;
+			side.rotation = best->rotation;
+			side.lightmapScale = best->lightmapScale;
+			if (std::abs(dot(normalize(side.u.axis), plane.normal)) > 0.99 || std::abs(dot(normalize(side.v.axis), plane.normal)) > 0.99) alignToWorld(side);
+		}
+	}
+	hull->id = solid.id;
+	hull->extra = solid.extra;
+	return hull;
+}
+
+/// The part of `solid` inside the convex `cutter` (none if they do not overlap); defined below.
+std::optional<Solid> insideOf(MapDocument& ids, const Solid& solid, const Solid& cutter);
+
+/// Whether a live preview's planning was called off (a newer one is wanted).
+bool stopped(const RoadBuildOptions& o) {
+	return o.cancelled && o.cancelled();
+}
+
 std::string units(double v) {
 	char text[32];
 	std::snprintf(text, sizeof text, "%g", std::round(v * 10) / 10);
@@ -118,6 +224,23 @@ PathLayout layoutPath(const RoadPath& path, const RoadBuildOptions& o, RoadBuild
 	const auto zAt = [&](std::size_t segment, double along) {
 		return p[segment].z + (p[segment + 1].z - p[segment].z) * std::clamp(along / len[segment], 0.0, 1.0);
 	};
+	// The ground's profile (from a street): heights where the slope changes.
+	const std::vector<Vec3>& ground = path.profile;
+	const auto heightAt = [&](const Vec3& q) {
+		double bestD = 1e30, z = q.z;
+		for (std::size_t k = 0; k + 1 < ground.size(); ++k) {
+			const Vec3 a = ground[k], b = ground[k + 1];
+			const Vec3 e = flat(b - a);
+			const double ee = dot(e, e);
+			const double t = ee > 1e-9 ? std::clamp(dot(flat(q - a), e) / ee, 0.0, 1.0) : 0.0;
+			const double d = length(flat(a + e * t - q));
+			if (d < bestD) {
+				bestD = d;
+				z = a.z + (b.z - a.z) * t;
+			}
+		}
+		return z;
+	};
 
 	const auto addStation = [&](const Vec3& c, const Vec3& left, bool arc, const Vec3& centre, double radius) {
 		if (!out.stations.empty()) {
@@ -131,7 +254,36 @@ PathLayout layoutPath(const RoadPath& path, const RoadBuildOptions& o, RoadBuild
 		}
 	};
 
-	addStation(p[0], leftOf(dir[0]), false, {}, 0);
+	// A straight stretch to `c`: a joint wherever the ground's slope changes on the way.
+	const auto straightTo = [&](Vec3 c, const Vec3& left) {
+		if (!ground.empty() && !out.stations.empty()) {
+			const Vec3 a = out.stations.back().c;
+			const Vec3 d = flat(c - a);
+			const double length2 = length(d);
+			if (length2 > 2) {
+				const Vec3 along = d / length2;
+				std::vector<double> at;
+				for (const auto& q : ground) {
+					const double t = dot(flat(q - a), along);
+					if (t > 1 && t < length2 - 1 && std::abs(cross2(along, flat(q - a))) < 2) at.push_back(t);
+				}
+				std::sort(at.begin(), at.end());
+				for (const double t : at) {
+					Vec3 m = a + along * t;
+					m.z = heightAt(m);
+					addStation(m, leftOf(along), false, {}, 0);
+				}
+			}
+			c.z = heightAt(c);
+		}
+		addStation(c, left, false, {}, 0);
+	};
+
+	{
+		Vec3 first = p[0];
+		if (!ground.empty()) first.z = heightAt(first);
+		addStation(first, leftOf(dir[0]), false, {}, 0);
+	}
 	for (std::size_t i = 1; i < n; ++i) {
 		const double wanted = std::max(0.0, radii[i] >= 0 ? radii[i] : o.innerRadius) + hw;
 		const Vec3 d0 = dir[i - 1], d1 = dir[i];
@@ -155,7 +307,7 @@ PathLayout layoutPath(const RoadPath& path, const RoadBuildOptions& o, RoadBuild
 			// Mitre: one cross-section along the bisector, as wide as the road on both sides.
 			const Vec3 bisector = normalize(leftOf(d0) + leftOf(d1));
 			const double c = std::max(0.2, std::cos(theta / 2));
-			addStation(p[i], bisector / c, false, {}, 0);
+			straightTo(p[i], bisector / c);
 			continue;
 		}
 		++plan.curves;
@@ -170,11 +322,15 @@ PathLayout layoutPath(const RoadPath& path, const RoadBuildOptions& o, RoadBuild
 		for (int k = 0; k <= pieces; ++k) {
 			const double phi = theta * k / pieces;
 			Vec3 c = centre + turned(r0, phi);
-			c.z = z0 + (z1 - z0) * k / pieces;
-			addStation(c, leftOf(turned(d0, phi)), k > 0, centre, radius);
+			c.z = ground.empty() ? z0 + (z1 - z0) * k / pieces : heightAt(c);
+			if (k == 0) {
+				straightTo(c, leftOf(turned(d0, phi)));
+			} else {
+				addStation(c, leftOf(turned(d0, phi)), true, centre, radius);
+			}
 		}
 	}
-	addStation(p[n], leftOf(dir[n - 1]), false, {}, 0);
+	straightTo(p[n], leftOf(dir[n - 1]));
 	return out;
 }
 
@@ -357,6 +513,38 @@ bool fromOriginal(const Solid& original, const Side& side) {
 	});
 }
 
+/// Joins touching pieces whose union is one convex brush again (what a carve split needlessly), in
+/// passes over all pairs with their boxes kept (no restart after each join: hundreds of pieces stay
+/// quick). Above `limit` pieces nothing is joined (valid, only more brushes).
+void joinPieces(MapDocument& ids, std::vector<Solid>& pieces, std::size_t limit = 2000) {
+	if (pieces.size() < 2 || pieces.size() > limit) return;
+	std::vector<Bounds> box;
+	box.reserve(pieces.size());
+	for (const auto& piece : pieces) box.push_back(buildBrushGeometry(piece).bounds);
+	for (bool joined = true; joined;) {
+		joined = false;
+		for (std::size_t i = 0; i < pieces.size(); ++i) {
+			for (std::size_t j = i + 1; j < pieces.size();) {
+				if (!boxesOverlap(box[i], box[j], -0.01)) {
+					++j;
+					continue;
+				}
+				auto merged = joinTouching(ids, pieces[i], pieces[j]);
+				if (!merged || !brushProblem(*merged).empty()) {
+					++j;
+					continue;
+				}
+				merged->id = pieces[i].id;
+				box[i] = buildBrushGeometry(*merged).bounds;
+				pieces[i] = std::move(*merged);
+				pieces.erase(pieces.begin() + std::ptrdiff_t(j));
+				box.erase(box.begin() + std::ptrdiff_t(j));
+				joined = true;
+			}
+		}
+	}
+}
+
 /// Pieces of a carved brush: the sides the carve added get `material` (the brush's own look,
 /// world-aligned), joined where two pieces form one brush again.
 void tidyCarved(MapDocument& ids, const Solid& original, std::vector<Solid>& pieces, const std::string& material) {
@@ -369,24 +557,7 @@ void tidyCarved(MapDocument& ids, const Solid& original, std::vector<Solid>& pie
 			}
 		}
 	}
-	bool joined = true;
-	while (joined && pieces.size() > 1) {
-		joined = false;
-		for (std::size_t i = 0; i < pieces.size() && !joined; ++i) {
-			for (std::size_t j = i + 1; j < pieces.size() && !joined; ++j) {
-				if (!boxesOverlap(buildBrushGeometry(pieces[i]).bounds, buildBrushGeometry(pieces[j]).bounds, -0.01)) continue;
-				auto merged = mergeSolids(ids, {pieces[i], pieces[j]});
-				// The pieces never overlap: the hull is their union exactly when the volumes add up.
-				if (!merged || std::abs(solidVolume(merged->solid) - solidVolume(pieces[i]) - solidVolume(pieces[j])) > 0.5 ||
-				    !brushProblem(merged->solid).empty()) {
-					continue;
-				}
-				pieces[i] = std::move(merged->solid);
-				pieces.erase(pieces.begin() + std::ptrdiff_t(j));
-				joined = true;
-			}
-		}
-	}
+	joinPieces(ids, pieces);
 }
 
 /// The material most of a brush's visible sides have (for faces a carve adds).
@@ -516,7 +687,17 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	}
 
 	std::vector<Piece> roads, kerbs, seals;
+	// A road narrower than the street (raiseBeyond...): the flat street along the road (road and
+	// parking lanes), as tall prisms per span; the floor outside them rises to its neighbour.
+	const bool raise = o.raiseBeyondLeft > 0 || o.raiseBeyondRight > 0;
+	std::vector<Solid> flatColumns;
+	const auto giveUp = [&] {
+		RoadBuildPlan none;
+		none.notes.push_back("stopped");
+		return none;
+	};
 	for (const auto& path : paths) {
+		if (stopped(o)) return giveUp();
 		const PathLayout layout = layoutPath(path, o, plan);
 		if (layout.stations.size() < 2) continue;
 		std::vector<Vec3> line;
@@ -565,6 +746,15 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 				}
 			};
 			const bool oneTop = o.displacement;
+			if (raise) {
+				const double left = o.raiseBeyondLeft > 0 ? o.raiseBeyondLeft : hw, right = o.raiseBeyondRight > 0 ? o.raiseBeyondRight : hw;
+				std::vector<Vec3> points;
+				for (const auto& c : {s0.c - s0.left * right, s1.c - s1.left * right, s1.c + s1.left * left, s0.c + s0.left * left}) {
+					points.push_back({c.x, c.y, std::min(s0.c.z, s1.c.z) - 4 * o.thickness - 256});
+					points.push_back({c.x, c.y, std::max(s0.c.z, s1.c.z) + o.clearance + 256});
+				}
+				if (auto column = solidFromPoints(ids, points, NODRAW)) flatColumns.push_back(std::move(*column));
+			}
 			// The road.
 			const double lo0 = -hw, hi0 = hw;
 			auto made = stripPieces(ids, s0, s1, lo0, hi0, lo0, hi0, 0, o.thickness, oneTop);
@@ -760,12 +950,16 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 			if (auto column = columnOver(ids, piece.solid, top)) columns.push_back(std::move(*column));
 		}
 	}
+	std::vector<Bounds> columnBox;
+	columnBox.reserve(columns.size());
+	for (const auto& column : columns) columnBox.push_back(buildBrushGeometry(column).bounds);
 	const auto carveByColumns = [&](const Solid& solid, std::vector<Solid>& pieces) {
 		pieces = {solid};
 		const Bounds box = buildBrushGeometry(solid).bounds;
 		bool changed = false;
-		for (const auto& column : columns) {
-			if (!boxesOverlap(box, buildBrushGeometry(column).bounds)) continue;
+		for (std::size_t c = 0; c < columns.size(); ++c) {
+			const Solid& column = columns[c];
+			if (!boxesOverlap(box, columnBox[c])) continue;
 			std::vector<Solid> next;
 			for (const auto& piece : pieces) {
 				auto parts = subtractSolid(ids, piece, column);
@@ -802,6 +996,7 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	int unfit = 0;
 	if (o.fit) {
 		for (const NearbySolid* n : others) {
+			if (stopped(o)) return giveUp();
 			if (n->ref.entityId != 0) {
 				const Entity* entity = doc.findEntity(n->ref.entityId);
 				if (!entity || entity->classname() != "func_detail") continue;
@@ -845,39 +1040,232 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 		}
 		if (groundMaterial.empty() && o.kerbs) groundMaterial = kerbMaterial;
 	}
+	// A road narrower than the street: each piece of the floor left beside it is split into what lies
+	// in the flat street (road and lanes: stays) and what lies beyond; that rises to the height of
+	// what borders it - a sidewalk's top (the sidewalk reaches the road), before something taller a
+	// kerb's height, beside nothing higher it stays flush. A piece that borders only other pieces takes
+	// the height of a raised one beside it.
+	int raisedPieces = 0;
+	std::vector<Bounds> flatBox;
+	for (const auto& column : flatColumns) flatBox.push_back(buildBrushGeometry(column).bounds);
+	const auto inFlat = [&](const Vec3& p) {
+		for (std::size_t c = 0; c < flatColumns.size(); ++c) {
+			const Bounds& b = flatBox[c];
+			if (p.x < b.min.x || p.x > b.max.x || p.y < b.min.y || p.y > b.max.y) continue;
+			if (solidContains(flatColumns[c], p, 0.01)) return true;
+		}
+		return false;
+	};
+	const auto raiseBeside = [&](std::vector<Solid>& pieces, const Solid& original) {
+		std::vector<Solid> level, beyond;
+		// Only the floor's surface rises: a piece whose top lies below the old floor's top (the slab
+		// left under the road) stays.
+		const Side* originalTop = topSide(original);
+		const auto belowSurface = [&](const Solid& piece) {
+			if (!originalTop) return false;
+			const Side* t = topSide(piece);
+			if (!t) return true;
+			const auto geometry = buildBrushGeometry(piece);
+			double z = 0, n = 0;
+			for (const auto& face : geometry.faces) {
+				if (&piece.sides[std::size_t(face.sideIndex)] != t) continue;
+				for (const auto& v : face.vertices) {
+					z += originalTop->plane().distanceTo(v);
+					++n;
+				}
+			}
+			return n > 0 && z / n < -0.5;
+		};
+		for (auto& piece : pieces) {
+			if (belowSurface(piece)) {
+				level.push_back(std::move(piece));
+				continue;
+			}
+			std::vector<Solid> rest{piece};
+			for (std::size_t c = 0; c < flatColumns.size() && !rest.empty(); ++c) {
+				std::vector<Solid> next;
+				for (auto& r : rest) {
+					if (!boxesOverlap(buildBrushGeometry(r).bounds, flatBox[c])) {
+						next.push_back(std::move(r));
+						continue;
+					}
+					if (auto in = insideOf(ids, r, flatColumns[c])) level.push_back(std::move(*in));
+					for (auto& part : subtractSolid(ids, r, flatColumns[c])) {
+						if (solidVolume(part) >= 1.0) next.push_back(std::move(part));
+					}
+				}
+				rest = std::move(next);
+			}
+			for (auto& r : rest) beyond.push_back(std::move(r));
+		}
+		joinPieces(ids, level);
+		joinPieces(ids, beyond);
+		// The rise of each piece beyond: from what borders it outside the street.
+		struct Rise {
+			double by = 0;
+			std::string top, side;
+			bool known = false;
+		};
+		std::vector<Rise> rises(beyond.size());
+		std::vector<std::vector<Vec3>> outlines(beyond.size());
+		std::vector<double> tops(beyond.size(), 0);
+		for (std::size_t i = 0; i < beyond.size(); ++i) {
+			const auto geometry = buildBrushGeometry(beyond[i]);
+			const FaceGeometry* top = nullptr;
+			for (const auto& face : geometry.faces) {
+				if (face.normal.z > 0.7 && (!top || face.normal.z > top->normal.z)) top = &face;
+			}
+			if (!top) continue;
+			outlines[i] = top->vertices;
+			double z = 0;
+			for (const auto& v : top->vertices) z += v.z;
+			tops[i] = z / double(top->vertices.size());
+			Vec3 middle{};
+			for (const auto& v : top->vertices) middle = middle + v;
+			middle = middle / double(top->vertices.size());
+			const auto around = solidsNear(doc, geometry.bounds, 4, replace);
+			double best = 1e30;
+			const Solid* bestSolid = nullptr;
+			bool taller = false;
+			const Solid* tallSolid = nullptr;
+			for (std::size_t k = 0; k < top->vertices.size(); ++k) {
+				const Vec3 a = top->vertices[k], b = top->vertices[(k + 1) % top->vertices.size()];
+				const Vec3 edge = flat(b - a);
+				if (length(edge) < 1) continue;
+				Vec3 out = normalize(Vec3{edge.y, -edge.x, 0});
+				const Vec3 mid = (a + b) * 0.5;
+				if (dot(out, flat(mid - middle)) < 0) out = -out;
+				for (const double t : {0.25, 0.5, 0.75}) {
+					const Vec3 at = a + (b - a) * t + out * 2.0;
+					const Vec3 probe{at.x, at.y, at.z + 1};
+					if (inFlat(probe)) continue;   // towards the road: not a neighbour
+					for (const auto& n : around) {
+						if (std::all_of(n.solid->sides.begin(), n.solid->sides.end(), [](const Side& side) { return isToolMaterial(side.material); })) continue;
+						if (!solidContains(*n.solid, probe, 0.05)) continue;
+						// Its top right there (a sidewalk beside a ramp slopes too).
+						double neighbourTop = n.bounds.max.z;
+						if (const Side* t = topSide(*n.solid)) {
+							const Plane tp = t->plane();
+							if (tp.normal.z > 0.7) neighbourTop = (tp.dist - tp.normal.x * probe.x - tp.normal.y * probe.y) / tp.normal.z;
+						}
+						const double rise = neighbourTop - at.z;
+						if (rise < 1) continue;
+						if (rise <= 64) {
+							if (rise < best) {
+								best = rise;
+								bestSolid = n.solid;
+							}
+						} else {
+							taller = true;
+							tallSolid = n.solid;
+						}
+					}
+				}
+			}
+			if (bestSolid) {
+				rises[i] = {best, mainMaterial(*bestSolid), mainMaterial(*bestSolid), true};
+				if (const Side* t = topSide(*bestSolid)) rises[i].top = t->material;
+			} else if (taller) {
+				rises[i] = {o.kerbHeight, mainMaterial(beyond[i]), mainMaterial(*tallSolid), true};
+				if (const Side* t = topSide(beyond[i])) rises[i].top = t->material;
+			}
+		}
+		// Pieces that border only other pieces: the rise of a raised piece they touch.
+		for (int round = 0; round < 8; ++round) {
+			bool changed = false;
+			for (std::size_t i = 0; i < beyond.size(); ++i) {
+				if (rises[i].known || outlines[i].empty()) continue;
+				for (std::size_t j = 0; j < beyond.size() && !rises[i].known; ++j) {
+					if (i == j || !rises[j].known || !boxesOverlap(buildBrushGeometry(beyond[i]).bounds, buildBrushGeometry(beyond[j]).bounds, -0.5)) continue;
+					rises[i] = rises[j];
+					changed = true;
+				}
+			}
+			if (!changed) break;
+		}
+		for (std::size_t i = 0; i < beyond.size(); ++i) {
+			if (!rises[i].known || rises[i].by < 0.5) {
+				level.push_back(std::move(beyond[i]));
+				continue;
+			}
+			// The top corners go up by the rise; the faces get the neighbour's look.
+			std::vector<Vec3> corners = solidCorners(beyond[i]);
+			for (auto& c : corners) {
+				if (std::any_of(outlines[i].begin(), outlines[i].end(), [&](const Vec3& v) { return length(v - c) < 0.05; })) c.z += rises[i].by;
+			}
+			auto raised = solidFromPoints(ids, corners, rises[i].side.empty() ? NODRAW : rises[i].side);
+			if (!raised || !brushProblem(*raised).empty()) {
+				level.push_back(std::move(beyond[i]));
+				continue;
+			}
+			for (auto& side : raised->sides) {
+				const Plane plane = side.plane();
+				if (plane.normal.z > 0.7) {
+					side.material = rises[i].top.empty() ? side.material : rises[i].top;
+				} else if (plane.normal.z < -0.7) {
+					side.material = NODRAW;
+				} else if (o.raisedEdgeKerb) {
+					// Facing the road: the kerb.
+					const auto faces = buildBrushGeometry(*raised).faces;
+					for (const auto& face : faces) {
+						if (&raised->sides[std::size_t(face.sideIndex)] != &side || face.vertices.empty()) continue;
+						Vec3 centre{};
+						for (const auto& v : face.vertices) centre = centre + v;
+						centre = centre / double(face.vertices.size());
+						if (inFlat(centre + plane.normal * 2.0)) side.material = o.kerbMaterial.empty() ? side.material : o.kerbMaterial;
+					}
+				}
+				alignToWorld(side);
+			}
+			raised->id = beyond[i].id;
+			level.push_back(std::move(*raised));
+			++raisedPieces;
+		}
+		pieces = std::move(level);
+	};
+
 	// The selected floor the road is built from: what is left of it stays (fill).
 	double lostFloor = 0;   // square units of floor in slivers that joined nothing
 	int lostSlivers = 0;
+	// A sliver the cuts left (too thin for a brush) joins a neighbouring piece instead of leaving a
+	// hole; only what joins nothing is left out (and said). A big piece whose only fault is a speck
+	// (two corners a hair apart where a cut passed near a corner) is mended first.
+	const auto absorbSlivers = [&](std::vector<Solid>& pieces) {
+		std::vector<Solid> good, bad;
+		for (auto& piece : pieces) (brushProblem(piece).empty() ? good : bad).push_back(std::move(piece));
+		std::vector<Solid> mendedPieces;
+		for (auto& sliver : bad) {
+			bool joined = false;
+			const Bounds sb = buildBrushGeometry(sliver).bounds;
+			for (auto& piece : good) {
+				if (!boxesOverlap(sb, buildBrushGeometry(piece).bounds, -0.05)) continue;
+				auto merged = joinTouching(ids, piece, sliver);
+				if (!merged || !brushProblem(*merged).empty()) continue;
+				merged->id = piece.id;
+				piece = std::move(*merged);
+				joined = true;
+				break;
+			}
+			if (!joined) {
+				if (auto mended = mendSpecks(ids, sliver)) {
+					mendedPieces.push_back(std::move(*mended));
+					continue;
+				}
+				lostFloor += solidVolume(sliver) / std::max(1.0, o.thickness);
+				++lostSlivers;
+			}
+		}
+		for (auto& m : mendedPieces) good.push_back(std::move(m));
+		pieces = std::move(good);
+	};
 	for (const auto& ref : replace) {
+		if (stopped(o)) return giveUp();
 		const Solid* solid = doc.findSolid(ref);
 		if (!solid) continue;
 		std::vector<Solid> pieces;
 		carveByColumns(*solid, pieces);
 		tidyCarved(ids, *solid, pieces, mainMaterial(*solid));
-		// A sliver the cuts left (too thin for a brush) joins a neighbouring piece instead of
-		// leaving a hole; only what joins nothing is left out (and said).
-		{
-			std::vector<Solid> good, bad;
-			for (auto& piece : pieces) (brushProblem(piece).empty() ? good : bad).push_back(std::move(piece));
-			for (auto& sliver : bad) {
-				bool joined = false;
-				const Bounds sb = buildBrushGeometry(sliver).bounds;
-				for (auto& piece : good) {
-					if (!boxesOverlap(sb, buildBrushGeometry(piece).bounds, -0.05)) continue;
-					auto merged = mergeSolids(ids, {piece, sliver});
-					if (!merged || std::abs(solidVolume(merged->solid) - solidVolume(piece) - solidVolume(sliver)) > 0.5 || !brushProblem(merged->solid).empty()) continue;
-					merged->solid.id = piece.id;
-					piece = std::move(merged->solid);
-					joined = true;
-					break;
-				}
-				if (!joined) {
-					lostFloor += solidVolume(sliver) / std::max(1.0, o.thickness);
-					++lostSlivers;
-				}
-			}
-			pieces = std::move(good);
-		}
+		absorbSlivers(pieces);
 		// What is left beside a curve was road: it gets the fill material, else the ground's.
 		const std::string fill = !o.fillMaterial.empty() ? o.fillMaterial : groundMaterial;
 		for (auto& piece : pieces) {
@@ -888,8 +1276,15 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 				}
 			}
 		}
+		if (raise && !flatColumns.empty()) {
+			raiseBeside(pieces, *solid);
+			absorbSlivers(pieces);
+		}
 		keepId(ref, pieces);
 		plan.changed.push_back({ref, std::move(pieces)});
+	}
+	if (raisedPieces > 0) {
+		plan.notes.push_back(std::to_string(raisedPieces) + " piece(s) of the floor beside the road rise to the sidewalk (the road is narrower than the street)");
 	}
 
 	if (lostSlivers > 0) {
@@ -1076,6 +1471,27 @@ void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& pla
 		for (const auto& piece : r.pieces) street.add(buildBrushGeometry(piece).bounds);
 	}
 	if (floor.empty() || street.empty()) return;
+	// The street's surface may slope (a ramp): heights from the old floor brushes' tops.
+	double lowest = top, highest = top;
+	for (auto* r : floor) {
+		if (const Solid* original = doc.findSolid(r->ref)) {
+			const auto b = buildBrushGeometry(*original).bounds;
+			lowest = std::min(lowest, b.max.z);
+			highest = std::max(highest, b.max.z);
+			if (const Side* t = topSide(*original)) {
+				for (const auto& v : solidCorners(*original)) {
+					if (std::abs(t->plane().distanceTo(v)) < 0.05) lowest = std::min(lowest, v.z);
+				}
+			}
+		}
+	}
+	const auto heightOf = [](const Solid& solid, double x, double y, double fallback) {
+		if (const Side* t = topSide(solid)) {
+			const Plane p = t->plane();
+			if (p.normal.z > 0.7) return (p.dist - p.normal.x * x - p.normal.y * y) / p.normal.z;
+		}
+		return fallback;
+	};
 
 	// Everything raised that borders the street: brushes of the world and func_detail that stand on
 	// or beside it (their bottom at most the street's top) and rise above it. Carved neighbours count
@@ -1089,7 +1505,7 @@ void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& pla
 		if (std::all_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return isToolMaterial(s.material); })) return;
 		if (std::any_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return s.dispInfo(); })) return;
 		const Bounds b = buildBrushGeometry(solid).bounds;
-		if (b.empty() || b.min.z > top + 1 || b.max.z < top + 2) return;
+		if (b.empty() || b.min.z > highest + 1 || b.max.z < lowest + 2) return;
 		Bounds reach = street;
 		reach.min = reach.min - Vec3{kerbWidth + 1, kerbWidth + 1, 0};
 		reach.max = reach.max + Vec3{kerbWidth + 1, kerbWidth + 1, 0};
@@ -1119,21 +1535,40 @@ void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& pla
 	for (const auto& r : raised) {
 		const auto outline = footprint(r.solid);
 		if (outline.size() < 3) continue;
-		const auto zone = prism(ids, grown(outline, kerbWidth), low, top + 1, NODRAW);
-		const auto under = prism(ids, outline, low, top + 1, NODRAW);
+		const auto zone = prism(ids, grown(outline, kerbWidth), low, highest + 1, NODRAW);
+		const auto under = prism(ids, outline, low, highest + 1, NODRAW);
 		if (!zone || !under) continue;
 		const Bounds zoneBox = buildBrushGeometry(*zone).bounds;
-		// Flush with a sidewalk; before a wall (or anything taller) a kerb of its own height.
-		const double kerbTop = r.rise <= 32 ? top + r.rise : top + kerbHeight;
 		for (auto* replacement : floor) {
 			std::vector<Solid> rest;
 			bool cut = false;
+			const Solid* original = doc.findSolid(replacement->ref);
+			const Side* originalTop = original ? topSide(*original) : nullptr;
 			for (auto& piece : replacement->pieces) {
 				const Bounds pb = buildBrushGeometry(piece).bounds;
-				if (pb.max.z < top - 0.5 || pb.max.z > top + 0.5 || !boxesOverlap(pb, zoneBox)) {
+				// Only the floor's surface (not the slab left under the road), next to the neighbour.
+				const Side* pieceTop = topSide(piece);
+				bool surface = pieceTop && originalTop;
+				if (surface) {
+					for (const auto& v : solidCorners(piece)) {
+						if (std::abs(pieceTop->plane().distanceTo(v)) < 0.05 && std::abs(originalTop->plane().distanceTo(v)) > 0.5) surface = false;
+					}
+				}
+				if (!surface || !boxesOverlap(pb, zoneBox)) {
 					rest.push_back(std::move(piece));
 					continue;
 				}
+				// How much higher the neighbour is right here: flush with a sidewalk; before a wall (or
+				// anything taller) a kerb of its own height. Not higher here: no kerb.
+				const Vec3 middle = (pb.min + pb.max) * 0.5;
+				const double here = heightOf(piece, middle.x, middle.y, pb.max.z);
+				const double rise = heightOf(r.solid, middle.x, middle.y, here + r.rise) - here;
+				if (rise < 1) {
+					rest.push_back(std::move(piece));
+					continue;
+				}
+				const double lift = rise <= 32 ? rise : kerbHeight;
+				const Plane topPlane = pieceTop->plane();
 				auto inside = insideOf(ids, piece, *zone);
 				if (!inside) {
 					rest.push_back(std::move(piece));
@@ -1149,7 +1584,7 @@ void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& pla
 					if (solidVolume(part) < 1.0) continue;
 					std::vector<Vec3> corners = solidCorners(part);
 					for (auto& c : corners) {
-						if (c.z > top - 0.05) c.z = kerbTop;
+						if (std::abs(topPlane.distanceTo(c)) < 0.05) c.z += lift;
 					}
 					auto kerb = solidFromPoints(ids, corners, material);
 					if (!kerb || !brushProblem(*kerb).empty()) {

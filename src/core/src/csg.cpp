@@ -208,6 +208,46 @@ std::optional<Solid> solidFromPoints(MapDocument& doc, const std::vector<Vec3>& 
 	return solid;
 }
 
+namespace {
+
+/// A part whose only fault is a face too small to count (a cut a hair from a corner leaves a face
+/// of almost no area): that face left out, the neighbouring faces meet instead, if the brush hardly
+/// changes. Without this a big piece would be thrown away for a speck of a face.
+bool dropTinyFaces(Solid& solid) {
+	const auto geometry = buildBrushGeometry(solid);
+	if (!geometry.valid) return false;
+	std::vector<std::size_t> tiny;
+	for (const auto& face : geometry.faces) {
+		Vec3 area;
+		for (std::size_t i = 1; i + 1 < face.vertices.size(); ++i) area += cross(face.vertices[i] - face.vertices[0], face.vertices[i + 1] - face.vertices[0]);
+		if (length(area) < 0.5) tiny.push_back(static_cast<std::size_t>(face.sideIndex));
+	}
+	if (tiny.empty() || tiny.size() >= solid.sides.size()) return false;
+	const double before = solidVolume(solid);
+	Solid trimmed = solid;
+	std::sort(tiny.rbegin(), tiny.rend());
+	for (const auto index : tiny) trimmed.sides.erase(trimmed.sides.begin() + std::ptrdiff_t(index));
+	removeUnusedSides(trimmed);
+	if (!isConvexValid(trimmed) || std::abs(solidVolume(trimmed) - before) > 1.0) return false;
+	solid = std::move(trimmed);
+	return true;
+}
+
+/// How far the solid's corners reach behind (lowest) and in front of (highest) a plane.
+std::pair<double, double> planeSpan(const Solid& solid, const Plane& plane) {
+	double lowest = 1e30, highest = -1e30;
+	for (const auto& face : buildBrushGeometry(solid).faces) {
+		for (const auto& v : face.vertices) {
+			const double d = dot(plane.normal, v) - plane.dist;
+			lowest = std::min(lowest, d);
+			highest = std::max(highest, d);
+		}
+	}
+	return {lowest, highest};
+}
+
+} // namespace
+
 std::pair<std::optional<Solid>, std::optional<Solid>> splitSolid(MapDocument& doc, const Solid& solid, const Plane& plane, const Side& capTexture) {
 	const auto geometry = buildBrushGeometry(solid);
 	double lowest = 1e30, highest = -1e30;
@@ -233,8 +273,8 @@ std::pair<std::optional<Solid>, std::optional<Solid>> splitSolid(MapDocument& do
 	removeUnusedSides(front);
 	tidyPlanePoints(front);
 	std::optional<Solid> frontPart, backPart;
-	if (usable(front)) frontPart = std::move(front);
-	if (usable(back)) backPart = std::move(back);
+	if (usable(front) || (dropTinyFaces(front) && usable(front))) frontPart = std::move(front);
+	if (usable(back) || (dropTinyFaces(back) && usable(back))) backPart = std::move(back);
 	return {std::move(frontPart), std::move(backPart)};
 }
 
@@ -338,6 +378,16 @@ std::vector<Solid> subtractSolid(MapDocument& doc, const Solid& solid, const Sol
 		std::optional<Solid> bestFront, bestBack;
 		for (std::size_t i = 0; i < planes.size();) {
 			auto [front, back] = splitSolid(doc, remaining, planes[i]->plane(), *planes[i]);
+			if (!front || !back) {
+				// A part missing although the brush reaches both sides of the plane: that part was too
+				// thin to be a brush. Not "all on one side": the other planes first (after them the
+				// part may lie wholly on one side), else this one is never used.
+				const auto [lowest, highest] = planeSpan(remaining, planes[i]->plane());
+				if (lowest < -EPS && highest > EPS) {
+					++i;
+					continue;
+				}
+			}
 			if (front && !back) {
 				// The rest lies outside the cutter: nothing more to take away.
 				if (!cut) return {solid};
@@ -368,7 +418,30 @@ std::vector<Solid> subtractSolid(MapDocument& doc, const Solid& solid, const Sol
 			}
 			++i;
 		}
-		if (!found) break;
+		if (!found) {
+			// Only planes left whose cut leaves a part too thin to be a clean brush: cut anyway (the
+			// part keeps a speck of a face) rather than lose what lies outside the cutter.
+			for (const Side* side : planes) {
+				const Plane plane = side->plane();
+				const auto [lowest, highest] = planeSpan(remaining, plane);
+				if (highest <= EPS) continue;
+				if (lowest >= -EPS) {
+					out.push_back(std::move(remaining));
+					joinConvexPieces(doc, out);
+					return out;
+				}
+				Solid back = remaining;
+				back.sides.push_back(makeSide(doc, plane, side->material, side));
+				removeUnusedSides(back);
+				Solid front = freshIds(doc, remaining);
+				front.sides.push_back(makeSide(doc, Plane{-plane.normal, -plane.dist}, side->material, side));
+				removeUnusedSides(front);
+				if (buildBrushGeometry(front).valid && solidVolume(front) > 1.0) out.push_back(std::move(front));
+				if (!buildBrushGeometry(back).valid || solidVolume(back) <= 1.0) break;
+				remaining = std::move(back);
+			}
+			break;
+		}
 		cut = true;
 		out.push_back(std::move(*bestFront));
 		remaining = std::move(*bestBack);
@@ -428,6 +501,31 @@ std::optional<MergeResult> mergeSolids(MapDocument& doc, const std::vector<Solid
 	}
 	result.exact = left < 1.0;
 	return result;
+}
+
+std::optional<Solid> joinTouching(MapDocument& doc, const Solid& a, const Solid& b) {
+	const auto ga = buildBrushGeometry(a), gb = buildBrushGeometry(b);
+	if (!ga.valid || !gb.valid) return std::nullopt;
+	for (int k = 0; k < 3; ++k) {
+		if (ga.bounds.max[k] < gb.bounds.min[k] - EPS || gb.bounds.max[k] < ga.bounds.min[k] - EPS) return std::nullopt;
+	}
+	bool facing = false;
+	for (const auto& sa : a.sides) {
+		const Plane pa = sa.plane();
+		for (const auto& sb : b.sides) {
+			const Plane pb = sb.plane();
+			if (dot(pa.normal, pb.normal) < -0.99999 && std::abs(pa.dist + pb.dist) < EPS) {
+				facing = true;
+				break;
+			}
+		}
+		if (facing) break;
+	}
+	if (!facing) return std::nullopt;
+	auto hull = hullSolid(doc, {a, b});
+	// The pieces do not overlap: the hull is their union exactly when the volumes add up.
+	if (!hull || std::abs(solidVolume(*hull) - solidVolume(a) - solidVolume(b)) > 0.5) return std::nullopt;
+	return hull;
 }
 
 std::optional<Solid> roundEdge(MapDocument& doc, const Solid& solid, int sideA, int sideB, double radius, int segments) {

@@ -391,6 +391,7 @@ void addRoadBuildSettings(std::vector<std::pair<std::string, std::string>>& out,
 	out.emplace_back("build.kerbWidth", number(o.kerbWidth));
 	out.emplace_back("build.kerbHeight", number(o.kerbHeight));
 	out.emplace_back("build.kerbMaterial", o.kerbMaterial);
+	out.emplace_back("build.streetRoadWidth", number(o.streetRoadWidth));
 	std::string pts;
 	for (const auto& p : points) pts += (pts.empty() ? "" : ";") + number(p.x) + " " + number(p.y) + " " + number(p.z);
 	out.emplace_back("build.points", pts);
@@ -472,6 +473,7 @@ RoadBuildOptions roadBuildSettings(const std::map<std::string, std::string>& set
 	o.kerbWidth = num("build.kerbWidth", o.kerbWidth);
 	o.kerbHeight = num("build.kerbHeight", o.kerbHeight);
 	o.kerbMaterial = setting(settings, "build.kerbMaterial");
+	o.streetRoadWidth = num("build.streetRoadWidth", 0);
 	if (fromSelection) *fromSelection = setting(settings, "build.mode") != "path";
 	if (points) {
 		points->clear();

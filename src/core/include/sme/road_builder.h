@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,6 +51,11 @@ struct RoadPath {
 	/// RoadBuildOptions::innerRadius. Set by the street finder so each curve keeps clear of the
 	/// kerbs (a rounded sidewalk corner gets a curve round the same middle).
 	std::vector<double> innerRadius;
+	/// The ground along the way (from a street's floor): the points with their heights, in order,
+	/// where its slope changes - a ramp in the middle of a straight part. The road follows it (extra
+	/// joints where the slope changes, curves at the ground's height). Empty: heights straight
+	/// between the points.
+	std::vector<Vec3> profile;
 };
 
 /// Through a selected street: on which sides of the road a parking lane is left (left and right as
@@ -85,6 +91,18 @@ struct RoadBuildOptions {
 	double kerbWidth = 16;
 	double kerbHeight = 8;
 	std::string kerbMaterial;        ///< Empty: the side material
+	/// Through a selected street: the road's width (0: from the street, its width minus the parking
+	/// lanes). Narrower than that, the strips left beside the road rise to what borders them (the
+	/// sidewalk is extended to the road's edge); wider, it reaches into the neighbours (carved).
+	double streetRoadWidth = 0;
+	/// Set by planRoadFromSelection for a road narrower than the street: the floor left beside the road
+	/// farther than this from its centre line (left, right) rises to the height of what borders it
+	/// (a sidewalk: its top; something taller: `kerbHeight`; nothing higher: it stays flush).
+	double raiseBeyondLeft = 0, raiseBeyondRight = 0;
+	bool raisedEdgeKerb = false;   ///< The raised floor's face towards the road gets the kerb material
+	/// Asked now and then while planning (a live preview planned on another thread): true stops it,
+	/// the plan comes back empty with the note "stopped".
+	std::function<bool()> cancelled;
 };
 
 /// What building the road would do.
@@ -139,6 +157,10 @@ struct RoadCorridor {
 	double area = 0;                 ///< The street's area (square units)
 	double cell = 0;                 ///< Raster used to find the middle
 	std::string material;            ///< The top material most of the floor has
+	/// The road (and its parking lanes) is narrower than the street (options.streetRoadWidth): the
+	/// floor left beside it rises to what borders it (the sidewalk), see RoadBuildOptions.
+	bool raisedSides = false;
+	double flatLeft = 0, flatRight = 0;   ///< With raisedSides: the flat street (road and lanes) left and right of the centre line
 	std::vector<std::string> notes;
 	[[nodiscard]] bool ok() const { return !paths.empty(); }
 };
