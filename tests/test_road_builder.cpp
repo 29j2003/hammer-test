@@ -420,9 +420,13 @@ void checkCovered(const MapDocument& before, const std::vector<SolidRef>& floor,
 		const Solid* solid = before.findSolid(ref);
 		REQUIRE(solid);
 		const auto b = buildBrushGeometry(*solid).bounds;
+		const Side* t = top(*solid);
+		const Plane plane = t ? t->plane() : Plane{{0, 0, 1}, b.max.z};
 		for (double x = b.min.x + 1.3; x < b.max.x; x += 7.7) {
 			for (double y = b.min.y + 1.7; y < b.max.y; y += 7.7) {
-				const Vec3 p{x, y, b.max.z - 4};
+				// Just below the top (a ramp's top slopes).
+				const double z = std::abs(plane.normal.z) > 1e-6 ? (plane.dist - plane.normal.x * x - plane.normal.y * y) / plane.normal.z : b.max.z;
+				const Vec3 p{x, y, z - 4};
 				if (!solidContains(*solid, p, -0.05)) continue;
 				++samples;
 				int strict = 0, loose = 0;
@@ -1080,4 +1084,193 @@ TEST_CASE("road builder: planning can be stopped (a newer preview is wanted)") {
 	CHECK_FALSE(plan.ok());
 	CHECK(asked >= 2);
 	CHECK(std::find(plan.notes.begin(), plan.notes.end(), "stopped") != plan.notes.end());
+}
+
+TEST_CASE("road from selection: a road narrower than the street - the floor beside it rises to the sidewalk, no holes") {
+	for (const auto sides : {RoadParkingSides::None, RoadParkingSides::Both}) {
+		CAPTURE(int(sides));
+		Street street = julius();
+		RoadBuildOptions o;
+		o.material = "ROAD/ASPHALT";
+		o.parkingSides = sides;
+		o.parking = 48;
+		o.streetRoadWidth = 160;
+		o.kerbs = true;
+		o.kerbMaterial = "CONCRETE/KERB";
+		RoadCorridor corridor;
+		const auto plan = planRoadFromSelection(street.doc, street.doc, street.floor, o, SQUARE, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		INFO(describeRoadBuild(plan));
+		REQUIRE(plan.ok());
+		CHECK(corridor.roadWidth == doctest::Approx(160));
+		CHECK(corridor.raisedSides);
+		CHECK(plan.skipped == 0);
+		CHECK(allSound(plan.resultSolids()));
+		const MapDocument after = applied(street.doc, plan);
+		checkCovered(street.doc, street.floor, after);
+		CHECK(noOverlaps(after.world.solids));
+		const auto road = roadIn(after, "ROAD/ASPHALT");
+		const double flatHalf = 80 + (sides == RoadParkingSides::Both ? 48 : 0);
+		// Along the first part (centre y = -928): the road, the flat lanes, then raised floor up to the sidewalk (top 16).
+		for (const double x : {-2000.0, -1600.0}) {
+			CHECK(roadAt(road, x, -928, 0));
+			CHECK_FALSE(roadAt(road, x, -928 + 100, 0));
+			const auto solidAt = [&](double y, double z) {
+				return std::any_of(after.world.solids.begin(), after.world.solids.end(), [&](const Solid& s) { return solidContains(s, {x, y, z}, -0.05); });
+			};
+			CHECK_FALSE(solidAt(-928 + flatHalf - 8, 12));   // flat street: open above its top (8)
+			CHECK(solidAt(-928 + flatHalf + 20, 12));        // beyond it: raised to 16
+			CHECK_FALSE(solidAt(-928 + flatHalf + 20, 18));
+			CHECK(solidAt(-928 - flatHalf - 20, 12));
+		}
+		// The raised floor's face towards the road is the kerb.
+		bool kerbFace = false;
+		for (const auto& s : after.world.solids) {
+			for (const auto& side : s.sides) kerbFace = kerbFace || side.material == "CONCRETE/KERB";
+		}
+		CHECK(kerbFace);
+	}
+}
+
+TEST_CASE("road from selection: narrower road through a big angled street - raised sides, no holes") {
+	AngledStreet s = angledStreet(angledCentre(), 208, 512);
+	RoadBuildOptions o = juliusSettings();
+	o.streetRoadWidth = 224;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(corridor.raisedSides);
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(s.doc, plan);
+	checkCovered(s.doc, s.floor, after);
+	// Beside the first part (along x): raised to the sidewalk's top (8).
+	const auto solidAt = [&](double x, double y, double z) {
+		return std::any_of(after.world.solids.begin(), after.world.solids.end(), [&](const Solid& q) { return solidContains(q, {x, y, z}, -0.05); });
+	};
+	CHECK(solidAt(-1500, 180, 4));
+	CHECK(solidAt(-1500, -180, 4));
+	CHECK_FALSE(solidAt(-1500, 80, 4));
+}
+
+namespace {
+
+/// A street that ramps up: flat at 0 (x 0..1024), a ramp to 128 (x 1024..2048), flat at 128
+/// (x 2048..3072), 416 wide, cut into blocks; sidewalks 96 wide and 8 higher, sloping with it.
+/// `leg`: an L - after the top level, a part along y that slopes down again to 64.
+struct RampStreet {
+	MapDocument doc;
+	std::vector<SolidRef> floor, sidewalks;
+};
+
+RampStreet rampStreet(bool leg = false) {
+	RampStreet s;
+	const auto slab = [&](double x0, double x1, double y0, double y1, double z0, double z1, double lift, const char* material, std::vector<SolidRef>& into,
+	                      bool alongY = false) {
+		// Top rises from z0 to z1 along x (or along y), the brush 24 thick under it.
+		std::vector<Vec3> points;
+		for (const double x : {x0, x1}) {
+			for (const double y : {y0, y1}) {
+				const double f = alongY ? (y - y0) / (y1 - y0) : (x - x0) / (x1 - x0);
+				const double z = z0 + (z1 - z0) * f + lift;
+				points.push_back({x, y, z});
+				points.push_back({x, y, z - 24 - lift});
+			}
+		}
+		auto solid = solidFromPoints(s.doc, points, material);
+		REQUIRE(solid);
+		s.doc.world.solids.push_back(std::move(*solid));
+		into.push_back({0, s.doc.world.solids.back().id});
+	};
+	for (const auto& [x0, x1, z0, z1] : std::vector<std::array<double, 4>>{{0, 512, 0, 0}, {512, 1024, 0, 0}, {1024, 1536, 0, 64}, {1536, 2048, 64, 128},
+	                                                                    {2048, 2560, 128, 128}, {2560, 3072, 128, 128}}) {
+		slab(x0, x1, -208, 0, z0, z1, 0, "CONCRETE/STREET", s.floor);
+		slab(x0, x1, 0, 208, z0, z1, 0, "CONCRETE/STREET", s.floor);
+		slab(x0, x1, 208, 304, z0, z1, 8, "CONCRETE/SIDEWALK", s.sidewalks);
+		if (!leg || x1 < 3072) slab(x0, x1, -304, -208, z0, z1, 8, "CONCRETE/SIDEWALK", s.sidewalks);
+	}
+	if (leg) {
+		// From the top level's end (x 2656..3072 wide) along -y, sloping down to 64.
+		slab(2656, 3072, -1232, -208, 64, 128, 0, "CONCRETE/STREET", s.floor, true);
+		slab(2560, 2656, -1232, -304, 72, 136, 0, "CONCRETE/SIDEWALK", s.sidewalks, true);
+	}
+	return s;
+}
+
+} // namespace
+
+TEST_CASE("road from selection: a street that ramps up between two levels - the road follows the ground") {
+	for (const bool disp : {false, true}) {
+		CAPTURE(disp);
+		RampStreet s = rampStreet();
+		RoadBuildOptions o = juliusSettings();
+		o.displacement = disp;
+		o.parkingSides = RoadParkingSides::Both;
+		o.parking = 64;
+		RoadCorridor corridor;
+		const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		INFO(describeRoadBuild(plan));
+		REQUIRE(plan.ok());
+		CHECK(corridor.floor.size() == s.floor.size());   // the ramp joins both levels: one street
+		CHECK(corridor.ignored.empty());
+		CHECK(plan.skipped == 0);
+		CHECK(allSound(plan.resultSolids()));
+		const MapDocument after = applied(s.doc, plan);
+		checkCovered(s.doc, s.floor, after);
+		CHECK(noOverlaps(after.world.solids));
+		// The road's top on the ground: along the middle at several places (1 unit below / above).
+		const auto road = roadIn(after, o.material);
+		for (const auto& [x, z] : std::vector<std::pair<double, double>>{{300, 0}, {900, 0}, {1280, 32}, {1536, 64}, {1900, 109.5}, {2700, 128}}) {
+			CAPTURE(x);
+			CHECK(roadAt(road, x, 0, z - 1));
+			if (!disp) CHECK_FALSE(roadAt(road, x, 0, z + 1));
+		}
+	}
+}
+
+TEST_CASE("road from selection: an L street with a sloped leg - curve and slope, no holes") {
+	RampStreet s = rampStreet(true);
+	RoadBuildOptions o = juliusSettings();
+	o.displacement = false;
+	o.parkingSides = RoadParkingSides::None;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(corridor.ignored.empty());
+	CHECK(plan.curves >= 1);
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(s.doc, plan);
+	checkCovered(s.doc, s.floor, after);
+	CHECK(noOverlaps(after.world.solids));
+	const auto road = roadIn(after, o.material);
+	// Down the leg: the ground falls from 128 (y -208) to 64 (y -1232).
+	const double zLeg = 64 + 64 * (1232.0 - 1100) / 1024;   // 72.25 at y = -1100
+	CHECK(roadAt(road, 2864, -1100, zLeg - 1));
+	CHECK_FALSE(roadAt(road, 2864, -1100, zLeg + 1));
+}
+
+TEST_CASE("road from selection: kerbs at the edge of a ramp street follow the slope, flush with the sidewalk") {
+	RampStreet s = rampStreet();
+	RoadBuildOptions o = edgeKerbOptions();
+	o.parking = 64;
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+	INFO(describeRoadCorridor(corridor));
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	checkEdgeKerbs(s.doc, s.floor, plan);
+	const MapDocument after = applied(s.doc, plan);
+	// On the flat start, half way up the ramp and on the top level: a kerb against the sidewalk,
+	// its top flush with the sidewalk's (8 above the ground).
+	for (const auto& [x, z] : std::vector<std::pair<double, double>>{{300, 0}, {1280, 32}, {1800, 97}, {2800, 128}}) {
+		CAPTURE(x);
+		CHECK(kerbAt(after, x, 208 - 8, z + 4));
+		CHECK_FALSE(kerbAt(after, x, 208 - 8, z + 9));
+	}
 }

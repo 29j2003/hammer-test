@@ -159,6 +159,10 @@ public:
 		m_maxObjectId = from.m_maxObjectId;
 		m_maxSideId = from.m_maxSideId;
 	}
+	void setIdCounters(std::pair<int, int> counters) {
+		m_maxObjectId = counters.first;
+		m_maxSideId = counters.second;
+	}
 
 	[[nodiscard]] Entity* findEntity(int entityId);     ///< 0 = world
 	// Same, read-only.

@@ -18,6 +18,7 @@
 #include <QSettings>
 
 #include <algorithm>
+#include <chrono>
 
 #include <sme/assets.h>
 #include <sme/brush.h>
@@ -49,6 +50,8 @@ QString fromPath(const std::filesystem::path& path) {
 }
 
 Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<ModelCache>()) {
+	// Plans made before a change of the map (on another thread) are stale.
+	connect(this, &Editor::documentChanged, this, [this] { ++m_docSerial; });
 	m_poser = std::make_unique<ScenePoser>(this);
 	QSettings settings;
 	m_grid = settings.value("editor/grid", 16.0).toDouble();
@@ -1417,44 +1420,138 @@ std::vector<RoadPath> Editor::selectedRoadPaths(RoadBuildOptions* suggested) con
 	return roadPathsFromSolids(m_doc, m_selection.solids, suggested);
 }
 
-RoadBuildPlan Editor::planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection, RoadCorridor* corridor) const {
+Editor::RoadBuildJob Editor::roadBuildJob(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) const {
+	RoadBuildJob job;
+	if (!m_docSnapshot || m_docSnapshotSerial != m_docSerial || m_docSnapshot->idCounters() != m_doc.idCounters()) {
+		m_docSnapshot = std::make_shared<const MapDocument>(m_doc);
+		m_docSnapshotSerial = m_docSerial;
+	}
+	job.doc = m_docSnapshot;
+	job.idCounters = m_doc.idCounters();
+	job.serial = m_docSerial;
+	job.revision = m_history.revision();
+	job.solids = m_selection.solids;
+	job.paths = paths;
+	job.options = options;
+	job.fromSelection = fromSelection;
+	// Texture sizes of what the plan may use: the road material, else the floor's tops.
 	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
 	const auto size = [files](const std::string& material) {
 		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
 	};
-	MapDocument scratch;   // ids for the preview only; building plans again with the map's own
-	RoadBuildPlan plan;
-	RoadCorridor street;
-	if (fromSelection) {
-		plan = planRoadFromSelection(m_doc, scratch, m_selection.solids, options, size, &street);
-	} else {
-		plan = planRoadBuild(m_doc, scratch, paths, options, size);
+	std::set<std::string> materials;
+	if (!options.material.empty()) materials.insert(options.material);
+	if (fromSelection && options.material.empty()) {
+		for (const auto& ref : m_selection.solids) {
+			const Solid* solid = m_doc.findSolid(ref);
+			if (!solid) continue;
+			for (const auto& side : solid->sides) {
+				if (side.plane().normal.z > 0.7) materials.insert(side.material);
+			}
+			if (materials.size() > 32) break;
+		}
 	}
-	// For the editor report: the settings and selection (replayed by sme-probe) and the plan.
+	for (const auto& material : materials) job.textureSizes[material] = size(material);
+	return job;
+}
+
+Editor::RoadBuildResult Editor::runRoadBuildJob(const RoadBuildJob& job) {
+	RoadBuildResult result;
+	const auto t0 = std::chrono::steady_clock::now();
+	try {
+		MapDocument ids;
+		ids.setIdCounters(job.idCounters);
+		const auto& sizes = job.textureSizes;
+		const TextureSizeFn size = [&sizes](const std::string& material) {
+			const auto it = sizes.find(material);
+			return it != sizes.end() ? it->second : std::pair<int, int>{512, 512};
+		};
+		if (!job.doc) return result;
+		if (job.fromSelection) {
+			result.plan = planRoadFromSelection(*job.doc, ids, job.solids, job.options, size, &result.street);
+		} else {
+			result.plan = planRoadBuild(*job.doc, ids, job.paths, job.options, size);
+		}
+	} catch (const std::exception& e) {
+		result.plan = {};
+		result.error = e.what();
+	} catch (...) {
+		result.plan = {};
+		result.error = "unknown error";
+	}
+	result.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	return result;
+}
+
+std::string Editor::roadJobKey(const RoadBuildJob& job) {
+	std::vector<std::pair<std::string, std::string>> settings;
 	std::vector<Vec3> points;
-	if (!fromSelection && !paths.empty()) points = paths.front().points;
+	if (!job.fromSelection && !job.paths.empty()) points = job.paths.front().points;
+	addRoadBuildSettings(settings, job.options, job.fromSelection, points, {0, 0});
+	settings.emplace_back("build.solids", formatSolids(job.solids));
+	std::string key;
+	for (const auto& [k, v] : settings) key += k + "=" + v + "\n";
+	return key;
+}
+
+bool Editor::roadJobCurrent(const RoadBuildJob& job) const {
+	return job.serial == m_docSerial && job.revision == m_history.revision() && job.idCounters == m_doc.idCounters();
+}
+
+void Editor::noteRoadBuildStarted(const RoadBuildJob& job) const {
+	std::vector<Vec3> points;
+	if (!job.fromSelection && !job.paths.empty()) points = job.paths.front().points;
 	m_buildReplay.clear();
-	addRoadBuildSettings(m_buildReplay, options, fromSelection, points, size(options.material.empty() ? street.material : options.material));
-	m_buildReplay.emplace_back("build.solids", formatSolids(m_selection.solids));
-	notePlan((fromSelection ? describeRoadCorridor(street) : std::string()) + describeRoadBuild(plan));
-	if (corridor) *corridor = std::move(street);
-	return plan;
+	const std::string material = job.options.material;
+	const auto it = job.textureSizes.find(material);
+	addRoadBuildSettings(m_buildReplay, job.options, job.fromSelection, points, it != job.textureSizes.end() ? it->second : std::pair<int, int>{512, 512});
+	m_buildReplay.emplace_back("build.solids", formatSolids(job.solids));
+	std::string text = "road builder: planning " + std::string(job.fromSelection ? "through the selected street" : "along clicked points") + ", " +
+	                   std::to_string(job.solids.size()) + " brush(es) selected:";
+	for (const auto& [k, v] : m_buildReplay) text += "\n  " + k + " = " + v;
+	notePlan(text);
+}
+
+void Editor::noteRoadBuildDone(const RoadBuildJob& job, const RoadBuildResult& result) const {
+	std::string text = (job.fromSelection ? describeRoadCorridor(result.street) : std::string()) + describeRoadBuild(result.plan);
+	if (!result.error.empty()) text += "error: " + result.error + "\n";
+	text += "planned in " + std::to_string(std::lround(result.milliseconds)) + " ms\n";
+	notePlan(text);
+}
+
+RoadBuildPlan Editor::planRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection, RoadCorridor* corridor) const {
+	const auto job = roadBuildJob(options, paths, fromSelection);
+	noteRoadBuildStarted(job);
+	auto result = runRoadBuildJob(job);
+	noteRoadBuildDone(job, result);
+	if (corridor) *corridor = std::move(result.street);
+	return std::move(result.plan);
 }
 
 void Editor::applyRoadBuilder(const RoadBuildOptions& options, const std::vector<RoadPath>& paths, bool fromSelection) {
 	clearBrushPreview();
-	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
-	const auto size = [files](const std::string& material) {
-		return files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
-	};
-	RoadCorridor street;
-	const auto plan = fromSelection ? planRoadFromSelection(m_doc, m_doc, m_selection.solids, options, size, &street) : planRoadBuild(m_doc, m_doc, paths, options, size);
-	if (!plan.ok()) {
-		emit message(tr("No road: click at least two points (or select the street's floor brushes)"));
+	auto job = roadBuildJob(options, paths, fromSelection);
+	job.options.cancelled = nullptr;
+	const auto result = runRoadBuildJob(job);
+	applyRoadBuildJob(job, result);
+}
+
+void Editor::applyRoadBuildJob(const RoadBuildJob& job, const RoadBuildResult& result) {
+	clearBrushPreview();
+	if (!roadJobCurrent(job)) {
+		// The map changed since: planned again with the map as it is.
+		applyRoadBuilder(job.options, job.paths, job.fromSelection);
 		return;
 	}
-	notePlan("applied:\n" + (fromSelection ? describeRoadCorridor(street) : std::string()) + describeRoadBuild(plan));
-	auto [change, refs] = edit::applyRoadBuild(m_doc, plan);
+	if (!result.plan.ok()) {
+		emit message(result.error.empty() ? tr("No road: click at least two points (or select the street's floor brushes)")
+		                                  : tr("No road: %1").arg(QString::fromStdString(result.error)));
+		return;
+	}
+	notePlan("applied:\n" + (job.fromSelection ? describeRoadCorridor(result.street) : std::string()) + describeRoadBuild(result.plan));
+	auto [change, refs] = edit::applyRoadBuild(m_doc, result.plan);
+	// The plan's new ids came from a copy of the counters: the map's own catch up.
+	m_doc.updateIdCounters();
 	commit(std::move(change));
 	Selection selection;
 	selection.solids = refs;
