@@ -1021,6 +1021,12 @@ TEST_CASE("road from selection: a big angled street (30°, 45°) - no holes, not
 }
 
 TEST_CASE("road from selection: big streets and squares plan quickly (the live preview never waits long)") {
+	// Release builds (CI, the shipped editor); an unoptimised debug build is several times slower.
+#ifdef NDEBUG
+	constexpr double bound = 2500;
+#else
+	constexpr double bound = 15000;
+#endif
 	// Julius' report of 10.11.2026: a selection that took 54 s (joining hundreds of cut pieces again
 	// pair by pair, from the start after every join). Generous bounds: well under a second each here.
 	const auto timed = [](const MapDocument& doc, const std::vector<SolidRef>& floor, const RoadBuildOptions& o) {
@@ -1037,7 +1043,7 @@ TEST_CASE("road from selection: big streets and squares plan quickly (the live p
 		AngledStreet s = angledStreet(angledCentre(), 208, tile);
 		const double ms = timed(s.doc, s.floor, juliusSettings());
 		MESSAGE("angled street, tiles " << tile << ": " << ms << " ms");
-		CHECK(ms < 2500);
+		CHECK(ms < bound);
 	}
 	{
 		// A square of floor blocks with pillars standing on it: many ways through, many cuts.
@@ -1054,7 +1060,7 @@ TEST_CASE("road from selection: big streets and squares plan quickly (the live p
 		}
 		const double ms = timed(doc, floor, juliusSettings());
 		MESSAGE("square with pillars: " << ms << " ms");
-		CHECK(ms < 2500);
+		CHECK(ms < bound);
 	}
 	{
 		// One big slab the road winds through: every curve piece cuts it (hundreds of pieces to join).
@@ -1071,7 +1077,7 @@ TEST_CASE("road from selection: big streets and squares plan quickly (the live p
 		const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		MESSAGE("winding road through one slab: " << ms << " ms, " << plan.changed.size() << " changed");
 		CHECK(plan.ok());
-		CHECK(ms < 2500);
+		CHECK(ms < bound);
 	}
 }
 
