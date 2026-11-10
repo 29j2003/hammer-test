@@ -2745,6 +2745,7 @@ void MainWindow::roadBuilderDialog() {
 	// Beside the map, not in front of it: the views show the road while it is drawn.
 	m_roadBuilderDialog = new RoadBuilderDialog(m_editor, material, this);
 	m_roadBuilderDialog->setPlainMaterial(plain);
+	m_roadBuilderDialog->setAssets(m_assets);
 	m_roadBuilderDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_roadBuilderDialog->show();
 	if (m_active) m_roadBuilderDialog->move(m_active->mapToGlobal(QPoint(16, 16)));

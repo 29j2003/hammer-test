@@ -188,6 +188,10 @@ public:
 	[[nodiscard]] QSize minimumSizeHint() const override;
 	/// Opens the popup with the recently used materials (the "Recent" button).
 	void showRecent();
+	/// The material list (all of the game's materials with their categories) and its thumbnails,
+	/// for pickers elsewhere (MaterialPickerDialog).
+	[[nodiscard]] MaterialListModel* materialModel() const { return m_materialModel; }
+	[[nodiscard]] MaterialCache* materialThumbnails() const { return m_thumbnails; }
 
 signals:
 	/// Background indexing finished (the name lists are filled).

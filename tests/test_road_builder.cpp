@@ -672,3 +672,235 @@ TEST_CASE("road from selection: whole width, selection with a sidewalk, one undo
 	std::sort(doc.world.solids.begin(), doc.world.solids.end(), [](const Solid& a, const Solid& b) { return a.id < b.id; });
 	CHECK(keyValueDifferences(before, doc.serialize()).empty());
 }
+
+namespace {
+
+/// The kerbs of a map afterwards (kerb material on top).
+std::vector<const Solid*> kerbsIn(const MapDocument& doc) {
+	return roadIn(doc, "CONCRETE/KERB");
+}
+
+/// Common checks for kerbs at the street's edge: no hole, nothing doubled, every brush sound,
+/// kerbs never on the road, all of the map's brushes free of overlaps near the street.
+void checkEdgeKerbs(const MapDocument& before, const std::vector<SolidRef>& floor, const RoadBuildPlan& plan) {
+	CHECK(plan.skipped == 0);
+	CHECK(allSound(plan.resultSolids()));
+	const MapDocument after = applied(before, plan);
+	checkCovered(before, floor, after);
+	CHECK(noOverlaps(after.world.solids));
+	const auto road = roadIn(after, "ROAD/ASPHALT");
+	const auto kerbs = kerbsIn(after);
+	CHECK_FALSE(kerbs.empty());
+	for (const Solid* k : kerbs) {
+		for (const Solid* r : road) CHECK(sharedVolume(*k, *r) < 1);
+	}
+}
+
+RoadBuildOptions edgeKerbOptions() {
+	RoadBuildOptions o;
+	o.material = "ROAD/ASPHALT";
+	o.kerbs = true;
+	o.kerbWidth = 16;
+	o.kerbHeight = 8;
+	o.kerbMaterial = "CONCRETE/KERB";
+	o.fillMaterial = "CONCRETE/PARKING";
+	return o;
+}
+
+bool kerbAt(const MapDocument& doc, double x, double y, double z) {
+	const auto kerbs = kerbsIn(doc);
+	return std::any_of(kerbs.begin(), kerbs.end(), [&](const Solid* s) { return solidContains(*s, {x, y, z}, -0.05); });
+}
+
+} // namespace
+
+TEST_CASE("road from selection: kerbs at the street's edge - between parking lane and sidewalk, flush with it, not beside the road") {
+	Street street = julius();
+	const RoadBuildOptions o = edgeKerbOptions();
+	RoadCorridor corridor;
+	const auto plan = planRoadFromSelection(street.doc, street.doc, street.floor, o, SQUARE, &corridor);
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(corridor.parking == doctest::Approx(96));
+	checkEdgeKerbs(street.doc, street.floor, plan);
+	const MapDocument after = applied(street.doc, plan);
+	// Along the sidewalks: a kerb 16 wide, its top flush with the sidewalk (16, the street is at 8).
+	for (const double x : {-2000.0, -1600.0, -1100.0}) {
+		CHECK(kerbAt(after, x, -688 - 8, 12));
+		CHECK(kerbAt(after, x, -1168 + 8, 12));
+		CHECK_FALSE(kerbAt(after, x, -688 - 8, 17));
+		CHECK_FALSE(kerbAt(after, x, -688 - 24, 4));   // the parking lane itself stays low
+	}
+	for (const double y : {-1800.0, -2400.0}) {
+		CHECK(kerbAt(after, 256 + 8, y, 12));
+		CHECK(kerbAt(after, 784 - 8, y, 12));
+	}
+	// Not beside the road (the road's edge is 112 from the middle at -928).
+	for (const double x : {-2000.0, -1600.0}) {
+		CHECK_FALSE(kerbAt(after, x, -928 + 112 + 8, 4));
+		CHECK_FALSE(kerbAt(after, x, -928 - 112 - 8, 4));
+	}
+	// The street's open ends (nothing raised there) get none.
+	CHECK_FALSE(kerbAt(after, -2160 + 8, -800, 4));
+	// The parking lanes get their own material, the road keeps its own.
+	bool parking = false;
+	for (const auto& s : after.world.solids) {
+		if (solidContains(s, {-1600, -688 - 56, 0}, -0.05) && top(s)) parking = top(s)->material == "CONCRETE/PARKING";
+	}
+	CHECK(parking);
+	// Kerbs beside the road on request (the old way).
+	RoadBuildOptions along = o;
+	along.kerbsAlongRoad = true;
+	const auto alongPlan = planRoadFromSelection(street.doc, street.doc, street.floor, along, SQUARE);
+	const MapDocument alongAfter = applied(street.doc, alongPlan);
+	CHECK(kerbAt(alongAfter, -1600, -928 + 112 + 8, 12));
+	CHECK_FALSE(kerbAt(alongAfter, -1600, -688 - 8, 12));
+}
+
+TEST_CASE("road from selection: kerbs at the street's edge follow a rounded sidewalk corner and the street's tiles") {
+	Street street = julius(112);
+	REQUIRE(edit::roundEdge(street.doc, facing(street.doc, street.innerCorner, {1, 0, 0}), facing(street.doc, street.innerCorner, {0, 1, 0}), 128, 0));
+	std::vector<SolidRef> floor;
+	for (const auto& s : street.doc.world.solids) {
+		const auto b = buildBrushGeometry(s).bounds;
+		if (std::abs(b.max.z - 8) < 0.01) floor.push_back({0, s.id});
+	}
+	const RoadBuildOptions o = edgeKerbOptions();
+	const auto plan = planRoadFromSelection(street.doc, street.doc, floor, o, SQUARE);
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	checkEdgeKerbs(street.doc, floor, plan);
+	const MapDocument after = applied(street.doc, plan);
+	// From the street towards the rounded corner (its middle inside the sidewalk, near (128,
+	// -1424)): the first raised thing on the way is a kerb, never the sidewalk itself.
+	const Vec3 inside{128, -1424, 12};
+	for (const Vec3 from : {Vec3{420, -1180, 12}, Vec3{330, -1150, 12}, Vec3{450, -1260, 12}}) {
+		const Vec3 dir = normalize(inside - from);
+		std::string hit;
+		for (double t = 0; t < length(inside - from) && hit.empty(); t += 1) {
+			const Vec3 p = from + dir * t;
+			if (kerbAt(after, p.x, p.y, 12)) hit = "kerb";
+			else if (std::any_of(after.world.solids.begin(), after.world.solids.end(), [&](const Solid& s) { return solidContains(s, p, -0.05); })) hit = "other";
+		}
+		CAPTURE(from);
+		CHECK(hit == "kerb");
+	}
+}
+
+TEST_CASE("road from selection: kerbs at a T street's edges, and before a wall a kerb of its own height") {
+	MapDocument doc;
+	std::vector<SolidRef> floor;
+	for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{0, -240, -16}, {784, 240, 8}}, {{784, -240, -16}, {1264, 240, 8}},
+	                                                            {{1264, -240, -16}, {2560, 240, 8}}, {{784, 240, -16}, {1264, 1600, 8}}}) {
+		doc.world.solids.push_back(makeBlock(doc, box(a, b), "CONCRETE/STREET"));
+		floor.push_back({0, doc.world.solids.back().id});
+	}
+	// Sidewalks (top 16) along the main street's far side and the side street; a wall (top 200)
+	// along the main street's near side, left of the side street.
+	for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{0, -336, -16}, {2560, -240, 16}}, {{688, 240, -16}, {784, 1600, 16}},
+	                                                            {{1264, 240, -16}, {1360, 1600, 16}}, {{1360, 240, -16}, {2560, 336, 16}}}) {
+		doc.world.solids.push_back(makeBlock(doc, box(a, b), "CONCRETE/SIDEWALK"));
+	}
+	doc.world.solids.push_back(makeBlock(doc, box({0, 240, -16}, {688, 336, 200}), "BRICK/WALL"));
+	const RoadBuildOptions o = edgeKerbOptions();
+	const auto plan = planRoadFromSelection(doc, doc, floor, o, SQUARE);
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	checkEdgeKerbs(doc, floor, plan);
+	const MapDocument after = applied(doc, plan);
+	CHECK(kerbAt(after, 300, -240 + 8, 12));        // flush with the sidewalk
+	CHECK(kerbAt(after, 2000, 240 - 8, 12));
+	CHECK(kerbAt(after, 784 + 8, 800, 12));         // along the side street
+	CHECK(kerbAt(after, 1264 - 8, 800, 12));
+	CHECK(kerbAt(after, 300, 240 - 8, 14));         // before the wall: 8 high (street at 8 -> 16)
+	CHECK_FALSE(kerbAt(after, 300, 240 - 8, 17));
+	// Where the side street leaves the main street there is no kerb across it.
+	CHECK_FALSE(kerbAt(after, 1024, 240 - 8, 4));
+	CHECK_FALSE(kerbAt(after, 1024, 240 + 8, 4));
+}
+
+TEST_CASE("road builder: material suggestions by name - lines for the road, plain for parking, kerbs for kerbs") {
+	const std::vector<std::string> names{"concrete/concretefloor001a", "nature/asphalt_blend01", "road/street_lines01", "road/asphalt01",
+	                                     "tools/toolsnodraw",          "decals/roadline",        "concrete/curb001",    "concrete/sidewalk01",
+	                                     "brick/wall01",               "nature/dirt01",          "props/sign_stop"};
+	const auto road = roadMaterialSuggestions(names, RoadMaterialRole::Road);
+	REQUIRE_FALSE(road.empty());
+	CHECK(road.front() == "road/street_lines01");
+	CHECK(std::find(road.begin(), road.end(), "decals/roadline") == road.end());
+	CHECK(std::find(road.begin(), road.end(), "nature/asphalt_blend01") == road.end());
+	const auto parking = roadMaterialSuggestions(names, RoadMaterialRole::Parking);
+	REQUIRE_FALSE(parking.empty());
+	CHECK(std::find(parking.begin(), parking.end(), "road/street_lines01") == parking.end());
+	CHECK(parking.front() == "road/asphalt01");   // plain asphalt, even in a "road" folder
+	CHECK(std::find(parking.begin(), parking.end(), "concrete/concretefloor001a") != parking.end());
+	const auto kerb = roadMaterialSuggestions(names, RoadMaterialRole::Kerb);
+	REQUIRE_FALSE(kerb.empty());
+	CHECK(kerb.front() == "concrete/curb001");
+	CHECK(std::find(kerb.begin(), kerb.end(), "brick/wall01") == kerb.end());
+	CHECK(roadMaterialSuggestions(names, RoadMaterialRole::Road, 1).size() == 1);
+}
+
+TEST_CASE("road from selection: parking lanes on one side only, or none - the road moves over to the other kerb") {
+	MapDocument doc;
+	std::vector<SolidRef> floor;
+	// A straight street 480 wide along x (y -240 .. 240), from x 0 to 2048, sidewalks on both sides.
+	doc.world.solids.push_back(makeBlock(doc, box({0, -240, -16}, {2048, 240, 8}), "CONCRETE/STREET"));
+	floor.push_back({0, doc.world.solids.back().id});
+	doc.world.solids.push_back(makeBlock(doc, box({0, -336, -16}, {2048, -240, 16}), "CONCRETE/SIDEWALK"));
+	doc.world.solids.push_back(makeBlock(doc, box({0, 240, -16}, {2048, 336, 16}), "CONCRETE/SIDEWALK"));
+	const auto plan = [&](RoadParkingSides sides, RoadCorridor* corridor) {
+		RoadBuildOptions o = edgeKerbOptions();
+		o.parkingSides = sides;
+		return planRoadFromSelection(doc, doc, floor, o, SQUARE, corridor);
+	};
+	for (const auto sides : {RoadParkingSides::Left, RoadParkingSides::Right}) {
+		RoadCorridor corridor;
+		const auto p = plan(sides, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		REQUIRE(p.ok());
+		CHECK(corridor.roadWidth == doctest::Approx(480 - 96));
+		CHECK(std::abs(corridor.offset) == doctest::Approx(48));
+		checkEdgeKerbs(doc, floor, p);
+		const MapDocument after = applied(doc, p);
+		const auto road = roadIn(after, "ROAD/ASPHALT");
+		// Which side is "left" follows the road's direction.
+		const auto& points = corridor.paths.front().points;
+		const bool east = points.back().x > points.front().x;
+		const bool laneAtNorth = (sides == RoadParkingSides::Left) == east;
+		const double laneY = laneAtNorth ? 240 - 48 : -240 + 48, roadEdgeY = laneAtNorth ? -240 + 8 : 240 - 8;
+		CHECK_FALSE(roadAt(road, 1000, laneY, 0));
+		CHECK(roadAt(road, 1000, roadEdgeY, 0));   // the road reaches the kerb without a lane
+		CHECK(kerbAt(after, 1000, laneAtNorth ? 240 - 8 : -240 + 8, 12));
+	}
+	RoadCorridor none;
+	const auto p = plan(RoadParkingSides::None, &none);
+	REQUIRE(p.ok());
+	CHECK(none.parking == 0);
+	CHECK(none.roadWidth == doctest::Approx(480));
+	CHECK(none.offset == doctest::Approx(0));
+	// The older "whole width" setting means none.
+	RoadBuildOptions old = edgeKerbOptions();
+	old.wholeWidth = true;
+	RoadCorridor oldCorridor;
+	(void)planRoadFromSelection(doc, doc, floor, old, SQUARE, &oldCorridor);
+	CHECK(oldCorridor.roadWidth == doctest::Approx(480));
+}
+
+TEST_CASE("road from selection: one parking lane round Julius' L street - no holes, curves inside the street") {
+	for (const auto sides : {RoadParkingSides::Left, RoadParkingSides::Right}) {
+		Street street = julius();
+		RoadBuildOptions o = edgeKerbOptions();
+		o.parkingSides = sides;
+		RoadCorridor corridor;
+		const auto plan = planRoadFromSelection(street.doc, street.doc, street.floor, o, SQUARE, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		REQUIRE(plan.ok());
+		CHECK(corridor.roadWidth == doctest::Approx(416 - 96));
+		checkEdgeKerbs(street.doc, street.floor, plan);
+		// The road stays on the street: never into a sidewalk.
+		const MapDocument after = applied(street.doc, plan);
+		for (const auto& ref : street.sidewalks) {
+			for (const Solid* r : roadIn(after, "ROAD/ASPHALT")) CHECK(sharedVolume(*r, *after.findSolid(ref)) < 1);
+		}
+	}
+}

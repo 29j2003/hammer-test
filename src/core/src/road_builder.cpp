@@ -940,6 +940,255 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	return plan;
 }
 
+namespace {
+
+/// A brush's footprint seen from above: its corners' convex outline, counter-clockwise.
+std::vector<Vec3> footprint(const Solid& solid) {
+	std::vector<Vec3> points;
+	for (const auto& c : solidCorners(solid)) {
+		const Vec3 p{c.x, c.y, 0};
+		if (std::none_of(points.begin(), points.end(), [&](const Vec3& q) { return length(q - p) < 0.05; })) points.push_back(p);
+	}
+	if (points.size() < 3) return {};
+	// Monotone chain.
+	std::sort(points.begin(), points.end(), [](const Vec3& a, const Vec3& b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+	std::vector<Vec3> hull(points.size() * 2);
+	std::size_t k = 0;
+	for (std::size_t i = 0; i < points.size(); ++i) {
+		while (k >= 2 && cross2(hull[k - 1] - hull[k - 2], points[i] - hull[k - 2]) <= 1e-9) --k;
+		hull[k++] = points[i];
+	}
+	for (std::size_t i = points.size() - 1, t = k + 1; i > 0; --i) {
+		while (k >= t && cross2(hull[k - 1] - hull[k - 2], points[i - 1] - hull[k - 2]) <= 1e-9) --k;
+		hull[k++] = points[i - 1];
+	}
+	hull.resize(k > 0 ? k - 1 : 0);
+	return hull;
+}
+
+/// The outline moved outward by `by` (mitred corners, a sharp corner bevelled so it never reaches
+/// further than three times `by`).
+std::vector<Vec3> grown(const std::vector<Vec3>& outline, double by) {
+	std::vector<Vec3> out;
+	const std::size_t n = outline.size();
+	for (std::size_t i = 0; i < n; ++i) {
+		const Vec3 a = outline[(i + n - 1) % n], b = outline[i], c = outline[(i + 1) % n];
+		const Vec3 d0 = normalize(b - a), d1 = normalize(c - b);
+		const Vec3 n0{d0.y, -d0.x, 0}, n1{d1.y, -d1.x, 0};   // outward (counter-clockwise outline)
+		const Vec3 mid = normalize(n0 + n1);
+		const double cosHalf = dot(mid, n0);
+		if (cosHalf > 0.34) {
+			out.push_back(b + mid * (by / cosHalf));
+		} else {
+			out.push_back(b + n0 * by);
+			out.push_back(b + n1 * by);
+		}
+	}
+	return out;
+}
+
+/// An upright prism over an outline from `low` to `high`.
+std::optional<Solid> prism(MapDocument& ids, const std::vector<Vec3>& outline, double low, double high, const std::string& material) {
+	std::vector<Vec3> points;
+	for (const auto& p : outline) {
+		points.push_back({p.x, p.y, low});
+		points.push_back({p.x, p.y, high});
+	}
+	return solidFromPoints(ids, points, material);
+}
+
+/// The part of `solid` inside the convex `cutter` (none if they do not overlap).
+std::optional<Solid> insideOf(MapDocument& ids, const Solid& solid, const Solid& cutter) {
+	std::optional<Solid> part = solid;
+	for (const auto& side : cutter.sides) {
+		if (!part) break;
+		auto [front, back] = splitSolid(ids, *part, side.plane(), side);
+		part = std::move(back);
+	}
+	if (part && solidVolume(*part) < 1.0) return std::nullopt;
+	return part;
+}
+
+} // namespace
+
+std::vector<std::string> roadMaterialSuggestions(const std::vector<std::string>& names, RoadMaterialRole role, std::size_t count) {
+	const auto has = [](const std::string& name, std::initializer_list<const char*> words) {
+		return std::any_of(words.begin(), words.end(), [&](const char* w) { return name.find(w) != std::string::npos; });
+	};
+	std::vector<std::pair<int, std::string>> scored;
+	for (const auto& original : names) {
+		std::string name = original;
+		std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+		std::replace(name.begin(), name.end(), '\\', '/');
+		if (name.rfind("tools/", 0) == 0 || name.rfind("decals/", 0) == 0 || name.rfind("overlays/", 0) == 0 || name.rfind("dev/", 0) == 0) continue;
+		if (has(name, {"blend", "sign", "cone", "barrier", "decal", "overlay", "puddle"})) continue;
+		// The file's own name tells lines and roads (a folder "road/" also holds plain asphalt).
+		const std::string base = name.substr(name.rfind('/') == std::string::npos ? 0 : name.rfind('/') + 1);
+		const bool lined = has(base, {"line", "stripe", "lane", "marking", "crosswalk"});
+		const bool roadish = has(base, {"road", "street", "highway"});
+		const bool roadFolder = has(name.substr(0, name.size() - base.size()), {"road", "street", "highway"});
+		const bool plain = has(name, {"asphalt", "tarmac", "concrete", "pavement", "parking"});
+		int score = 0;
+		switch (role) {
+			case RoadMaterialRole::Road:
+				score = (roadish ? 3 : 0) + (lined ? 2 : 0) + (roadFolder ? 1 : 0) + (has(name, {"asphalt", "tarmac"}) ? 1 : 0);
+				if (!roadish && !lined && !roadFolder && !has(name, {"asphalt", "tarmac"})) score = 0;
+				break;
+			case RoadMaterialRole::Parking:
+			case RoadMaterialRole::Junction:
+				if (lined || roadish) break;
+				score = (has(name, {"asphalt", "tarmac"}) ? 3 : 0) + (has(name, {"parking"}) ? 2 : 0) + (has(name, {"concrete", "pavement"}) ? 1 : 0);
+				break;
+			case RoadMaterialRole::Kerb:
+				if (lined) break;
+				score = (has(name, {"curb", "kerb"}) ? 4 : 0) + (has(name, {"sidewalk", "pavement"}) ? 2 : 0) + (has(name, {"concrete"}) ? 1 : 0);
+				break;
+			case RoadMaterialRole::Side:
+				if (lined) break;
+				score = (has(name, {"curb", "kerb", "concrete"}) ? 2 : 0) + (plain ? 1 : 0);
+				break;
+		}
+		if (score > 0) scored.emplace_back(score, original);
+	}
+	std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+	std::vector<std::string> out;
+	for (const auto& [score, name] : scored) {
+		if (out.size() >= count) break;
+		out.push_back(name);
+	}
+	return out;
+}
+
+void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& plan, const RoadCorridor& corridor, const RoadBuildOptions& options) {
+	if (!plan.ok() || corridor.floor.empty()) return;
+	const double top = corridor.top;
+	const double kerbWidth = std::max(1.0, options.kerbWidth);
+	const double kerbHeight = std::max(1.0, options.kerbHeight);
+	const std::string material = !options.kerbMaterial.empty() ? options.kerbMaterial : (!options.sideMaterial.empty() ? options.sideMaterial : plan.material);
+	const auto isFloor = [&](const SolidRef& ref) { return std::find(corridor.floor.begin(), corridor.floor.end(), ref) != corridor.floor.end(); };
+
+	// The floor left beside the road (the parking lanes): the replaced selection's pieces.
+	std::vector<RoadBuildPlan::Replacement*> floor;
+	Bounds street;
+	for (auto& r : plan.changed) {
+		if (!isFloor(r.ref)) continue;
+		floor.push_back(&r);
+		for (const auto& piece : r.pieces) street.add(buildBrushGeometry(piece).bounds);
+	}
+	if (floor.empty() || street.empty()) return;
+
+	// Everything raised that borders the street: brushes of the world and func_detail that stand on
+	// or beside it (their bottom at most the street's top) and rise above it. Carved neighbours count
+	// as the plan leaves them.
+	struct Raised {
+		Solid solid;
+		double rise;
+	};
+	std::vector<Raised> raised;
+	const auto consider = [&](const Solid& solid) {
+		if (std::all_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return isToolMaterial(s.material); })) return;
+		if (std::any_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return s.dispInfo(); })) return;
+		const Bounds b = buildBrushGeometry(solid).bounds;
+		if (b.empty() || b.min.z > top + 1 || b.max.z < top + 2) return;
+		Bounds reach = street;
+		reach.min = reach.min - Vec3{kerbWidth + 1, kerbWidth + 1, 0};
+		reach.max = reach.max + Vec3{kerbWidth + 1, kerbWidth + 1, 0};
+		if (b.max.x < reach.min.x || b.min.x > reach.max.x || b.max.y < reach.min.y || b.min.y > reach.max.y) return;
+		raised.push_back({solid, b.max.z - top});
+	};
+	const auto visit = [&](const Entity& entity, bool world) {
+		if (!world && entity.classname() != "func_detail") return;
+		for (const auto& solid : entity.solids) {
+			const SolidRef ref{world ? 0 : entity.id, solid.id};
+			if (isFloor(ref)) continue;
+			const auto changed = std::find_if(plan.changed.begin(), plan.changed.end(), [&](const RoadBuildPlan::Replacement& r) { return r.ref == ref; });
+			if (changed != plan.changed.end()) {
+				for (const auto& piece : changed->pieces) consider(piece);
+			} else {
+				consider(solid);
+			}
+		}
+	};
+	visit(doc.world, true);
+	for (const auto& entity : doc.entities) visit(entity, false);
+	// Sidewalks first (a corner where a sidewalk meets a wall keeps the sidewalk's kerb).
+	std::stable_sort(raised.begin(), raised.end(), [](const Raised& a, const Raised& b) { return a.rise < b.rise; });
+
+	int made = 0;
+	double low = street.min.z - 1;
+	for (const auto& r : raised) {
+		const auto outline = footprint(r.solid);
+		if (outline.size() < 3) continue;
+		const auto zone = prism(ids, grown(outline, kerbWidth), low, top + 1, NODRAW);
+		const auto under = prism(ids, outline, low, top + 1, NODRAW);
+		if (!zone || !under) continue;
+		const Bounds zoneBox = buildBrushGeometry(*zone).bounds;
+		// Flush with a sidewalk; before a wall (or anything taller) a kerb of its own height.
+		const double kerbTop = r.rise <= 32 ? top + r.rise : top + kerbHeight;
+		for (auto* replacement : floor) {
+			std::vector<Solid> rest;
+			bool cut = false;
+			for (auto& piece : replacement->pieces) {
+				const Bounds pb = buildBrushGeometry(piece).bounds;
+				if (pb.max.z < top - 0.5 || pb.max.z > top + 0.5 || !boxesOverlap(pb, zoneBox)) {
+					rest.push_back(std::move(piece));
+					continue;
+				}
+				auto inside = insideOf(ids, piece, *zone);
+				if (!inside) {
+					rest.push_back(std::move(piece));
+					continue;
+				}
+				// What lies under the neighbour (a wall standing on the floor) stays floor.
+				std::vector<Solid> kerbParts = subtractSolid(ids, *inside, *under);
+				std::vector<Solid> keep = subtractSolid(ids, piece, *zone);
+				if (auto below = insideOf(ids, *inside, *under)) keep.push_back(std::move(*below));
+				std::vector<Solid> kerbs;
+				bool sound = true;
+				for (const auto& part : kerbParts) {
+					if (solidVolume(part) < 1.0) continue;
+					std::vector<Vec3> corners = solidCorners(part);
+					for (auto& c : corners) {
+						if (c.z > top - 0.05) c.z = kerbTop;
+					}
+					auto kerb = solidFromPoints(ids, corners, material);
+					if (!kerb || !brushProblem(*kerb).empty()) {
+						sound = false;
+						break;
+					}
+					for (auto& side : kerb->sides) {
+						if (side.plane().normal.z < -0.7) side.material = NODRAW;
+					}
+					kerbs.push_back(std::move(*kerb));
+				}
+				std::erase_if(keep, [](const Solid& s) { return solidVolume(s) < 1.0; });
+				if (sound) sound = std::all_of(keep.begin(), keep.end(), [](const Solid& s) { return brushProblem(s).empty(); });
+				if (!sound || kerbs.empty()) {
+					// A strip too thin for a brush (a sliver at a corner): the floor stays as it was there.
+					rest.push_back(std::move(piece));
+					continue;
+				}
+				tidyCarved(ids, piece, keep, mainMaterial(piece));
+				for (auto& k : keep) rest.push_back(std::move(k));
+				for (auto& k : kerbs) plan.kerbs.push_back(std::move(k));
+				made += int(kerbs.size());
+				cut = true;
+			}
+			replacement->pieces = std::move(rest);
+			if (cut) {
+				// The first piece keeps the brush's id.
+				auto& pieces = replacement->pieces;
+				std::stable_partition(pieces.begin(), pieces.end(), [&](const Solid& s) { return s.id == replacement->ref.solidId; });
+				for (std::size_t i = 0; i < pieces.size(); ++i) {
+					if (i == 0) pieces[i].id = replacement->ref.solidId;
+					else if (pieces[i].id == replacement->ref.solidId) pieces[i].id = ids.newSolidId();
+				}
+			}
+		}
+	}
+	if (made == 0) plan.notes.push_back("no kerbs: nothing raised (sidewalk or wall) borders the street beside the parking lanes");
+}
+
 namespace edit {
 
 std::pair<Change, std::vector<SolidRef>> applyRoadBuild(MapDocument& doc, const RoadBuildPlan& plan) {
