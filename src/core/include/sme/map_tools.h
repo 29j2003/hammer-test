@@ -42,7 +42,8 @@ void writeCordons(MapDocument& doc, const CordonSet& cordons);
                                        const std::string& sealMaterial = "TOOLS/TOOLSSKYBOX");
 
 /// Copies of a map that Mapsmith writes next to it for a compile ("x_cordon.vmf" with cordons
-/// on, "x_here.vmf" for Play from here): not maps of their own, left out of map lists.
+/// on, "x_here.vmf" for Play from here, "x_compile.vmf" for a name the tools cannot take): not
+/// maps of their own, left out of map lists.
 [[nodiscard]] bool isGeneratedMapCopy(std::string_view fileName);
 
 /// "Play from here": the player starts where the camera is, looking the same way.

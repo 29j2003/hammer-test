@@ -100,6 +100,8 @@ signals:
 	void modUpdated();
 	/// The banner's "Show" was pressed.
 	void showRequested();
+	/// "Make editor report ..." was clicked (a problem in the editor, not in the game).
+	void editorReportRequested();
 
 private:
 	void loadForGame();

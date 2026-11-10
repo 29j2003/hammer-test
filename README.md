@@ -245,8 +245,8 @@ memory and lists every key or value that would change.
   liquid in bottles and more, all on; untick what the mod should not have (the game uses it from its next start).
   Offered on the Overview, and a *New mod ...* on Mapbase gets the features right away. *Fresh install ...* lists what
   the add-on and Mapsmith made in the mod (never your own files), removes it, writes the features again and installs
-  anew. *Make report* packs what `fidelity_report` wrote in the game into a zip to send – in the Map menu and the
-  Compile and Problems panels.
+  anew. *Pack game report* packs what `fidelity_report` wrote in the game into a zip to send – in the Map menu and the
+  Compile and Problems panels (problems in the editor itself: *Help › Make editor report ...*).
 - **Build from source** (Project page, last tab; only if you build the mod's code yourself): with the mod's own source
   (Mapbase with mapbase-fidelity), *Update mod* builds and installs it from inside Mapsmith – what `update.bat` does,
   with steps, progress and a clear summary, no console window; optionally after every Pull or when Mapsmith starts.

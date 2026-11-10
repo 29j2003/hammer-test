@@ -30,7 +30,7 @@ Changes that are not part of the map, such as cordons, the camera or hidden obje
 ## Autosave and recovery
 
 **Autosave.** Every 5 minutes, if the map changed, Mapsmith writes a copy into a folder named `autosave` next to the
-map: `<map>.<date>-<time>.vmf`. The newest 10 copies are kept. A map that was never saved is autosaved into Mapsmith's
+map: `<map>_<date>-<time>.vmf` (older versions wrote `<map>.<date>-<time>.vmf`; both are found). The newest 10 copies are kept. A map that was never saved is autosaved into Mapsmith's
 own data folder. Writing happens in the background, so the editor does not pause.
 
 **After a crash.** When Mapsmith did not close normally, or when you open a map whose autosaves are newer than the

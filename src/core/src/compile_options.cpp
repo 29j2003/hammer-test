@@ -351,6 +351,36 @@ std::vector<std::string> toolArguments(const CompileSettings& s, CompileTool too
 	return out;
 }
 
+bool isCompileSafeName(std::string_view mapName) {
+	return !mapName.empty() && std::all_of(mapName.begin(), mapName.end(), [](char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+	});
+}
+
+std::string compileSafeName(std::string_view mapName) {
+	std::string out;
+	for (std::size_t i = 0; i < mapName.size(); ++i) {
+		const char c = mapName[i];
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			out.push_back(c);
+		} else if ((static_cast<unsigned char>(c) & 0xC0) == 0x80) {
+			continue;   // the rest of a UTF-8 character: one '_' per character
+		} else {
+			out.push_back('_');
+		}
+	}
+	return out.empty() ? std::string("map") : out;
+}
+
+std::string compileCopyPath(std::string_view vmfPath) {
+	const auto slash = vmfPath.find_last_of("/\\");
+	const std::string_view folder = slash == std::string_view::npos ? std::string_view() : vmfPath.substr(0, slash + 1);
+	std::string_view name = slash == std::string_view::npos ? vmfPath : vmfPath.substr(slash + 1);
+	if (name.size() > 4 && iequals(name.substr(name.size() - 4), ".vmf")) name.remove_suffix(4);
+	if (isCompileSafeName(name)) return {};
+	return std::string(folder) + compileSafeName(name) + "_compile.vmf";
+}
+
 std::vector<CompileCommand> compileCommands(const CompileSettings& s, std::string_view mapBase, std::string_view gameDir, std::string_view launchOptions) {
 	std::vector<CompileCommand> steps;
 	const std::string base(mapBase), game(gameDir);

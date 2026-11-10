@@ -91,6 +91,8 @@ public:
 	[[nodiscard]] QString filePath() const { return m_filePath; }
 	[[nodiscard]] bool modified() const { return m_history.modified() || m_footerModified || m_recovered; }
 	void newMap();
+	/// Opens a map. An autosave (a file in an "autosave" folder named <map>_<stamp>.vmf) opens like
+	/// openRecovered: its content, but the map it belongs to is the file Save writes.
 	bool openMap(const QString& path, QString* error = nullptr);
 	/// Saves; with the setting "editor/vmxBackup" (on by default) the previous file is kept as
 	/// <name>.vmx first, like Hammer.
@@ -572,6 +574,8 @@ private:
 	SceneFocus m_sceneFocus;
 	std::function<void(const Vec3&)> m_scenePoint;
 	QString m_scenePointHint;
+	/// Reads `path` and makes it the document; `filePath` and `recovered` are set before anyone is told.
+	bool loadMap(const QString& path, const QString& filePath, bool recovered, QString* error);
 	bool m_recovered = false;   ///< Opened from an autosave and not saved since
 	Selection m_selection;
 	Selection m_hidden;

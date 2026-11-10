@@ -108,6 +108,9 @@ public:
 	[[nodiscard]] const std::vector<std::string>& skipped() const { return m_skipped; }
 	/// Files the script named as written (report: the zips to send).
 	[[nodiscard]] const std::vector<std::string>& outputs() const { return m_outputs; }
+	/// report.ps1 found nothing to pack: fidelity_report was not typed in the game since the last
+	/// report. Not a failure - the summary explains the steps instead.
+	[[nodiscard]] bool nothingToPack() const { return m_nothingToPack; }
 	/// What the user can do about the failure, in plain words (empty after success).
 	[[nodiscard]] std::string advice() const;
 
@@ -119,6 +122,7 @@ private:
 	std::vector<std::string> m_errors;
 	std::vector<std::string> m_skipped;
 	std::vector<std::string> m_outputs;
+	bool m_nothingToPack = false;
 };
 
 /// Advice for a "FAILED" message of update.ps1 (empty when there is nothing better than the message).

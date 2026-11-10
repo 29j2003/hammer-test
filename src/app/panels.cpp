@@ -137,7 +137,7 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	check->setToolTip(tr("Look for problems now (also runs before every compile)"));
 	// Problems that only show in the game (a wall looks wrong, an effect is missing) go into a
 	// report: the button is here because this is where one looks after testing.
-	auto* report = new QPushButton(tr("Make report"));
+	auto* report = new QPushButton(tr("Pack game report"));
 	report->setObjectName("problemsMakeReport");
 	report->setToolTip(reportHowTo());
 	auto* copyAll = new QPushButton(tr("Copy all"));

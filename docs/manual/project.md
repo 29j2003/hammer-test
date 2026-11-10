@@ -260,13 +260,17 @@ When something got mixed up, **Fresh install ...** starts mapbase-fidelity over 
 
 The steps tick off on the tab; *Show details* opens the Build from source tab with the full output.
 
-### Make report
+### Pack game report
 
 Something looks wrong in the game – a wall, an effect, a sound? In the game, stand where it happens,
-open the console and type `fidelity_report`. Close the game and press **Make report**: Mapsmith packs what it wrote
+open the console and type `fidelity_report`. Close the game and press **Pack game report**: Mapsmith packs what it wrote
 into `fidelity_report.zip` and opens its folder, ready to send. The button is where you look after testing a map:
-*Map › Make report from the game*, the **Compile** panel (after a run) and the **Problems** panel. It works for every
+*Map › Pack game report (fidelity_report) ...*, the **Compile** panel (after a run) and the **Problems** panel. It works for every
 mod with the features – no source code needed; the run shows on the Build from source tab.
+
+If `fidelity_report` was not typed in the game since the last report, there is nothing to pack yet: the tab then shows
+the three steps again instead of an error. A problem in the editor itself (a tool, a crash) is a different report:
+*Help › Make editor report ...* (the tab links to it); see [Reporting a problem](troubleshooting.html#reporting-a-problem).
 
 ## Build from source (advanced)
 
@@ -297,7 +301,7 @@ After a successful update Mapsmith reads the mod again (new shaders, materials a
 views right away); the open map stays open.
 
 **Skip VRAD** leaves the custom VRAD out (faster; map compiles then bake no ambient occlusion). **Install game files
-only** runs `deploy.ps1` (shaders, cfg, generated materials – no build). **Make report** runs `report.ps1`: it packs
+only** runs `deploy.ps1` (shaders, cfg, generated materials – no build). **Pack game report** runs `report.ps1`: it packs
 what `fidelity_report` wrote in the game into `fidelity_report.zip` and opens its folder, ready to send.
 
 **Automatic** (per mod, all off until you switch them on):
@@ -314,7 +318,7 @@ a pull with another program), and offers **Update mod**.
 
 {: .important }
 Building the mod's DLLs needs **Windows with Visual Studio 2022** installed (workload *Desktop development with C++*).
-On Linux and macOS the build is not possible; Install game files only and Make report work there when PowerShell 7
+On Linux and macOS the build is not possible; Install game files only and Pack game report work there when PowerShell 7
 (`pwsh`) is installed.
 
 {: .note }

@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 
 #include <sme/autosave.h>
+#include <sme/recent_projects.h>
 #include <sme/editing.h>
 #include <sme/entity_search.h>
 #include <sme/history.h>
@@ -40,9 +41,14 @@ TEST_CASE("autosave names, listing newest first, keeping the newest few, .vmx ba
 	CHECK(AutosaveStamp::parse("20261027-213005") == stamp);
 	CHECK_FALSE(AutosaveStamp::parse("20261327-213005"));   // month 13
 	CHECK_FALSE(AutosaveStamp::parse("2026102-2130050"));
-	CHECK(autosaveFileName("de.test", stamp) == "de.test.20261027-213005.vmf");
+	// No dot before the stamp: VBSP reads everything after the last dot as the extension.
+	CHECK(autosaveFileName("de.test", stamp) == "de.test_20261027-213005.vmf");
+	const auto fresh = parseAutosaveName("folder/de.test_20261027-213005.vmf");
+	REQUIRE(fresh);
+	CHECK(fresh->mapName == "de.test");
+	CHECK(fresh->stamp == stamp);
 
-	const auto parsed = parseAutosaveName("folder/de.test.20261027-213005.vmf");
+	const auto parsed = parseAutosaveName("folder/de.test.20261027-213005.vmf");   // the older name still reads
 	REQUIRE(parsed);
 	CHECK(parsed->mapName == "de.test");   // dots in the map name survive
 	CHECK(parsed->stamp == stamp);
@@ -178,4 +184,32 @@ TEST_CASE("replace materials: whole map, wildcards, selection only, overlays, un
 	CHECK(doc.findSolid(a)->sides.front().material == "DEV/DEV_MEASUREGENERIC01");
 	CHECK(doc.findSolid(b)->sides.front().material == "CONCRETE/CONCRETEWALL001");
 	CHECK(doc.entities.front().get("material") == "concrete/concretewall001");
+}
+
+TEST_CASE("an autosave stands for its map: opening, the recent list (Julius, 10.11.2026: VBSP could not open the autosave)") {
+	// Julius' case: the editor's file had become mapsrc/autosave/workingtitle.20261110-145648.vmf.
+	const auto original = autosaveOriginal("D:/sourcemods/workingtitle/mapsrc/autosave/workingtitle.20261110-145648.vmf");
+	REQUIRE(original);
+	CHECK(*original == std::filesystem::path("D:/sourcemods/workingtitle/mapsrc/workingtitle.vmf"));
+	CHECK(autosaveOriginal("mapsrc/Autosave/de.test_20261027-213005.vmf") == std::filesystem::path("mapsrc/de.test.vmf"));
+	CHECK_FALSE(autosaveOriginal("mapsrc/workingtitle.vmf"));
+	CHECK_FALSE(autosaveOriginal("mapsrc/backups/workingtitle.20261110-145648.vmf"));   // only inside an "autosave" folder
+	CHECK_FALSE(autosaveOriginal("mapsrc/autosave/notes.vmf"));
+
+	CHECK(withoutAutosave("D:\\mod\\mapsrc\\autosave\\workingtitle.20261110-145648.vmf") == "D:\\mod\\mapsrc\\workingtitle.vmf");
+	CHECK(withoutAutosave("/home/j/mapsrc/autosave/städte_20261110-145648.vmf") == "/home/j/mapsrc/städte.vmf");
+	CHECK(withoutAutosave("/home/j/mapsrc/workingtitle.vmf") == "/home/j/mapsrc/workingtitle.vmf");
+	CHECK(withoutAutosave("workingtitle.20261110-145648.vmf") == "workingtitle.20261110-145648.vmf");   // no folder: not known as one
+
+	// Recording an autosave keeps the map; an old list with the autosave reads back as the map, once.
+	auto list = rememberProject({}, {"sourcemods/workingtitle", "D:/mod/mapsrc/autosave/workingtitle.20261110-145648.vmf", 20});
+	REQUIRE(list.size() == 1);
+	CHECK(list[0].mapPath == "D:/mod/mapsrc/workingtitle.vmf");
+	const auto old = parseRecentProjects("30\tsourcemods/workingtitle\tD:/mod/mapsrc/autosave/workingtitle.20261110-145648.vmf\n"
+	                                     "20\tsourcemods/workingtitle\tD:/mod/mapsrc/workingtitle.vmf\n"
+	                                     "10\tsourcemods/other\tD:/other/mapsrc/a.vmf\n");
+	REQUIRE(old.size() == 2);
+	CHECK(old[0].mapPath == "D:/mod/mapsrc/workingtitle.vmf");
+	CHECK(old[0].time == 30);
+	CHECK(old[1].mapPath == "D:/other/mapsrc/a.vmf");
 }

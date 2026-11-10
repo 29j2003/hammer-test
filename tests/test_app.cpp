@@ -5515,6 +5515,45 @@ TEST_CASE("features: the mod's features as one checklist, offered once, fresh in
 	settle();
 	CHECK(ran.size() == 2);
 	CHECK(ran.back() == ModCodeAction::Report);
+	// Each says what it does: a game report is not the editor report (Julius, 10.11.2026).
+	CHECK(problemsReport->text() == "Pack game report");
+	CHECK(compileReport->text() == "Pack game report");
+	CHECK(menuReport->text().startsWith("Pack game report"));
+	CHECK(modCode->findChild<QPushButton*>("modCodeReport")->text() == "Pack game report");
+	auto* editorHint = modCode->findChild<QLabel*>("modCodeEditorReportHint");
+	REQUIRE(editorHint);
+	CHECK(editorHint->text().contains("Make editor report"));
+
+	// Nothing typed in the game yet: not a red failure, but the steps - and the way to the editor report.
+	modCode->setCommandFactory([&](ModCodeAction action, const ModCodeScripts& scripts, const std::filesystem::path&) {
+		ran.push_back(action);
+		ScriptCommand command;
+		command.workingDir = scripts.root;
+#ifdef Q_OS_WIN
+		command.program = "cmd.exe";
+		command.args = {"/c", "echo mapbase-fidelity report& echo   nothing to pack: in the game look at the spot& exit /b 1"};
+#else
+		command.program = "sh";
+		command.args = {"-c", "echo 'mapbase-fidelity report -> mymod'; echo '  nothing to pack: in the game look at the spot, open the console and "
+		                      "type  fidelity_report'; exit 1"};
+#endif
+		return std::optional<ScriptCommand>(command);
+	});
+	modCode->start(ModCodeAction::Report);
+	for (int i = 0; i < 500 && modCode->running(); ++i) QTest::qWait(20);
+	settle();
+	CHECK(ran.back() == ModCodeAction::Report);
+	auto* summary = modCode->findChild<QLabel*>("modCodeSummary");
+	REQUIRE(summary);
+	CHECK(summary->text().contains("Nothing to pack yet"));
+	CHECK(summary->text().contains("fidelity_report"));
+	CHECK_FALSE(summary->text().contains("did not work"));
+	CHECK_FALSE(summary->text().contains("#ff8a7a"));
+	QObject::disconnect(modCode, &ModCodePanel::editorReportRequested, &window, nullptr);   // no file dialog in the test
+	QSignalSpy editorReport(modCode, &ModCodePanel::editorReportRequested);
+	emit summary->linkActivated(QStringLiteral("editor-report"));
+	emit editorHint->linkActivated(QStringLiteral("editor-report"));
+	CHECK(editorReport.count() == 2);
 
 	// New mod: the features can be chosen up front; they wait in the mod for the add-on.
 	{
@@ -11422,4 +11461,77 @@ TEST_CASE("road builder through a street: clean pieces like a mapper would cut t
 	settle();
 	shoot("road4_kerb_close", QVector3D(120, -1180, 70), -60, -25);
 	shoot("road4_kerb_round", QVector3D(380, -1200, 140), -150, -35);
+}
+
+TEST_CASE("an autosave opened by hand edits its map, the recent list keeps the map, a dotted name compiles from a safe copy") {
+	// Julius, 10.11.2026: the editor's file had become mapsrc/autosave/workingtitle.20261110-145648.vmf
+	// (a restore recorded the autosave as a recent project) and VBSP could not open it.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+
+	const QString mapsrc = fromPath(f.mod / "mapsrc");
+	QDir().mkpath(mapsrc + "/autosave");
+	const QString original = mapsrc + "/workingtitle.vmf";
+	editor.newMap();
+	REQUIRE(editor.saveMap(original));
+	const QString oldStyle = mapsrc + "/autosave/workingtitle.20261110-145648.vmf";
+	REQUIRE(QFile::copy(original, oldStyle));
+
+	// Opened by hand (File > Open, an old recent entry): the map is the file, the autosave its content.
+	REQUIRE(window.openMap(oldStyle));
+	settle();
+	CHECK(QDir::cleanPath(editor.filePath()) == QDir::cleanPath(original));
+	CHECK(editor.modified());   // Save writes the restored work into the map
+	REQUIRE_FALSE(loadRecentProjects().empty());
+	CHECK(QDir::cleanPath(QString::fromStdString(loadRecentProjects().front().mapPath)) == QDir::cleanPath(original));
+
+	// A restore records the map too (before, the autosave path reached the recent list first).
+	const QString fresh = mapsrc + "/autosave/workingtitle_20261110-150000.vmf";
+	REQUIRE(QFile::copy(original, fresh));
+	REQUIRE(editor.openRecovered(fresh, original));
+	settle();
+	CHECK(QDir::cleanPath(editor.filePath()) == QDir::cleanPath(original));
+	for (const auto& project : loadRecentProjects()) {
+		CHECK_FALSE(QString::fromStdString(project.mapPath).contains("autosave"));
+	}
+
+	// Older lists that hold an autosave read back as the map.
+	QSettings().setValue(RECENT_PROJECTS_KEY, QStringLiteral("1\tsourcemods/mymod\t%1\n").arg(oldStyle));
+	const auto recent = loadRecentProjects();
+	REQUIRE(recent.size() == 1);
+	CHECK(QDir::cleanPath(QString::fromStdString(recent.front().mapPath)) == QDir::cleanPath(original));
+
+	// A name the tools cannot take compiles from a safe copy next to it; the map file stays.
+	const QString dotted = mapsrc + "/my map.v2.vmf";
+	REQUIRE(QFile::copy(original, dotted));
+	CHECK(CompileRunner::compileTarget(original) == original);
+	CHECK(CompileRunner::compileTarget(dotted) == mapsrc + "/my_map_v2_compile.vmf");
+	GameSettings settings = editor.gameSettings();
+	const QString gameDir = fromPath(f.mod);
+	CHECK_FALSE(CompileRunner::describe(dotted, gameDir, settings, CompileOptions{}).join('\n').contains("my map"));
+	CHECK(CompileRunner::describe(dotted, gameDir, settings, CompileOptions{}).join('\n').contains("my_map_v2_compile"));
+	QSignalSpy finished(&window.compiler(), &CompileRunner::finished);
+	QSignalSpy output(&window.compiler(), &CompileRunner::output);
+	window.compiler().start(dotted, gameDir, settings, CompileOptions{});
+	CHECK(QFileInfo::exists(mapsrc + "/my_map_v2_compile.vmf"));
+	CHECK(QFileInfo::exists(dotted));
+	bool told = false;
+	for (const auto& args : output) told = told || args.at(0).toString().contains("my_map_v2_compile.vmf");
+	CHECK(told);
+	if (window.compiler().running()) window.compiler().cancel();
+	if (finished.isEmpty()) finished.wait(5000);
 }

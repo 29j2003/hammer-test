@@ -603,6 +603,7 @@ void MainWindow::createDocks() {
 		});
 	};
 	connect(m_modCode, &ModCodePanel::modUpdated, this, reloadGame);
+	connect(m_modCode, &ModCodePanel::editorReportRequested, this, &MainWindow::makeEditorReport);
 	m_projectPage->addTab(new ShipPanel(m_editor, projectTabs), tr("Ship"));
 	m_projectPage->addTab(m_modCode, tr("Build from source"));
 	// Features: Mapsmith's ready-built mapbase-fidelity installed into the mod (offered on the
@@ -1735,7 +1736,7 @@ void MainWindow::createActions() {
 	map->addAction(run);
 	map->addAction(hereAction);
 	// After testing the map in the game: something looked wrong there -> a report to send.
-	auto* report = action(tr("Make report from the game"), QKeySequence(), [this] { makeReport(); });
+	auto* report = action(tr("Pack game report (fidelity_report) ..."), QKeySequence(), [this] { makeReport(); });
 	report->setObjectName("makeReport");
 	report->setToolTip(reportHowTo());
 	report->setStatusTip(tr("Pack what fidelity_report wrote in the game into fidelity_report.zip"));

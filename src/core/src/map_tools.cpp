@@ -254,7 +254,7 @@ Bounds roomAround(const MapDocument& doc, const Vec3& point, double maxDistance)
 
 bool isGeneratedMapCopy(std::string_view fileName) {
 	const auto name = toLower(fileName);
-	return name.ends_with("_cordon.vmf") || name.ends_with("_here.vmf");
+	return name.ends_with("_cordon.vmf") || name.ends_with("_here.vmf") || name.ends_with("_compile.vmf");
 }
 
 PlayFromHereCopy playFromHereCopy(const MapDocument& doc, const PlayFromHere& options, const CordonSet& cordons, const EntityCatalog* catalog) {
