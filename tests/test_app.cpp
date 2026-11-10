@@ -11298,3 +11298,128 @@ TEST_CASE("road builder through a street: pictures of a big angled street, a nar
 	shoot("road3_ramp_after", QVector3D(-2400, -1500, 900), 40, -25);
 	shoot("road3_ramp_side", QVector3D(-500, -1600, 400), 90, -10);
 }
+
+TEST_CASE("road builder through a street: clean pieces like a mapper would cut them, kerbs as a run of stones with the texture along them (pictures)") {
+	// Julius, 10.11.2026 (pictures 70-74): fans of thin wedges, nodraw showing on kerbs, a concrete
+	// texture streaked across the kerb. Pictures with the brushes' outlines (all selected).
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	writeColourTexture(f, "concrete/kerbtest", 150, 150, 150, true);
+	test::writeText(f.mod / "materials/concrete/kerbtest.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"concrete/kerbtest\"\n}\n");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1900, 1150);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	Viewport* view = window.view3D();
+	const auto shoot = [&](const QString& name, QVector3D position, float yaw, float pitch) {
+		view->camera().position = position;
+		view->camera().yaw = yaw;
+		view->camera().pitch = pitch;
+		view->update();
+		settle();
+		QTest::qWait(250);
+		settle();
+		view->grabFramebuffer().save(shotDir + "/" + name + ".png");
+	};
+	const auto selectAll = [&] {
+		Selection s;
+		for (const auto& solid : editor.doc().world.solids) s.solids.push_back({0, solid.id});
+		editor.setSelection(s);
+		settle();
+	};
+	// Julius' L street: floor blocks (top at 8, the road texture), sidewalks 8 higher, the inside
+	// corner's sidewalk rounded.
+	editor.newMap();
+	settle();
+	std::vector<SolidRef> floorRefs;
+	SolidRef inner;
+	{
+		const auto block = [&](Vec3 lo, Vec3 hi, const char* material) {
+			Bounds b;
+			b.add(lo);
+			b.add(hi);
+			auto [change, ref] = edit::createBlock(editor.doc(), b, material);
+			editor.commit(std::move(change));
+			return ref;
+		};
+		for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{-2160, -1168, -16}, {-1472, -688, 8}}, {{-1472, -1168, -16}, {-768, -688, 8}},
+		                                                            {{-768, -1296, -16}, {-624, -688, 8}},   {{-624, -1296, -16}, {784, -880, 8}},
+		                                                            {{256, -2352, -16}, {784, -1296, 8}},    {{256, -2880, -16}, {784, -2352, 8}}}) {
+			block(a, b, "ROAD/DEMO_ROAD");
+		}
+		for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{-2160, -688, -16}, {-624, -592, 16}},  {{-624, -880, -16}, {-528, -592, 16}},
+		                                                            {{-528, -880, -16}, {880, -784, 16}},   {{784, -2880, -16}, {880, -880, 16}},
+		                                                            {{-2160, -1264, -16}, {-768, -1168, 16}}, {{-768, -1392, -16}, {256, -1296, 16}},
+		                                                            {{160, -2880, -16}, {256, -1392, 16}}}) {
+			const auto ref = block(a, b, "CONCRETE/WALL01");
+			if (a.x == -768 && a.y == -1392) inner = ref;
+		}
+		const auto face = [&](Vec3 normal) {
+			for (const auto& side : editor.doc().findSolid(inner)->sides) {
+				if (dot(side.plane().normal, normal) > 0.999) return FaceRef{inner, side.id};
+			}
+			return FaceRef{};
+		};
+		auto rounded = edit::roundEdge(editor.doc(), face({1, 0, 0}), face({0, 1, 0}), 128, 0);
+		REQUIRE(rounded);
+		editor.commit(std::move(*rounded));
+		settle();
+		for (const auto& s : editor.doc().world.solids) {
+			if (std::abs(buildBrushGeometry(s).bounds.max.z - 8) < 0.01) floorRefs.push_back({0, s.id});
+		}
+	}
+	selectAll();
+	shoot("road4_curve_before", QVector3D(520, -560, 900), -110, -55);
+	Selection floor;
+	floor.solids = floorRefs;
+	editor.setSelection(floor);
+	settle();
+	auto* action = window.findChild<QAction*>("brushesBuildRoad");
+	REQUIRE(action);
+	action->trigger();
+	settle();
+	auto* dialog = window.findChild<RoadBuilderDialog*>("roadBuilderDialog");
+	REQUIRE(dialog);
+	REQUIRE(dialog->fromSelection());
+	dialog->findChild<QLineEdit*>("roadBuilderMaterial")->setText("ROAD/DEMO_ROAD");
+	dialog->findChild<QComboBox*>("roadBuilderParkingSides")->setCurrentIndex(0);
+	dialog->findChild<QComboBox*>("roadBuilderKerbPlace")->setCurrentIndex(1);
+	dialog->findChild<QLineEdit*>("roadBuilderKerbMaterial")->setText("CONCRETE/KERBTEST");
+	QTest::qWait(100);
+	dialog->waitForPlan();
+	settle();
+	const std::string note = dialog->note().toStdString();
+	INFO("note: " << note);
+	dialog->accept();
+	settle();
+	int brushes = 0, kerbs = 0;
+	for (const auto& s : editor.doc().world.solids) {
+		CHECK(brushProblem(s).empty());
+		++brushes;
+		for (const auto& side : s.sides) {
+			if (side.plane().normal.z > 0.7 && side.material == "CONCRETE/KERBTEST") ++kerbs;
+		}
+	}
+	MESSAGE(brushes << " brushes in the map, " << kerbs << " kerb stones");
+	CHECK(kerbs >= 4);
+	selectAll();
+	shoot("road4_curve_after", QVector3D(520, -560, 900), -110, -55);
+	shoot("road4_top_after", QVector3D(-500, -1500, 4200), 90, -89);
+	editor.setSelection({});
+	settle();
+	shoot("road4_kerb_close", QVector3D(120, -1180, 70), -60, -25);
+	shoot("road4_kerb_round", QVector3D(380, -1200, 140), -150, -35);
+}

@@ -156,6 +156,14 @@ double cross2(const Vec3& a, const Vec3& b) {
 	return a.x * b.y - a.y * b.x;
 }
 
+/// The middle of a brush's corners (where a note points).
+Vec3 middleOfSolid(const Solid& solid) {
+	const auto corners = solidCorners(solid);
+	Vec3 m{};
+	for (const auto& c : corners) m = m + c;
+	return corners.empty() ? m : m / double(corners.size());
+}
+
 bool sameMaterial(const std::string& a, const std::string& b) {
 	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return std::tolower((unsigned char)x) == std::tolower((unsigned char)y); });
 }
@@ -547,7 +555,7 @@ void joinPieces(MapDocument& ids, std::vector<Solid>& pieces, std::size_t limit 
 
 /// Pieces of a carved brush: the sides the carve added get `material` (the brush's own look,
 /// world-aligned), joined where two pieces form one brush again.
-void tidyCarved(MapDocument& ids, const Solid& original, std::vector<Solid>& pieces, const std::string& material) {
+void tidyCarved(MapDocument& ids, const Solid& original, std::vector<Solid>& pieces, const std::string& material, const std::vector<CutHint>& hints = {}) {
 	for (auto& piece : pieces) {
 		for (auto& side : piece.sides) {
 			if (fromOriginal(original, side)) continue;
@@ -556,6 +564,13 @@ void tidyCarved(MapDocument& ids, const Solid& original, std::vector<Solid>& pie
 				alignToWorld(side);
 			}
 		}
+	}
+	// Cut again the way a mapper would (no fans of wedges from the cutters' planes), then join what
+	// is left over that is not an upright prism.
+	if (pieces.size() > 1) {
+		PrismTidyOptions tidy;
+		tidy.hints = hints;
+		pieces = tidyPrisms(ids, pieces, tidy);
 	}
 	joinPieces(ids, pieces);
 }
@@ -701,7 +716,10 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 		const PathLayout layout = layoutPath(path, o, plan);
 		if (layout.stations.size() < 2) continue;
 		std::vector<Vec3> line;
-		for (const auto& s : layout.stations) line.push_back(s.c);
+		for (const auto& s : layout.stations) {
+			line.push_back(s.c);
+			plan.crossLines.push_back({s.c, s.left});
+		}
 		plan.centreLines.push_back(std::move(line));
 
 		std::vector<Piece> newRoads, newKerbs, newSeals;
@@ -1005,7 +1023,14 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 			if (n->solid->sides.end() != std::find_if(n->solid->sides.begin(), n->solid->sides.end(), [](const Side& s) { return s.dispInfo(); })) continue;
 			std::vector<Solid> pieces;
 			if (!carveByColumns(*n->solid, pieces)) continue;
-			tidyCarved(ids, *n->solid, pieces, mainMaterial(*n->solid));
+			{
+				// A graze of rounding (a few cubic units along a long slanted cut): leave it whole.
+				double left = 0;
+				for (const auto& piece : pieces) left += solidVolume(piece);
+				const double whole = solidVolume(*n->solid);
+				if (whole - left < std::max(8.0, 1e-5 * whole)) continue;
+			}
+			tidyCarved(ids, *n->solid, pieces, mainMaterial(*n->solid), plan.crossLines);
 			if (!std::all_of(pieces.begin(), pieces.end(), [](const Solid& s) { return brushProblem(s).empty(); })) {
 				++unfit;
 				continue;
@@ -1015,7 +1040,7 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 			++plan.carved;
 		}
 	}
-	if (unfit > 0) plan.notes.push_back(std::to_string(unfit) + " brush(es) beside the road were not carved (it would leave a sliver): check them");
+	if (unfit > 0) plan.notes.push_back(std::to_string(unfit) + " brush(es) the road reaches into stay whole (carving them would leave a sliver): the road is cut around them");
 	// The ground beside the road: the top material most floors near the road's height have.
 	std::string groundMaterial;
 	{
@@ -1226,6 +1251,7 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 
 	// The selected floor the road is built from: what is left of it stays (fill).
 	double lostFloor = 0;   // square units of floor in slivers that joined nothing
+	Vec3 lostAt, skippedAt;
 	int lostSlivers = 0;
 	// A sliver the cuts left (too thin for a brush) joins a neighbouring piece instead of leaving a
 	// hole; only what joins nothing is left out (and said). A big piece whose only fault is a speck
@@ -1251,20 +1277,110 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 					mendedPieces.push_back(std::move(*mended));
 					continue;
 				}
-				lostFloor += solidVolume(sliver) / std::max(1.0, o.thickness);
-				++lostSlivers;
+				// An upright prism with an edge a hair long: rebuilt from its outline without it.
+				{
+					auto rebuilt = tidyPrisms(ids, {sliver});
+					if (!rebuilt.empty() && std::all_of(rebuilt.begin(), rebuilt.end(), [](const Solid& s) { return brushProblem(s).empty(); })) {
+						for (auto& r : rebuilt) {
+							r.id = sliver.id;
+							mendedPieces.push_back(std::move(r));
+						}
+						continue;
+					}
+				}
+				// A speck of a few square units seen from above (thinner than half a unit) is no hole
+				// anyone sees.
+				double lostArea = 0;
+				{
+					std::vector<Vec3> pts;
+					for (const auto& c : solidCorners(sliver)) pts.push_back({c.x, c.y, 0});
+					std::sort(pts.begin(), pts.end(), [](const Vec3& a2, const Vec3& b2) { return a2.x < b2.x || (a2.x == b2.x && a2.y < b2.y); });
+					std::vector<Vec3> hull;
+					for (int pass = 0; pass < 2; ++pass) {
+						const std::size_t start = hull.size();
+						for (const auto& q : pts) {
+							while (hull.size() >= start + 2 && cross2(hull[hull.size() - 1] - hull[hull.size() - 2], q - hull[hull.size() - 2]) <= 0) hull.pop_back();
+							hull.push_back(q);
+						}
+						hull.pop_back();
+						std::reverse(pts.begin(), pts.end());
+					}
+					for (std::size_t k = 0; k < hull.size(); ++k) lostArea += cross2(hull[k], hull[(k + 1) % hull.size()]) / 2;
+					lostArea = std::abs(lostArea);
+				}
+				if (lostArea < 8) continue;
+				lostFloor += lostArea;
+				if (lostSlivers++ == 0) lostAt = middleOfSolid(sliver);
+
 			}
 		}
 		for (auto& m : mendedPieces) good.push_back(std::move(m));
 		pieces = std::move(good);
+	};
+	// The selected floor is carved by columns through its whole depth: what is left beside the road
+	// keeps the floor's full depth, one prism per piece (not a stack split at the road's bottom, which
+	// came out as two layers of differently cut pieces). Below each built piece the floor that lies
+	// under it stays as a slab with the piece's own outline.
+	std::vector<Solid> deepColumns, slabCutters;
+	if (!replace.empty()) {
+		double floorLow = 1e30;
+		for (const auto& ref : replace) {
+			if (const Solid* solid = doc.findSolid(ref)) floorLow = std::min(floorLow, buildBrushGeometry(*solid).bounds.min.z);
+		}
+		const double low = floorLow - 64;
+		for (const auto* list : {&roads, &kerbs, &seals}) {
+			for (const auto& piece : *list) {
+				const double top = (piece.kind == Piece::Kind::Kerb ? piece.topZ : piece.topZ + (piece.kind == Piece::Kind::Seal ? o.thickness : 0)) + o.clearance;
+				const auto corners = solidCorners(piece.solid);
+				std::vector<Vec3> deep, under;
+				for (const auto& c : corners) {
+					deep.push_back({c.x, c.y, low});
+					deep.push_back({c.x, c.y, top});
+				}
+				if (auto column = solidFromPoints(ids, deep, NODRAW)) deepColumns.push_back(std::move(*column));
+				// The piece's bottom: per corner seen from above, its lowest point.
+				if (piece.kind == Piece::Kind::Road && o.displacement) continue;   // its seal is below it
+				for (const auto& c : corners) {
+					double lowest = c.z;
+					for (const auto& d : corners) {
+						if (std::abs(d.x - c.x) < 0.01 && std::abs(d.y - c.y) < 0.01) lowest = std::min(lowest, d.z);
+					}
+					if (std::abs(lowest - c.z) > 1e-6) continue;
+					under.push_back(c);
+					under.push_back({c.x, c.y, low});
+				}
+				if (auto cutter = solidFromPoints(ids, under, NODRAW)) slabCutters.push_back(std::move(*cutter));
+			}
+		}
+	}
+	std::vector<Bounds> deepBox, slabBox;
+	for (const auto& c : deepColumns) deepBox.push_back(buildBrushGeometry(c).bounds);
+	for (const auto& c : slabCutters) slabBox.push_back(buildBrushGeometry(c).bounds);
+	const auto carveFloor = [&](const Solid& solid, std::vector<Solid>& pieces) {
+		pieces = {solid};
+		const Bounds box = buildBrushGeometry(solid).bounds;
+		for (std::size_t c = 0; c < deepColumns.size() && !pieces.empty(); ++c) {
+			if (!boxesOverlap(box, deepBox[c])) continue;
+			std::vector<Solid> next;
+			for (const auto& piece : pieces) {
+				for (auto& part : subtractSolid(ids, piece, deepColumns[c])) {
+					if (solidVolume(part) >= 1.0) next.push_back(std::move(part));
+				}
+			}
+			pieces = std::move(next);
+		}
+		for (std::size_t c = 0; c < slabCutters.size(); ++c) {
+			if (!boxesOverlap(box, slabBox[c])) continue;
+			if (auto slab = insideOf(ids, solid, slabCutters[c])) pieces.push_back(std::move(*slab));
+		}
 	};
 	for (const auto& ref : replace) {
 		if (stopped(o)) return giveUp();
 		const Solid* solid = doc.findSolid(ref);
 		if (!solid) continue;
 		std::vector<Solid> pieces;
-		carveByColumns(*solid, pieces);
-		tidyCarved(ids, *solid, pieces, mainMaterial(*solid));
+		carveFloor(*solid, pieces);
+		tidyCarved(ids, *solid, pieces, mainMaterial(*solid), plan.crossLines);
 		absorbSlivers(pieces);
 		// What is left beside a curve was road: it gets the fill material, else the ground's.
 		const std::string fill = !o.fillMaterial.empty() ? o.fillMaterial : groundMaterial;
@@ -1288,8 +1404,144 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	}
 
 	if (lostSlivers > 0) {
-		plan.notes.push_back(std::to_string(lostSlivers) + " sliver(s) of the floor (about " + units(lostFloor) +
-		                     " square units) were too thin for a brush and are left out: check beside the road");
+		plan.notes.push_back(std::to_string(lostSlivers) + " sliver(s) of the floor (about " + units(lostFloor) + " square units, the first near (" + units(lostAt.x) +
+		                     ", " + units(lostAt.y) + ")) were too thin for a brush and are left out: fill that spot by hand or change the road's width a little");
+	}
+
+	// Where the road takes the street's whole width, a curve leaves a thin wedge beside its first and
+	// last piece (between the piece's outer edge and the straight kerb, a few degrees wide) - a sliver
+	// no mapper would make. It joins the road piece beside it (the road reaches the kerb there: still
+	// four corners); what of it lies below the road joins the floor slab under that piece.
+	if (!replace.empty()) {
+		const auto sharpest = [](const Solid& solid) {
+			const auto geometry = buildBrushGeometry(solid);
+			double worst = 180;
+			std::size_t corners = 0;
+			for (const auto& face : geometry.faces) {
+				if (face.normal.z < 0.7) continue;
+				corners = face.vertices.size();
+				const auto& p = face.vertices;
+				for (std::size_t k = 0; k < p.size(); ++k) {
+					const Vec3 a = p[(k + p.size() - 1) % p.size()], b = p[k], c = p[(k + 1) % p.size()];
+					worst = std::min(worst, std::acos(std::clamp(dot(normalize(a - b), normalize(c - b)), -1.0, 1.0)) * 180 / PI);
+				}
+			}
+			return std::pair{worst, corners};
+		};
+		// One brush of two that lie face to face and together are convex: the sides of both but the
+		// two they share (each face keeps its look); planes a hair apart count as one.
+		const auto samePlaneLoose = [](const Plane& p, const Plane& q) { return dot(p.normal, q.normal) > 0.9999 && std::abs(p.dist - q.dist) < 0.05; };
+		const auto joinExact = [&](const Solid& a, const Solid& b) -> std::optional<Solid> {
+			const auto shared = [&](const Side& side, const Solid& other) {
+				const Plane p = side.plane();
+				return std::any_of(other.sides.begin(), other.sides.end(), [&](const Side& o2) { return samePlaneLoose(p, Plane{-o2.plane().normal, -o2.plane().dist}); });
+			};
+			Solid u;
+			u.id = a.id;
+			u.extra = a.extra;
+			bool touching = false;
+			for (const auto& side : a.sides) {
+				if (shared(side, b)) {
+					touching = true;
+					continue;
+				}
+				u.sides.push_back(side);
+			}
+			if (!touching) return std::nullopt;
+			for (const auto& side : b.sides) {
+				if (shared(side, a)) continue;
+				const Plane p = side.plane();
+				if (std::any_of(u.sides.begin(), u.sides.end(), [&](const Side& s2) { return samePlaneLoose(s2.plane(), p); })) continue;
+				Side copy = side;
+				copy.id = ids.newSideId();
+				u.sides.push_back(std::move(copy));
+			}
+			removeUnusedSides(u);
+			if (!buildBrushGeometry(u).valid) return std::nullopt;
+			const double sum = solidVolume(a) + solidVolume(b);
+			// Corners a hair off one line (cuts in another order): that little may differ.
+			if (std::abs(solidVolume(u) - sum) > std::max(1.0, 2e-4 * sum)) return std::nullopt;
+			if (!brushProblem(u).empty()) return std::nullopt;
+			return u;
+		};
+		int wedges = 0;
+		Side cap;
+		cap.material = NODRAW;
+		alignToWorld(cap);
+		for (auto& r : plan.changed) {
+			if (std::find(replace.begin(), replace.end(), r.ref) == replace.end()) continue;
+			std::vector<Solid> keep, slivers;
+			for (auto& piece : r.pieces) {
+				const auto [worst, corners] = sharpest(piece);
+				(worst < 10 && corners == 3 ? slivers : keep).push_back(std::move(piece));
+			}
+			for (auto& sliver : slivers) {
+				std::vector<Solid> rest{sliver};
+				for (auto& road : roads) {
+					if (road.kind != Piece::Kind::Road || rest.empty()) continue;
+					const Bounds rb = buildBrushGeometry(road.solid).bounds;
+					std::vector<Solid> next;
+					for (auto& part : rest) {
+						const Bounds pb = buildBrushGeometry(part).bounds;
+						if (!boxesOverlap(rb, pb, -0.05) || std::abs(rb.max.z - pb.max.z) > 0.5) {
+							next.push_back(std::move(part));
+							continue;
+						}
+						// The part of the wedge across from this road piece: within the planes of its
+						// upright sides (not the one the wedge lies against).
+						std::optional<Solid> inside = part;
+						std::vector<Solid> outside;
+						for (const auto& side : road.solid.sides) {
+							const Plane plane = side.plane();
+							if (std::abs(plane.normal.z) > 0.2 || !inside) continue;
+							const bool against = std::any_of(inside->sides.begin(), inside->sides.end(), [&](const Side& s2) {
+								const Plane q = s2.plane();
+								return dot(q.normal, plane.normal) < -0.9999 && std::abs(q.dist + plane.dist) < 0.05;
+							});
+							if (against) continue;
+							auto [front, back] = splitSolid(ids, *inside, plane, cap);
+							if (front && solidVolume(*front) >= 1.0) outside.push_back(std::move(*front));
+							inside = std::move(back);
+						}
+						if (!inside || solidVolume(*inside) < 1.0) {
+							next.push_back(std::move(part));
+							continue;
+						}
+						// Beside the road (its depth) it joins the road piece; below it, the slab under it.
+						std::optional<Solid> upper = inside, lower;
+						if (pb.min.z < rb.min.z - 0.5) {
+							auto [below, above] = splitSolid(ids, *inside, Plane{{0, 0, -1}, -rb.min.z}, cap);
+							upper = std::move(above);
+							lower = std::move(below);
+						}
+						std::optional<Solid> merged = upper ? joinExact(road.solid, *upper) : std::nullopt;
+						if (merged && o.displacement && sharpest(*merged).second != 4) merged.reset();
+						if (!merged) {
+							next.push_back(std::move(part));
+							continue;
+						}
+						road.solid = std::move(*merged);
+						if (lower) {
+							bool slabbed = false;
+							for (auto& slab : keep) {
+								if (auto under = joinExact(slab, *lower)) {
+									slab = std::move(*under);
+									slabbed = true;
+									break;
+								}
+							}
+							if (!slabbed) keep.push_back(std::move(*lower));
+						}
+						for (auto& o2 : outside) next.push_back(std::move(o2));
+						++wedges;
+					}
+					rest = std::move(next);
+				}
+				for (auto& left : rest) keep.push_back(std::move(left));
+			}
+			r.pieces = std::move(keep);
+		}
+		(void)wedges;
 	}
 
 	// Displacements: every four-cornered road top, bent onto the road's true surface.
@@ -1317,21 +1569,29 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 			storeDisplacement(piece.solid.sides[std::size_t(top->sideIndex)], *disp);
 			++plan.displacements;
 		}
-		if (flatTops > 0) plan.notes.push_back(std::to_string(flatTops) + " road piece(s) stay flat: cut at a junction or a curve's tip, they do not have four corners");
+		if (flatTops > 0) {
+		plan.notes.push_back(std::to_string(flatTops) + " road piece(s) stay flat (no displacement): cut at a junction or a tight curve's tip they do not have four corners");
+	}
 	}
 
 	// Never anything broken: pieces with a problem are left out.
 	for (auto* list : {&roads, &kerbs, &seals}) {
 		for (const auto& piece : *list) {
-			if (!brushProblem(piece.solid).empty()) ++plan.skipped;
+			if (brushProblem(piece.solid).empty()) continue;
+			if (plan.skipped++ == 0) skippedAt = middleOfSolid(piece.solid);
 		}
 		std::erase_if(*list, [](const Piece& p) { return !brushProblem(p.solid).empty(); });
 	}
-	if (plan.skipped > 0) plan.notes.push_back(std::to_string(plan.skipped) + " piece(s) left out: too thin or broken");
+	if (plan.skipped > 0) {
+		plan.notes.push_back(std::to_string(plan.skipped) + " road piece(s) near (" + units(skippedAt.x) + ", " + units(skippedAt.y) +
+		                     ") left out: too thin for a brush there - make the road or its curve wider");
+	}
 	for (auto& piece : roads) plan.road.push_back(std::move(piece.solid));
 	plan.seals = int(seals.size());
 	for (auto& piece : seals) plan.road.push_back(std::move(piece.solid));
 	for (auto& piece : kerbs) plan.kerbs.push_back(std::move(piece.solid));
+	// A clicked road: finished here (from a selection: after the kerbs at the street's edge).
+	if (replace.empty()) finishRoadPlan(doc, ids, plan, {}, o);
 	return plan;
 }
 
@@ -1603,7 +1863,7 @@ void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& pla
 					rest.push_back(std::move(piece));
 					continue;
 				}
-				tidyCarved(ids, piece, keep, mainMaterial(piece));
+				tidyCarved(ids, piece, keep, mainMaterial(piece), plan.crossLines);
 				for (auto& k : keep) rest.push_back(std::move(k));
 				for (auto& k : kerbs) plan.kerbs.push_back(std::move(k));
 				made += int(kerbs.size());
@@ -1622,6 +1882,317 @@ void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& pla
 		}
 	}
 	if (made == 0) plan.notes.push_back("no kerbs: nothing raised (sidewalk or wall) borders the street beside the parking lanes");
+}
+
+namespace {
+
+/// Whether a point lies in a convex outline seen from above (counter-clockwise), with a margin.
+bool insideOutline(const std::vector<Vec3>& outline, const Vec3& p, double margin) {
+	if (outline.size() < 3) return false;
+	for (std::size_t i = 0; i < outline.size(); ++i) {
+		const Vec3 a = outline[i], b = outline[(i + 1) % outline.size()];
+		const double l = length(flat(b - a));
+		if (l < 1e-9) continue;
+		if (cross2(b - a, p - a) / l < -margin) return false;
+	}
+	return true;
+}
+
+Vec3 middleOf(const Solid& solid) {
+	const auto corners = solidCorners(solid);
+	Vec3 m{};
+	for (const auto& c : corners) m = m + c;
+	return corners.empty() ? m : m / double(corners.size());
+}
+
+/// The kerbs' texture along them: per kerb stone its long direction, consistent along each run of
+/// stones that touch, the texture going on from stone to stone where they meet (one scale, world
+/// size); upright faces with the texture's V downwards, the end faces along their own width.
+void alignKerbs(std::vector<Solid>& kerbs) {
+	const std::size_t n = kerbs.size();
+	if (n == 0) return;
+	struct Stone {
+		std::vector<Vec3> top;   // outline from above
+		Vec3 dir;
+		Vec3 middle;
+		double shift = 0;
+		bool done = false;
+	};
+	std::vector<Stone> stones(n);
+	for (std::size_t i = 0; i < n; ++i) {
+		const auto geometry = buildBrushGeometry(kerbs[i]);
+		const FaceGeometry* top = nullptr;
+		for (const auto& face : geometry.faces) {
+			if (face.normal.z > 0.7 && (!top || face.normal.z > top->normal.z)) top = &face;
+		}
+		stones[i].middle = flat(middleOf(kerbs[i]));
+		if (!top) continue;
+		double longest = 0;
+		for (std::size_t k = 0; k < top->vertices.size(); ++k) {
+			const Vec3 e = flat(top->vertices[(k + 1) % top->vertices.size()] - top->vertices[k]);
+			if (length(e) > longest) {
+				longest = length(e);
+				stones[i].dir = normalize(e);
+			}
+		}
+		for (const auto& v : top->vertices) stones[i].top.push_back(flat(v));
+	}
+	// Stones that touch: a corner of one lies on the other's outline, two corners shared or close.
+	const auto touching = [&](std::size_t a, std::size_t b) {
+		int shared = 0;
+		for (const auto& p : stones[a].top) {
+			for (std::size_t k = 0; k < stones[b].top.size(); ++k) {
+				const Vec3 c = stones[b].top[k], d = stones[b].top[(k + 1) % stones[b].top.size()];
+				const double l = length(d - c);
+				if (l < 1e-6) continue;
+				const double t = dot(p - c, d - c) / (l * l);
+				if (t < -0.01 || t > 1.01) continue;
+				if (std::abs(cross2(d - c, p - c)) / l < 0.1) {
+					++shared;
+					break;
+				}
+			}
+		}
+		return shared >= 2;
+	};
+	constexpr double SCALE = 0.25;
+	for (std::size_t start = 0; start < n; ++start) {
+		if (stones[start].done || length(stones[start].dir) < 0.5) continue;
+		// Walk the run both ways from here.
+		stones[start].done = true;
+		stones[start].shift = 0;
+		std::vector<std::size_t> queue{start};
+		for (std::size_t q = 0; q < queue.size(); ++q) {
+			const std::size_t i = queue[q];
+			for (std::size_t j = 0; j < n; ++j) {
+				if (stones[j].done || length(stones[j].dir) < 0.5 || !touching(i, j)) continue;
+				// The direction on from stone i: pointing the same way along the run.
+				Vec3 dj = stones[j].dir;
+				if (dot(dj, stones[i].dir) < 0) dj = -dj;
+				stones[j].dir = dj;
+				// Where they meet: the middle of the corners they share; the texel there the same.
+				Vec3 meet{};
+				int count = 0;
+				for (const auto& p : stones[j].top) {
+					for (const auto& r : stones[i].top) {
+						if (length(p - r) < 0.2) {
+							meet = meet + p;
+							++count;
+						}
+					}
+				}
+				if (count == 0) meet = (stones[i].middle + stones[j].middle) * 0.5;
+				else meet = meet / double(count);
+				const double u = dot(meet, stones[i].dir) / SCALE + stones[i].shift;
+				stones[j].shift = u - dot(meet, dj) / SCALE;
+				stones[j].done = true;
+				queue.push_back(j);
+			}
+		}
+	}
+	for (std::size_t i = 0; i < n; ++i) {
+		if (length(stones[i].dir) < 0.5) continue;
+		const Vec3 d = stones[i].dir;
+		const Vec3 across{-d.y, d.x, 0};
+		// Across the stone the texture starts at the same edge of every stone (its picture does not
+		// jump sideways from stone to stone round a curve).
+		double edge = -1e30;
+		for (const auto& v : stones[i].top) edge = std::max(edge, dot(v, across));
+		for (auto& side : kerbs[i].sides) {
+			if (side.dispInfo() || isToolMaterial(side.material)) continue;
+			const Vec3 normal = side.plane().normal;
+			side.rotation = 0;
+			if (normal.z > 0.7) {
+				side.u = {d, stones[i].shift, SCALE};
+				side.v = {-across, edge / SCALE, SCALE};
+			} else if (std::abs(normal.z) < 0.7) {
+				Vec3 along = d;
+				double shift = stones[i].shift;
+				if (std::abs(dot(flat(normal), d)) > 0.7) {
+					// An end of the stone: along its own width.
+					along = normalize(cross(Vec3{0, 0, 1}, normal));
+					shift = 0;
+				}
+				side.u = {along, shift, SCALE};
+				side.v = {{0, 0, -1}, 0, SCALE};
+			}
+		}
+	}
+}
+
+} // namespace
+
+void finishRoadPlan(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& plan, const std::vector<SolidRef>& floor, const RoadBuildOptions& options) {
+	if (!plan.ok()) return;
+	PrismTidyOptions tidy;
+	tidy.hints = plan.crossLines;
+
+	// 1. The floor left beside the road, joined across the old blocks of one entity and cut again.
+	std::map<int, std::vector<std::size_t>> byEntity;
+	for (std::size_t i = 0; i < plan.changed.size(); ++i) {
+		if (std::find(floor.begin(), floor.end(), plan.changed[i].ref) != floor.end()) byEntity[plan.changed[i].ref.entityId].push_back(i);
+	}
+	for (const auto& [entity, which] : byEntity) {
+		if (stopped(options)) return;
+		std::vector<Solid> all;
+		for (const std::size_t i : which) {
+			for (auto& piece : plan.changed[i].pieces) all.push_back(std::move(piece));
+			plan.changed[i].pieces.clear();
+		}
+		all = tidyPrisms(ids, all, tidy);
+		// Each piece goes to the old block its middle lies in (pieces spanning blocks to one of them).
+		std::vector<std::vector<Vec3>> outlines;
+		for (const std::size_t i : which) {
+			const Solid* original = doc.findSolid(plan.changed[i].ref);
+			outlines.push_back(original ? footprint(*original) : std::vector<Vec3>{});
+		}
+		for (auto& piece : all) {
+			const Vec3 m = flat(middleOf(piece));
+			std::size_t to = 0;
+			for (std::size_t k = 0; k < which.size(); ++k) {
+				if (insideOutline(outlines[k], m, 0.05)) {
+					to = k;
+					break;
+				}
+			}
+			plan.changed[which[to]].pieces.push_back(std::move(piece));
+		}
+		for (const std::size_t i : which) {
+			auto& r = plan.changed[i];
+			auto& pieces = r.pieces;
+			std::stable_partition(pieces.begin(), pieces.end(), [&](const Solid& s) { return s.id == r.ref.solidId; });
+			for (std::size_t k = 0; k < pieces.size(); ++k) {
+				if (k == 0) pieces[k].id = r.ref.solidId;
+				else if (pieces[k].id == r.ref.solidId) pieces[k].id = ids.newSolidId();
+			}
+		}
+	}
+
+	// 2. Kerbs: clean stones along their run.
+	if (plan.kerbs.size() > 1) plan.kerbs = tidyPrisms(ids, plan.kerbs, tidy);
+
+	// 3. Nothing built may overlap a brush that stays (it would flicker - Z fighting): what the road
+	// could not carve (a displacement, a brush entity, a brush a carve would have broken) cuts the new
+	// piece instead. Overlaps of rounding (a few cubic units along a long slanted cut) do not count.
+	std::vector<SolidRef> skip = plan.replacedRefs();
+	Bounds all;
+	for (const auto& s : plan.resultSolids()) all.add(buildBrushGeometry(s).bounds);
+	int clipped = 0, stuck = 0;
+	if (!all.empty()) {
+		const auto near = solidsNear(doc, all, 1, skip);
+		const auto clip = [&](std::vector<Solid>& list) {
+			std::vector<Solid> next;
+			for (auto& piece : list) {
+				const Bounds pb = buildBrushGeometry(piece).bounds;
+				std::vector<Solid> parts{piece};
+				for (const auto& n : near) {
+					if (!boxesOverlap(pb, n.bounds, 0.5)) continue;
+					if (std::all_of(n.solid->sides.begin(), n.solid->sides.end(), [](const Side& s) { return isToolMaterial(s.material); })) continue;
+					if (n.ref.entityId != 0) {
+						const Entity* entity = doc.findEntity(n.ref.entityId);
+						// Triggers and other tool volumes may overlap anything.
+						if (!entity || entity->classname().rfind("trigger_", 0) == 0) continue;
+					}
+					std::vector<Solid> rest;
+					for (auto& part : parts) {
+						const double shared = sharedVolume(part, *n.solid);
+						if (shared < std::max(8.0, 1e-4 * solidVolume(part))) {
+							rest.push_back(std::move(part));
+							continue;
+						}
+						if (std::any_of(part.sides.begin(), part.sides.end(), [](const Side& s) { return s.dispInfo(); })) {
+							++stuck;
+							rest.push_back(std::move(part));
+							continue;
+						}
+						++clipped;
+						for (auto& cut : subtractSolid(ids, part, *n.solid)) {
+							if (solidVolume(cut) < 1.0) continue;
+							for (auto& side : cut.sides) {
+								if (!fromOriginal(part, side)) side.material = NODRAW;   // against the brush that stays
+							}
+							rest.push_back(std::move(cut));
+						}
+					}
+					parts = std::move(rest);
+				}
+				for (auto& p : parts) next.push_back(std::move(p));
+			}
+			list = std::move(next);
+		};
+		clip(plan.road);
+		clip(plan.kerbs);
+		for (auto& r : plan.changed) clip(r.pieces);
+	}
+	if (clipped > 0) {
+		plan.notes.push_back(std::to_string(clipped) + " new piece(s) were cut where they reached into a brush that stays (it could not be carved)");
+		// The cuts left fans again: cut cleanly once more.
+		plan.road = tidyPrisms(ids, plan.road, tidy);
+		plan.kerbs = tidyPrisms(ids, plan.kerbs, tidy);
+		for (auto& r : plan.changed) {
+			if (r.pieces.size() > 1) r.pieces = tidyPrisms(ids, r.pieces, tidy);
+		}
+	}
+	if (stuck > 0) {
+		plan.notes.push_back(std::to_string(stuck) + " road displacement(s) reach into a brush that stays: move that brush or turn off displacements");
+	}
+
+	// 4. The kerbs' texture along them.
+	alignKerbs(plan.kerbs);
+
+	// 5. No nodraw where it can be seen: a face above the street that nothing covers gets the look of
+	// its brush.
+	double ground = 1e30;
+	for (const auto& s : plan.road) ground = std::min(ground, buildBrushGeometry(s).bounds.max.z);
+	if (ground < 1e29) {
+		std::vector<const Solid*> others;
+		const auto near = solidsNear(doc, all, 2, skip);
+		for (const auto& n : near) others.push_back(n.solid);
+		const auto result = plan.resultSolids();
+		for (const auto& s : result) others.push_back(&s);
+		const auto expose = [&](Solid& solid) {
+			const auto geometry = buildBrushGeometry(solid);
+			for (const auto& face : geometry.faces) {
+				Side& side = solid.sides[std::size_t(face.sideIndex)];
+				if (side.material != NODRAW || face.normal.z < -0.7) continue;
+				Vec3 centre{};
+				for (const auto& v : face.vertices) centre = centre + v;
+				centre = centre / double(face.vertices.size());
+				bool shown = false;
+				std::vector<Vec3> samples{centre};
+				for (const auto& v : face.vertices) samples.push_back(v + (centre - v) * 0.1);
+				for (const auto& sample : samples) {
+					const Vec3 p = sample + face.normal * 0.5;
+					if (p.z < ground + 0.25) continue;
+					bool covered = false;
+					for (const Solid* o : others) {
+						if (o->id == solid.id && o != &solid) continue;
+						if (o == &solid) continue;
+						// Covered, or under the ground (something right above it: nobody stands there).
+						if (solidContains(*o, p, 0.01) || solidContains(*o, p + Vec3{0, 0, 4}, 0.01) || solidContains(*o, p + Vec3{0, 0, 16}, 0.01) ||
+						    solidContains(*o, p + Vec3{0, 0, 40}, 0.01)) {
+							covered = true;
+							break;
+						}
+					}
+					if (!covered) {
+						shown = true;
+						break;
+					}
+				}
+				if (shown) {
+					side.material = mainMaterial(solid);
+					if (side.material == NODRAW) side.material = !options.sideMaterial.empty() ? options.sideMaterial : plan.material;
+					alignToWorld(side);
+				}
+			}
+		};
+		for (auto& s : plan.kerbs) expose(s);
+		for (auto& s : plan.road) expose(s);
+		for (auto& r : plan.changed) {
+			for (auto& s : r.pieces) expose(s);
+		}
+	}
 }
 
 namespace edit {

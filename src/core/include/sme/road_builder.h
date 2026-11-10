@@ -40,6 +40,7 @@
 #include <sme/editing.h>
 #include <sme/history.h>
 #include <sme/map.h>
+#include <sme/prism_tidy.h>
 #include <sme/road_texture.h>
 
 namespace sme {
@@ -116,6 +117,9 @@ struct RoadBuildPlan {
 	std::vector<Solid> kerbs;
 	std::vector<Replacement> changed;         ///< Carved neighbours, split old roads, replaced selection
 	std::vector<std::vector<Vec3>> centreLines;   ///< The centre line of each path as built (for drawing)
+	/// Each station of the road (centre point, left direction): the floor beside the road is cut
+	/// along these lines (a curve's lane: one piece per curve piece, as a mapper would cut it).
+	std::vector<CutHint> crossLines;
 	std::vector<std::string> notes;           ///< What was limited or left out, one line each
 	std::string material;                     ///< The road material used
 	int curves = 0;                           ///< Corners turned into curves
@@ -188,6 +192,13 @@ struct RoadCorridor {
 /// cut from the floor piece exactly (the piece = kerb + rest), so nothing overlaps and no hole
 /// opens; round a rounded sidewalk corner the strips follow its facets. Exposed for tests.
 void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& plan, const RoadCorridor& corridor, const RoadBuildOptions& options);
+
+/// The last step of a plan: the floor left beside the road (`floor`: the replaced selection, pieces
+/// of one entity joined across the old blocks) and the kerbs re-cut cleanly (tidyPrisms, along the
+/// road's cross lines), the kerbs' texture laid along them, nothing built overlapping a brush that
+/// stays (what the road could not carve - a displacement, a brush entity - cuts the new piece
+/// instead) and no nodraw face left where it can be seen. Exposed for tests.
+void finishRoadPlan(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& plan, const std::vector<SolidRef>& floor, const RoadBuildOptions& options);
 
 /// What a material is for in the road builder (its suggestions).
 enum class RoadMaterialRole { Road, Parking, Kerb, Junction, Side };
