@@ -53,7 +53,7 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	m_again = new QPushButton(tr("Compile again (F9)"));
 	m_leakButton = new QPushButton(tr("Show leak"));
 	m_leakButton->setVisible(false);
-	m_reportButton = new QPushButton(tr("Make report"));
+	m_reportButton = new QPushButton(tr("Pack game report"));
 	m_reportButton->setObjectName("compileMakeReport");
 	m_reportButton->setToolTip(reportHowTo());
 	m_reportButton->setVisible(false);

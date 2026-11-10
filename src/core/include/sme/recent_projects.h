@@ -20,13 +20,15 @@ struct RecentProject {
 };
 
 /// `list` with `project` on top: an older entry of the same map is replaced (paths compared
-/// without case and slash direction), the list is cut to `limit`.
+/// without case and slash direction), the list is cut to `limit`. An autosave path is stored
+/// as the map it belongs to (see withoutAutosave).
 [[nodiscard]] std::vector<RecentProject> rememberProject(std::vector<RecentProject> list, RecentProject project, std::size_t limit = 12);
 /// `list` without the map (it was deleted or moved).
 [[nodiscard]] std::vector<RecentProject> forgetProject(std::vector<RecentProject> list, std::string_view mapPath);
 
 [[nodiscard]] std::string writeRecentProjects(const std::vector<RecentProject>& list);
-/// Reads what writeRecentProjects wrote; broken lines are skipped, the order is kept.
+/// Reads what writeRecentProjects wrote; broken lines are skipped, the order is kept. Autosave
+/// paths (older versions recorded them after a restore) become their map; doubles are dropped.
 [[nodiscard]] std::vector<RecentProject> parseRecentProjects(std::string_view text);
 
 } // namespace sme

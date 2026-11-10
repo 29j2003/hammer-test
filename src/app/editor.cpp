@@ -12,10 +12,12 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QSettings>
+#include <QStandardPaths>
 
 #include <algorithm>
 #include <chrono>
@@ -258,6 +260,18 @@ void Editor::newMap() {
 }
 
 bool Editor::openMap(const QString& path, QString* error) {
+	if (const auto original = autosaveOriginal(toPath(path))) {
+		// An autosave opened by hand (File > Open, an old recent entry): edit the map it belongs to,
+		// so Save and Compile never work on the autosave file (its name trips up VBSP).
+		QString map = fromPath(*original);
+		const QString appData = QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+		if (QDir::cleanPath(QFileInfo(map).absolutePath()) == appData) map.clear();   // autosave of a map never saved
+		return openRecovered(path, map, error);
+	}
+	return loadMap(path, path, false, error);
+}
+
+bool Editor::loadMap(const QString& path, const QString& filePath, bool recovered, QString* error) {
 	QFile file(path);
 	if (!file.open(QIODevice::ReadOnly)) {
 		if (error) {
@@ -283,8 +297,8 @@ bool Editor::openMap(const QString& path, QString* error) {
 	m_hidden.clear();
 	m_hiddenVisGroups = hiddenVisGroupsInFile(m_doc);   // groups that were hidden when it was saved
 	m_hiddenDirty = true;
-	m_filePath = path;
-	m_recovered = false;
+	m_filePath = filePath;   // before the signals: the recent list must never see an autosave path
+	m_recovered = recovered;
 	emit documentReplaced();
 	emit documentChanged();
 	emit selectionChanged();
@@ -370,13 +384,12 @@ bool Editor::saveMap(const QString& path, QString* error) {
 }
 
 bool Editor::openRecovered(const QString& autosavePath, const QString& originalPath, QString* error) {
-	if (!openMap(autosavePath, error)) {
+	if (!loadMap(autosavePath, originalPath, true, error)) {
 		return false;
 	}
-	m_filePath = originalPath;
-	m_recovered = true;
-	emit documentChanged();
-	emit message(tr("Restored the autosave %1 - save to keep it").arg(QFileInfo(autosavePath).fileName()));
+	emit message(originalPath.isEmpty()
+	                 ? tr("Opened the autosave %1 of a map that was never saved - Save asks where to keep it").arg(QFileInfo(autosavePath).fileName())
+	                 : tr("Opened the autosave %1 of %2 - Save writes %2").arg(QFileInfo(autosavePath).fileName(), QFileInfo(originalPath).fileName()));
 	return true;
 }
 

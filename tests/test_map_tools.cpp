@@ -598,6 +598,7 @@ TEST_CASE("play from here: only an area around the start, or the map's cordons w
 TEST_CASE("generated map copies are not maps of their own") {
 	CHECK(isGeneratedMapCopy("arena_cordon.vmf"));
 	CHECK(isGeneratedMapCopy("Arena_HERE.vmf"));
+	CHECK(isGeneratedMapCopy("my_map_compile.vmf"));   // the safe-named copy for a name the tools cannot take
 	CHECK_FALSE(isGeneratedMapCopy("arena.vmf"));
 	CHECK_FALSE(isGeneratedMapCopy("where.vmf"));
 }

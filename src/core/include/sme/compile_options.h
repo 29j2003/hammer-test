@@ -99,6 +99,17 @@ struct CompileCommand {
 /// to the settings.
 [[nodiscard]] std::vector<CompileCommand> compileCommands(const CompileSettings& settings, std::string_view mapBase, std::string_view gameDir,
                                                           std::string_view launchOptions = {});
+/// True if the compile tools and the game take `mapName` (file name without ".vmf") as it is:
+/// ASCII letters, digits, '_' and '-'. VBSP takes everything after the last dot for the file
+/// extension ("map.20261110-145648" fails to open), "+map name" ends at a space, and the tools
+/// read non-ASCII names in the old Windows code page.
+[[nodiscard]] bool isCompileSafeName(std::string_view mapName);
+/// `mapName` with every other character turned into '_' ("my map.v2" -> "my_map_v2"; empty -> "map").
+[[nodiscard]] std::string compileSafeName(std::string_view mapName);
+/// The copy to compile instead of `vmfPath` (UTF-8, either slash) when its name is not safe:
+/// "<same folder>/<safe name>_compile.vmf" (next to the map, so func_instance paths still work;
+/// the suffix keeps a real map of that name untouched). Empty if the map compiles as it is.
+[[nodiscard]] std::string compileCopyPath(std::string_view vmfPath);
 /// Splits a command line at spaces; "quoted parts" stay together.
 [[nodiscard]] std::vector<std::string> splitArguments(std::string_view text);
 /// Joins arguments for display, quoting those with spaces.

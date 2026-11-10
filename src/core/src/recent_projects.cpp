@@ -2,6 +2,7 @@
 
 #include <sme/recent_projects.h>
 
+#include <sme/autosave.h>
 #include <sme/text.h>
 
 #include <algorithm>
@@ -21,6 +22,7 @@ std::string pathKey(std::string_view path) {
 
 std::vector<RecentProject> rememberProject(std::vector<RecentProject> list, RecentProject project, std::size_t limit) {
 	if (project.mapPath.empty()) return list;
+	project.mapPath = withoutAutosave(project.mapPath);   // an autosave stands for its map
 	list = forgetProject(std::move(list), project.mapPath);
 	list.insert(list.begin(), std::move(project));
 	if (list.size() > limit) list.resize(limit);
@@ -56,8 +58,10 @@ std::vector<RecentProject> parseRecentProjects(std::string_view text) {
 			continue;
 		}
 		p.gameKey = line.substr(first + 1, second - first - 1);
-		p.mapPath = line.substr(second + 1);
+		p.mapPath = withoutAutosave(line.substr(second + 1));   // older versions could list an autosave
 		if (p.mapPath.empty()) continue;
+		const std::string key = pathKey(p.mapPath);
+		if (std::any_of(list.begin(), list.end(), [&key](const RecentProject& q) { return pathKey(q.mapPath) == key; })) continue;
 		list.push_back(std::move(p));
 	}
 	return list;

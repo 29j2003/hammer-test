@@ -31,6 +31,15 @@ Press **F9** or the orange **Run map** button in the top bar. Mapsmith then:
 
 Press F9 again while a compile runs to cancel it.
 
+**Map names.** The compile tools and the game need a plain name: letters, digits, `_` and `-`. VBSP reads everything
+after the last dot as the file extension (`city.v2` would be looked for as `city.v2` without `.vmf`), and `+map` stops
+at a space. For a name with dots, spaces or accents Mapsmith compiles a copy next to the map with a safe name
+(`city.v2.vmf` → `city_v2_compile.vmf`, in the game `city_v2_compile`) and says so in the Log; your map file stays as it
+is. Renaming the map to a plain name gives the nicer in-game name.
+
+**Autosaves are never compiled.** Opening a file from the `autosave` folder (File › Open, or an old entry in the
+recent list) opens it as the map it belongs to: its content, but **Save** and **Run map** use `<map>.vmf`.
+
 ## Play from here (Shift+F9)
 
 To try a spot quickly, fly the 3D camera there, look the way you want to start and press **Shift+F9** (or the

@@ -93,7 +93,7 @@ QString actionName(ModCodeAction action) {
 		case ModCodeAction::Update:
 		case ModCodeAction::UpdateNoVrad: return ModCodePanel::tr("Update mod");
 		case ModCodeAction::Deploy: return ModCodePanel::tr("Install game files");
-		case ModCodeAction::Report: return ModCodePanel::tr("Make report");
+		case ModCodeAction::Report: return ModCodePanel::tr("Pack game report");
 		case ModCodeAction::RemoveGameFiles: return ModCodePanel::tr("Remove game files");
 	}
 	return {};
@@ -109,8 +109,9 @@ QString duration(qint64 ms) {
 QString reportHowTo() {
 	return ModCodePanel::tr("Something looks wrong in the game (a wall, an effect, a sound)?\n"
 	                        "1. In the game, stand where it happens, open the console and type: fidelity_report\n"
-	                        "2. Close the game and press Make report: Mapsmith packs what it wrote into fidelity_report.zip\n"
-	                        "   and opens its folder - send that zip.");
+	                        "2. Close the game and press Pack game report: Mapsmith packs what it wrote into fidelity_report.zip\n"
+	                        "   and opens its folder - send that zip.\n"
+	                        "A problem in the editor itself (a tool, a crash)? Help > Make editor report ... instead.");
 }
 
 ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
@@ -123,7 +124,7 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	m_bundleNote = new QLabel(tr("<b>Only for building the mod from its own source code.</b> The features come ready-built: "
 	                             "Project &gt; Features installs them."));
 	m_bundleNote->setToolTip(tr("The mod's features (ambient occlusion, light shafts, liquid in bottles ...) come with Mapsmith: "
-	                            "Project > Features installs and updates them - no compiler, no scripts. Make report works here either way."));
+	                            "Project > Features installs and updates them - no compiler, no scripts. Pack game report works here either way."));
 	m_bundleNote->setObjectName("modCodeBundleNote");
 	m_bundleNote->setWordWrap(true);
 	m_bundleNote->setProperty("role", "description");
@@ -160,7 +161,7 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	                  tr("Build the code with Visual Studio 2022 and install everything into the mod: DLLs, VRAD with baked AO, game files"));
 	m_update->setProperty("accent", true);
 	m_deploy = button(tr("Install game files only"), "modCodeDeploy", tr("Copy shaders, cfg and generated materials into the mod (no build)"));
-	m_report = button(tr("Make report"), "modCodeReport", reportHowTo());
+	m_report = button(tr("Pack game report"), "modCodeReport", reportHowTo());
 	m_cancel = button(tr("Cancel"), "modCodeCancel", tr("Stop the running script and the build it started"));
 	for (auto* b : {m_update, m_deploy, m_report}) actions->addWidget(b);
 	actions->addStretch(1);
@@ -174,6 +175,15 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	m_platformNote->setProperty("role", "description");
 	m_platformNote->setWordWrap(true);
 	rv->addWidget(m_platformNote);
+	// The game report is about what fidelity_report saw in the game; editor problems have their own.
+	auto* editorReport = new QLabel(tr("Pack game report packs what <i>fidelity_report</i> saved in the game. A problem in the editor itself "
+	                                   "(a tool, a crash)? <a href=\"editor-report\">Make editor report ...</a>"));
+	editorReport->setObjectName("modCodeEditorReportHint");
+	editorReport->setProperty("role", "description");
+	editorReport->setWordWrap(true);
+	editorReport->setTextFormat(Qt::RichText);
+	connect(editorReport, &QLabel::linkActivated, this, [this] { emit editorReportRequested(); });
+	rv->addWidget(editorReport);
 	v->addWidget(run);
 
 	// Automatic: after a pull, at start.
@@ -214,7 +224,10 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	m_summary->setObjectName("modCodeSummary");
 	m_summary->setWordWrap(true);
 	m_summary->setTextFormat(Qt::RichText);
-	m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	m_summary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse);
+	connect(m_summary, &QLabel::linkActivated, this, [this](const QString& link) {
+		if (link == QStringLiteral("editor-report")) emit editorReportRequested();
+	});
 	v->addWidget(m_summary);
 	auto* split = new QSplitter(Qt::Horizontal);
 	split->setObjectName("modCodeDetails");
@@ -660,8 +673,13 @@ void ModCodePanel::processEnded(int exitCode) {
 	m_run.finish(exitCode);
 	const bool ok = m_run.succeeded();
 	const bool isUpdate = m_action == ModCodeAction::Update || m_action == ModCodeAction::UpdateNoVrad;
-	log(ok ? tr("Finished in %1.").arg(duration(m_clock.elapsed())) : tr("Stopped after %1 (exit code %2).").arg(duration(m_clock.elapsed())).arg(exitCode),
-	    ok ? QStringLiteral("#8fdc9a") : QStringLiteral("#ff8a7a"));
+	const bool nothingToPack = m_action == ModCodeAction::Report && m_run.nothingToPack();
+	if (nothingToPack) {
+		log(tr("Nothing to pack yet - see the steps above."), QStringLiteral("#e8c170"));
+	} else {
+		log(ok ? tr("Finished in %1.").arg(duration(m_clock.elapsed())) : tr("Stopped after %1 (exit code %2).").arg(duration(m_clock.elapsed())).arg(exitCode),
+		    ok ? QStringLiteral("#8fdc9a") : QStringLiteral("#ff8a7a"));
+	}
 	if (ok && isUpdate) {
 		QSettings().setValue(settingsKey("updatedAt"), QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
 		m_changedSinceUpdate = false;
@@ -758,6 +776,13 @@ void ModCodePanel::showRun() {
 			}
 		}
 		for (const auto& line : m_run.skipped()) html += QStringLiteral("<br>") + tr("Skipped: %1").arg(qs(line).toHtmlEscaped());
+	} else if (m_action == ModCodeAction::Report && m_run.nothingToPack()) {
+		// Not a failure: fidelity_report has not been typed in the game since the last report.
+		html = tr("<span style='color:#e8c170'><b>Nothing to pack yet.</b></span> The game report is made in the game:<br>"
+		          "1. Start the mod and stand where something looks wrong.<br>"
+		          "2. Open the console (~) and type <b>fidelity_report</b>.<br>"
+		          "3. Close the game and press <b>Pack game report</b> again.<br>"
+		          "A problem in the editor itself (a tool, a crash)? <a href=\"editor-report\">Make editor report ...</a>");
 	} else {
 		html = isUpdate ? tr("<span style='color:#ff8a7a'><b>✗ The update stopped at \"%1\".</b></span>")
 		                      .arg(qs(updateStepName(current == UpdateStep::Start ? UpdateStep::VisualStudio : current)).toHtmlEscaped())

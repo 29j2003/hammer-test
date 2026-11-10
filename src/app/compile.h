@@ -57,6 +57,9 @@ public:
 	[[nodiscard]] bool running() const { return m_process != nullptr; }
 
 	/// Command lines a compile would run (also shown in the dialog).
+	/// The file that is really compiled for `vmfPath`: itself, or the safe-named copy next to it
+	/// (compileCopyPath) when the name has dots, spaces or accents the tools cannot take.
+	[[nodiscard]] static QString compileTarget(const QString& vmfPath);
 	[[nodiscard]] static QStringList describe(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options);
 
 	/// Steps of the running (or last) compile.

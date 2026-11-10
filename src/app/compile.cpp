@@ -74,8 +74,15 @@ std::optional<BspCubemaps> readMapCubemaps(const QString& path) {
 
 } // namespace
 
-std::vector<CompileRunner::Step> CompileRunner::plan(const QString& vmfPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options) {
+QString CompileRunner::compileTarget(const QString& vmfPath) {
+	const std::string copy = compileCopyPath(vmfPath.toStdString());
+	return copy.empty() ? vmfPath : QString::fromStdString(copy);
+}
+
+std::vector<CompileRunner::Step> CompileRunner::plan(const QString& mapPath, const QString& gameDir, const GameSettings& settings, const CompileOptions& options) {
 	std::vector<Step> steps;
+	// A name the tools cannot take ("map.20261110-145648", spaces) compiles from a copy (see start()).
+	const QString vmfPath = compileTarget(mapPath);
 	const QFileInfo vmf(vmfPath);
 	const QString base = vmf.absolutePath() + "/" + vmf.completeBaseName();
 	for (const auto& command : compileCommands(options, base.toStdString(), gameDir.toStdString(), settings.launchOptions.toStdString())) {
@@ -135,13 +142,29 @@ void CompileRunner::start(const QString& vmfPath, const QString& gameDir, const 
 	m_steps = plan(vmfPath, gameDir, settings, options);
 	m_index = 0;
 	m_current = -1;
-	m_vmfPath = vmfPath;
+	m_vmfPath = compileTarget(vmfPath);
+	if (m_vmfPath != vmfPath) {
+		// VBSP reads everything after the last dot as the extension, the game's "+map" stops at a
+		// space: such a name compiles from a copy next to the map (the map file stays as it is).
+		QFile::remove(m_vmfPath);
+		if (!QFile::copy(vmfPath, m_vmfPath)) {
+			m_current = 0;
+			m_stepClock.start();
+			emit started(m_vmfPath, stepNames());
+			fail(tr("Could not copy %1 to %2 for compiling").arg(QFileInfo(vmfPath).fileName(), QFileInfo(m_vmfPath).fileName()));
+			return;
+		}
+		emit output(tr("\"%1\" has characters the compile tools cannot take in a map name (dots, spaces or accents) - compiling a copy "
+		               "named %2; in the game the map is called %3.")
+		                .arg(QFileInfo(vmfPath).completeBaseName(), QFileInfo(m_vmfPath).fileName(), QFileInfo(m_vmfPath).completeBaseName()),
+		            QColor(255, 200, 100));
+	}
 	m_gameDir = gameDir;
 	m_leaked = false;
 	m_cancelled = false;
-	emit started(vmfPath, stepNames());
+	emit started(m_vmfPath, stepNames());
 	// An old pointfile would show a stale leak.
-	QFile::remove(QFileInfo(vmfPath).absolutePath() + "/" + QFileInfo(vmfPath).completeBaseName() + ".lin");
+	QFile::remove(QFileInfo(m_vmfPath).absolutePath() + "/" + QFileInfo(m_vmfPath).completeBaseName() + ".lin");
 	next();
 }
 

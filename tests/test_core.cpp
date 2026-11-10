@@ -560,3 +560,33 @@ TEST_CASE("play from here: quick settings from the game's own, the copy compiled
 	CHECK(steps[4].arguments.back() == "arena_here");
 	CHECK_FALSE(playFromHereSettings(saved, false).vrad);   // full bright, quickest
 }
+
+TEST_CASE("compile names: a name the tools cannot take compiles from a safe copy next to the map") {
+	// VBSP took "workingtitle.20261110-145648" for a file with the extension ".20261110-145648".
+	CHECK(isCompileSafeName("workingtitle"));
+	CHECK(isCompileSafeName("d1_town-01a"));
+	CHECK_FALSE(isCompileSafeName("workingtitle.20261110-145648"));
+	CHECK_FALSE(isCompileSafeName("my map"));
+	CHECK_FALSE(isCompileSafeName("straße"));
+	CHECK_FALSE(isCompileSafeName(""));
+	CHECK(compileSafeName("workingtitle.20261110-145648") == "workingtitle_20261110-145648");
+	CHECK(compileSafeName("my map.v2") == "my_map_v2");
+	CHECK(compileSafeName("straße") == "stra_e");   // one '_' per character, not per byte
+	CHECK(compileSafeName("") == "map");
+
+	CHECK(compileCopyPath("D:/mod/mapsrc/workingtitle.vmf").empty());
+	CHECK(compileCopyPath("D:/mod/mapsrc/autosave/workingtitle.20261110-145648.vmf") ==
+	      "D:/mod/mapsrc/autosave/workingtitle_20261110-145648_compile.vmf");
+	CHECK(compileCopyPath("D:\\mod\\mapsrc\\my map.VMF") == "D:\\mod\\mapsrc\\my_map_compile.vmf");
+	CHECK(compileCopyPath("plain.vmf").empty());
+
+	// The safe copy's commands name it everywhere: VBSP/VVIS/VRAD, the copy into maps/ and +map.
+	CompileSettings settings;
+	const auto copy = compileCopyPath("/mod/mapsrc/my map.vmf");
+	const std::string base = copy.substr(0, copy.size() - 4);
+	for (const auto& command : compileCommands(settings, base, "/mod")) {
+		for (const auto& argument : command.arguments) {
+			CHECK(argument.find("my map") == std::string::npos);
+		}
+	}
+}

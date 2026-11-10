@@ -245,6 +245,7 @@ void ScriptRun::feed(std::string_view line) {
 			break;
 		default: break;
 	}
+	if (contains(line, "nothing to pack")) m_nothingToPack = true;   // report.ps1: no fidelity_report since the last report
 	if (const auto zip = zipIn(line); !zip.empty() && std::find(m_outputs.begin(), m_outputs.end(), zip) == m_outputs.end()) {
 		m_outputs.push_back(zip);
 	}

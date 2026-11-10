@@ -49,25 +49,34 @@ std::filesystem::path autosaveFolder(const std::filesystem::path& mapFile) {
 }
 
 std::string autosaveFileName(std::string_view mapName, const AutosaveStamp& stamp) {
-	return std::string(mapName) + "." + stamp.text() + ".vmf";
+	return std::string(mapName) + "_" + stamp.text() + ".vmf";
 }
 
-std::optional<AutosaveEntry> parseAutosaveName(const std::filesystem::path& file) {
-	// "<mapName>.<stamp>.vmf" - the map name itself may contain dots.
-	const std::string name = file.filename().string();
-	if (name.size() < STAMP_LENGTH + 6 || !iequals(std::string_view(name).substr(name.size() - 4), ".vmf")) {
+std::optional<std::pair<std::string, AutosaveStamp>> splitAutosaveName(std::string_view name) {
+	// "<mapName>_<stamp>.vmf" (older: "<mapName>.<stamp>.vmf") - the map name itself may
+	// contain dots and underscores.
+	if (name.size() < STAMP_LENGTH + 6 || !iequals(name.substr(name.size() - 4), ".vmf")) {
 		return std::nullopt;
 	}
-	const std::string_view rest = std::string_view(name).substr(0, name.size() - 4);
+	const std::string_view rest = name.substr(0, name.size() - 4);
 	const std::size_t dot = rest.size() - STAMP_LENGTH - 1;
-	if (rest[dot] != '.') {
+	if (rest[dot] != '.' && rest[dot] != '_') {
 		return std::nullopt;
 	}
 	const auto stamp = AutosaveStamp::parse(rest.substr(dot + 1));
 	if (!stamp || dot == 0) {
 		return std::nullopt;
 	}
-	return AutosaveEntry{file, std::string(rest.substr(0, dot)), *stamp};
+	return std::pair{std::string(rest.substr(0, dot)), *stamp};
+}
+
+std::optional<AutosaveEntry> parseAutosaveName(const std::filesystem::path& file) {
+	const auto u8 = file.filename().u8string();
+	const auto split = splitAutosaveName(std::string_view(reinterpret_cast<const char*>(u8.data()), u8.size()));
+	if (!split) {
+		return std::nullopt;
+	}
+	return AutosaveEntry{file, split->first, split->second};
 }
 
 std::vector<AutosaveEntry> listAutosaves(const std::filesystem::path& folder, std::string_view mapName) {
@@ -89,6 +98,25 @@ std::vector<std::filesystem::path> autosavesToRemove(const std::vector<AutosaveE
 		out.push_back(list[i].path);
 	}
 	return out;
+}
+
+std::optional<std::filesystem::path> autosaveOriginal(const std::filesystem::path& file) {
+	const auto entry = parseAutosaveName(file);
+	if (!entry || !iequals(file.parent_path().filename().string(), "autosave")) {
+		return std::nullopt;
+	}
+	const std::u8string name(reinterpret_cast<const char8_t*>(entry->mapName.data()), entry->mapName.size());
+	return file.parent_path().parent_path() / (name + u8".vmf");
+}
+
+std::string withoutAutosave(std::string_view path) {
+	const auto slash = path.find_last_of("/\\");
+	if (slash == std::string_view::npos) return std::string(path);
+	const auto split = splitAutosaveName(path.substr(slash + 1));
+	const std::string_view folder = path.substr(0, slash);
+	const auto above = folder.find_last_of("/\\");
+	if (!split || above == std::string_view::npos || !iequals(folder.substr(above + 1), "autosave")) return std::string(path);
+	return std::string(folder.substr(0, above + 1)) + split->first + ".vmf";
 }
 
 std::filesystem::path backupPath(const std::filesystem::path& mapFile) {

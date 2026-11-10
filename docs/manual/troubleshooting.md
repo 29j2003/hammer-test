@@ -156,7 +156,8 @@ While Mapsmith runs, it keeps the last clicks and edits in a small file in its o
 closes normally. After a crash it keeps that file and offers a report at the next start: the report then also holds
 the clicks and edits that led to the crash (`last_session.log`).
 
-This is not the same as **Make report** in the Map menu, which packs what `fidelity_report` wrote while you played.
+This is not the same as **Pack game report** (Map menu, Compile and Problems panels, Project › Build from source),
+which packs what `fidelity_report` wrote while you played.
 
 ### The setup report
 
