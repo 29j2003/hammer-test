@@ -14,6 +14,11 @@
 #include <sme/road_builder.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <cmath>
 #include <numbers>
 
@@ -903,4 +908,176 @@ TEST_CASE("road from selection: one parking lane round Julius' L street - no hol
 			for (const Solid* r : roadIn(after, "ROAD/ASPHALT")) CHECK(sharedVolume(*r, *after.findSolid(ref)) < 1);
 		}
 	}
+}
+
+// --- Big angled streets (Julius' report of 10.11.2026): speed, holes, raised sides, ramps ------
+
+namespace {
+
+/// A street along a polyline (centre points), mitred at the bends: floor 24 thick (top at the
+/// points' height), cut into tiles about `tile` long and two strips across, sidewalks `walk` wide
+/// and 8 higher on both sides. `halfWidth`: kerb to the middle.
+struct AngledStreet {
+	MapDocument doc;
+	std::vector<SolidRef> floor;
+	std::vector<SolidRef> sidewalks;
+	std::vector<Vec3> centre;
+};
+
+Vec3 mitred(const std::vector<Vec3>& p, std::size_t i, double d) {
+	const Vec3 a = i > 0 ? normalize(flat(p[i] - p[i - 1])) : normalize(flat(p[1] - p[0]));
+	const Vec3 b = i + 1 < p.size() ? normalize(flat(p[i + 1] - p[i])) : a;
+	const Vec3 la{-a.y, a.x, 0}, lb{-b.y, b.x, 0};
+	const double denom = 1 + dot(a, b);
+	return p[i] + (denom > 1e-3 ? (la + lb) * (d / denom) : la * d);
+}
+
+void addStrip(AngledStreet& s, const std::vector<Vec3>& p, double d0, double d1, double lift, double tile, const std::string& material, std::vector<SolidRef>& into) {
+	for (std::size_t i = 0; i + 1 < p.size(); ++i) {
+		const double len = length(flat(p[i + 1] - p[i]));
+		const int count = std::max(1, int(std::lround(len / tile)));
+		for (int k = 0; k < count; ++k) {
+			const double t0 = double(k) / count, t1 = double(k + 1) / count;
+			std::vector<Vec3> points;
+			for (const auto& [t, d] : std::vector<std::pair<double, double>>{{t0, d0}, {t1, d0}, {t1, d1}, {t0, d1}}) {
+				const Vec3 v = mitred(p, i, d) * (1 - t) + mitred(p, i + 1, d) * t;
+				points.push_back({v.x, v.y, v.z + lift});
+				points.push_back({v.x, v.y, v.z - 24});
+			}
+			auto solid = solidFromPoints(s.doc, points, material);
+			REQUIRE(solid);
+			s.doc.world.solids.push_back(std::move(*solid));
+			into.push_back({0, s.doc.world.solids.back().id});
+		}
+	}
+}
+
+AngledStreet angledStreet(std::vector<Vec3> centre, double halfWidth = 208, double tile = 512, double walk = 96) {
+	AngledStreet s;
+	s.centre = centre;
+	addStrip(s, centre, -halfWidth, 0, 0, tile, "CONCRETE/STREET", s.floor);
+	addStrip(s, centre, 0, halfWidth, 0, tile * 0.75, "CONCRETE/STREET", s.floor);
+	addStrip(s, centre, halfWidth, halfWidth + walk, 8, 1024, "CONCRETE/SIDEWALK", s.sidewalks);
+	addStrip(s, centre, -halfWidth - walk, -halfWidth, 8, 1024, "CONCRETE/SIDEWALK", s.sidewalks);
+	return s;
+}
+
+/// Julius' larger street with angled parts: straight, 30° left, 45° more, 45° back.
+std::vector<Vec3> angledCentre() {
+	std::vector<Vec3> p{{-3000, 0, 0}, {0, 0, 0}};
+	double angle = 0;
+	for (const auto& [turn, len] : std::vector<std::pair<double, double>>{{30, 2048}, {45, 1800}, {-45, 1600}}) {
+		angle += turn * std::numbers::pi / 180;
+		p.push_back(p.back() + Vec3{std::cos(angle) * len, std::sin(angle) * len, 0});
+	}
+	return p;
+}
+
+/// Julius' settings in the report (10.11.2026).
+RoadBuildOptions juliusSettings() {
+	RoadBuildOptions o;
+	o.material = "CONCRETE/BLENDROAD_BROKEN01";
+	o.parkingSides = RoadParkingSides::None;
+	o.segments = 10;
+	o.thickness = 24;
+	o.displacement = true;
+	o.power = 3;
+	o.crown = 4;
+	o.fit = true;
+	o.kerbs = false;
+	return o;
+}
+
+} // namespace
+
+TEST_CASE("road from selection: a big angled street (30°, 45°) - no holes, nothing doubled, every brush sound") {
+	for (const double tile : {512.0, 100000.0}) {
+		for (const auto sides : {RoadParkingSides::None, RoadParkingSides::Both, RoadParkingSides::Left}) {
+			for (const bool disp : {false, true}) {
+				CAPTURE(tile);
+				CAPTURE(int(sides));
+				CAPTURE(disp);
+				AngledStreet s = angledStreet(angledCentre(), 208, tile);
+				RoadBuildOptions o = juliusSettings();
+				o.parkingSides = sides;
+				o.displacement = disp;
+				RoadCorridor corridor;
+				const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+				INFO(describeRoadCorridor(corridor));
+				INFO(describeRoadBuild(plan));
+				REQUIRE(plan.ok());
+				CHECK(plan.skipped == 0);
+				CHECK(allSound(plan.resultSolids()));
+				const MapDocument after = applied(s.doc, plan);
+				checkCovered(s.doc, s.floor, after);
+			}
+		}
+	}
+}
+
+TEST_CASE("road from selection: big streets and squares plan quickly (the live preview never waits long)") {
+	// Julius' report of 10.11.2026: a selection that took 54 s (joining hundreds of cut pieces again
+	// pair by pair, from the start after every join). Generous bounds: well under a second each here.
+	const auto timed = [](const MapDocument& doc, const std::vector<SolidRef>& floor, const RoadBuildOptions& o) {
+		MapDocument scratch;
+		scratch.copyIdCounters(doc);
+		RoadCorridor corridor;
+		const auto t0 = std::chrono::steady_clock::now();
+		const auto plan = planRoadFromSelection(doc, scratch, floor, o, SQUARE, &corridor);
+		const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		CHECK(plan.ok());
+		return ms;
+	};
+	for (const double tile : {512.0, 100000.0}) {
+		AngledStreet s = angledStreet(angledCentre(), 208, tile);
+		const double ms = timed(s.doc, s.floor, juliusSettings());
+		MESSAGE("angled street, tiles " << tile << ": " << ms << " ms");
+		CHECK(ms < 2500);
+	}
+	{
+		// A square of floor blocks with pillars standing on it: many ways through, many cuts.
+		MapDocument doc;
+		std::vector<SolidRef> floor;
+		for (double x = -1500; x < 1500; x += 500) {
+			for (double y = -1000; y < 1000; y += 400) {
+				doc.world.solids.push_back(makeBlock(doc, box({x, y, -24}, {x + 500, y + 400, 0}), "CONCRETE/STREET"));
+				floor.push_back({0, doc.world.solids.back().id});
+			}
+		}
+		for (double x = -1200; x < 1200; x += 400) {
+			for (double y = -700; y < 700; y += 350) doc.world.solids.push_back(makeBlock(doc, box({x, y, 0}, {x + 32, y + 32, 128}), "CONCRETE/PILLAR"));
+		}
+		const double ms = timed(doc, floor, juliusSettings());
+		MESSAGE("square with pillars: " << ms << " ms");
+		CHECK(ms < 2500);
+	}
+	{
+		// One big slab the road winds through: every curve piece cuts it (hundreds of pieces to join).
+		MapDocument doc;
+		doc.world.solids.push_back(makeBlock(doc, box({-2048, -2048, -64}, {2048, 2048, 0}), "CONCRETE/STREET"));
+		RoadBuildOptions o = juliusSettings();
+		o.width = 256;
+		o.innerRadius = 64;
+		o.fit = true;
+		MapDocument scratch;
+		scratch.copyIdCounters(doc);
+		const auto t0 = std::chrono::steady_clock::now();
+		const auto plan = planRoadBuild(doc, scratch, {path({{-1800, -1800, 0}, {1800, -1800, 0}, {1800, -600, 0}, {-1800, -600, 0}, {-1800, 600, 0}, {1800, 600, 0}, {1800, 1800, 0}})}, o, SQUARE);
+		const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		MESSAGE("winding road through one slab: " << ms << " ms, " << plan.changed.size() << " changed");
+		CHECK(plan.ok());
+		CHECK(ms < 2500);
+	}
+}
+
+TEST_CASE("road builder: planning can be stopped (a newer preview is wanted)") {
+	AngledStreet s = angledStreet(angledCentre());
+	RoadBuildOptions o = juliusSettings();
+	int asked = 0;
+	o.cancelled = [&asked] { return ++asked > 1; };
+	MapDocument scratch;
+	const auto plan = planRoadFromSelection(s.doc, scratch, s.floor, o, SQUARE);
+	CHECK_FALSE(plan.ok());
+	CHECK(asked >= 2);
+	CHECK(std::find(plan.notes.begin(), plan.notes.end(), "stopped") != plan.notes.end());
 }

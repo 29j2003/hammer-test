@@ -152,6 +152,13 @@ public:
 	[[nodiscard]] int newSideId() { return ++m_maxSideId; }
 	/// Recomputes the id counters from the content (after loading or bulk changes).
 	void updateIdCounters();
+	/// The id counters (objects, sides): a plan made with another document that has the same
+	/// counters (copyIdCounters) gets the ids this one would hand out.
+	[[nodiscard]] std::pair<int, int> idCounters() const { return {m_maxObjectId, m_maxSideId}; }
+	void copyIdCounters(const MapDocument& from) {
+		m_maxObjectId = from.m_maxObjectId;
+		m_maxSideId = from.m_maxSideId;
+	}
 
 	[[nodiscard]] Entity* findEntity(int entityId);     ///< 0 = world
 	// Same, read-only.

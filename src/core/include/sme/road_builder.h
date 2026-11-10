@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -85,6 +86,13 @@ struct RoadBuildOptions {
 	double kerbWidth = 16;
 	double kerbHeight = 8;
 	std::string kerbMaterial;        ///< Empty: the side material
+	/// Through a selected street: the road's width (0: from the street, its width minus the parking
+	/// lanes). Narrower than that, the strips left beside the road rise to what borders them (the
+	/// sidewalk is extended to the road's edge); wider, it reaches into the neighbours (carved).
+	double streetRoadWidth = 0;
+	/// Asked now and then while planning (a live preview planned on another thread): true stops it,
+	/// the plan comes back empty with the note "stopped".
+	std::function<bool()> cancelled;
 };
 
 /// What building the road would do.

@@ -692,6 +692,7 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		}
 	}
 
+	if (options.cancelled && options.cancelled()) return corridor;
 	// 3. The middle: thinned cells; the main road the longest way through them, branches after.
 	std::vector<std::uint8_t> skel = thin(g);
 	std::vector<int> cells;
@@ -1089,7 +1090,9 @@ RoadBuildPlan planRoadFromSelection(const MapDocument& doc, MapDocument& ids, co
                                     const TextureSizeFn& textureSize, RoadCorridor* corridorOut) {
 	RoadCorridor corridor = roadCorridorFromSolids(doc, solids, options);
 	RoadBuildPlan plan;
-	if (corridor.ok()) {
+	if (options.cancelled && options.cancelled()) {
+		plan.notes.push_back("stopped");
+	} else if (corridor.ok()) {
 		RoadBuildOptions o = options;
 		o.width = corridor.roadWidth;
 		if (o.material.empty()) o.material = corridor.material;

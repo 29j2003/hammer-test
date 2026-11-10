@@ -57,6 +57,11 @@ struct MergeResult {
 };
 /// One brush around all given brushes (their convex hull); nullopt if they do not span a volume.
 [[nodiscard]] std::optional<MergeResult> mergeSolids(MapDocument& doc, const std::vector<Solid>& solids);
+/// Two brushes that touch along a face and together fill their hull (no gap between them, no
+/// overlap): the one brush they make (each face takes the texture of the face in its plane), else
+/// nullopt. Cheap checks first (the boxes touch, a side of one lies against a side of the other),
+/// so trying many pairs stays quick (cut leftovers joined again).
+[[nodiscard]] std::optional<Solid> joinTouching(MapDocument& doc, const Solid& a, const Solid& b);
 
 /// Rounds (segments > 1) or bevels (segments = 1) the edge between sides `sideA` and `sideB`
 /// (side ids) with the given radius. nullopt if the sides do not share an edge.

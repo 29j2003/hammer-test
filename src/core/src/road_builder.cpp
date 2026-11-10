@@ -25,6 +25,11 @@ namespace {
 constexpr double PI = std::numbers::pi;
 const std::string NODRAW = "TOOLS/TOOLSNODRAW";
 
+/// Whether a live preview's planning was called off (a newer one is wanted).
+bool stopped(const RoadBuildOptions& o) {
+	return o.cancelled && o.cancelled();
+}
+
 std::string units(double v) {
 	char text[32];
 	std::snprintf(text, sizeof text, "%g", std::round(v * 10) / 10);
@@ -357,6 +362,38 @@ bool fromOriginal(const Solid& original, const Side& side) {
 	});
 }
 
+/// Joins touching pieces whose union is one convex brush again (what a carve split needlessly), in
+/// passes over all pairs with their boxes kept (no restart after each join: hundreds of pieces stay
+/// quick). Above `limit` pieces nothing is joined (valid, only more brushes).
+void joinPieces(MapDocument& ids, std::vector<Solid>& pieces, std::size_t limit = 2000) {
+	if (pieces.size() < 2 || pieces.size() > limit) return;
+	std::vector<Bounds> box;
+	box.reserve(pieces.size());
+	for (const auto& piece : pieces) box.push_back(buildBrushGeometry(piece).bounds);
+	for (bool joined = true; joined;) {
+		joined = false;
+		for (std::size_t i = 0; i < pieces.size(); ++i) {
+			for (std::size_t j = i + 1; j < pieces.size();) {
+				if (!boxesOverlap(box[i], box[j], -0.01)) {
+					++j;
+					continue;
+				}
+				auto merged = joinTouching(ids, pieces[i], pieces[j]);
+				if (!merged || !brushProblem(*merged).empty()) {
+					++j;
+					continue;
+				}
+				merged->id = pieces[i].id;
+				box[i] = buildBrushGeometry(*merged).bounds;
+				pieces[i] = std::move(*merged);
+				pieces.erase(pieces.begin() + std::ptrdiff_t(j));
+				box.erase(box.begin() + std::ptrdiff_t(j));
+				joined = true;
+			}
+		}
+	}
+}
+
 /// Pieces of a carved brush: the sides the carve added get `material` (the brush's own look,
 /// world-aligned), joined where two pieces form one brush again.
 void tidyCarved(MapDocument& ids, const Solid& original, std::vector<Solid>& pieces, const std::string& material) {
@@ -369,24 +406,7 @@ void tidyCarved(MapDocument& ids, const Solid& original, std::vector<Solid>& pie
 			}
 		}
 	}
-	bool joined = true;
-	while (joined && pieces.size() > 1) {
-		joined = false;
-		for (std::size_t i = 0; i < pieces.size() && !joined; ++i) {
-			for (std::size_t j = i + 1; j < pieces.size() && !joined; ++j) {
-				if (!boxesOverlap(buildBrushGeometry(pieces[i]).bounds, buildBrushGeometry(pieces[j]).bounds, -0.01)) continue;
-				auto merged = mergeSolids(ids, {pieces[i], pieces[j]});
-				// The pieces never overlap: the hull is their union exactly when the volumes add up.
-				if (!merged || std::abs(solidVolume(merged->solid) - solidVolume(pieces[i]) - solidVolume(pieces[j])) > 0.5 ||
-				    !brushProblem(merged->solid).empty()) {
-					continue;
-				}
-				pieces[i] = std::move(merged->solid);
-				pieces.erase(pieces.begin() + std::ptrdiff_t(j));
-				joined = true;
-			}
-		}
-	}
+	joinPieces(ids, pieces);
 }
 
 /// The material most of a brush's visible sides have (for faces a carve adds).
@@ -516,7 +536,13 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	}
 
 	std::vector<Piece> roads, kerbs, seals;
+	const auto giveUp = [&] {
+		RoadBuildPlan none;
+		none.notes.push_back("stopped");
+		return none;
+	};
 	for (const auto& path : paths) {
+		if (stopped(o)) return giveUp();
 		const PathLayout layout = layoutPath(path, o, plan);
 		if (layout.stations.size() < 2) continue;
 		std::vector<Vec3> line;
@@ -760,12 +786,16 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 			if (auto column = columnOver(ids, piece.solid, top)) columns.push_back(std::move(*column));
 		}
 	}
+	std::vector<Bounds> columnBox;
+	columnBox.reserve(columns.size());
+	for (const auto& column : columns) columnBox.push_back(buildBrushGeometry(column).bounds);
 	const auto carveByColumns = [&](const Solid& solid, std::vector<Solid>& pieces) {
 		pieces = {solid};
 		const Bounds box = buildBrushGeometry(solid).bounds;
 		bool changed = false;
-		for (const auto& column : columns) {
-			if (!boxesOverlap(box, buildBrushGeometry(column).bounds)) continue;
+		for (std::size_t c = 0; c < columns.size(); ++c) {
+			const Solid& column = columns[c];
+			if (!boxesOverlap(box, columnBox[c])) continue;
 			std::vector<Solid> next;
 			for (const auto& piece : pieces) {
 				auto parts = subtractSolid(ids, piece, column);
@@ -802,6 +832,7 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	int unfit = 0;
 	if (o.fit) {
 		for (const NearbySolid* n : others) {
+			if (stopped(o)) return giveUp();
 			if (n->ref.entityId != 0) {
 				const Entity* entity = doc.findEntity(n->ref.entityId);
 				if (!entity || entity->classname() != "func_detail") continue;
@@ -849,6 +880,7 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	double lostFloor = 0;   // square units of floor in slivers that joined nothing
 	int lostSlivers = 0;
 	for (const auto& ref : replace) {
+		if (stopped(o)) return giveUp();
 		const Solid* solid = doc.findSolid(ref);
 		if (!solid) continue;
 		std::vector<Solid> pieces;
@@ -864,10 +896,10 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 				const Bounds sb = buildBrushGeometry(sliver).bounds;
 				for (auto& piece : good) {
 					if (!boxesOverlap(sb, buildBrushGeometry(piece).bounds, -0.05)) continue;
-					auto merged = mergeSolids(ids, {piece, sliver});
-					if (!merged || std::abs(solidVolume(merged->solid) - solidVolume(piece) - solidVolume(sliver)) > 0.5 || !brushProblem(merged->solid).empty()) continue;
-					merged->solid.id = piece.id;
-					piece = std::move(merged->solid);
+					auto merged = joinTouching(ids, piece, sliver);
+					if (!merged || !brushProblem(*merged).empty()) continue;
+					merged->id = piece.id;
+					piece = std::move(*merged);
 					joined = true;
 					break;
 				}
