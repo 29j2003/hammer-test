@@ -22,6 +22,9 @@
 #include <map>
 #include <cmath>
 #include <numbers>
+#include <functional>
+#include <set>
+#include <sstream>
 
 using namespace sme;
 
@@ -71,13 +74,18 @@ int holders(const std::vector<Solid>& solids, const Vec3& p) {
 }
 
 /// No two brushes overlap (more than rounding: a few cubic units along a long slanted cut is a
-/// ten-thousandth of a unit deep).
+/// ten-thousandth of a unit deep; the road builder itself treats up to 8 as rounding).
 bool noOverlaps(const std::vector<Solid>& solids) {
 	for (std::size_t i = 0; i < solids.size(); ++i) {
 		for (std::size_t j = i + 1; j < solids.size(); ++j) {
 			const double shared = sharedVolume(solids[i], solids[j]);
-			if (shared > 4) {
-				MESSAGE("brushes " << i << " and " << j << " share " << shared << " cubic units");
+			if (shared > 8) {
+				const Side* ta = top(solids[i]);
+				const Side* tb = top(solids[j]);
+				const auto bi = buildBrushGeometry(solids[i]).bounds, bj = buildBrushGeometry(solids[j]).bounds;
+				MESSAGE("brushes " << i << " (" << (ta ? ta->material : "-") << " " << bi.min.x << " " << bi.min.y << " " << bi.min.z << " .. " << bi.max.x << " " << bi.max.y << " " << bi.max.z
+				                   << ") and " << j << " (" << (tb ? tb->material : "-") << " " << bj.min.x << " " << bj.min.y << " " << bj.min.z << " .. " << bj.max.x << " " << bj.max.y << " "
+				                   << bj.max.z << ") share " << shared << " cubic units");
 				return false;
 			}
 		}
@@ -1321,4 +1329,467 @@ TEST_CASE("road from selection: a cut a hair from a corner never drops a big pie
 	CHECK(std::none_of(plan.notes.begin(), plan.notes.end(), [](const std::string& n) { return n.find("sliver") != std::string::npos; }));
 	CHECK(allSound(plan.resultSolids()));
 	checkCovered(s.doc, s.floor, applied(s.doc, plan));
+}
+
+namespace {
+
+/// How a built street looks in brushes (Julius, 10.11.2026: "weird shapes that make no sense, Z
+/// fighting"): the brushes the plan made, their smallest corner angle and shortest edge, overlaps
+/// with any other brush, faces lying on another brush's face the same way round (Z fighting), and
+/// nodraw faces above the street that nothing covers.
+struct Quality {
+	int brushes = 0;
+	double minAngle = 180, minEdge = 1e9;
+	int overlaps = 0, zFights = 0, visibleNodraw = 0;
+	std::string worst;
+};
+
+std::vector<Vec3> faceIn(const Plane& plane, const std::vector<Vec3>& poly, Vec3& u, Vec3& v) {
+	u = std::abs(plane.normal.z) < 0.9 ? normalize(cross(Vec3{0, 0, 1}, plane.normal)) : Vec3{1, 0, 0};
+	v = cross(plane.normal, u);
+	std::vector<Vec3> out;
+	for (const auto& p : poly) out.push_back({dot(p, u), dot(p, v), 0});
+	return out;
+}
+
+double area2d(const std::vector<Vec3>& p) {
+	double a = 0;
+	for (std::size_t i = 0; i < p.size(); ++i) a += p[i].x * p[(i + 1) % p.size()].y - p[(i + 1) % p.size()].x * p[i].y;
+	return a / 2;
+}
+
+/// The overlap of two convex polygons (2D, either winding).
+double overlap2d(std::vector<Vec3> a, std::vector<Vec3> b) {
+	if (area2d(a) < 0) std::reverse(a.begin(), a.end());
+	if (area2d(b) < 0) std::reverse(b.begin(), b.end());
+	std::vector<Vec3> out = a;
+	for (std::size_t i = 0; i < b.size() && !out.empty(); ++i) {
+		const Vec3 p = b[i], q = b[(i + 1) % b.size()];
+		const auto inside = [&](const Vec3& x) { return (q.x - p.x) * (x.y - p.y) - (q.y - p.y) * (x.x - p.x) >= -1e-9; };
+		std::vector<Vec3> next;
+		for (std::size_t k = 0; k < out.size(); ++k) {
+			const Vec3 c = out[k], d = out[(k + 1) % out.size()];
+			const bool ci = inside(c), di = inside(d);
+			if (ci) next.push_back(c);
+			if (ci != di) {
+				const double t = ((q.x - p.x) * (c.y - p.y) - (q.y - p.y) * (c.x - p.x)) / ((q.y - p.y) * (d.x - c.x) - (q.x - p.x) * (d.y - c.y));
+				next.push_back(c + (d - c) * t);
+			}
+		}
+		out = std::move(next);
+	}
+	return out.size() < 3 ? 0 : std::abs(area2d(out));
+}
+
+Quality quality(const MapDocument& before, const RoadBuildPlan& plan, double streetTop) {
+	Quality q;
+	const MapDocument after = applied(before, plan);
+	std::set<int> made;
+	for (const auto& s : plan.resultSolids()) made.insert(s.id);
+	q.brushes = int(made.size());
+	std::vector<const Solid*> all;
+	std::vector<BrushGeometry> geometry;
+	for (const auto& s : after.world.solids) {
+		all.push_back(&s);
+		geometry.push_back(buildBrushGeometry(s));
+	}
+	for (std::size_t i = 0; i < all.size(); ++i) {
+		if (!made.count(all[i]->id)) continue;
+		for (const auto& face : geometry[i].faces) {
+			const auto& p = face.vertices;
+			for (std::size_t k = 0; k < p.size(); ++k) {
+				const Vec3 a = p[(k + p.size() - 1) % p.size()], b = p[k], c = p[(k + 1) % p.size()];
+				const double edge = length(c - b);
+				if (edge < q.minEdge) q.minEdge = edge;
+				if (edge < 2 && std::getenv("ROAD_DEBUG")) {
+					std::ostringstream o2;
+					o2 << "short " << edge << " brush " << all[i]->id << " n " << face.normal.z << ":";
+					for (const auto& w : p) o2 << " (" << w.x << " " << w.y << " " << w.z << ")";
+					MESSAGE(o2.str());
+				}
+				const double angle = std::acos(std::clamp(dot(normalize(a - b), normalize(c - b)), -1.0, 1.0)) * 180 / std::numbers::pi;
+				if (angle < 10 && std::getenv("ROAD_DEBUG")) {
+					std::ostringstream o2;
+					o2 << "sharp " << angle << " brush " << all[i]->id << " n " << face.normal.z << ":";
+					for (const auto& w : p) o2 << " (" << w.x << " " << w.y << " " << w.z << ")";
+					MESSAGE(o2.str());
+				}
+				if (angle < q.minAngle) {
+					q.minAngle = angle;
+					std::ostringstream at;
+					const Side* t = top(*all[i]);
+					at << "brush " << all[i]->id << " " << (t ? t->material : std::string("-")) << " face n " << face.normal.x << " " << face.normal.y << " " << face.normal.z << " at " << b.x << " " << b.y << " " << b.z;
+					q.worst = at.str();
+				}
+			}
+			// Nodraw above the street that nothing covers.
+			const Side& side = all[i]->sides[std::size_t(face.sideIndex)];
+			if (side.material == "TOOLS/TOOLSNODRAW" && face.normal.z > -0.7) {
+				Vec3 centre{};
+				for (const auto& v : p) centre = centre + v;
+				centre = centre / double(p.size());
+				bool shown = false;
+				for (const auto& v : p) {
+					const Vec3 s = v + (centre - v) * 0.1 + face.normal * 0.5;
+					if (s.z < streetTop + 0.5) continue;
+					bool covered = false;
+					for (std::size_t j = 0; j < all.size() && !covered; ++j) covered = j != i && solidContains(*all[j], s, 0.01);
+					// Under the ground (something right above it): nobody stands there.
+					for (std::size_t j = 0; j < all.size() && !covered; ++j) {
+						for (const double up : {4.0, 16.0, 40.0}) covered = covered || solidContains(*all[j], s + Vec3{0, 0, up}, 0.01);
+					}
+					if (!covered) shown = true;
+				}
+				if (shown) {
+					++q.visibleNodraw;
+					if (std::getenv("ROAD_DEBUG")) {
+						const Side* t = top(*all[i]);
+						std::ostringstream o2;
+						o2 << "nodraw shown: brush " << all[i]->id << " " << (t ? t->material : std::string("-")) << " n " << face.normal.x << " " << face.normal.y << " " << face.normal.z << ":";
+						for (const auto& w : p) o2 << " (" << w.x << " " << w.y << " " << w.z << ")";
+						MESSAGE(o2.str());
+					}
+				}
+			}
+		}
+		for (std::size_t j = 0; j < all.size(); ++j) {
+			if (j == i || (made.count(all[j]->id) && j < i)) continue;
+			const Bounds& a = geometry[i].bounds;
+			const Bounds& b = geometry[j].bounds;
+			if (a.max.x < b.min.x || b.max.x < a.min.x || a.max.y < b.min.y || b.max.y < a.min.y || a.max.z < b.min.z || b.max.z < a.min.z) continue;
+			if (const double sv = sharedVolume(*all[i], *all[j]); sv > 8) {
+				++q.overlaps;
+				if (q.overlaps <= 3) {
+					const Side* ta = top(*all[i]);
+					const Side* tb = top(*all[j]);
+					MESSAGE("overlap " << sv << " between " << all[i]->id << " (" << (ta ? ta->material : "-") << ", made) and " << all[j]->id << " ("
+					                   << (tb ? tb->material : "-") << (made.count(all[j]->id) ? ", made" : "") << ") near " << geometry[i].bounds.min.x << " "
+					                   << geometry[i].bounds.min.y << " " << geometry[i].bounds.min.z);
+				}
+			}
+			for (const auto& fa : geometry[i].faces) {
+				for (const auto& fb : geometry[j].faces) {
+					if (dot(fa.normal, fb.normal) < 0.9999) continue;
+					const Plane pa{fa.normal, dot(fa.normal, fa.vertices.front())};
+					if (std::abs(pa.distanceTo(fb.vertices.front())) > 0.01) continue;
+					Vec3 u, v;
+					if (overlap2d(faceIn(pa, fa.vertices, u, v), faceIn(pa, fb.vertices, u, v)) > 1) ++q.zFights;
+				}
+			}
+		}
+	}
+	return q;
+}
+
+/// For looking at it: the plan's brushes from above as an SVG (only when ROAD_SVG names a folder).
+void drawPlan(const std::string& name, const RoadBuildPlan& plan) {
+	const char* dir = std::getenv("ROAD_SVG");
+	if (!dir) return;
+	Bounds all;
+	const auto solids = plan.resultSolids();
+	for (const auto& s : solids) all.add(buildBrushGeometry(s).bounds);
+	const double w = all.max.x - all.min.x, h = all.max.y - all.min.y;
+	const double scale = 1600 / std::max(w, h);
+	std::ofstream out(std::string(dir) + "/" + name + ".svg");
+	out << "<svg xmlns='http://www.w3.org/2000/svg' width='" << w * scale + 20 << "' height='" << h * scale + 20 << "'><rect width='100%' height='100%' fill='#222'/>";
+	std::vector<std::pair<double, std::string>> faces;
+	for (const auto& s : solids) {
+		const auto g = buildBrushGeometry(s);
+		for (const auto& f : g.faces) {
+			if (f.normal.z < 0.7) continue;
+			const std::string& m = s.sides[std::size_t(f.sideIndex)].material;
+			const std::string colour = m.find("KERB") != std::string::npos ? "#ddd" : m.find("ASPHALT") != std::string::npos || m.find("BLENDROAD") != std::string::npos ? "#a87"
+			                         : m.find("PARKING") != std::string::npos ? "#68a" : m.find("SIDEWALK") != std::string::npos ? "#888" : "#5a5";
+			std::ostringstream poly;
+			poly << "<polygon fill='" << colour << "' stroke='#f44' stroke-width='0.7' points='";
+			for (const auto& v : f.vertices) poly << (v.x - all.min.x) * scale + 10 << "," << (all.max.y - v.y) * scale + 10 << " ";
+			poly << "'/>";
+			faces.push_back({g.bounds.max.z, poly.str()});
+		}
+	}
+	std::stable_sort(faces.begin(), faces.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+	for (const auto& f : faces) out << f.second;
+	out << "</svg>";
+}
+
+std::string describe(const Quality& q) {
+	std::ostringstream out;
+	out << q.brushes << " brushes, smallest angle " << q.minAngle << "° (" << q.worst << "), shortest edge " << q.minEdge << ", " << q.overlaps << " overlap(s), "
+	    << q.zFights << " Z fight(s), " << q.visibleNodraw << " visible nodraw";
+	return out.str();
+}
+
+} // namespace
+
+TEST_CASE("road from selection: clean brushes like a mapper would make - no slivers, no fans, no overlaps, no Z fighting") {
+	struct Case {
+		std::string name;
+		std::function<std::pair<MapDocument, std::vector<SolidRef>>()> scene;
+		RoadBuildOptions options;
+		double top = 8;
+	};
+	const auto juliusScene = [](double tile) {
+		return [tile] {
+			Street s = julius(tile);
+			return std::pair{s.doc, s.floor};
+		};
+	};
+	const auto angledScene = [](double tile) {
+		return [tile] {
+			AngledStreet s = angledStreet(angledCentre(), 208, tile);
+			return std::pair{s.doc, s.floor};
+		};
+	};
+	RoadBuildOptions plain;
+	plain.material = "ROAD/ASPHALT";
+	RoadBuildOptions narrow = edgeKerbOptions();
+	narrow.streetRoadWidth = 160;
+	narrow.parking = 48;
+	const auto rounded = [] {
+		Street street = julius();
+		REQUIRE(edit::roundEdge(street.doc, facing(street.doc, street.innerCorner, {1, 0, 0}), facing(street.doc, street.innerCorner, {0, 1, 0}), 128, 0));
+		std::vector<SolidRef> floor;
+		for (const auto& s : street.doc.world.solids) {
+			if (std::abs(buildBrushGeometry(s).bounds.max.z - 8) < 0.01) floor.push_back({0, s.id});
+		}
+		return std::pair{street.doc, floor};
+	};
+	const auto tee = [] {
+		MapDocument doc;
+		std::vector<SolidRef> floor;
+		for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{0, -240, -16}, {784, 240, 8}}, {{784, -240, -16}, {1264, 240, 8}},
+		                                                            {{1264, -240, -16}, {2560, 240, 8}}, {{784, 240, -16}, {1264, 1600, 8}}}) {
+			doc.world.solids.push_back(makeBlock(doc, box(a, b), "CONCRETE/STREET"));
+			floor.push_back({0, doc.world.solids.back().id});
+		}
+		for (const auto& [a, b] : std::vector<std::pair<Vec3, Vec3>>{{{0, -336, -16}, {2560, -240, 16}}, {{0, 240, -16}, {784, 336, 16}}, {{1264, 240, -16}, {2560, 336, 16}},
+		                                                            {{688, 336, -16}, {784, 1600, 16}}, {{1264, 336, -16}, {1360, 1600, 16}}}) {
+			doc.world.solids.push_back(makeBlock(doc, box(a, b), "CONCRETE/SIDEWALK"));
+		}
+		return std::pair{doc, floor};
+	};
+	const auto ramp = [] {
+		RampStreet s = rampStreet(true);
+		return std::pair{s.doc, s.floor};
+	};
+	RoadBuildOptions angledNarrow = edgeKerbOptions();
+	angledNarrow.streetRoadWidth = 192;
+	angledNarrow.parking = 48;
+	RoadBuildOptions angledDisp = juliusSettings();
+	angledDisp.parkingSides = RoadParkingSides::Both;
+	std::vector<Case> cases{
+	    {"julius", juliusScene(0), plain},
+	    {"julius kerbs", juliusScene(0), edgeKerbOptions()},
+	    {"julius tiles", juliusScene(112), edgeKerbOptions()},
+	    {"julius narrow", juliusScene(0), narrow},
+	    {"rounded kerbs", rounded, edgeKerbOptions()},
+	    {"tee kerbs", tee, edgeKerbOptions()},
+	    {"ramp", ramp, juliusSettings(), 0},
+	    {"ramp kerbs", ramp, edgeKerbOptions(), 0},
+	    {"angled", angledScene(512), juliusSettings(), 0},
+	    {"angled parking displacement", angledScene(512), angledDisp, 0},
+	    {"angled kerbs", angledScene(512), edgeKerbOptions(), 0},
+	    {"angled narrow", angledScene(512), angledNarrow, 0},
+	};
+	for (const auto& c : cases) {
+		CAPTURE(c.name);
+		auto [doc, floor] = c.scene();
+		MapDocument ids;
+		ids.copyIdCounters(doc);
+		const auto plan = planRoadFromSelection(doc, ids, floor, c.options, SQUARE);
+		INFO(describeRoadBuild(plan));
+		REQUIRE(plan.ok());
+		const Quality q = quality(doc, plan, c.top);
+		MESSAGE(c.name << ": " << describe(q));
+		// Where the slope changes inside a curve (the ramp's L) the slab under the road and one corner
+		// piece follow two planes and keep thin wedges; everywhere else no corner sharper than 10°.
+		CHECK(q.minAngle >= (c.name.rfind("ramp", 0) == 0 ? 4 : 10));
+		// The rounded sidewalk's own facets meet the kerb in edges of 1.6 units; nothing shorter.
+		CHECK(q.minEdge >= 1);
+		CHECK(q.overlaps == 0);
+		CHECK(q.zFights == 0);
+		CHECK(q.visibleNodraw == 0);
+		CHECK(plan.skipped == 0);
+		std::string file = c.name;
+		std::replace(file.begin(), file.end(), ' ', '_');
+		drawPlan(file, plan);
+	}
+}
+
+TEST_CASE("road from selection: every road width from narrow to wider than the street, with and without parking lanes and kerbs, gives a valid street") {
+	// Julius, 10.11.2026: "depending on the width it just does not do what it needs to do, gives up".
+	struct Scene {
+		std::string name;
+		std::function<std::pair<MapDocument, std::vector<SolidRef>>()> make;
+		double streetWidth;
+		double step;
+	};
+	const std::vector<Scene> scenes{
+	    {"julius", [] { Street s = julius(); return std::pair{s.doc, s.floor}; }, 416, 16},
+	    {"angled", [] { AngledStreet s = angledStreet(angledCentre(), 208, 512); return std::pair{s.doc, s.floor}; }, 416, 48},
+	};
+	std::map<std::string, int> notes;
+	int plans = 0;
+	for (const auto& scene : scenes) {
+		// Every 16 (48 on the angled street) with ROAD_SWEEP_FULL set; four times coarser otherwise (CI).
+		const double step = std::getenv("ROAD_SWEEP_FULL") ? scene.step : scene.step * 4;
+		for (double width = 48; width <= scene.streetWidth + 96; width += step) {
+			for (const auto sides : {RoadParkingSides::Both, RoadParkingSides::None}) {
+				for (const bool kerbs : {false, true}) {
+					CAPTURE(scene.name);
+					CAPTURE(width);
+					CAPTURE(int(sides));
+					CAPTURE(kerbs);
+					auto [doc, floor] = scene.make();
+					RoadBuildOptions o = kerbs ? edgeKerbOptions() : RoadBuildOptions{};
+					if (!kerbs) o.material = "ROAD/ASPHALT";
+					o.parkingSides = sides;
+					o.parking = 64;
+					o.streetRoadWidth = width;
+					MapDocument ids;
+					ids.copyIdCounters(doc);
+					const auto plan = planRoadFromSelection(doc, ids, floor, o, SQUARE);
+					INFO(describeRoadBuild(plan));
+					++plans;
+					REQUIRE(plan.ok());
+					CHECK(plan.skipped == 0);
+					const bool sound = allSound(plan.resultSolids());
+					CHECK(sound);
+					checkCovered(doc, floor, applied(doc, plan));
+					for (const auto& n : plan.notes) ++notes[n.substr(0, 60)];
+					const bool slivers = std::any_of(plan.notes.begin(), plan.notes.end(), [](const std::string& n) { return n.find("sliver") != std::string::npos; });
+					if (!sound || slivers || plan.skipped) MESSAGE("FAIL " << scene.name << " width " << width << " sides " << int(sides) << " kerbs " << kerbs << std::string(sound ? "" : " unsound") << std::string(slivers ? " slivers" : "") << " skipped " << plan.skipped);
+				}
+			}
+		}
+	}
+	MESSAGE(plans << " plans");
+	for (const auto& [n, count] : notes) MESSAGE(count << "x " << n);
+}
+
+TEST_CASE("road from selection: kerb stones carry their texture along the kerb, on from stone to stone, nodraw only where nothing sees it") {
+	// Julius, 10.11.2026 (pictures 72, 73): kerbs cut into fans with nodraw faces showing and a concrete
+	// texture streaked across them.
+	for (const bool round : {false, true}) {
+		CAPTURE(round);
+		Street street = julius();
+		std::vector<SolidRef> floor = street.floor;
+		if (round) {
+			REQUIRE(edit::roundEdge(street.doc, facing(street.doc, street.innerCorner, {1, 0, 0}), facing(street.doc, street.innerCorner, {0, 1, 0}), 128, 0));
+			floor.clear();
+			for (const auto& s : street.doc.world.solids) {
+				if (std::abs(buildBrushGeometry(s).bounds.max.z - 8) < 0.01) floor.push_back({0, s.id});
+			}
+		}
+		MapDocument ids;
+		ids.copyIdCounters(street.doc);
+		const auto plan = planRoadFromSelection(street.doc, ids, floor, edgeKerbOptions(), SQUARE);
+		REQUIRE(plan.ok());
+		REQUIRE(plan.kerbs.size() >= 4);
+		struct Stone {
+			std::vector<Vec3> top;
+			const Side* topSide = nullptr;
+			Vec3 dir;
+		};
+		std::vector<Stone> stones;
+		for (const auto& k : plan.kerbs) {
+			Stone s;
+			for (const auto& face : buildBrushGeometry(k).faces) {
+				const Side& side = k.sides[std::size_t(face.sideIndex)];
+				if (face.normal.z > 0.7) {
+					s.top = face.vertices;
+					s.topSide = &side;
+					continue;
+				}
+				// Upright faces: kerb material with V straight down (never nodraw above the street:
+				// the faces between stones are kerb too - the stones are cut along the kerb's run).
+				if (std::abs(face.normal.z) < 0.2) {
+					double highest = -1e9;
+					for (const auto& v : face.vertices) highest = std::max(highest, v.z);
+					if (highest > 8.5 && side.material == "TOOLS/TOOLSNODRAW") {
+						// Only where another stone or a sidewalk lies against it.
+						Vec3 c{};
+						for (const auto& v : face.vertices) c = c + v;
+						c = c / double(face.vertices.size());
+						const Vec3 p = c + face.normal * 0.5;
+						bool covered = false;
+						for (const auto& other : plan.kerbs) covered = covered || (other.id != k.id && solidContains(other, p, 0.01));
+						for (const auto& w : street.doc.world.solids) covered = covered || solidContains(w, p, 0.01);
+						CHECK(covered);
+					}
+					if (side.material == "CONCRETE/KERB") CHECK(side.v.axis.z == doctest::Approx(-1));
+				}
+			}
+			REQUIRE(s.topSide);
+			CHECK(s.topSide->material == "CONCRETE/KERB");
+			double longest = 0;
+			for (std::size_t i = 0; i < s.top.size(); ++i) {
+				const Vec3 e = flat(s.top[(i + 1) % s.top.size()] - s.top[i]);
+				if (length(e) > longest) {
+					longest = length(e);
+					s.dir = normalize(e);
+				}
+			}
+			// U along the stone (not across: that streaks).
+			CHECK(std::abs(dot(normalize(s.topSide->u.axis), s.dir)) > 0.99);
+			stones.push_back(std::move(s));
+		}
+		// Where two stones meet, the texture goes on: the same U in the middle of their joint.
+		int joints = 0;
+		for (std::size_t a = 0; a < stones.size(); ++a) {
+			for (std::size_t b = a + 1; b < stones.size(); ++b) {
+				std::vector<Vec3> shared;
+				for (const auto& p : stones[a].top) {
+					for (const auto& q : stones[b].top) {
+						if (length(p - q) < 0.2) shared.push_back(p);
+					}
+				}
+				if (shared.size() != 2) continue;
+				const Vec3 meet = (shared[0] + shared[1]) * 0.5;
+				const auto ta = textureCoordinate(*stones[a].topSide, meet), tb = textureCoordinate(*stones[b].topSide, meet);
+				CHECK(std::abs(ta.u - tb.u) < 0.5);
+				// Across: no jump sideways round a curve (a square corner of the kerb is a corner); where
+				// a stone of the rounding is a little narrower than the straight kerb's (the sidewalk's own
+				// facets), at most that difference (under a unit: 4 texels).
+				if (std::abs(dot(stones[a].dir, stones[b].dir)) > 0.85) CHECK(std::abs(ta.v - tb.v) < 4);
+				++joints;
+			}
+		}
+		MESSAGE(stones.size() << " kerb stones, " << joints << " joints");
+		CHECK(joints >= 2);
+	}
+}
+
+TEST_CASE("road from selection: a brush the road may not carve cuts the road instead - nothing flickers (Z fighting)") {
+	// Julius, 10.11.2026 (picture 70): new pieces fighting with old brushes they overlap.
+	Street street = julius();
+	// The first sidewalk becomes a brush entity (the road does not carve those).
+	const SolidRef walkRef = street.sidewalks.front();
+	const Solid walk = *street.doc.findSolid(walkRef);
+	std::erase_if(street.doc.world.solids, [&](const Solid& s) { return s.id == walkRef.solidId; });
+	Entity brush;
+	brush.id = street.doc.newEntityId();
+	brush.set("classname", "func_brush");
+	brush.solids.push_back(walk);
+	street.doc.entities.push_back(std::move(brush));
+	const int entityId = street.doc.entities.back().id;
+	RoadBuildOptions o = edgeKerbOptions();
+	o.parkingSides = RoadParkingSides::None;
+	o.streetRoadWidth = 480;   // wider than the street (416): it reaches into both sidewalks
+	MapDocument ids;
+	ids.copyIdCounters(street.doc);
+	const auto plan = planRoadFromSelection(street.doc, ids, street.floor, o, SQUARE);
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(std::any_of(plan.notes.begin(), plan.notes.end(), [](const std::string& n) { return n.find("could not be carved") != std::string::npos; }));
+	const Solid* entityWalk = nullptr;
+	for (const auto& e : street.doc.entities) {
+		if (e.id == entityId) entityWalk = &e.solids.front();
+	}
+	REQUIRE(entityWalk);
+	for (const auto& s : plan.resultSolids()) CHECK(sharedVolume(s, *entityWalk) < 8);
+	const Quality q = quality(street.doc, plan, 8);
+	MESSAGE(describe(q));
+	CHECK(q.zFights == 0);
+	CHECK(allSound(plan.resultSolids()));
 }

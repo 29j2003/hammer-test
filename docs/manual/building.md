@@ -417,8 +417,27 @@ The settings:
   **Side material** for the road's open sides and ends, **Junction material**, **Clear above the
   road**.
 
+**Clean brushes.** Everything the builder leaves is cut the way you would cut it by hand: the floor
+left beside the road is joined across your old blocks and cut again only where it has to be - one
+long piece per parking lane on a straight, one trapezoid per curve piece on the outside of a curve
+(from the road's edge to the street's edge, like an arch), a couple of pieces round an inside
+corner. No fans of thin wedges, no slivers, no edges a hair long; faces between two new pieces are
+nodraw, faces anyone can see keep a real material. Below the road the floor that is left stays as a
+slab under each road piece. Where the road takes the street's whole width, the thin wedge a curve
+would leave beside the kerb becomes part of the road piece next to it (still four corners, so a
+displacement works). Kerbs are a run of stones along the kerb (one per straight stretch, one per
+facet of a rounded corner), the **Kerb material** laid along each stone - it runs on from stone to
+stone and keeps its place across the kerb round a curve, the sides with the picture upright.
+
+**Nothing overlaps.** No new piece is left inside a brush that stays (that would flicker in the
+game - Z fighting). The road carves what it reaches into; what it may not carve (a brush entity
+other than func_detail, a displacement, a brush the carve would break) cuts the new piece instead,
+and the note says how many. Pieces a hair apart along a long slanted cut (a ten-thousandth of a unit)
+are left as they are.
+
 **Build** makes it one undo step and selects the new road. Nothing is ever refused: a piece that
-would be broken is left out and the note says so. If a road comes out wrong, **Help > Make editor
+would be broken is left out and the note says so, with where it was and what to change (a slightly
+different width usually does it). If a road comes out wrong, **Help > Make editor
 report ...** right after building records the selection, the settings and what the builder decided
 (the street's width, its centre line, every curve), so it can be rebuilt exactly.
 

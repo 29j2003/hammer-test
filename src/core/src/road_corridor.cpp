@@ -380,6 +380,29 @@ void dropStraightPoints(Line& line) {
 	}
 }
 
+/// The raster's middle line forks near a street's square end (towards its two corners): a short
+/// last part that turns away from the one before is such a fork - it goes; the end is then carried
+/// on straight to the street's end (Julius' angled street, 10.11.2026: the road bent off at its end
+/// and reached into the sidewalk).
+void dropForkedEnds(Line& line, double street, bool atStart) {
+	for (int guard = 0; guard < 4 && line.points.size() > 2; ++guard) {
+		auto& p = line.points;
+		const std::size_t n = p.size();
+		const Vec3 a = atStart ? p[0] : p[n - 1], b = atStart ? p[1] : p[n - 2], c = atStart ? p[2] : p[n - 3];
+		const double last = length(flat(a - b));
+		const Vec3 d0 = normalize(flat(b - c)), d1 = normalize(flat(a - b));
+		const bool turns = std::abs(cross2(d0, d1)) > std::sin(3.0 * PI / 180) || dot(d0, d1) < 0;
+		if (last >= 0.75 * street || !turns) return;
+		if (atStart) {
+			p.erase(p.begin());
+			line.widths.erase(line.widths.begin());
+		} else {
+			p.pop_back();
+			line.widths.pop_back();
+		}
+	}
+}
+
 /// A short part between two longer ones that turn the same way (a rounded corner the raster
 /// drew as two bends) becomes one corner where the long parts' lines cross.
 void mergeShortBends(Line& line, double street) {
@@ -750,7 +773,7 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		if (skel[k]) cells.push_back(int(k));
 	}
 	if (cells.empty()) {
-		corridor.notes.push_back("the selected floor is too small for a road");
+		corridor.notes.push_back("the selected floor is too small or too narrow for a road: select the street's whole floor (its brushes at the street's height)");
 		return corridor;
 	}
 	// The biggest connected piece only.
@@ -900,6 +923,8 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		line.points = simplify(raw, std::max(1.5 * g.cell, 0.08 * streetWidth));
 		if (line.points.size() < 2) continue;
 		line.widths.assign(line.points.size() - 1, 0);
+		if (!line.branch) dropForkedEnds(line, streetWidth, true);
+		dropForkedEnds(line, streetWidth, false);
 		mergeShortBends(line, streetWidth);
 		dropStraightPoints(line);
 		centre(line, street, streetWidth);
@@ -909,7 +934,7 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		lines.push_back(std::move(line));
 	}
 	if (lines.empty()) {
-		corridor.notes.push_back("the selected floor is too small for a road");
+		corridor.notes.push_back("the selected floor is too small or too narrow for a road: select the street's whole floor (its brushes at the street's height)");
 		return corridor;
 	}
 	// The ends reach the street's end; a branch starts on the main road's centre line.
@@ -1150,7 +1175,7 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 		}
 		corridor.paths.push_back(std::move(path));
 	}
-	if (tight > 0) corridor.notes.push_back(std::to_string(tight) + " curve(s) reach into the parking lane: the street is too tight there for the lane");
+	if (tight > 0) corridor.notes.push_back(std::to_string(tight) + " curve(s) reach into the parking lane: the street is too tight there for the lane (a narrower road or parking lane keeps it free)");
 	if (corridor.paths.size() > 1) corridor.notes.push_back(std::to_string(corridor.paths.size() - 1) + " side street(s) join the main road");
 	return corridor;
 }
@@ -1225,6 +1250,7 @@ RoadBuildPlan planRoadFromSelection(const MapDocument& doc, MapDocument& ids, co
 			o.kerbs = true;
 			addStreetKerbs(doc, ids, plan, corridor, o);
 		}
+		finishRoadPlan(doc, ids, plan, corridor.floor, o);
 		plan.notes.insert(plan.notes.begin(), corridor.notes.begin(), corridor.notes.end());
 	} else {
 		plan.notes = corridor.notes;

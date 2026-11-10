@@ -273,8 +273,17 @@ std::pair<std::optional<Solid>, std::optional<Solid>> splitSolid(MapDocument& do
 	removeUnusedSides(front);
 	tidyPlanePoints(front);
 	std::optional<Solid> frontPart, backPart;
-	if (usable(front) || (dropTinyFaces(front) && usable(front))) frontPart = std::move(front);
-	if (usable(back) || (dropTinyFaces(back) && usable(back))) backPart = std::move(back);
+	// A part never reaches past the brush it was cut from: a sliver whose tiny faces were dropped
+	// can lose a face that closed it (it would run off to the end of the world) - it goes.
+	const auto within = [&](const Solid& part) {
+		const auto b = buildBrushGeometry(part).bounds;
+		for (int i = 0; i < 3; ++i) {
+			if (b.min[i] < geometry.bounds.min[i] - 0.1 || b.max[i] > geometry.bounds.max[i] + 0.1) return false;
+		}
+		return true;
+	};
+	if ((usable(front) || (dropTinyFaces(front) && usable(front))) && within(front)) frontPart = std::move(front);
+	if ((usable(back) || (dropTinyFaces(back) && usable(back))) && within(back)) backPart = std::move(back);
 	return {std::move(frontPart), std::move(backPart)};
 }
 
