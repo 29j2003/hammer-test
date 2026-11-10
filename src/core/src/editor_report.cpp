@@ -374,6 +374,7 @@ void addRoadBuildSettings(std::vector<std::pair<std::string, std::string>>& out,
 	out.emplace_back("build.segments", std::to_string(o.segments));
 	out.emplace_back("build.parking", number(o.parking));
 	out.emplace_back("build.wholeWidth", o.wholeWidth ? "1" : "0");
+	out.emplace_back("build.parkingSides", std::to_string(int(o.parkingSides)));
 	out.emplace_back("build.along", o.along == RoadAlong::Auto ? "auto" : o.along == RoadAlong::U ? "U" : "V");
 	out.emplace_back("build.flip", o.flip ? "1" : "0");
 	out.emplace_back("build.sideMaterial", o.sideMaterial);
@@ -386,6 +387,7 @@ void addRoadBuildSettings(std::vector<std::pair<std::string, std::string>>& out,
 	out.emplace_back("build.fit", o.fit ? "1" : "0");
 	out.emplace_back("build.clearance", number(o.clearance));
 	out.emplace_back("build.kerbs", o.kerbs ? "1" : "0");
+	out.emplace_back("build.kerbsAlongRoad", o.kerbsAlongRoad ? "1" : "0");
 	out.emplace_back("build.kerbWidth", number(o.kerbWidth));
 	out.emplace_back("build.kerbHeight", number(o.kerbHeight));
 	out.emplace_back("build.kerbMaterial", o.kerbMaterial);
@@ -452,6 +454,7 @@ RoadBuildOptions roadBuildSettings(const std::map<std::string, std::string>& set
 	o.segments = int(num("build.segments", o.segments));
 	o.parking = num("build.parking", o.parking);
 	o.wholeWidth = flag("build.wholeWidth", o.wholeWidth);
+	o.parkingSides = static_cast<RoadParkingSides>(std::clamp(int(num("build.parkingSides", int(o.parkingSides))), 0, 3));
 	const std::string along = setting(settings, "build.along");
 	o.along = along == "U" ? RoadAlong::U : along == "V" ? RoadAlong::V : RoadAlong::Auto;
 	o.flip = flag("build.flip", false);
@@ -465,6 +468,7 @@ RoadBuildOptions roadBuildSettings(const std::map<std::string, std::string>& set
 	o.fit = flag("build.fit", o.fit);
 	o.clearance = num("build.clearance", o.clearance);
 	o.kerbs = flag("build.kerbs", false);
+	o.kerbsAlongRoad = flag("build.kerbsAlongRoad", false);
 	o.kerbWidth = num("build.kerbWidth", o.kerbWidth);
 	o.kerbHeight = num("build.kerbHeight", o.kerbHeight);
 	o.kerbMaterial = setting(settings, "build.kerbMaterial");

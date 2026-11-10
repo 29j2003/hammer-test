@@ -340,9 +340,12 @@ one step, with the texture already running along the road and round its curves.
   corner left) - right-click and pick **Build road ...**. Mapsmith looks at the street they make
   from above (their tops at the floor's height, minus anything standing on them, like a sidewalk
   or a wall) and builds the road along its middle:
-  - the road is the street's width where it is narrowest minus a **Parking lane** on each side
-    (96 units by default: room for parked cars), centred exactly between the kerbs on every straight
-    part; tick **Whole width** for no lanes;
+  - the road is the street's width where it is narrowest minus a parking lane on each side
+    (**Parking lanes**: *Both sides*, 96 units wide by default - room for parked cars), centred
+    exactly between the kerbs on every straight part. *Left only* or *Right only* leaves one lane and
+    moves the road over to the other kerb (left and right as seen along the road from where it starts
+    - the live preview shows which side you got; pick the other one if it is the wrong side). *None*
+    gives the road the street's whole width;
   - every bend becomes the largest curve that keeps the lane clear of the kerbs - round a rounded
     sidewalk corner the curve runs round the same middle; where the street jogs sideways the road
     swings over in one gentle S;
@@ -350,8 +353,8 @@ one step, with the texture already running along the road and round its curves.
     is the straightest way through;
   - the selected floor is cut around the road like **Carve**: road and what is left beside it fill
     the street exactly - no holes, nothing doubled. What is left (the parking lanes, the corners)
-    keeps the floor's material; if the floor already had the road material, it gets the **Beside
-    the road** material (a plain asphalt of the game is filled in when there is one).
+    keeps the floor's material, or gets the **Parking lane material**; if the floor already had the
+    road material, a plain asphalt of the game is filled in there when there is one.
   Width, curve radius and thickness come from the street (the width field shows the road's width).
   Selected brushes at another height (a sidewalk picked by mistake) stay as they are.
 - **Only lay the road texture**: keeps the selected blocks and lays the road material over their
@@ -372,8 +375,22 @@ The settings:
   middle raised by **Middle up** units like a real road, with optional **Uneven** bumps. The pieces
   meet exactly and you can sculpt them with the Displacement tool afterwards. Nodraw brushes
   underneath keep the map sealed (displacements do not seal a map).
-- **Kerbs along both sides**: strips beside the road (wider ones are sidewalks) that follow it round
-  the curves.
+- **Kerbs** (with **Width**, **Height** and a **Kerb material**):
+  - *At the edge of the street* - where a real street has them: between the parking lane and the
+    sidewalk. A strip of the parking lane along everything raised that borders the street becomes a
+    kerb stone: flush with a sidewalk (anything up to 32 units higher - the kerb is the sidewalk's
+    edge, in the kerb material), **Height** high before a wall or anything taller. It follows the
+    street's outline, round a rounded sidewalk corner too, and is cut out of the parking lane
+    exactly (no holes, no overlaps). Where the street runs on (the selection ends at the same
+    height) there is no kerb. A clicked road, and a street with *Parking lanes: None*, gets its
+    kerbs along the road instead.
+  - *Along the road* - strips right beside the road that follow it round the curves (wider ones
+    are sidewalks).
+- **Materials**: every material field shows a small picture of the material, **▾** lists fitting
+  materials of the game found by their names (lane lines for the road; plain asphalt or concrete
+  for parking lanes and junctions; curb/kerb, sidewalk or concrete for kerbs) and the one picked in
+  the browser, and **...** opens a picker with all of the game's materials (search words,
+  pictures; double-click takes one). The preview follows every change.
 - **Fit into surroundings** (on by default): brushes the road reaches into - the floor it is sunk
   into, a sidewalk in a curve's way, a low wall across it - are carved around it, like **Carve**, up
   to **Clear above the road** units above it. Pieces left over are joined again where they form one
@@ -383,8 +400,8 @@ The settings:
   With a **Junction material** (under *More settings*) the old road's piece in the crossing gets it,
   for plain asphalt without lane lines.
 - *More settings*: which way the texture runs (**Texture runs along**, **Flip direction**), the
-  **Side material** for the road's open sides and ends, **Kerb material**, **Junction material**,
-  **Beside the road**, **Clear above the road**.
+  **Side material** for the road's open sides and ends, **Junction material**, **Clear above the
+  road**.
 
 **Build** makes it one undo step and selects the new road. Nothing is ever refused: a piece that
 would be broken is left out and the note says so. If a road comes out wrong, **Help > Make editor

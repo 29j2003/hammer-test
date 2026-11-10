@@ -919,15 +919,24 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 	}
 	corridor.width = std::round(streetWidth);
 	const double minRoad = std::min(corridor.width, 128.0);
-	double parking = options.wholeWidth ? 0 : std::max(0.0, options.parking);
-	if (corridor.width - 2 * parking < minRoad) {
-		const double fits = std::max(0.0, std::floor((corridor.width - minRoad) / 2));
+	const RoadParkingSides sides = options.wholeWidth ? RoadParkingSides::None : options.parkingSides;
+	const bool laneLeft = sides == RoadParkingSides::Both || sides == RoadParkingSides::Left;
+	const bool laneRight = sides == RoadParkingSides::Both || sides == RoadParkingSides::Right;
+	const int lanes = (laneLeft ? 1 : 0) + (laneRight ? 1 : 0);
+	double parking = lanes == 0 ? 0 : std::max(0.0, options.parking);
+	if (lanes > 0 && corridor.width - lanes * parking < minRoad) {
+		const double fits = std::max(0.0, std::floor((corridor.width - minRoad) / lanes));
 		if (parking > 0) corridor.notes.push_back("the street is " + units(corridor.width) + " wide: the parking lanes are " + units(fits) + " (not " + units(parking) + ") so the road keeps " + units(minRoad));
 		parking = fits;
 	}
 	corridor.parking = parking;
-	corridor.roadWidth = corridor.width - 2 * parking;
+	corridor.sides = parking > 0 ? sides : RoadParkingSides::None;
+	corridor.roadWidth = corridor.width - lanes * parking;
 	const double hw = corridor.roadWidth / 2;
+	// A lane on one side only: the road moves over to the other side (left of the direction: +).
+	const double pLeft = laneLeft ? parking : 0, pRight = laneRight ? parking : 0;
+	const double off = (pRight - pLeft) / 2;
+	corridor.offset = off;
 
 	// 5. Curves: per corner the largest one whose edges keep the lane clear of the kerbs.
 	const double tolerance = 0.75 * g.cell + 1;
@@ -946,13 +955,20 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 			const double len0 = length(flat(P - path.points[i - 1])), len1 = length(flat(path.points[i + 1] - P));
 			const double room = std::min(len0 * (i - 1 == 0 ? 1.0 : 0.5), len1 * (i + 1 == n ? 1.0 : 0.5));
 			const double maxR = room / std::tan(turn / 2);
-			// The lane each side keeps: what the narrower of the two parts leaves beside the road.
+			// The lane each side keeps: what the narrower of the two parts leaves beside the road
+			// (the road's edges sit at off + hw on the left and hw - off on the right of the middle).
 			const double w0 = line.widths[i - 1] > 0 ? line.widths[i - 1] : corridor.width, w1 = line.widths[i] > 0 ? line.widths[i] : corridor.width;
-			const double clear = std::max(0.0, std::min(w0, w1) / 2 - hw);
+			const double clearLeft = std::max(0.0, std::min(w0, w1) / 2 - (off + hw)), clearRight = std::max(0.0, std::min(w0, w1) / 2 - (hw - off));
 			const double side = theta > 0 ? 1.0 : -1.0;
-			const auto clearance = [&](double inner) {
-				const double R = std::min(inner + hw, maxR);
-				if (R < hw - 1e-6) return -1e9;
+			// On the curve's inside: left on a left turn. The road's centre line turns round the
+			// same middle as the street's, `side * off` nearer to it.
+			const double clearInner = side > 0 ? clearLeft : clearRight, clearOuter = side > 0 ? clearRight : clearLeft;
+			const double shift = side * off;   // street's centre radius = road's + shift
+			// `raw`: the edges' distance to the street's edge; else what is left of the lane needed there.
+			const auto clearance = [&](double inner, bool raw) {
+				const double Ra = inner + hw;
+				const double R = std::min(Ra + shift, maxR);
+				if (R - shift < hw - 1e-6) return -1e9;
 				const double t = R * std::tan(turn / 2);
 				const Vec3 t0 = flat(P) - d0 * t;
 				const Vec3 centre = t0 + leftOf(d0) * (side * R);
@@ -960,24 +976,23 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 				double worst = 1e9;
 				for (int k = 0; k <= 16; ++k) {
 					const Vec3 u = turned(r0, theta * k / 16);
-					for (const double r : {R - hw, R + hw}) {
-						const Vec3 s = centre + u * r;
-						worst = std::min(worst, g.distAt(s.x, s.y));
-					}
+					const Vec3 in = centre + u * (R - shift - hw), out = centre + u * (R - shift + hw);
+					worst = std::min(worst, g.distAt(in.x, in.y) - (raw ? 0 : clearInner));
+					worst = std::min(worst, g.distAt(out.x, out.y) - (raw ? 0 : clearOuter));
 				}
 				return worst;
 			};
-			const double need = clear - tolerance;
+			const double need = -tolerance;
 			double best = -1;
-			const double hi = std::max(0.0, std::min(4 * corridor.width, maxR - hw));
-			if (clearance(0) >= need) {
+			const double hi = std::max(0.0, std::min(4 * corridor.width, maxR - shift - hw));
+			if (clearance(0, false) >= need) {
 				double lo = 0, top = hi;
-				if (clearance(top) >= need) {
+				if (clearance(top, false) >= need) {
 					lo = top;
 				} else {
 					for (int k = 0; k < 16; ++k) {
 						const double mid = (lo + top) / 2;
-						(clearance(mid) >= need ? lo : top) = mid;
+						(clearance(mid, false) >= need ? lo : top) = mid;
 					}
 				}
 				best = std::floor(lo / 4) * 4;
@@ -988,13 +1003,13 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 				double found = -1;
 				for (int k = 32; k >= 0 && found < 0; --k) {
 					const double r = hi * k / 32;
-					if (clearance(r) >= onStreet) found = r;
+					if (clearance(r, true) >= onStreet) found = r;
 				}
 				if (found < 0) {
 					double bestClear = -1e30;
 					for (int k = 0; k <= 16; ++k) {
 						const double r = hi * k / 16;
-						const double c = clearance(r);
+						const double c = clearance(r, true);
 						if (c > bestClear) {
 							bestClear = c;
 							found = r;
@@ -1005,7 +1020,22 @@ RoadCorridor roadCorridorFromSolids(const MapDocument& doc, const std::vector<So
 				++tight;
 			}
 			// A curve with no inner radius fans out from one point (slivers beside it): at least 16.
-			path.innerRadius[i] = std::max(best, std::min(16.0, std::max(0.0, maxR - hw)));
+			path.innerRadius[i] = std::max(best, std::min(16.0, std::max(0.0, maxR - shift - hw)));
+		}
+		// A lane on one side only: the centre line moves over by `off` (to the left of its
+		// direction when positive), every corner on the bisector so the parts stay parallel.
+		if (std::abs(off) > 1e-6 && path.points.size() >= 2) {
+			std::vector<Vec3> moved = path.points;
+			const std::size_t last = path.points.size() - 1;
+			for (std::size_t i = 0; i <= last; ++i) {
+				const Vec3 a = i > 0 ? normalize(flat(path.points[i] - path.points[i - 1])) : normalize(flat(path.points[1] - path.points[0]));
+				const Vec3 b = i < last ? normalize(flat(path.points[i + 1] - path.points[i])) : a;
+				const double denom = 1 + dot(a, b);
+				const Vec3 shiftBy = denom > 1e-3 ? (leftOf(a) + leftOf(b)) * (off / denom) : leftOf(a) * off;
+				moved[i] = path.points[i] + shiftBy;
+				moved[i].z = street.zAt(moved[i].x, moved[i].y);
+			}
+			path.points = std::move(moved);
 		}
 		corridor.paths.push_back(std::move(path));
 	}
@@ -1019,7 +1049,9 @@ std::string describeRoadCorridor(const RoadCorridor& c) {
 	out << "street: " << c.floor.size() << " floor brush(es)";
 	if (!c.ignored.empty()) out << ", " << c.ignored.size() << " left alone";
 	out << ", top " << c.top << ", thickness " << c.thickness << ", area " << std::lround(c.area) << ", raster " << c.cell << "\n";
-	out << "width " << c.width << ": road " << c.roadWidth << ", parking " << c.parking << " each side, material " << c.material << "\n";
+	static const char* const SIDES[] = {"both sides", "left only", "right only", "none"};
+	out << "width " << c.width << ": road " << c.roadWidth << ", parking " << c.parking << " (" << SIDES[int(c.sides)] << ", road moved " << c.offset
+	    << " to the left), material " << c.material << "\n";
 	out << "floor:";
 	for (const auto& ref : c.floor) out << " " << ref.entityId << "/" << ref.solidId;
 	out << "\n";
@@ -1061,7 +1093,15 @@ RoadBuildPlan planRoadFromSelection(const MapDocument& doc, MapDocument& ids, co
 		RoadBuildOptions o = options;
 		o.width = corridor.roadWidth;
 		if (o.material.empty()) o.material = corridor.material;
+		// Kerbs at the street's edge (between parking lane and sidewalk) are cut from what is left of
+		// the floor afterwards; without parking lanes the road reaches the edge: kerbs beside it.
+		const bool edgeKerbs = o.kerbs && !o.kerbsAlongRoad && corridor.parking > 0;
+		if (edgeKerbs) o.kerbs = false;
 		plan = planRoadBuild(doc, ids, corridor.paths, o, textureSize, corridor.floor);
+		if (edgeKerbs) {
+			o.kerbs = true;
+			addStreetKerbs(doc, ids, plan, corridor, o);
+		}
 		plan.notes.insert(plan.notes.begin(), corridor.notes.begin(), corridor.notes.end());
 	} else {
 		plan.notes = corridor.notes;

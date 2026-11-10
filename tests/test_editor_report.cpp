@@ -312,6 +312,8 @@ TEST_CASE("editor report: the road builder's settings go there and back; a stree
 	o.parking = 80;
 	o.wholeWidth = false;
 	o.kerbs = true;
+	o.kerbsAlongRoad = true;
+	o.parkingSides = RoadParkingSides::Right;
 	o.kerbWidth = 24;
 	o.displacement = true;
 	o.power = 2;
@@ -330,6 +332,8 @@ TEST_CASE("editor report: the road builder's settings go there and back; a stree
 	CHECK(back.material == o.material);
 	CHECK(back.parking == doctest::Approx(80));
 	CHECK(back.kerbs);
+	CHECK(back.kerbsAlongRoad);
+	CHECK(back.parkingSides == RoadParkingSides::Right);
 	CHECK(back.kerbWidth == doctest::Approx(24));
 	CHECK(back.displacement);
 	CHECK(back.power == 2);

@@ -134,6 +134,7 @@
 #include "compile_window.h"
 #include "properties_panel.h"
 #include "road_builder_dialog.h"
+#include "material_field.h"
 #include "surface_dialogs.h"
 #include <sme/grid_snap.h>
 #include <sme/overlay_tools.h>
@@ -7889,7 +7890,7 @@ TEST_CASE("road builder: click points on the floor, Enter builds a curved road s
 	CHECK(dialog->findChild<QLineEdit*>("roadBuilderMaterial")->text() == "ROAD/DEMO_ROAD");   // remembered
 	CHECK(dialog->findChild<QCheckBox*>("roadBuilderDisplacement")->isChecked());   // remembered
 	dialog->findChild<QCheckBox*>("roadBuilderDisplacement")->setChecked(false);
-	dialog->findChild<QCheckBox*>("roadBuilderKerbs")->setChecked(true);
+	dialog->findChild<QComboBox*>("roadBuilderKerbPlace")->setCurrentIndex(2);   // a clicked road: beside it
 	dialog->findChild<QLineEdit*>("roadBuilderKerbMaterial")->setText("CONCRETE/WALL01");
 	dialog->addPoint({400, 900, 0});
 	dialog->addPoint({400, 0, 0});
@@ -8024,6 +8025,17 @@ TEST_CASE("road builder through a street: select the floor, Build road ... - cen
 		out.write(reinterpret_cast<const char*>(vtf->data()), std::streamsize(vtf->size()));
 		out.close();
 		test::writeText(f.mod / "materials/concrete/demo_asphalt.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"concrete/demo_asphalt\"\n}\n");
+		// A light kerb stone (suggested for the kerbs by its name).
+		for (int i = 0; i < 64 * 64; ++i) {
+			const int v = 190 + (i * 29 % 11);
+			image.pixels[std::size_t(i) * 4] = image.pixels[std::size_t(i) * 4 + 1] = image.pixels[std::size_t(i) * 4 + 2] = std::byte(v);
+		}
+		const auto kerb = encodeVtf(image, false, false, 64);
+		REQUIRE(kerb);
+		std::ofstream kerbOut(f.mod / "materials/concrete/demo_curb.vtf", std::ios::binary);
+		kerbOut.write(reinterpret_cast<const char*>(kerb->data()), std::streamsize(kerb->size()));
+		kerbOut.close();
+		test::writeText(f.mod / "materials/concrete/demo_curb.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"concrete/demo_curb\"\n}\n");
 	}
 	Editor editor;
 	editor.discover(fromPath(f.steam));
@@ -8118,6 +8130,70 @@ TEST_CASE("road builder through a street: select the floor, Build road ... - cen
 		}
 		CHECK(dialog->findChild<QLineEdit*>("roadBuilderMaterial")->text() == "ROAD/DEMO_ROAD");   // the floor's
 		CHECK(dialog->findChild<QLineEdit*>("roadBuilderFillMaterial")->text() == "CONCRETE/DEMO_ASPHALT");   // plain, beside the road
+		// Every material field: suggestions by name, a picture, a picker.
+		const auto field = [&](const char* name) {
+			auto* line = dialog->findChild<QLineEdit*>(name);
+			REQUIRE(line);
+			auto* materialField = qobject_cast<MaterialField*>(line->parentWidget());
+			REQUIRE(materialField);
+			CHECK(dialog->findChild<QToolButton*>(QString(name) + "Browse")->isEnabledTo(materialField));   // the game's list is there
+			CHECK(dialog->findChild<QLabel*>(QString(name) + "Picture"));
+			return materialField;
+		};
+		CHECK(field("roadBuilderMaterial")->suggestions().contains("ROAD/DEMO_ROAD"));
+		CHECK(field("roadBuilderFillMaterial")->suggestions().contains("CONCRETE/DEMO_ASPHALT"));
+		CHECK_FALSE(field("roadBuilderFillMaterial")->suggestions().contains("ROAD/DEMO_ROAD"));
+		auto* kerbField = field("roadBuilderKerbMaterial");
+		REQUIRE_FALSE(kerbField->suggestions().isEmpty());
+		CHECK(kerbField->suggestions().front() == "CONCRETE/DEMO_CURB");
+		// Kerbs at the street's edge, their material from the picker ("..."): search, take the first.
+		auto* kerbPlace = dialog->findChild<QComboBox*>("roadBuilderKerbPlace");
+		REQUIRE(kerbPlace);
+		if (std::string(c.kind) == "street") CHECK_FALSE(kerbField->isEnabled());   // no kerbs yet: nothing to choose (later: remembered)
+		kerbPlace->setCurrentIndex(1);
+		CHECK(kerbField->isEnabled());
+		QTimer::singleShot(200, [&] {
+			auto* picker = window.findChild<MaterialPickerDialog*>("materialPicker");
+			if (!picker) picker = dialog->findChild<MaterialPickerDialog*>("materialPicker");
+			CHECK(picker);
+			if (!picker) return;
+			picker->setSearch("demo curb");
+			QTest::qWait(50);
+			picker->accept();
+		});
+		kerbField->browse();
+		CHECK(kerbField->text() == "CONCRETE/DEMO_CURB");
+		if (std::string(c.kind) == "street") {
+			// Parking lanes: one side only moves the road over, none gives the whole width.
+			auto* sides = dialog->findChild<QComboBox*>("roadBuilderParkingSides");
+			REQUIRE(sides);
+			CHECK(sides->currentIndex() == 0);   // both sides by default
+			sides->setCurrentIndex(1);
+			QTest::qWait(150);
+			settle();
+			CHECK(width->value() == doctest::Approx(320));
+			{
+				// The live preview shows which side "left" is (the selection stays: the preview needs it).
+				view->camera().position = c.top;
+				view->camera().yaw = 90;
+				view->camera().pitch = -89;
+				view->update();
+				settle();
+				QTest::qWait(250);
+				settle();
+				view->grabFramebuffer().save(shotDir + "/road2_street_left_only.png");
+			}
+			sides->setCurrentIndex(3);
+			QTest::qWait(150);
+			settle();
+			CHECK(width->value() == doctest::Approx(416));
+			CHECK_FALSE(dialog->findChild<QDoubleSpinBox*>("roadBuilderParking")->isEnabled());
+			CHECK_FALSE(dialog->findChild<QLineEdit*>("roadBuilderFillMaterial")->isEnabled());
+			sides->setCurrentIndex(0);
+			QTest::qWait(150);
+			settle();
+			CHECK(width->value() == doctest::Approx(224));
+		}
 		if (std::string(c.kind) == "street") {
 			// Only lay the texture: the blocks would stay.
 			dialog->findChild<QRadioButton*>("roadBuilderTextureOnly")->setChecked(true);
@@ -8144,11 +8220,26 @@ TEST_CASE("road builder through a street: select the floor, Build road ... - cen
 			for (const auto& side : it->sides) asphalt = asphalt || (side.plane().normal.z > 0.7 && side.material == "CONCRETE/DEMO_ASPHALT");
 			CHECK(asphalt);
 		}
+		// Kerbs between the parking lanes and the sidewalks, flush with them (top 16).
+		{
+			const auto kerbs = std::count_if(editor.doc().world.solids.begin(), editor.doc().world.solids.end(), [](const Solid& s) {
+				return std::any_of(s.sides.begin(), s.sides.end(), [](const Side& side) { return side.material == "CONCRETE/DEMO_CURB"; });
+			});
+			CHECK(kerbs > 0);
+			if (std::string(c.kind) != "tee") {
+				const Vec3 kerb{-1800, -688 - 8, 12};
+				CHECK(std::any_of(editor.doc().world.solids.begin(), editor.doc().world.solids.end(), [&](const Solid& s) {
+					return solidContains(s, kerb, -0.05) && std::any_of(s.sides.begin(), s.sides.end(), [](const Side& side) { return side.material == "CONCRETE/DEMO_CURB"; });
+				}));
+			}
+		}
 		// The road.log of the editor report has the street and the plan.
 		CHECK(editor.planJournal().find("street:") != std::string::npos);
 		CHECK(editor.planJournal().find("parking") != std::string::npos);
 		shoot(QString("road2_%1_after").arg(c.kind), c.perspective, -40);
 		shoot(QString("road2_%1_top").arg(c.kind), c.top, -89);
+		if (std::string(c.kind) == "street") shoot("road2_street_kerb", QVector3D(-1700, -1250, 220), -32);
+		if (std::string(c.kind) == "rounded") shoot("road2_rounded_kerb", QVector3D(420, -1700, 260), -30);
 		// One undo step.
 		editor.undo();
 		settle();

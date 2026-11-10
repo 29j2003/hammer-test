@@ -26,7 +26,9 @@ class QSpinBox;
 
 namespace sme::app {
 
+class AssetBrowser;
 class Editor;
+class MaterialField;
 
 class RoadBuilderDialog : public QDialog {
 	Q_OBJECT
@@ -52,6 +54,8 @@ public:
 	/// A plain asphalt of the game (no lane lines): through a street whose floor has the road
 	/// material, what is left beside the road gets it unless a material is set there.
 	void setPlainMaterial(const QString& material);
+	/// The game's materials: pictures, suggestions (by name, per field) and the picker ("...").
+	void setAssets(AssetBrowser* assets);
 
 public slots:
 	void accept() override;
@@ -81,24 +85,24 @@ private:
 	QDoubleSpinBox* m_thickness;
 	QDoubleSpinBox* m_radius;
 	QSpinBox* m_segments;
-	QLineEdit* m_material;
+	MaterialField* m_material;
 	QComboBox* m_along;
 	QCheckBox* m_flip;
-	QLineEdit* m_side;
-	QLineEdit* m_junction;
+	MaterialField* m_side;
+	MaterialField* m_junction;
 	QCheckBox* m_displacement;
 	QComboBox* m_power;
 	QDoubleSpinBox* m_crown;
 	QDoubleSpinBox* m_roughness;
-	QCheckBox* m_kerbs;
+	QComboBox* m_kerbPlace;   ///< None / at the street's edge / along the road
 	QDoubleSpinBox* m_kerbWidth;
 	QDoubleSpinBox* m_kerbHeight;
-	QLineEdit* m_kerbMaterial;
+	MaterialField* m_kerbMaterial;
 	QCheckBox* m_fit;
 	QDoubleSpinBox* m_clearance;
 	QDoubleSpinBox* m_parking;
-	QCheckBox* m_wholeWidth;
-	QLineEdit* m_fill;
+	QComboBox* m_parkingSides;   ///< Both sides / left only / right only / none
+	MaterialField* m_fill;      ///< Parking lane material
 	QLabel* m_note;
 	QDialogButtonBox* m_buttons;
 	QTimer m_soon;
@@ -106,7 +110,7 @@ private:
 	bool m_drawing = false;
 	bool m_finished = false;
 	QString m_plainMaterial;
-	bool m_fillEdited = false;   ///< The user typed a "Beside the road" material
+	bool m_fillEdited = false;   ///< The user set a parking lane material
 };
 
 } // namespace sme::app

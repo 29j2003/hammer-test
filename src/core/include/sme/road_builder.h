@@ -14,7 +14,10 @@
 //   raised (crown) and a little unevenness; neighbouring pieces meet exactly (sewn by
 //   construction) and stay editable with the displacement tool. Nodraw brushes under them seal
 //   the map (displacements do not).
-// - Kerbs (optional): strips beside the road that follow it round the curves.
+// - Kerbs (optional): along a clicked road, strips beside it that follow it round the curves.
+//   Through a selected street with parking lanes they belong where a real street has them: at the
+//   street's edge, between the parking lane and the sidewalk (addStreetKerbs, below), unless
+//   "along the road" is chosen.
 // - Junctions: where the path meets or crosses a road that is already there (a brush with the
 //   road material on top at the same height) the new road stops at its edge, the old road runs
 //   through; with a junction material the old road's piece in the crossing gets it (plain
@@ -49,6 +52,10 @@ struct RoadPath {
 	std::vector<double> innerRadius;
 };
 
+/// Through a selected street: on which sides of the road a parking lane is left (left and right as
+/// seen along the road's centre line, from its first point; the preview shows which is which).
+enum class RoadParkingSides { Both, Left, Right, None };
+
 /// Settings of the road builder.
 struct RoadBuildOptions {
 	double width = 256;              ///< Kerb to kerb (256: two lanes, 1024: four)
@@ -69,8 +76,12 @@ struct RoadBuildOptions {
 	double clearance = 128;          ///< Fit: carved this high above the road
 	std::string fillMaterial;        ///< From selection: top of the old floor left beside the road (parking); empty: the ground's
 	double parking = 96;             ///< From selection: a lane left on each side of the road (cars park there)
-	bool wholeWidth = false;         ///< From selection: the road takes the street's whole width (no parking lanes)
+	RoadParkingSides parkingSides = RoadParkingSides::Both;   ///< From selection: where the lanes are (None: the road takes the street's whole width)
+	bool wholeWidth = false;         ///< Older setting: true means parkingSides None
 	bool kerbs = false;
+	/// Through a selected street: kerbs beside the road itself (else at the street's edge, between
+	/// the parking lane and the sidewalk; a clicked road always has them beside it).
+	bool kerbsAlongRoad = false;
 	double kerbWidth = 16;
 	double kerbHeight = 8;
 	std::string kerbMaterial;        ///< Empty: the side material
@@ -112,14 +123,17 @@ struct RoadBuildPlan {
 /// centred exactly between the kerbs, every bend a curve that keeps `parking` clear of the kerbs
 /// (round a rounded sidewalk corner: the same middle), side streets as branches that join the
 /// main road. The road is the street's width where it is narrowest minus a parking lane on each
-/// side, so the lanes are at least that wide everywhere.
+/// side that has one (options.parkingSides), so the lanes are at least that wide everywhere; with a
+/// lane on one side only the road moves over to the other side's kerb.
 struct RoadCorridor {
 	std::vector<RoadPath> paths;     ///< Main road first, then branches (they start on it)
 	std::vector<SolidRef> floor;     ///< Selected brushes the street is made of (the road replaces them)
 	std::vector<SolidRef> ignored;   ///< Selected brushes left alone (another height, no top)
 	double width = 0;                ///< Street, kerb to kerb, where it is narrowest (the road is sized from it)
 	double roadWidth = 0;            ///< Road (the street minus the parking lanes)
-	double parking = 0;              ///< Each side, as used
+	double parking = 0;              ///< Each side that has a lane, as used (0: none)
+	RoadParkingSides sides = RoadParkingSides::Both;   ///< Where the lanes are, as used
+	double offset = 0;               ///< The road's middle beside the street's (to the left of its direction: positive)
 	double thickness = 0;            ///< The floor's (bottom to top)
 	double top = 0;                  ///< The floor's top
 	double area = 0;                 ///< The street's area (square units)
@@ -143,6 +157,24 @@ struct RoadCorridor {
 /// `options.width` is ignored (the street gives it). `corridor` (optional) gets the street.
 [[nodiscard]] RoadBuildPlan planRoadFromSelection(const MapDocument& doc, MapDocument& ids, const std::vector<SolidRef>& solids, const RoadBuildOptions& options,
                                                   const TextureSizeFn& textureSize, RoadCorridor* corridor = nullptr);
+/// Kerbs at the street's edge (through a selected street, `options.kerbs` and not
+/// `kerbsAlongRoad`): what is left of the floor beside the road (the parking lanes) gives up a strip
+/// `kerbWidth` wide along everything raised that borders the street - a sidewalk or a wall standing
+/// beside it or on it - and the strip is raised: flush with a sidewalk (a neighbour up to 32 units
+/// higher: the kerb stone is the sidewalk's edge), `kerbHeight` before anything taller (a wall).
+/// Where the street runs on at its own height (the selection ends) there is no kerb. Each strip is
+/// cut from the floor piece exactly (the piece = kerb + rest), so nothing overlaps and no hole
+/// opens; round a rounded sidewalk corner the strips follow its facets. Exposed for tests.
+void addStreetKerbs(const MapDocument& doc, MapDocument& ids, RoadBuildPlan& plan, const RoadCorridor& corridor, const RoadBuildOptions& options);
+
+/// What a material is for in the road builder (its suggestions).
+enum class RoadMaterialRole { Road, Parking, Kerb, Junction, Side };
+/// Materials of the game that fit a role, best first (at most `count`), found by their names:
+/// a road has lane lines (road, street, line, lane ...), a parking lane and a junction are plain
+/// (asphalt, concrete, tarmac - no lines), a kerb is a kerb (curb, kerb, then sidewalk, concrete).
+/// Tool textures, decals, overlays and blends are never suggested.
+[[nodiscard]] std::vector<std::string> roadMaterialSuggestions(const std::vector<std::string>& names, RoadMaterialRole role, std::size_t count = 8);
+
 /// A plan as text (road.log): counts, centre lines, pieces, notes.
 [[nodiscard]] std::string describeRoadBuild(const RoadBuildPlan& plan);
 
