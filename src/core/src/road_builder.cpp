@@ -25,6 +25,104 @@ namespace {
 constexpr double PI = std::numbers::pi;
 const std::string NODRAW = "TOOLS/TOOLSNODRAW";
 
+/// A brush whose only fault is a speck - two corners less than a third of a unit apart (a cut that
+/// passed a hair from a corner), a face of almost no area - rebuilt from its corners with those
+/// merged (it changes by less than that third of a unit), each face keeping the look of the face in
+/// its plane. nullopt if that does not give a sound brush of about the same volume.
+std::optional<Solid> mendSpecks(MapDocument& ids, const Solid& solid) {
+	const double before = solidVolume(solid);
+	const double allowed = std::max(1.0, 1e-4 * before);   // the brush hardly grows (never into a neighbour by more than a speck)
+	{
+		// Two sides in almost the same plane (two cuts a hundredth apart): the one with the smaller
+		// face goes, the other bounds the brush alone.
+		Solid trimmed = solid;
+		for (bool again = true; again;) {
+			again = false;
+			const auto geometry = buildBrushGeometry(trimmed);
+			if (!geometry.valid) break;
+			std::vector<double> area(trimmed.sides.size(), 0);
+			for (const auto& face : geometry.faces) {
+				Vec3 sum;
+				for (std::size_t i = 1; i + 1 < face.vertices.size(); ++i) sum += cross(face.vertices[i] - face.vertices[0], face.vertices[i + 1] - face.vertices[0]);
+				area[std::size_t(face.sideIndex)] = length(sum) / 2;
+			}
+			for (std::size_t i = 0; i < trimmed.sides.size() && !again; ++i) {
+				for (std::size_t j = i + 1; j < trimmed.sides.size() && !again; ++j) {
+					const Plane a = trimmed.sides[i].plane(), b = trimmed.sides[j].plane();
+					if (dot(a.normal, b.normal) < 0.99999 || std::abs(a.dist - b.dist) > 0.05) continue;
+					Solid next = trimmed;
+					next.sides.erase(next.sides.begin() + std::ptrdiff_t(area[i] < area[j] ? i : j));
+					removeUnusedSides(next);
+					if (!buildBrushGeometry(next).valid || solidVolume(next) - before > allowed) continue;
+					trimmed = std::move(next);
+					again = true;
+				}
+			}
+		}
+		if (trimmed.sides.size() < solid.sides.size() && brushProblem(trimmed).empty()) return trimmed;
+	}
+	std::vector<Vec3> corners = solidCorners(solid);
+	if (corners.size() < 4) return std::nullopt;
+	std::vector<Vec3> merged;
+	std::vector<int> weight;
+	for (const auto& c : corners) {
+		bool joined = false;
+		for (std::size_t k = 0; k < merged.size(); ++k) {
+			if (length(merged[k] - c) < 0.34) {
+				merged[k] = (merged[k] * double(weight[k]) + c) / double(weight[k] + 1);
+				++weight[k];
+				joined = true;
+				break;
+			}
+		}
+		if (!joined) {
+			merged.push_back(c);
+			weight.push_back(1);
+		}
+	}
+	// An edge that should stand upright but leans by a hair (its ends a hundredth apart seen from
+	// above): the upper end above the lower one.
+	for (std::size_t i = 0; i < merged.size(); ++i) {
+		for (std::size_t j = 0; j < merged.size(); ++j) {
+			if (i == j || merged[j].z <= merged[i].z + 1) continue;
+			const double dx = merged[j].x - merged[i].x, dy = merged[j].y - merged[i].y;
+			if (dx * dx + dy * dy < 0.02 * 0.02) {
+				merged[j].x = merged[i].x;
+				merged[j].y = merged[i].y;
+			}
+		}
+	}
+	if (merged.size() < 4) return std::nullopt;
+	auto hull = solidFromPoints(ids, merged, solid.sides.front().material);
+	if (!hull || !brushProblem(*hull).empty()) return std::nullopt;
+	const double after = solidVolume(*hull);
+	if (std::abs(after - before) > allowed) return std::nullopt;
+	for (auto& side : hull->sides) {
+		const Plane plane = side.plane();
+		const Side* best = nullptr;
+		double bestScore = -1e30;
+		for (const auto& old : solid.sides) {
+			const Plane p = old.plane();
+			const double score = dot(p.normal, plane.normal) - std::abs(p.dist - plane.dist) * 0.01;
+			if (score > bestScore) {
+				bestScore = score;
+				best = &old;
+			}
+		}
+		if (best) {
+			side.material = best->material;
+			side.u = best->u;
+			side.v = best->v;
+			side.rotation = best->rotation;
+			side.lightmapScale = best->lightmapScale;
+			if (std::abs(dot(normalize(side.u.axis), plane.normal)) > 0.99 || std::abs(dot(normalize(side.v.axis), plane.normal)) > 0.99) alignToWorld(side);
+		}
+	}
+	hull->id = solid.id;
+	hull->extra = solid.extra;
+	return hull;
+}
+
 /// The part of `solid` inside the convex `cutter` (none if they do not overlap); defined below.
 std::optional<Solid> insideOf(MapDocument& ids, const Solid& solid, const Solid& cutter);
 
@@ -1130,10 +1228,12 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 	double lostFloor = 0;   // square units of floor in slivers that joined nothing
 	int lostSlivers = 0;
 	// A sliver the cuts left (too thin for a brush) joins a neighbouring piece instead of leaving a
-	// hole; only what joins nothing is left out (and said).
+	// hole; only what joins nothing is left out (and said). A big piece whose only fault is a speck
+	// (two corners a hair apart where a cut passed near a corner) is mended first.
 	const auto absorbSlivers = [&](std::vector<Solid>& pieces) {
 		std::vector<Solid> good, bad;
 		for (auto& piece : pieces) (brushProblem(piece).empty() ? good : bad).push_back(std::move(piece));
+		std::vector<Solid> mendedPieces;
 		for (auto& sliver : bad) {
 			bool joined = false;
 			const Bounds sb = buildBrushGeometry(sliver).bounds;
@@ -1147,10 +1247,15 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 				break;
 			}
 			if (!joined) {
+				if (auto mended = mendSpecks(ids, sliver)) {
+					mendedPieces.push_back(std::move(*mended));
+					continue;
+				}
 				lostFloor += solidVolume(sliver) / std::max(1.0, o.thickness);
 				++lostSlivers;
 			}
 		}
+		for (auto& m : mendedPieces) good.push_back(std::move(m));
 		pieces = std::move(good);
 	};
 	for (const auto& ref : replace) {

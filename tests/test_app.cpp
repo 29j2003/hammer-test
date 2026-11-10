@@ -11134,3 +11134,167 @@ TEST_CASE("road builder: the selection changes while the dialog is open - the pr
 	CHECK(editor.planJournal().find("road builder: planning through the selected street") != std::string::npos);
 	CHECK(editor.planJournal().find("build.streetRoadWidth = 224") != std::string::npos);
 }
+
+TEST_CASE("road builder through a street: pictures of a big angled street, a narrower road with raised sides, a ramp") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	writeDemoRoadTexture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1900, 1150);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	const auto shotDir = qEnvironmentVariable("SME_TEST_SHOTS", QDir::tempPath());
+	QDir().mkpath(shotDir);
+	Viewport* view = window.view3D();
+	const auto shoot = [&](const QString& name, QVector3D position, float yaw, float pitch) {
+		const Selection kept = editor.selection();
+		editor.setSelection({});
+		view->camera().position = position;
+		view->camera().yaw = yaw;
+		view->camera().pitch = pitch;
+		view->update();
+		settle();
+		QTest::qWait(250);
+		settle();
+		view->grabFramebuffer().save(shotDir + "/" + name + ".png");
+		editor.setSelection(kept);
+	};
+	// Streets along a centre polyline, mitred at the bends: floor blocks (road texture, like Julius'
+	// floor), sidewalks 8 higher. `z`: per centre point (a ramp between two of them).
+	const auto buildStreet = [&](const std::vector<Vec3>& centre, double half, double tile) {
+		editor.newMap();
+		settle();
+		MapDocument& doc = editor.doc();
+		Transaction t(doc, "street");
+		std::vector<SolidRef> floor;
+		const auto mitred = [&](std::size_t i, double d) {
+			const Vec3 a = i > 0 ? normalize(Vec3{centre[i].x - centre[i - 1].x, centre[i].y - centre[i - 1].y, 0})
+			                     : normalize(Vec3{centre[1].x - centre[0].x, centre[1].y - centre[0].y, 0});
+			const Vec3 b = i + 1 < centre.size() ? normalize(Vec3{centre[i + 1].x - centre[i].x, centre[i + 1].y - centre[i].y, 0}) : a;
+			const Vec3 la{-a.y, a.x, 0}, lb{-b.y, b.x, 0};
+			const double denom = 1 + dot(a, b);
+			return centre[i] + (denom > 1e-3 ? (la + lb) * (d / denom) : la * d);
+		};
+		const auto strip = [&](double d0, double d1, double lift, double length, const char* material, bool isFloor) {
+			for (std::size_t i = 0; i + 1 < centre.size(); ++i) {
+				const double len = std::hypot(centre[i + 1].x - centre[i].x, centre[i + 1].y - centre[i].y);
+				const int count = std::max(1, int(std::lround(len / length)));
+				for (int k = 0; k < count; ++k) {
+					const double t0 = double(k) / count, t1 = double(k + 1) / count;
+					std::vector<Vec3> points;
+					for (const auto& [tt, d] : std::vector<std::pair<double, double>>{{t0, d0}, {t1, d0}, {t1, d1}, {t0, d1}}) {
+						const Vec3 v = mitred(i, d) * (1 - tt) + mitred(i + 1, d) * tt;
+						points.push_back({v.x, v.y, v.z + lift});
+						points.push_back({v.x, v.y, v.z - 24});
+					}
+					auto solid = solidFromPoints(doc, points, material);
+					REQUIRE(solid);
+					doc.world.solids.push_back(std::move(*solid));
+					t.touchSolid({0, doc.world.solids.back().id});
+					if (isFloor) floor.push_back({0, doc.world.solids.back().id});
+				}
+			}
+		};
+		strip(-half, 0, 0, tile, "ROAD/DEMO_ROAD", true);
+		strip(0, half, 0, tile * 0.75, "ROAD/DEMO_ROAD", true);
+		strip(half, half + 96, 8, 1024, "CONCRETE/WALL01", false);
+		strip(-half - 96, -half, 8, 1024, "CONCRETE/WALL01", false);
+		editor.commit(t.finish());
+		settle();
+		Selection s;
+		s.solids = floor;
+		editor.setSelection(s);
+		return floor.size();
+	};
+	auto* action = window.findChild<QAction*>("brushesBuildRoad");
+	REQUIRE(action);
+	const auto build = [&](double width, bool kerbs) {
+		action->trigger();
+		settle();
+		auto* dialog = window.findChild<RoadBuilderDialog*>("roadBuilderDialog");
+		REQUIRE(dialog);
+		REQUIRE(dialog->fromSelection());
+		dialog->findChild<QLineEdit*>("roadBuilderMaterial")->setText("ROAD/DEMO_ROAD");
+		dialog->findChild<QComboBox*>("roadBuilderParkingSides")->setCurrentIndex(0);
+		dialog->findChild<QDoubleSpinBox*>("roadBuilderParking")->setValue(64);
+		dialog->findChild<QComboBox*>("roadBuilderKerbPlace")->setCurrentIndex(kerbs ? 1 : 0);
+		dialog->findChild<QLineEdit*>("roadBuilderKerbMaterial")->setText("CONCRETE/WALL01");
+		if (width > 0) dialog->findChild<QDoubleSpinBox*>("roadBuilderWidth")->setValue(width);
+		QTest::qWait(100);
+		dialog->waitForPlan();
+		settle();
+		INFO("note: " << dialog->note().toStdString());
+		const std::string note = dialog->note().toStdString();
+		dialog->accept();
+		settle();
+		for (const auto& s : editor.doc().world.solids) CHECK(brushProblem(s).empty());
+		return note;
+	};
+	// 1. The big angled street (straight, 30° left, 45° more, 45° back).
+	std::vector<Vec3> centre{{-3000, 0, 0}, {0, 0, 0}};
+	{
+		double angle = 0;
+		for (const auto& [turn, len] : std::vector<std::pair<double, double>>{{30, 2048}, {45, 1800}, {-45, 1600}}) {
+			angle += turn * std::numbers::pi / 180;
+			centre.push_back(centre.back() + Vec3{std::cos(angle) * len, std::sin(angle) * len, 0});
+		}
+	}
+	// Every point of the old floor in exactly one brush afterwards.
+	const auto covered = [&](const std::string& before) {
+		const MapDocument old = MapDocument::parse(before);
+		int holes = 0, doubled = 0;
+		for (const auto& s : old.world.solids) {
+			const auto b = buildBrushGeometry(s).bounds;
+			if (b.max.z > 1) continue;   // the floor (top at 0 here)
+			for (double x = b.min.x + 3.3; x < b.max.x; x += 11.7) {
+				for (double y = b.min.y + 2.9; y < b.max.y; y += 11.7) {
+					const Vec3 p{x, y, -4};
+					if (!solidContains(s, p, -0.05)) continue;
+					int strict = 0, loose = 0;
+					for (const auto& a : editor.doc().world.solids) {
+						strict += solidContains(a, p, -0.05) ? 1 : 0;
+						loose += solidContains(a, p, 0.05) ? 1 : 0;
+					}
+					if (loose == 0 && holes++ < 5) MESSAGE("hole at " << x << " " << y);
+					if (strict > 1 && doubled++ < 5) MESSAGE("doubled at " << x << " " << y);
+				}
+			}
+		}
+		CHECK(holes == 0);
+		CHECK(doubled == 0);
+	};
+	REQUIRE(buildStreet(centre, 208, 512) > 0);
+	shoot("road3_angled_before", QVector3D(-200, -2600, 3400), 70, -50);
+	shoot("road3_angled_top_before", QVector3D(400, 1600, 7600), 90, -89);
+	const std::string angledBefore = editor.doc().serialize();
+	build(0, true);
+	covered(angledBefore);
+	MESSAGE(editor.planJournal());
+	shoot("road3_angled_after", QVector3D(-200, -2600, 3400), 70, -50);
+	shoot("road3_angled_top", QVector3D(400, 1600, 7600), 90, -89);
+	shoot("road3_angled_corner", QVector3D(1200, 1500, 1300), 60, -45);
+	shoot("road3_angled_bend", QVector3D(2700, 400, 900), 150, -40);
+	// 2. The same street, the road narrower: the sides rise to the sidewalk.
+	REQUIRE(buildStreet(centre, 208, 512) > 0);
+	const std::string narrow = build(192, true);
+	CHECK(narrow.find("rise to the sidewalk") != std::string::npos);
+	shoot("road3_narrow_after", QVector3D(-1800, -900, 700), 70, -35);
+	shoot("road3_narrow_corner", QVector3D(1200, 1500, 1300), 60, -45);
+	// 3. A ramp: flat, up 128 over 1024, flat again, then a curve.
+	std::vector<Vec3> ramp{{-2048, 0, 0}, {-1024, 0, 0}, {0, 0, 128}, {1024, 0, 128}, {1024 + 1500, 1500, 128}};
+	REQUIRE(buildStreet(ramp, 208, 512) > 0);
+	shoot("road3_ramp_before", QVector3D(-2400, -1500, 900), 40, -25);
+	build(0, true);
+	shoot("road3_ramp_after", QVector3D(-2400, -1500, 900), 40, -25);
+	shoot("road3_ramp_side", QVector3D(-500, -1600, 400), 90, -10);
+}

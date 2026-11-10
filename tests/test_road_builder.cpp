@@ -14,6 +14,7 @@
 #include <sme/road_builder.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -1273,4 +1274,45 @@ TEST_CASE("road from selection: kerbs at the edge of a ramp street follow the sl
 		CHECK(kerbAt(after, x, 208 - 8, z + 4));
 		CHECK_FALSE(kerbAt(after, x, 208 - 8, z + 9));
 	}
+}
+
+TEST_CASE("road from selection: kerbs at the edge round the bends of a big angled street - no holes") {
+	for (const double parking : {64.0, 96.0}) {
+		CAPTURE(parking);
+		AngledStreet s = angledStreet(angledCentre(), 208, 512);
+		RoadBuildOptions o = edgeKerbOptions();
+		o.parking = parking;
+		RoadCorridor corridor;
+		const auto plan = planRoadFromSelection(s.doc, s.doc, s.floor, o, SQUARE, &corridor);
+		INFO(describeRoadCorridor(corridor));
+		INFO(describeRoadBuild(plan));
+		REQUIRE(plan.ok());
+		checkEdgeKerbs(s.doc, s.floor, plan);
+	}
+}
+
+TEST_CASE("road from selection: a cut a hair from a corner never drops a big piece of the floor") {
+	// The picture test of 10.11.2026: the floor with the road material on top, kerbs at the edge, a
+	// 256 x 512 texture: a parking lane piece of 16 549 square units came out with an edge of a
+	// hundredth of a unit (two cut planes almost alike) and was left out as a "sliver" - a hole.
+	AngledStreet s = angledStreet(angledCentre(), 208, 512);
+	for (auto& solid : s.doc.world.solids) {
+		for (auto& side : solid.sides) {
+			if (side.material == "CONCRETE/STREET") side.material = "ROAD/ASPHALT";
+		}
+	}
+	RoadBuildOptions o = edgeKerbOptions();
+	o.thickness = 24;
+	o.parking = 64;
+	o.fillMaterial.clear();
+	const TextureSizeFn tall = [](const std::string&) { return std::pair<int, int>{256, 512}; };
+	RoadCorridor corridor;
+	MapDocument ids;
+	ids.copyIdCounters(s.doc);
+	const auto plan = planRoadFromSelection(s.doc, ids, s.floor, o, tall, &corridor);
+	INFO(describeRoadBuild(plan));
+	REQUIRE(plan.ok());
+	CHECK(std::none_of(plan.notes.begin(), plan.notes.end(), [](const std::string& n) { return n.find("sliver") != std::string::npos; }));
+	CHECK(allSound(plan.resultSolids()));
+	checkCovered(s.doc, s.floor, applied(s.doc, plan));
 }
