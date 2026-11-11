@@ -397,6 +397,50 @@ int fitDisplacementLightmaps(MapDocument& doc, Change& change) {
 	return changed;
 }
 
+bool displacementFlat(const Displacement& d) {
+	if (std::abs(d.elevation) > 1e-6) return false;
+	const auto zero = [](double v) { return std::abs(v) < 1e-6; };
+	return std::all_of(d.distances.begin(), d.distances.end(), zero) && std::all_of(d.alphas.begin(), d.alphas.end(), zero) &&
+	       std::all_of(d.offsets.begin(), d.offsets.end(), [&](const Vec3& v) { return zero(v.x) && zero(v.y) && zero(v.z); });
+}
+
+namespace {
+
+std::optional<DisplacementBrush> displacementBrush(const SolidRef& ref, const Solid& solid) {
+	DisplacementBrush out;
+	out.solid = ref;
+	bool any = false, flat = true;
+	for (const auto& side : solid.sides) {
+		if (side.dispInfo()) {
+			any = true;
+			const auto d = readDisplacement(side);
+			flat = flat && d && displacementFlat(*d);
+		} else if (!startsWithI(side.material, "TOOLS/")) {
+			out.hiddenSides.push_back(side.id);
+		}
+	}
+	if (!any || out.hiddenSides.empty()) return std::nullopt;
+	out.flat = flat;
+	const auto geometry = buildBrushGeometry(solid);
+	out.center = (geometry.bounds.min + geometry.bounds.max) * 0.5;
+	return out;
+}
+
+}   // namespace
+
+std::vector<DisplacementBrush> displacementBrushesWithHiddenFaces(const MapDocument& doc) {
+	std::vector<DisplacementBrush> out;
+	for (const auto& solid : doc.world.solids) {
+		if (auto b = displacementBrush(SolidRef{0, solid.id}, solid)) out.push_back(std::move(*b));
+	}
+	for (const auto& entity : doc.entities) {
+		for (const auto& solid : entity.solids) {
+			if (auto b = displacementBrush(SolidRef{entity.id, solid.id}, solid)) out.push_back(std::move(*b));
+		}
+	}
+	return out;
+}
+
 std::vector<Vec3> displacementCorners(const FaceGeometry& face, const Vec3& start) {
 	if (face.vertices.size() != 4) return {};
 	// Clockwise seen from outside (the face's vertices run counter-clockwise), from the corner
@@ -781,6 +825,51 @@ Change fixOversizedDisplacements(MapDocument& doc, const std::vector<FaceRef>& f
 		}
 	}
 	if (count) *count = fixed;
+	return t.finish();
+}
+
+Change removeFlatDisplacements(MapDocument& doc, const std::vector<SolidRef>& solids, int* count) {
+	std::vector<SolidRef> targets = solids;
+	if (targets.empty()) {
+		for (const auto& b : displacementBrushesWithHiddenFaces(doc)) {
+			if (b.flat) targets.push_back(b.solid);
+		}
+	}
+	Transaction t(doc, "Make flat displacement brushes normal brushes");
+	int fixed = 0;
+	for (const auto& ref : targets) {
+		const Solid* solid = doc.findSolid(ref);
+		if (!solid) continue;
+		const auto brush = displacementBrush(ref, *solid);
+		if (!brush || !brush->flat) continue;
+		t.touchSolid(ref);
+		for (auto& side : doc.findSolid(ref)->sides) removeDisplacement(side);
+		++fixed;
+	}
+	if (count) *count = fixed;
+	return t.finish();
+}
+
+Change nodrawHiddenDisplacementFaces(MapDocument& doc, const std::vector<SolidRef>& solids, int* count) {
+	std::vector<SolidRef> targets = solids;
+	if (targets.empty()) {
+		for (const auto& b : displacementBrushesWithHiddenFaces(doc)) targets.push_back(b.solid);
+	}
+	Transaction t(doc, "Make faces the game does not draw nodraw");
+	int faces = 0;
+	for (const auto& ref : targets) {
+		const Solid* solid = doc.findSolid(ref);
+		if (!solid) continue;
+		const auto brush = displacementBrush(ref, *solid);
+		if (!brush) continue;
+		t.touchSolid(ref);
+		for (auto& side : doc.findSolid(ref)->sides) {
+			if (std::find(brush->hiddenSides.begin(), brush->hiddenSides.end(), side.id) == brush->hiddenSides.end()) continue;
+			side.material = "TOOLS/TOOLSNODRAW";
+			++faces;
+		}
+	}
+	if (count) *count = faces;
 	return t.finish();
 }
 

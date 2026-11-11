@@ -2253,7 +2253,11 @@ bool MainWindow::readyDisplacements(const QString& title) {
 	const auto bad = nonQuadDisplacements(m_editor->doc());
 	const auto big = oversizedDisplacements(m_editor->doc());
 	const auto edgeOn = edit::edgeOnTextureFaces(m_editor->doc());
-	if (bad.empty() && big.empty() && edgeOn.empty()) {
+	std::vector<SolidRef> flatBrushes;
+	for (const auto& b : displacementBrushesWithHiddenFaces(m_editor->doc())) {
+		if (b.flat) flatBrushes.push_back(b.solid);
+	}
+	if (bad.empty() && big.empty() && edgeOn.empty() && flatBrushes.empty()) {
 		return true;
 	}
 	QStringList what, fixes;
@@ -2268,6 +2272,11 @@ bool MainWindow::readyDisplacements(const QString& title) {
 		fixes << tr("Displacements that are too large get a larger lightmap scale (the first %1 instead of %2): their shadows get slightly softer.")
 		             .arg(big.front().neededScale)
 		             .arg(big.front().scale);
+	}
+	if (!flatBrushes.empty()) {
+		what << tr("%n brush(es) have a displacement that was never sculpted - in the game their other faces vanish (only the displacement is drawn).",
+		           nullptr, static_cast<int>(flatBrushes.size()));
+		fixes << tr("Brushes with an unsculpted displacement become normal brushes again.");
 	}
 	if (!edgeOn.empty()) {
 		what << tr("%n face(s) have their texture edge-on - it is smeared, and VRAD lights them badly (\"face vectors parallel to face normal\").", nullptr,
@@ -2302,6 +2311,11 @@ bool MainWindow::readyDisplacements(const QString& title) {
 			m_editor->commit(edit::fixOversizedDisplacements(m_editor->doc(), {}, &count));
 			m_log->append(tr("Raised the lightmap scale of %n large displacement face(s).", nullptr, count), QColor(255, 200, 100));
 		}
+		if (!flatBrushes.empty()) {
+			int count = 0;
+			m_editor->commit(edit::removeFlatDisplacements(m_editor->doc(), {}, &count));
+			m_log->append(tr("Made %n brush(es) with an unsculpted displacement normal brushes.", nullptr, count), QColor(255, 200, 100));
+		}
 		if (!edit::edgeOnTextureFaces(m_editor->doc()).empty()) {
 			int count = 0;
 			m_editor->commit(edit::alignEdgeOnTextures(m_editor->doc(), {}, &count));
@@ -2317,6 +2331,11 @@ bool MainWindow::readyDisplacements(const QString& title) {
 		for (const auto& b : bad) selection.faces.push_back(b.face);
 		for (const auto& b : big) selection.faces.push_back(b.face);
 		selection.faces.insert(selection.faces.end(), edgeOn.begin(), edgeOn.end());
+		for (const auto& ref : flatBrushes) {
+			if (const Solid* solid = m_editor->doc().findSolid(ref)) {
+				for (const auto& side : solid->sides) selection.faces.push_back({ref, side.id});
+			}
+		}
 		m_editor->setSelectMode(Editor::SelectMode::Face);
 		m_editor->setSelection(std::move(selection));
 		activeView()->frameSelection();

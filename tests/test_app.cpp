@@ -11595,7 +11595,7 @@ TEST_CASE("compile: displacements without four corners or too large for their li
 		for (const auto& face : buildBrushGeometry(*floor).faces) {
 			if (face.normal.z > 0.9) topId = floor->sides[static_cast<std::size_t>(face.sideIndex)].id;
 		}
-		(void)edit::createDisplacements(doc, {FaceRef{ref, topId}}, 2);
+		(void)edit::createDisplacements(doc, {FaceRef{ref, topId}}, 2, 8);
 		Solid* solid = doc.findSolid(ref);
 		Side corner = solid->sides.front();
 		corner.id = doc.newSideId();
@@ -11610,7 +11610,7 @@ TEST_CASE("compile: displacements without four corners or too large for their li
 		for (const auto& face : buildBrushGeometry(*longSolid).faces) {
 			if (face.normal.z > 0.9) longTop = longSolid->sides[static_cast<std::size_t>(face.sideIndex)].id;
 		}
-		(void)edit::createDisplacements(doc, {FaceRef{longRef, longTop}}, 2);
+		(void)edit::createDisplacements(doc, {FaceRef{longRef, longTop}}, 2, 8);
 		REQUIRE(oversizedDisplacements(doc).size() == 1);
 		const std::string text = doc.serialize();
 		std::filesystem::create_directories(f.mod / "mapsrc");

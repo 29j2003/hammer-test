@@ -164,7 +164,31 @@ int fitDisplacementLightmaps(Solid& solid);
 /// change's brushes get a lightmap scale VBSP accepts. Returns how many faces changed.
 int fitDisplacementLightmaps(MapDocument& doc, Change& change);
 
+/// True if the displacement changes nothing on its face: no height, no offset, no elevation and
+/// no blend painted (a displacement that was never sculpted).
+[[nodiscard]] bool displacementFlat(const Displacement& d);
+/// A brush with a displacement on some faces and visible faces without one. VBSP draws only the
+/// displacement of such a brush: its other faces vanish in the game (Hammer does the same) and
+/// the brush no longer blocks or seals (Julius 11.11.2026: a wall with a flat displacement on its
+/// back side was missing after the compile).
+struct DisplacementBrush {
+	SolidRef solid;
+	std::vector<int> hiddenSides;   ///< Visible (non-tool) faces without a displacement
+	bool flat = false;              ///< Every displacement of the brush is flat: it does nothing
+	Vec3 center;                    ///< Middle of the brush, for messages
+};
+/// Every such brush of the map (world and brush entities).
+[[nodiscard]] std::vector<DisplacementBrush> displacementBrushesWithHiddenFaces(const MapDocument& doc);
+
 namespace edit {
+
+/// Removes the flat displacements of the listed brushes (or, with no list, of every brush that
+/// displacementBrushesWithHiddenFaces lists as flat): they become normal brushes again, every
+/// face drawn. One undo step; `count` gets the brushes.
+[[nodiscard]] Change removeFlatDisplacements(MapDocument& doc, const std::vector<SolidRef>& solids = {}, int* count = nullptr);
+/// Makes the faces the game does not draw nodraw (sculpted displacement brushes): the editor
+/// shows what the game shows. One undo step; `count` gets the faces.
+[[nodiscard]] Change nodrawHiddenDisplacementFaces(MapDocument& doc, const std::vector<SolidRef>& solids = {}, int* count = nullptr);
 
 /// Makes the listed displacement faces flat (or, with no list, every face of the map that
 /// nonQuadDisplacements finds). One undo step; `count` gets the number of faces.

@@ -181,6 +181,39 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		p.fixLabel = "Raise lightmap scale";
 		problems.push_back(std::move(p));
 	}
+	// Brushes with a displacement on some faces: VBSP draws only the displacement, the brush's
+	// other faces vanish in the game (and it no longer seals).
+	{
+		Problem flat, sculpted;
+		for (const auto& b : displacementBrushesWithHiddenFaces(doc)) {
+			Problem& p = b.flat ? flat : sculpted;
+			p.objects.solids.push_back(b.solid);
+			if (p.from.empty()) p.from = formatPoint(b.center);
+		}
+		if (!flat.objects.solids.empty()) {
+			flat.kind = Problem::Kind::FlatDisplacementBrush;
+			flat.severity = Problem::Severity::Warning;
+			flat.message = std::to_string(flat.objects.solids.size()) +
+			               " brush(es) have a displacement that was never sculpted (the first near " + flat.from +
+			               ") - in the game only that face is drawn: the brush's other faces vanish, and it does not seal the map.";
+			flat.howToFix = "Make them normal brushes (the flat displacement goes, every face is drawn again).";
+			flat.fixLabel = "Make normal brushes";
+			flat.from.clear();
+			problems.push_back(std::move(flat));
+		}
+		if (!sculpted.objects.solids.empty()) {
+			sculpted.kind = Problem::Kind::DisplacementHiddenFaces;
+			sculpted.severity = Problem::Severity::Info;
+			sculpted.message = std::to_string(sculpted.objects.solids.size()) +
+			                   " displacement brush(es) also have faces with a normal material - the game draws only the displacement of such a "
+			                   "brush, those faces are not there.";
+			sculpted.howToFix = "Make those faces nodraw so the editor shows what the game shows; if one of them should be seen, put a "
+			                    "separate brush there.";
+			sculpted.fixLabel = "Make them nodraw";
+			sculpted.from.clear();
+			problems.push_back(std::move(sculpted));
+		}
+	}
 	// Textures edge-on to their face: smeared, and VRAD lights them badly.
 	if (const auto edgeOn = edit::edgeOnTextureFaces(doc); !edgeOn.empty()) {
 		Problem p;
@@ -664,6 +697,10 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 		}
 		case Problem::Kind::NonQuadDisplacement:
 			return edit::fixNonQuadDisplacements(doc, problem.objects.faces);
+		case Problem::Kind::FlatDisplacementBrush:
+			return edit::removeFlatDisplacements(doc, problem.objects.solids);
+		case Problem::Kind::DisplacementHiddenFaces:
+			return edit::nodrawHiddenDisplacementFaces(doc, problem.objects.solids);
 		case Problem::Kind::EdgeOnTexture:
 			return edit::alignEdgeOnTextures(doc, problem.objects.faces);
 		case Problem::Kind::DisplacementLightmap:

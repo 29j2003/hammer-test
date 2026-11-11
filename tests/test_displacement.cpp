@@ -708,3 +708,72 @@ TEST_CASE("displacement: a displacement too large for its lightmap is found, get
 	const std::string text = doc.serialize();
 	CHECK(MapDocument::parse(text).serialize() == text);
 }
+
+TEST_CASE("displacement: a brush with a displacement on one face loses its other faces in the game - unsculpted ones become normal brushes, sculpted ones get nodraw (Julius' wall of 11.11.2026)") {
+	// His wall (brush 151) had a flat displacement on its back face: after the compile the whole
+	// wall was missing, only that face (behind another wall) was drawn.
+	MapDocument doc;
+	History history;
+	auto [wall, wallRef] = edit::createBlock(doc, box({-1378, -1264, 198}, {-990, -592, 432}), "DEV/DEV_BLENDMEASURE2");
+	history.push(std::move(wall));
+	const Solid* wallSolid = doc.findSolid(wallRef);
+	int backId = 0;
+	for (const auto& face : buildBrushGeometry(*wallSolid).faces) {
+		if (face.normal.y < -0.9) backId = wallSolid->sides[static_cast<std::size_t>(face.sideIndex)].id;
+	}
+	REQUIRE(backId != 0);
+	history.push(edit::createDisplacements(doc, {FaceRef{wallRef, backId}}, 3));
+	// A sculpted floor: a displacement on top, the sides keep a normal material.
+	auto [floor, floorRef] = edit::createBlock(doc, box({0, 0, -16}, {512, 512, 0}), "CONCRETE/BLENDROAD_BROKEN01");
+	history.push(std::move(floor));
+	history.push(edit::createDisplacements(doc, {topFace(doc, floorRef)}, 2, 8));
+	// A road piece done right: only nodraw besides the displacement - nothing to say.
+	auto [road, roadRef] = edit::createBlock(doc, box({0, 1024, -16}, {512, 1536, 0}), "TOOLS/TOOLSNODRAW");
+	history.push(std::move(road));
+	{
+		Transaction t(doc, "Road top");
+		t.touchSolid(roadRef);
+		for (auto& side : doc.findSolid(roadRef)->sides) {
+			if (side.plane().normal.z > 0.9) side.material = "CONCRETE/BLENDROAD_BROKEN01";
+		}
+		history.push(t.finish());
+	}
+	history.push(edit::createDisplacements(doc, {topFace(doc, roadRef)}, 2, 8));
+
+	const auto found = displacementBrushesWithHiddenFaces(doc);
+	REQUIRE(found.size() == 2);
+	const auto wallIt = std::find_if(found.begin(), found.end(), [&](const DisplacementBrush& b) { return b.solid == wallRef; });
+	const auto floorIt = std::find_if(found.begin(), found.end(), [&](const DisplacementBrush& b) { return b.solid == floorRef; });
+	REQUIRE(wallIt != found.end());
+	REQUIRE(floorIt != found.end());
+	CHECK(wallIt->flat);
+	CHECK(wallIt->hiddenSides.size() == 5);
+	CHECK_FALSE(floorIt->flat);
+	CHECK(floorIt->hiddenSides.size() == 5);
+	// The checks: a warning with "Make normal brushes" for the wall, a hint with nodraw for the floor.
+	CheckContext context;
+	const auto problems = checkMap(doc, context);
+	const auto flatIt = std::find_if(problems.begin(), problems.end(), [](const Problem& p) { return p.kind == Problem::Kind::FlatDisplacementBrush; });
+	const auto hiddenIt = std::find_if(problems.begin(), problems.end(), [](const Problem& p) { return p.kind == Problem::Kind::DisplacementHiddenFaces; });
+	REQUIRE(flatIt != problems.end());
+	REQUIRE(hiddenIt != problems.end());
+	CHECK(flatIt->severity == Problem::Severity::Warning);
+	CHECK(flatIt->objects.solids == std::vector<SolidRef>{wallRef});
+	CHECK(hiddenIt->severity == Problem::Severity::Info);
+	CHECK(hiddenIt->objects.solids == std::vector<SolidRef>{floorRef});
+	// The fixes, one undo step each.
+	const std::string before = doc.serialize();
+	int count = -1;
+	history.push(edit::removeFlatDisplacements(doc, {}, &count));
+	CHECK(count == 1);
+	CHECK(std::none_of(doc.findSolid(wallRef)->sides.begin(), doc.findSolid(wallRef)->sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; }));
+	CHECK(doc.findSolid(floorRef)->sides.size() == 6);
+	CHECK(sideOf(doc, topFace(doc, floorRef)).dispInfo());   // the sculpted floor keeps its displacement
+	history.push(edit::nodrawHiddenDisplacementFaces(doc, {}, &count));
+	CHECK(count == 5);
+	CHECK(displacementBrushesWithHiddenFaces(doc).empty());
+	CHECK(sideOf(doc, topFace(doc, floorRef)).material == "CONCRETE/BLENDROAD_BROKEN01");
+	history.undo(doc);
+	history.undo(doc);
+	CHECK(doc.serialize() == before);
+}

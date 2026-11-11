@@ -129,6 +129,14 @@ offers **Fix and compile** (aligns those textures to the world, scales stay, one
 Problems panel lists them with **Align to world**, and every edit fixes the faces it touches. The compile window shows
 a line that repeats as one row with a count.
 
+**A brush is missing in the game (it is there in the editor)**
+Does one face of it have a displacement? Source draws only the displacement of such a brush: all its other faces
+vanish, and it no longer seals the map (Hammer behaves the same). A displacement that was never sculpted does nothing
+else, so Mapsmith's Problems panel lists those brushes with **Make normal brushes**, and the compile asks before
+VBSP (**Fix and compile**). Displacement floors that are sculpted get a hint instead: **Make them nodraw** makes the
+faces the game does not draw nodraw, so the editor shows what the game shows; put a separate brush where such a face
+should be seen.
+
 **VRAD warns "Overriding '...' from 'lights.rad' with 'fidelity_lights.rad'"**
 Harmless: the lights file of the installed features gives those glowing materials their own values.
 

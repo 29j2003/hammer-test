@@ -403,6 +403,10 @@ int cmdVmf(const Args& args) {
 		std::cout << "  displacement too large for its lightmap: brush " << big.face.solid.solidId << " side " << big.face.sideId << " (" << big.luxels
 		          << " luxels at scale " << big.scale << ", fits at " << big.neededScale << ")\n";
 	}
+	for (const auto& b : displacementBrushesWithHiddenFaces(doc)) {
+		std::cout << "  brush " << b.solid.solidId << ": " << b.hiddenSides.size() << " face(s) the game does not draw (a "
+		          << (b.flat ? "flat, unsculpted" : "sculpted") << " displacement on another face)\n";
+	}
 	if (const auto edgeOn = edit::edgeOnTextureFaces(doc); !edgeOn.empty()) {
 		std::cout << "  " << edgeOn.size() << " face(s) with the texture edge-on (VRAD: face vectors parallel to face normal), first: brush "
 		          << edgeOn.front().solid.solidId << " side " << edgeOn.front().sideId << "\n";
