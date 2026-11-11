@@ -112,6 +112,11 @@
 #include <filesystem>
 #include <chrono>
 #include <fstream>
+#include <csignal>
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 #include <memory>
 #include <numbers>
 #include <cstdio>
@@ -122,6 +127,7 @@
 #include "samples_folder.h"
 #include "class_picker.h"
 #include "autosaver.h"
+#include "crash_handler.h"
 #include "find_dialog.h"
 #include "history_panel.h"
 #include "replace_materials_dialog.h"
@@ -3448,12 +3454,45 @@ TEST_CASE("safety and search: autosave, crash recovery, .vmx backup, undo histor
 		CHECK(crash->afterCrash);
 		CHECK(crash->mapPath == mapPath);
 
+		// Every edit and every click goes into the actions file the moment it happens (no timer).
+		{
+			QFile actions(Autosaver::actionsPath());
+			REQUIRE(actions.open(QIODevice::ReadOnly));
+			const QString text = QString::fromUtf8(actions.readAll());
+			CHECK(text.contains("session started"));
+			CHECK(text.contains("edit #"));
+			CHECK(text.contains("Create block"));
+		}
+		QPushButton button(QStringLiteral("&Play from here"));
+		button.setObjectName("testButton");
+		button.show();
+		REQUIRE(QTest::qWaitForWindowExposed(&button));
+		QTest::mouseClick(&button, Qt::LeftButton);
+		{
+			QFile actions(Autosaver::actionsPath());
+			REQUIRE(actions.open(QIODevice::ReadOnly));
+			CHECK(QString::fromUtf8(actions.readAll()).contains("click \"Play from here\" [testButton]"));
+		}
+		// What a crash handler wrote last time (crash_handler.h) leads the crash journal.
+		{
+			QFile crashFile(crashFilePath());
+			REQUIRE(crashFile.open(QIODevice::WriteOnly));
+			crashFile.write("Mapsmith 0.2.0 crashed: access violation (code 0xc0000005, reading address 0x10)\nfault at Mapsmith.exe+0x1234\nstack:\n  #0 "
+			                "KERNELBASE.dll+0x10\n  #1 Mapsmith.exe+0x5678\n");
+		}
+
 		// The journal for a report after a crash: written when it changed, kept after a crash.
 		saver.writeJournal();
 		saver.waitForWrites();
 		REQUIRE(QFile::exists(Autosaver::journalPath()));
 		CHECK(lastSessionCrashed());
 		const QString journal = takeCrashJournal();
+		CHECK(journal.startsWith("== Crash =="));
+		CHECK(journal.contains("fault at Mapsmith.exe+0x1234"));
+		CHECK(journal.contains("== Last actions =="));
+		CHECK(journal.contains("click \"Play from here\""));
+		CHECK(lastCrashSummary() == "Mapsmith 0.2.0 crashed: access violation (code 0xc0000005, reading address 0x10) at Mapsmith.exe+0x5678");
+		CHECK_FALSE(QFile::exists(crashFilePath()));   // read once
 		CHECK(journal.contains("== Edits =="));
 		CHECK(journal.contains("Create block"));
 		CHECK(QFile::exists(Autosaver::crashJournalPath()));
@@ -11535,3 +11574,197 @@ TEST_CASE("an autosave opened by hand edits its map, the recent list keeps the m
 	if (window.compiler().running()) window.compiler().cancel();
 	if (finished.isEmpty()) finished.wait(5000);
 }
+
+TEST_CASE("compile: a displacement without four corners stops the compile with Fix and compile (Julius' map of 11.11.2026)") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	// A map whose floor has a displacement on a five-cornered face (what cutting a displacement
+	// brush used to leave) - written straight to the file: no edit in the editor can make one now.
+	const QString mapPath = fromPath(f.mod / "mapsrc/bad_disp.vmf");
+	{
+		MapDocument doc;
+		auto [create, ref] = edit::createBlock(doc, box({0, 0, -16}, {256, 256, 0}), "DEMO/CONCRETEFLOOR001");
+		const Solid* floor = doc.findSolid(ref);
+		int topId = 0;
+		for (const auto& face : buildBrushGeometry(*floor).faces) {
+			if (face.normal.z > 0.9) topId = floor->sides[static_cast<std::size_t>(face.sideIndex)].id;
+		}
+		(void)edit::createDisplacements(doc, {FaceRef{ref, topId}}, 2);
+		Solid* solid = doc.findSolid(ref);
+		Side corner = solid->sides.front();
+		corner.id = doc.newSideId();
+		corner.extra.clear();
+		corner.planePoints = {Vec3{256, 200, 0}, Vec3{200, 256, 0}, Vec3{200, 256, -16}};
+		solid->sides.push_back(corner);
+		REQUIRE(nonQuadDisplacements(doc).size() == 1);
+		const std::string text = doc.serialize();
+		std::filesystem::create_directories(f.mod / "mapsrc");
+		std::ofstream(toPath(mapPath), std::ios::binary) << text;
+	}
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	REQUIRE(window.openMap(mapPath));
+	settle();
+	REQUIRE(nonQuadDisplacements(editor.doc()).size() == 1);
+	// The Problems check lists it as an error.
+	window.problems()->runChecks();
+	CHECK(window.problems()->problemsText().contains("non-quad"));
+	auto* button = window.findChild<QToolButton*>("playFromHere");
+	REQUIRE(button);
+	const QString copyPath = fromPath(f.mod / "mapsrc/bad_disp_here.vmf");
+	// Cancel: nothing is compiled, the map stays as it is.
+	QString answer = "cancel";
+	bool asked = false;
+	QTimer watcher;
+	watcher.setInterval(30);
+	QObject::connect(&watcher, &QTimer::timeout, [&] {
+		auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+		if (!box || box->objectName() != "nonQuadDisplacements") return;
+		asked = true;
+		if (answer == "fix") {
+			if (auto* fix = box->findChild<QAbstractButton*>("fixAndCompile")) fix->click();
+		} else {
+			if (auto* cancel = box->button(QMessageBox::Cancel)) cancel->click();
+		}
+	});
+	watcher.start();
+	button->defaultAction()->trigger();
+	settle();
+	CHECK(asked);
+	CHECK_FALSE(QFile::exists(copyPath));
+	CHECK(nonQuadDisplacements(editor.doc()).size() == 1);
+	// Fix and compile: the face is flat (one undo step) and the copy is compiled.
+	asked = false;
+	answer = "fix";
+	button->defaultAction()->trigger();
+	settle();
+	watcher.stop();
+	CHECK(asked);
+	CHECK(nonQuadDisplacements(editor.doc()).empty());
+	CHECK(QFile::exists(copyPath));
+	if (window.compiler().running()) {
+		QSignalSpy done(&window.compiler(), &CompileRunner::finished);
+		window.compiler().cancel();
+		done.wait(5000);
+	}
+	editor.undo();
+	CHECK(nonQuadDisplacements(editor.doc()).size() == 1);
+}
+
+#ifndef _WIN32
+TEST_CASE("crash handler: a crash writes what happened and the stack as module+offset (Linux: a child process crashes)") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	qputenv("XDG_DATA_HOME", QDir(home.path()).filePath("data").toUtf8());
+	QFile::remove(crashFilePath());
+	const pid_t child = fork();
+	REQUIRE(child >= 0);
+	if (child == 0) {
+		installCrashHandler(QStringLiteral("9.9.9"));
+		std::raise(SIGSEGV);
+		_exit(0);   // not reached
+	}
+	int status = 0;
+	REQUIRE(waitpid(child, &status, 0) == child);
+	CHECK(WIFSIGNALED(status));
+	const QString text = takeCrashFile();
+	CHECK(text.startsWith("Mapsmith 9.9.9 crashed: segmentation fault"));
+	CHECK(text.contains("stack:\n  #0 "));
+	CHECK(text.contains("+0x"));
+	CHECK(takeCrashFile().isEmpty());   // read once
+}
+#endif
+
+#ifndef _WIN32
+TEST_CASE("play from here: both parts of the button on a map with an NPC scene, saved under a dotted name, VBSP failing") {
+	// Julius' crash of 11.11.2026 came right after a click on Play from here (map with a
+	// logic_choreographed_scene, scene files written on save, VBSP stopping on the map).
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	REQUIRE(window.openMap(fromPath(f.mod / "mapsrc/demo.vmf")));
+	settle();
+	int citizen = 0;
+	for (const auto& e : editor.doc().entities) {
+		if (e.get("targetname") == "citizen_01") citizen = e.id;
+	}
+	REQUIRE(citizen != 0);
+	editor.commit(edit::createChoreoScene(editor.doc(), citizen, "demo"));
+	// Saved under another (dotted) name: the scene file path moves with it ("Scene file paths").
+	const QString mapPath = fromPath(f.mod / "mapsrc/working.title.vmf");
+	QString error;
+	REQUIRE(editor.saveMap(mapPath, &error));
+	settle();
+	const auto script = [&](const QString& name, const QString& body) {
+		const QString path = home.filePath(name);
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(("#!/bin/sh\n" + body + "\n").toUtf8());
+		file.close();
+		file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+		return path;
+	};
+	GameSettings tools = editor.gameSettings();
+	tools.vbsp = script("vbsp", "echo 'Loading map'; echo 'Trying to create a non-quad displacement! (entity 0, brush 85)'; exit 1");
+	tools.vvis = script("vvis", "true");
+	tools.vrad = script("vrad", "true");
+	tools.gameExe = script("game", "true");
+	editor.setGameSettings(editor.gameKey(), tools);
+	auto* button = window.findChild<QToolButton*>("playFromHere");
+	REQUIRE(button);
+	REQUIRE(button->menu());
+	window.view3D()->camera().position = QVector3D(0, 0, 4000);   // far above: no floor below, the player falls
+	for (int round = 0; round < 3; ++round) {
+		CAPTURE(round);
+		if (round == 1) button->menu()->findChild<QAction*>("playHere/area")->setChecked(true);
+		if (round == 2) editor.setSelection({});
+		QSignalSpy done(&window.compiler(), &CompileRunner::finished);
+		QTest::mouseClick(button, Qt::LeftButton, {}, QPoint(6, button->height() / 2));   // the button part
+		settle();
+		if (window.compiler().running()) REQUIRE(done.wait(20000));
+		settle();
+		REQUIRE(done.size() == 1);
+		CHECK_FALSE(done.front().front().toBool());   // VBSP failed - reported, not crashed
+		CHECK(QFile::exists(fromPath(f.mod / "mapsrc/working.title_here.vmf")));
+		CHECK(window.compileWindow()->summary().contains("Stopped"));
+	}
+	// The arrow part opens the options menu; closing it changes nothing.
+	bool menuShown = false;
+	QTimer::singleShot(200, [&] {
+		if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+			menuShown = true;
+			menu->close();
+		}
+	});
+	QTest::mouseClick(button, Qt::LeftButton, {}, QPoint(button->width() - 4, button->height() / 2));
+	settle();
+	QTest::qWait(300);
+	CHECK(menuShown);
+	CHECK_FALSE(window.compiler().running());
+	CHECK(editor.filePath() == mapPath);
+}
+#endif

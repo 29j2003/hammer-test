@@ -417,10 +417,20 @@ void Editor::stampEdits(const Change& change) {
 	}
 }
 
+void Editor::guardDisplacements(Change& change) {
+	// No edit may leave a displacement on a face without four corners: VBSP would stop the whole
+	// compile ("Trying to create a non-quad displacement!"). The face stays, flat, with its material.
+	if (const int dropped = dropNonQuadDisplacements(m_doc, change); dropped > 0) {
+		emit message(tr("%n displacement face(s) lost their displacement in \"%1\": they no longer have four corners (VBSP would stop).", nullptr, dropped)
+		                 .arg(QString::fromStdString(change.name)));
+	}
+}
+
 void Editor::commit(Change change) {
 	if (change.empty()) {
 		return;
 	}
+	guardDisplacements(change);
 	stampEdits(change);
 	noteEdit(describeChange(change));
 	m_history.push(std::move(change));
@@ -433,6 +443,7 @@ void Editor::commitMerged(Change change) {
 	if (change.empty()) {
 		return;
 	}
+	guardDisplacements(change);
 	stampEdits(change);
 	noteEdit(describeChange(change), true);
 	m_history.push(std::move(change), true);
@@ -2153,6 +2164,13 @@ void Editor::notePick(const PickTrace& trace) {
 	++m_journalRevision;
 	m_pickJournal.push_back(formatPickTrace(trace, ++m_pickCount));
 	while (m_pickJournal.size() > 50) m_pickJournal.pop_front();
+	// One line for the actions file: where it was clicked and what it picked.
+	const std::string& entry = m_pickJournal.back();
+	std::string line = entry.substr(0, entry.find('\n'));
+	if (const auto result = entry.find("  result "); result != std::string::npos) {
+		line += " ->" + entry.substr(result + 8, entry.find('\n', result) - result - 8);
+	}
+	emit journalLine(QString::fromStdString(line));
 }
 
 void Editor::noteDrag(const std::string& line) {
@@ -2171,6 +2189,7 @@ void Editor::noteEdit(const std::string& text, bool merged) {
 	}
 	m_editJournal.push_back(entry);
 	while (m_editJournal.size() > 30) m_editJournal.pop_front();
+	emit journalLine(QStringLiteral("edit ") + QString::fromStdString(entry.substr(0, entry.find('\n'))));
 }
 
 void Editor::notePlan(std::string text) const {

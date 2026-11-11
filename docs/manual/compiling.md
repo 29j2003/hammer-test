@@ -122,7 +122,8 @@ While the tools run, the **Compile** tab in the bottom panel shows:
 - **Warnings and errors**: each message of the tools in plain words, with what it means and how to fix it. Known
   harmless messages (such as a missing optional `lights.rad`) are marked as harmless. Common errors are explained, among
   them *Texture axis perpendicular to face*, *Bad surface extents*, *MAX_POINTS_ON_WINDING*, an areaportal that
-  *doesn't touch two areas*, *Too many light styles*, a displacement on a face without 4 corners and VVIS's missing
+  *doesn't touch two areas*, *Too many light styles*, a displacement on a face without 4 corners (Mapsmith checks for
+  those before the compile starts and offers **Fix and compile**) and VVIS's missing
   portal file (*LoadPortals*: the map leaks);
 - **Full output of the compile tools**: the complete text, for the cases the summary does not cover.
 

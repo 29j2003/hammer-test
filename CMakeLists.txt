@@ -15,6 +15,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(MSVC)
 	# getenv & co. are used read-only and on purpose; keep the build log free of C4996 noise.
 	add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+	# Release builds write a .pdb next to the .exe (same optimisation): the crash file lists frames as
+	# module+offset, the CI keeps the .pdb ("Mapsmith-windows-pdb") to turn them into functions.
+	set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo,Release>:ProgramDatabase>")
+	add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
 endif()
 
 option(SME_BUILD_APP   "Build the Qt editor application" ON)

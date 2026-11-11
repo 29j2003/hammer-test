@@ -8,6 +8,7 @@ set(CMAKE_AUTOMOC ON)
 add_library(smeapp STATIC
 	asset_browser.cpp
 	autosaver.cpp
+	crash_handler.cpp
 	compile.cpp
 	compile_window.cpp
 	copy_paste.cpp

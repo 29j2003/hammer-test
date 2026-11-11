@@ -4,6 +4,10 @@
 
 #include <sme/brush.h>
 #include <sme/displacement.h>
+#include <sme/history.h>
+#include <sme/checks.h>
+#include <sme/shapes.h>
+#include <sme/csg.h>
 #include <sme/editing.h>
 
 #include <algorithm>
@@ -500,4 +504,127 @@ TEST_CASE("blend along selection: the first material near the road when asked, n
 	o.width = 10;
 	CHECK(blendNearAlpha(10, o) == doctest::Approx(255));
 	CHECK(blendNearAlpha(10.5, o) == doctest::Approx(0));
+}
+
+TEST_CASE("displacement: cutting a displacement brush never leaves a face without four corners (VBSP: non-quad displacement)") {
+	// Julius' map of 11.11.2026: pieces of his blend floor, cut by round shapes and by the road
+	// builder, kept the floor's dispinfo on three- and five-cornered faces - VBSP stopped.
+	MapDocument doc;
+	auto [create, ref] = edit::createBlock(doc, box({0, 0, -16}, {512, 512, 16}), "NATURE/BLENDGROUNDTOGRASS");
+	const FaceRef top = topFace(doc, ref);
+	(void)edit::createDisplacements(doc, {top}, 3);
+	REQUIRE(sideOf(doc, top).dispInfo());
+	const Solid floor = *doc.findSolid(ref);
+
+	// A round post through the floor (a cylinder of 12 sides) carves a hole whose pieces have
+	// slanted edges: none of them may keep the grid on a face that is not four-cornered.
+	ShapeOptions round;
+	round.kind = ShapeOptions::Kind::Cylinder;
+	round.sides = 12;
+	const auto cutters = makeShape(doc, box({100, 140, -64}, {260, 300, 64}), round, "TOOLS/TOOLSNODRAW");
+	REQUIRE(!cutters.empty());
+	std::vector<Solid> pieces{floor};
+	for (const auto& cutter : cutters) {
+		std::vector<Solid> next;
+		for (const auto& piece : pieces) {
+			for (auto& part : subtractSolid(doc, piece, cutter)) next.push_back(std::move(part));
+		}
+		pieces = std::move(next);
+	}
+	REQUIRE(pieces.size() > 2);
+	int kept = 0;
+	for (const auto& piece : pieces) {
+		for (const auto& face : buildBrushGeometry(piece).faces) {
+			const Side& side = piece.sides[static_cast<std::size_t>(face.sideIndex)];
+			if (!side.dispInfo()) continue;
+			++kept;
+			CHECK(face.vertices.size() == 4);
+		}
+	}
+	// A cut through the face drops the grid (it belonged to the whole face).
+	CHECK(kept == 0);
+
+	// A plane that does not touch the top face keeps it (only the bottom half is cut away).
+	auto [upper, lower] = splitSolid(doc, floor, Plane{{0, 0, 1}, 0}, floor.sides.front());
+	REQUIRE(upper);
+	REQUIRE(lower);
+	const auto stillDisplaced = [](const Solid& s) { return std::any_of(s.sides.begin(), s.sides.end(), [](const Side& side) { return side.dispInfo() != nullptr; }); };
+	CHECK(stillDisplaced(*upper));
+	CHECK_FALSE(stillDisplaced(*lower));
+}
+
+TEST_CASE("displacement: non-quad displacements are found, made flat in one step, and an edit never leaves one") {
+	MapDocument doc;
+	History history;
+	auto [create, ref] = edit::createBlock(doc, box({0, 0, 0}, {256, 256, 16}), "NATURE/BLENDGROUNDTOGRASS");
+	history.push(std::move(create));
+	const FaceRef top = topFace(doc, ref);
+	history.push(edit::createDisplacements(doc, {top}, 2));
+	CHECK(nonQuadDisplacements(doc).empty());
+	// Cut a corner off by editing the planes directly (what the old cutting did): the top now has five corners.
+	const std::string before = doc.serialize();
+	{
+		Transaction t(doc, "Cut a corner");
+		t.touchSolid(ref);
+		Solid* solid = doc.findSolid(ref);
+		Side corner = solid->sides.front();
+		corner.id = doc.newSideId();
+		corner.extra.clear();
+		corner.planePoints = {Vec3{256, 200, 16}, Vec3{200, 256, 16}, Vec3{200, 256, 0}};
+		solid->sides.push_back(corner);
+		Change change = t.finish();
+		const auto bad = nonQuadDisplacements(doc);
+		REQUIRE(bad.size() == 1);
+		CHECK(bad.front().corners == 5);
+		CHECK(bad.front().face == top);
+		// The check reports it as an error with a fix.
+		CheckContext context;
+		const auto problems = checkMap(doc, context);
+		const auto it = std::find_if(problems.begin(), problems.end(), [](const Problem& p) { return p.kind == Problem::Kind::NonQuadDisplacement; });
+		REQUIRE(it != problems.end());
+		CHECK(it->severity == Problem::Severity::Error);
+		CHECK(it->objects.faces.size() == 1);
+		CHECK(it->message.find("non-quad") != std::string::npos);
+		// The commit guard drops it and the change's after state follows (redo gives the flat face).
+		CHECK(dropNonQuadDisplacements(doc, change) == 1);
+		CHECK(nonQuadDisplacements(doc).empty());
+		REQUIRE(change.solids.size() == 1);
+		REQUIRE(change.solids.front().after);
+		const auto& after = *change.solids.front().after;
+		CHECK(std::none_of(after.sides.begin(), after.sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; }));
+		history.push(std::move(change));
+	}
+	history.undo(doc);
+	CHECK(doc.serialize() == before);
+	CHECK(sideOf(doc, top).dispInfo());
+	history.redo(doc);
+	CHECK(nonQuadDisplacements(doc).empty());
+	CHECK_FALSE(sideOf(doc, top).dispInfo());
+
+	// The autofix on its own: one undo step, only the listed faces, four-cornered ones stay.
+	history.undo(doc);
+	{
+		Transaction t(doc, "Cut a corner again");
+		t.touchSolid(ref);
+		Solid* solid = doc.findSolid(ref);
+		Side corner = solid->sides.front();
+		corner.id = doc.newSideId();
+		corner.extra.clear();
+		corner.planePoints = {Vec3{256, 200, 16}, Vec3{200, 256, 16}, Vec3{200, 256, 0}};
+		solid->sides.push_back(corner);
+		history.push(t.finish());
+	}
+	auto [other, otherRef] = edit::createBlock(doc, box({512, 0, 0}, {768, 256, 16}), "NATURE/BLENDGROUNDTOGRASS");
+	history.push(std::move(other));
+	const FaceRef good = topFace(doc, otherRef);
+	history.push(edit::createDisplacements(doc, {good}, 2));
+	int count = -1;
+	Change fix = edit::fixNonQuadDisplacements(doc, {}, &count);
+	CHECK(count == 1);
+	CHECK_FALSE(fix.empty());
+	CHECK(nonQuadDisplacements(doc).empty());
+	CHECK(sideOf(doc, good).dispInfo());
+	// The file still reads back the same.
+	const std::string text = doc.serialize();
+	CHECK(MapDocument::parse(text).serialize() == text);
 }

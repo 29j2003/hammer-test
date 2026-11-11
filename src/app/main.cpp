@@ -38,6 +38,7 @@
 
 #include "asset_browser.h"
 #include "autosaver.h"
+#include "crash_handler.h"
 #include "plural_text.h"
 #include "editor.h"
 #include "icons.h"
@@ -123,6 +124,8 @@ int main(int argc, char** argv) {
 	QApplication::setApplicationName("Mapsmith");
 	migrateOldSettings();
 	QApplication::setApplicationVersion(SME_VERSION);
+	// Where it crashed goes into a file the next start shows (crash_handler.h).
+	installCrashHandler(QStringLiteral(SME_VERSION));
 	applyDarkStyle(app);
 	PluralTranslator plurals;
 	QApplication::installTranslator(&plurals);

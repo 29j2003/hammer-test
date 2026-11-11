@@ -102,6 +102,8 @@ public:
 	bool openRecovered(const QString& autosavePath, const QString& originalPath, QString* error = nullptr);
 	/// Records an undoable change and notifies everyone.
 	void commit(Change change);
+	/// Faces of the change's brushes that lost their four corners drop their displacement (see dropNonQuadDisplacements).
+	void guardDisplacements(Change& change);
 	/// Like commit(), but folds into the previous change of the same name (paint strokes).
 	void commitMerged(Change change);
 	void undo();
@@ -495,6 +497,8 @@ public:
 	void setCordons(const CordonSet& cordons);
 
 signals:
+	/// One line about an edit or a click in a view, the moment it is noted (the crash journal's actions file).
+	void journalLine(const QString& line);
 	void gameAboutToChange();   ///< Background readers of the old game's files must stop now
 	/// Another game was opened (file system, FGDs and models are new).
 	void gameChanged();

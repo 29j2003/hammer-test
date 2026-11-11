@@ -61,6 +61,7 @@ add_library(smecore STATIC
 	src/road_corridor.cpp
 	src/prism_tidy.cpp
 	src/grid_snap.cpp
+	src/crash_log.cpp
 	src/overlay_tools.cpp
 	src/gap_fill.cpp
 	src/prop_placement.cpp
