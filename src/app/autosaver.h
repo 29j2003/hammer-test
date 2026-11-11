@@ -9,9 +9,11 @@
 // is still there at the next start, the editor did not close normally and the newest autosave
 // (when it is newer than the map file) is offered back.
 //
-// Next to the marker the editor report's journal (last clicks, edits, road plans) is written a few
-// seconds after it changed. After a crash it is kept as "last-crash-journal.txt" and offered as an
-// editor report, so the clicks that led to the crash reach the report too.
+// Next to the marker the editor report's journal (last clicks, edits, road plans) is written half a
+// second after it changed, and every action (clicks, shortcuts, menu entries, dialogs, edits) is
+// appended to an actions file the moment it happens. After a crash both (and what the crash
+// handler wrote, crash_handler.h) are kept as "last-crash-journal.txt" and offered as an editor
+// report, so the clicks that led to the crash reach the report too.
 
 #pragma once
 
@@ -19,6 +21,7 @@
 #include <QObject>
 #include <QStringList>
 #include <QThreadPool>
+#include <QFile>
 #include <QTimer>
 
 #include <functional>
@@ -66,6 +69,11 @@ public:
 	/// The running session's journal (see the file comment) and the one kept after a crash.
 	[[nodiscard]] static QString journalPath();
 	[[nodiscard]] static QString crashJournalPath();
+	/// The running session's actions (button clicks, shortcuts, menu entries, dialogs, edits),
+	/// one line each, written the moment they happen - the last lines before a crash survive it.
+	[[nodiscard]] static QString actionsPath();
+	/// Appends one line to the actions file now (no-op outside a session).
+	void noteAction(const QString& line);
 	/// Writes the journal now if it changed since the last write (also every few seconds).
 	void writeJournal();
 
@@ -73,6 +81,9 @@ public:
 	void startSession();
 	/// Removes the marker: the session ended normally. Called when the application quits.
 	void endSession();
+
+protected:
+	bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
 	void updateMarker();
@@ -85,6 +96,8 @@ private:
 	unsigned m_savedRevision = 0;     ///< History revision of the last autosave
 	QString m_markerMap;              ///< Map path written into the marker
 	bool m_sessionOpen = false;
+	QFile m_actions;                  ///< actionsPath(), open for appending while the session runs
+	int m_actionLines = 0;
 };
 
 /// Whether the last session did not end normally (its marker is still there). Call before an
@@ -93,6 +106,8 @@ private:
 /// The journal of the crashed session (empty if none), kept as crashJournalPath() so the new
 /// session does not overwrite it. Call before an Autosaver starts the new session.
 [[nodiscard]] QString takeCrashJournal();
+/// One line about the crash takeCrashJournal() found a crash file for (what and where), else empty.
+[[nodiscard]] QString lastCrashSummary();
 /// Autosaves of the last session if it did not end normally and they are newer than its map.
 /// Call before an Autosaver starts the new session (it overwrites the marker).
 [[nodiscard]] std::optional<RecoveryOffer> recoveryAfterCrash();

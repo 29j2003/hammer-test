@@ -120,8 +120,27 @@ struct SewItem {
 /// average, so neighbouring displacements have no cracks. Returns how many vertices moved.
 int sewDisplacements(const std::vector<SewItem>& items);
 
+/// A displacement on a face that does not have exactly four corners: VBSP stops the compile
+/// ("Trying to create a non-quad displacement!"). Cutting a displacement brush used to leave them.
+struct NonQuadDisplacement {
+	FaceRef face;
+	int corners = 0;   ///< The face's corners (3, 5, ...)
+	Vec3 center;       ///< Middle of the face, for messages
+};
+/// Every displacement face of the map without four corners (world and brush entities).
+[[nodiscard]] std::vector<NonQuadDisplacement> nonQuadDisplacements(const MapDocument& doc);
+/// Removes the dispinfo of the brush's faces that do not have four corners (the face keeps its
+/// material). Returns how many were removed.
+int dropNonQuadDisplacements(Solid& solid);
+/// The guard of every edit (Editor::commit): brushes the change left in `doc` lose the dispinfo
+/// of faces without four corners, and the change's "after" states follow. Returns how many.
+int dropNonQuadDisplacements(MapDocument& doc, Change& change);
+
 namespace edit {
 
+/// Makes the listed displacement faces flat (or, with no list, every face of the map that
+/// nonQuadDisplacements finds). One undo step; `count` gets the number of faces.
+[[nodiscard]] Change fixNonQuadDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces = {}, int* count = nullptr);
 /// Turns the faces into displacements of `power` (faces without four corners and faces that
 /// already are displacements are skipped and counted in `skipped`). One undo step.
 [[nodiscard]] Change createDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces, int power, double elevation = 0, int* skipped = nullptr);

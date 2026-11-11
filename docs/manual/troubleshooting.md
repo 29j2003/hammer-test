@@ -107,6 +107,13 @@ Build the cubemaps; see [Cubemaps](compiling.html#cubemaps).
 Use the **Fast** preset while you work, turn small world brushes into `func_detail`, use a larger lightmap scale on big
 surfaces, and compile only a part of the map with [cordons](building.html#cordons).
 
+**VBSP stops with "Trying to create a non-quad displacement!"**
+A displacement sits on a face that does not have four corners - in older versions of Mapsmith cutting a displacement
+(Carve, the road builder, rounding a corner next to it) could leave such pieces. Mapsmith now checks for them before
+every compile: **Fix and compile** makes those faces flat (their material stays, one undo step), **Show them** selects
+them. The Problems panel lists them as an error with the same fix. Cutting a displacement now always makes the cut
+faces flat, as Hammer does.
+
 ## Maps and files
 
 **Mapsmith crashed. Is my work gone?**
@@ -153,8 +160,10 @@ texture flow plans, the Log and Problems texts and a picture of each view. Your 
 by `<user>` and `~`. Nothing is sent anywhere by Mapsmith: the file stays on your PC until you send it yourself.
 
 While Mapsmith runs, it keeps the last clicks and edits in a small file in its own data folder, and deletes it when it
-closes normally. After a crash it keeps that file and offers a report at the next start: the report then also holds
-the clicks and edits that led to the crash (`last_session.log`).
+closes normally; every button, menu entry, shortcut and edit is written to it the moment it happens. If Mapsmith
+crashes, it also writes where in its code it stopped (a few lines like `Mapsmith.exe+0x4d2f10`). At the next start
+it says what happened and offers a report: the report then also holds the crash and the clicks and edits that led to
+it (`last_session.log`).
 
 This is not the same as **Pack game report** (Map menu, Compile and Problems panels, Project › Build from source),
 which packs what `fidelity_report` wrote while you played.

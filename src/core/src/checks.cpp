@@ -6,6 +6,7 @@
 #include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/choreography.h>
+#include <sme/displacement.h>
 #include <sme/doors.h>
 #include <sme/edge_round.h>
 #include <sme/filesystem.h>
@@ -150,6 +151,20 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		}
 		p.from = std::to_string(ref.entityId) + ":" + std::to_string(ref.solidId);
 	};
+	// Displacements on faces without four corners: VBSP stops the whole compile at the first one.
+	if (const auto bad = nonQuadDisplacements(doc); !bad.empty()) {
+		Problem p;
+		p.kind = Problem::Kind::NonQuadDisplacement;
+		p.severity = Problem::Severity::Error;
+		std::ostringstream where;
+		where << formatPoint(bad.front().center);
+		p.message = std::to_string(bad.size()) + " displacement face(s) do not have four corners (the first, " + std::to_string(bad.front().corners) +
+		            " corners, near " + where.str() + ") - VBSP stops with \"Trying to create a non-quad displacement!\".";
+		p.howToFix = "Make them flat faces (their material stays); sculpt them again after making them four-cornered if needed.";
+		for (const auto& b : bad) p.objects.faces.push_back(b.face);
+		p.fixLabel = "Make them flat";
+		problems.push_back(std::move(p));
+	}
 	// Corners off the grid (arches, rounded edges): one note for all, only brushes that can be snapped.
 	Problem offGrid;
 	offGrid.kind = Problem::Kind::OffGridCorners;
@@ -619,6 +634,8 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 			}
 			return t.finish();
 		}
+		case Problem::Kind::NonQuadDisplacement:
+			return edit::fixNonQuadDisplacements(doc, problem.objects.faces);
 		case Problem::Kind::OffGridCorners: {
 			int snapped = 0, refused = 0;
 			return edit::snapToGrid(doc, problem.objects, 1, &snapped, &refused);

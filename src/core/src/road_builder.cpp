@@ -1374,12 +1374,16 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 			if (auto slab = insideOf(ids, solid, slabCutters[c])) pieces.push_back(std::move(*slab));
 		}
 	};
+	int flattened = 0;
+	const auto displaced = [](const Solid& s) { return std::any_of(s.sides.begin(), s.sides.end(), [](const Side& side) { return side.dispInfo() != nullptr; }); };
 	for (const auto& ref : replace) {
 		if (stopped(o)) return giveUp();
 		const Solid* solid = doc.findSolid(ref);
 		if (!solid) continue;
 		std::vector<Solid> pieces;
 		carveFloor(*solid, pieces);
+		// A displacement floor that was cut lost its grid (it belonged to the whole face).
+		if (displaced(*solid) && std::any_of(pieces.begin(), pieces.end(), [&](const Solid& p) { return !displaced(p); })) ++flattened;
 		tidyCarved(ids, *solid, pieces, mainMaterial(*solid), plan.crossLines);
 		absorbSlivers(pieces);
 		// What is left beside a curve was road: it gets the fill material, else the ground's.
@@ -1398,6 +1402,9 @@ RoadBuildPlan planRoadBuild(const MapDocument& doc, MapDocument& ids, const std:
 		}
 		keepId(ref, pieces);
 		plan.changed.push_back({ref, std::move(pieces)});
+	}
+	if (flattened > 0) {
+		plan.notes.push_back(std::to_string(flattened) + " floor displacement(s) were cut by the road: the cut pieces are flat now (a displacement belongs to its whole face) - sculpt or blend them again if needed");
 	}
 	if (raisedPieces > 0) {
 		plan.notes.push_back(std::to_string(raisedPieces) + " piece(s) of the floor beside the road rise to the sidewalk (the road is narrower than the street)");

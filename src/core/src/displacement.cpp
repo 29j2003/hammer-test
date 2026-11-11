@@ -232,6 +232,65 @@ bool removeDisplacement(Side& side) {
 	return side.extra.size() != before;
 }
 
+int dropNonQuadDisplacements(Solid& solid) {
+	if (std::none_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; })) return 0;
+	const auto geometry = buildBrushGeometry(solid);
+	if (!geometry.valid) return 0;
+	int dropped = 0;
+	for (const auto& face : geometry.faces) {
+		Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
+		if (side.dispInfo() && face.vertices.size() != 4 && removeDisplacement(side)) ++dropped;
+	}
+	return dropped;
+}
+
+std::vector<NonQuadDisplacement> nonQuadDisplacements(const MapDocument& doc) {
+	std::vector<NonQuadDisplacement> out;
+	const auto visit = [&](const SolidRef& ref, const Solid& solid) {
+		if (std::none_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; })) return;
+		const auto geometry = buildBrushGeometry(solid);
+		if (!geometry.valid) return;
+		for (const auto& face : geometry.faces) {
+			const Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
+			if (!side.dispInfo() || face.vertices.size() == 4) continue;
+			Vec3 center;
+			for (const auto& v : face.vertices) center = center + v;
+			if (!face.vertices.empty()) center = center * (1.0 / static_cast<double>(face.vertices.size()));
+			out.push_back({FaceRef{ref, side.id}, static_cast<int>(face.vertices.size()), center});
+		}
+	};
+	for (const auto& solid : doc.world.solids) visit(SolidRef{0, solid.id}, solid);
+	for (const auto& entity : doc.entities) {
+		for (const auto& solid : entity.solids) visit(SolidRef{entity.id, solid.id}, solid);
+	}
+	return out;
+}
+
+int dropNonQuadDisplacements(MapDocument& doc, Change& change) {
+	int dropped = 0;
+	for (auto& state : change.solids) {
+		if (!state.after) continue;
+		Solid* solid = doc.findSolid(state.ref);
+		if (!solid) continue;
+		if (const int n = dropNonQuadDisplacements(*solid); n > 0) {
+			dropped += n;
+			state.after = *solid;
+		}
+	}
+	for (auto& state : change.entities) {
+		if (!state.after) continue;
+		Entity* entity = doc.findEntity(state.entityId);
+		if (!entity) continue;
+		int n = 0;
+		for (auto& solid : entity->solids) n += dropNonQuadDisplacements(solid);
+		if (n > 0) {
+			dropped += n;
+			state.after = *entity;
+		}
+	}
+	return dropped;
+}
+
 std::vector<Vec3> displacementCorners(const FaceGeometry& face, const Vec3& start) {
 	if (face.vertices.size() != 4) return {};
 	// Clockwise seen from outside (the face's vertices run counter-clockwise), from the corner
@@ -565,6 +624,30 @@ Change createDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces, 
 		storeDisplacement(*it, *made);
 	}
 	if (skipped) *skipped = skip;
+	return t.finish();
+}
+
+Change fixNonQuadDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces, int* count) {
+	std::vector<FaceRef> targets = faces;
+	if (targets.empty()) {
+		for (const auto& bad : nonQuadDisplacements(doc)) targets.push_back(bad.face);
+	}
+	Transaction t(doc, "Flatten displacements without four corners");
+	int fixed = 0;
+	for (const auto& ref : targets) {
+		Solid* solid = doc.findSolid(ref.solid);
+		if (!solid) continue;
+		const auto geometry = buildBrushGeometry(*solid);
+		const auto it = std::find_if(solid->sides.begin(), solid->sides.end(), [&](const Side& s) { return s.id == ref.sideId; });
+		const FaceGeometry* face = faceOfSide(geometry, *solid, ref.sideId);
+		if (it == solid->sides.end() || !it->dispInfo() || (face && face->vertices.size() == 4)) continue;
+		t.touchSolid(ref.solid);
+		Solid* touched = doc.findSolid(ref.solid);
+		for (auto& side : touched->sides) {
+			if (side.id == ref.sideId && removeDisplacement(side)) ++fixed;
+		}
+	}
+	if (count) *count = fixed;
 	return t.finish();
 }
 

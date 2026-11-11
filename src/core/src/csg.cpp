@@ -3,6 +3,7 @@
 #include <sme/csg.h>
 
 #include <sme/brush.h>
+#include <sme/text.h>
 
 #include <algorithm>
 #include <cmath>
@@ -264,11 +265,29 @@ std::pair<std::optional<Solid>, std::optional<Solid>> splitSolid(MapDocument& do
 	if (lowest >= -EPS) {
 		return {solid, std::nullopt};   // all in front
 	}
-	Solid back = solid;
+	// A displacement face the plane runs through loses its grid in both parts: the grid belongs to
+	// the whole face (its corners, startposition). A cut piece would keep one that does not fit -
+	// a three- or five-cornered face stops VBSP ("Trying to create a non-quad displacement!"), a
+	// four-cornered one would stretch the old sculpt over the piece. Hammer drops it too.
+	Solid source = solid;
+	for (const auto& face : geometry.faces) {
+		Side& side = source.sides[static_cast<std::size_t>(face.sideIndex)];
+		if (!side.dispInfo()) continue;
+		bool behind = false, inFront = false;
+		for (const auto& v : face.vertices) {
+			const double d = dot(plane.normal, v) - plane.dist;
+			behind = behind || d < -EPS;
+			inFront = inFront || d > EPS;
+		}
+		if (behind && inFront) {
+			std::erase_if(side.extra, [](const KvNode& node) { return node.block && iequals(node.key, "dispinfo"); });
+		}
+	}
+	Solid back = source;
 	back.sides.push_back(makeSide(doc, plane, capTexture.material, &capTexture));
 	removeUnusedSides(back);
 	tidyPlanePoints(back);
-	Solid front = freshIds(doc, solid);
+	Solid front = freshIds(doc, source);
 	front.sides.push_back(makeSide(doc, Plane{-plane.normal, -plane.dist}, capTexture.material, &capTexture));
 	removeUnusedSides(front);
 	tidyPlanePoints(front);

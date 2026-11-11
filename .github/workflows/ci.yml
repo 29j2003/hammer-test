@@ -141,3 +141,11 @@ jobs:
             dist/*.exe
             dist/*.sha256
           retention-days: 30
+      # The symbols of this build: a crash file's "Mapsmith.exe+0x..." frames become functions and lines.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Mapsmith-windows-pdb
+          path: |
+            build/src/app/Release/Mapsmith.pdb
+            build/src/probe/Release/sme-probe.pdb
+          retention-days: 90

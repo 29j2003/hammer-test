@@ -64,6 +64,7 @@ struct Problem {
 		OffGridCorners,         ///< Brushes with corners off the 1-unit grid that can be snapped (fix: snap them; grid_snap)
 		ScenePlan,              ///< choreography: a scene step without an NPC, sound or way (objects = the scene)
 		HiddenFaces,            ///< optimization_checks: faces flat against a func_detail brush nobody sees (fix: nodraw)
+		NonQuadDisplacement,    ///< Displacements on faces without four corners: VBSP stops (objects.faces; fix: make them flat)
 	};
 
 	Severity severity = Severity::Warning;

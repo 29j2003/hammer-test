@@ -2,8 +2,11 @@
 
 #include "autosaver.h"
 
+#include "crash_handler.h"
+
 #include "editor.h"
 
+#include <QAbstractButton>
 #include <QCheckBox>
 #include <QCoreApplication>
 #include <QDialog>
@@ -14,14 +17,20 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QLocale>
+#include <QMenu>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSettings>
+#include <QShortcutEvent>
 #include <QStandardPaths>
+#include <QTime>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <sme/autosave.h>
+#include <sme/crash_log.h>
 
 #include <memory>
 
@@ -78,10 +87,13 @@ Autosaver::Autosaver(Editor* editor, QObject* parent) : QObject(parent), m_edito
 	connect(editor, &Editor::documentChanged, this, [this] {
 		if (m_sessionOpen && m_editor->filePath() != m_markerMap) updateMarker();
 	});
-	// The journal for a report after a crash: written a few seconds after it changed.
+	// The journal for a report after a crash: written half a second after it changed.
 	m_journalWritten = editor->journalRevision();
 	connect(&m_journalTimer, &QTimer::timeout, this, &Autosaver::writeJournal);
-	m_journalTimer.start(3000);
+	m_journalTimer.start(500);
+	// Edits and clicks go to the actions file at once (a crash right after them keeps them).
+	connect(editor, &Editor::journalLine, this, [this](const QString& line) { noteAction(line); });
+	QCoreApplication::instance()->installEventFilter(this);
 	connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] {
 		waitForWrites();
 		endSession();
@@ -128,6 +140,77 @@ QString Autosaver::markerPath() {
 
 QString Autosaver::journalPath() {
 	return QDir(appDataFolder()).filePath("session-journal.txt");
+}
+
+QString Autosaver::actionsPath() {
+	return QDir(appDataFolder()).filePath("session-actions.txt");
+}
+
+void Autosaver::noteAction(const QString& line) {
+	if (!m_sessionOpen) return;
+	if (!m_actions.isOpen() || m_actionLines >= 4000) {
+		// Fresh at session start; when long, start over (the last lines are what a crash needs).
+		const bool restart = m_actionLines > 0;
+		m_actions.close();
+		m_actions.setFileName(actionsPath());
+		QDir().mkpath(QFileInfo(actionsPath()).absolutePath());
+		if (!m_actions.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+		m_actionLines = 0;
+		if (restart) m_actions.write("(earlier actions dropped)\n");
+	}
+	QString text = line;
+	text.replace('\n', QStringLiteral(" | "));
+	const QByteArray bytes = (QTime::currentTime().toString("HH:mm:ss.zzz") + ' ' + text + '\n').toUtf8();
+	m_actions.write(bytes);
+	m_actions.flush();   // into the OS now: it survives the process dying
+	++m_actionLines;
+}
+
+bool Autosaver::eventFilter(QObject* watched, QEvent* event) {
+	if (!m_sessionOpen) return false;
+	const auto plain = [](QString text) { return text.remove('&').simplified(); };
+	switch (event->type()) {
+		case QEvent::MouseButtonRelease: {
+			const auto* mouse = static_cast<QMouseEvent*>(event);
+			if (mouse->button() != Qt::LeftButton && mouse->button() != Qt::RightButton) break;
+			if (auto* button = qobject_cast<QAbstractButton*>(watched)) {
+				if (!button->isEnabled() || !button->rect().contains(mouse->position().toPoint())) break;
+				QString what = plain(button->text());
+				if (what.isEmpty()) what = plain(button->toolTip()).left(60);
+				QString part;
+				if (auto* tool = qobject_cast<QToolButton*>(button); tool && tool->popupMode() == QToolButton::MenuButtonPopup) {
+					// The small arrow at the right opens the menu, the rest runs the action.
+					part = mouse->position().x() > tool->width() - 16 ? QStringLiteral(" (menu arrow)") : QStringLiteral(" (button)");
+				}
+				const QWidget* window = button->window();
+				noteAction(QStringLiteral("click \"%1\"%2 [%3] in %4")
+				               .arg(what, part, button->objectName(), window ? plain(window->windowTitle()).left(60) : QString()));
+			} else if (auto* menu = qobject_cast<QMenu*>(watched)) {
+				if (const QAction* action = menu->actionAt(mouse->position().toPoint())) {
+					noteAction(QStringLiteral("menu \"%1\" > \"%2\"").arg(plain(menu->title()), plain(action->text())));
+				}
+			}
+			break;
+		}
+		case QEvent::Shortcut:
+			if (const auto* action = qobject_cast<QAction*>(watched)) {
+				noteAction(QStringLiteral("shortcut %1 \"%2\"").arg(static_cast<QShortcutEvent*>(event)->key().toString(), plain(action->text())));
+			}
+			break;
+		case QEvent::Show:
+			if (const auto* dialog = qobject_cast<QDialog*>(watched)) {
+				noteAction(QStringLiteral("dialog \"%1\" opened [%2]").arg(plain(dialog->windowTitle()), dialog->objectName()));
+			}
+			break;
+		case QEvent::Hide:
+			if (const auto* dialog = qobject_cast<QDialog*>(watched)) {
+				noteAction(QStringLiteral("dialog \"%1\" closed (result %2)").arg(plain(dialog->windowTitle())).arg(dialog->result()));
+			}
+			break;
+		default:
+			break;
+	}
+	return false;
 }
 
 QString Autosaver::crashJournalPath() {
@@ -186,12 +269,17 @@ void Autosaver::waitForWrites() {
 void Autosaver::startSession() {
 	m_sessionOpen = true;
 	updateMarker();
+	m_actionLines = 0;
+	m_actions.close();
+	noteAction(QStringLiteral("session started"));
 }
 
 void Autosaver::endSession() {
 	m_sessionOpen = false;
+	m_actions.close();
 	QFile::remove(markerPath());
 	QFile::remove(journalPath());
+	QFile::remove(actionsPath());
 }
 
 void Autosaver::updateMarker() {
@@ -208,13 +296,38 @@ bool lastSessionCrashed() {
 	return QFileInfo::exists(Autosaver::markerPath());
 }
 
+namespace {
+QString g_lastCrashSummary;   ///< crashSummary() of the crash file read at start
+} // namespace
+
+QString lastCrashSummary() {
+	return g_lastCrashSummary;
+}
+
 QString takeCrashJournal() {
+	// What the crash handler wrote (where it crashed), the last actions (what led there), then the
+	// journal (picks, edits, plans in detail).
+	QString text;
+	if (const QString crash = takeCrashFile(); !crash.isEmpty()) {
+		text += QStringLiteral("== Crash ==\n") + crash + '\n';
+		g_lastCrashSummary = QString::fromStdString(crashSummary(crash.toStdString()));
+	}
+	QFile actions(Autosaver::actionsPath());
+	if (actions.open(QIODevice::ReadOnly)) {
+		const QStringList lines = QString::fromUtf8(actions.readAll()).split('\n', Qt::SkipEmptyParts);
+		actions.close();
+		text += QStringLiteral("== Last actions ==\n") + lines.mid(std::max<qsizetype>(0, lines.size() - 200)).join('\n') + QStringLiteral("\n\n");
+		QFile::remove(Autosaver::actionsPath());
+	}
 	QFile journal(Autosaver::journalPath());
-	if (!journal.open(QIODevice::ReadOnly)) return {};
-	const QString text = QString::fromUtf8(journal.readAll());
-	journal.close();
-	QFile::remove(Autosaver::crashJournalPath());
-	QFile::rename(Autosaver::journalPath(), Autosaver::crashJournalPath());
+	if (journal.open(QIODevice::ReadOnly)) {
+		text += QString::fromUtf8(journal.readAll());
+		journal.close();
+	}
+	QFile::remove(Autosaver::journalPath());
+	if (text.isEmpty()) return {};
+	QFile kept(Autosaver::crashJournalPath());
+	if (kept.open(QIODevice::WriteOnly | QIODevice::Truncate)) kept.write(text.toUtf8());
 	return text;
 }
 
@@ -248,6 +361,13 @@ bool offerRecovery(Editor* editor, QWidget* parent, const RecoveryOffer& offer, 
 	                            : QObject::tr("There are autosaves of %1 that are newer than the file. Restore one instead of the file?").arg(map));
 	text->setWordWrap(true);
 	layout->addWidget(text);
+	if (offer.afterCrash && !lastCrashSummary().isEmpty()) {
+		auto* what = new QLabel(QObject::tr("What happened: %1").arg(lastCrashSummary()));
+		what->setObjectName("crashSummary");
+		what->setWordWrap(true);
+		what->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		layout->addWidget(what);
+	}
 	auto* list = new QListWidget;
 	list->setObjectName("autosaveList");
 	for (int i = 0; i < offer.autosaves.size(); ++i) {
@@ -290,7 +410,8 @@ void offerCrashReport(QWidget* parent, const std::function<void()>& makeReport) 
 	box.setObjectName("crashReportQuestion");
 	box.setIcon(QMessageBox::Question);
 	box.setWindowTitle(QObject::tr("Editor report"));
-	box.setText(QObject::tr("Mapsmith did not close normally last time."));
+	box.setText(lastCrashSummary().isEmpty() ? QObject::tr("Mapsmith did not close normally last time.")
+	                                          : QObject::tr("Mapsmith did not close normally last time.\n\nWhat happened: %1").arg(lastCrashSummary()));
 	box.setInformativeText(QObject::tr("Make an editor report about it? It is a file to send that holds your last clicks and edits before the crash. "
 	                                   "Nothing is sent anywhere."));
 	auto* yes = box.addButton(QObject::tr("Make editor report ..."), QMessageBox::AcceptRole);

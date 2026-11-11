@@ -186,6 +186,9 @@ private:
 	/// Play from here: a quick compile of a copy of the map where the player starts at the 3D
 	/// camera, then the game (options: only the area around, lighting, suit; QSettings "playHere/...").
 	void playFromHere();
+	/// Before a compile: displacements on faces without four corners stop VBSP. Asks to make them
+	/// flat ("Fix and compile", one undo step); false if the compile should not run.
+	bool readyDisplacements(const QString& title);
 	/// Compile with the Cubemaps step switched on (Problems: "Build cubemaps").
 	void buildCubemapsInCompile();
 	void showContextMenu(const QPoint& globalPos);

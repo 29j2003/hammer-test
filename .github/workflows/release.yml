@@ -77,6 +77,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
           $setup = "dist/Mapsmith-Setup-$version.exe"
           (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $setup -Leaf) | Out-File -Encoding ascii "$setup.sha256"
+          # The symbols of the released exe (crash files list frames as Mapsmith.exe+0x...).
+          Compress-Archive -Path build/src/app/Release/Mapsmith.pdb, build/src/probe/Release/sme-probe.pdb -DestinationPath "dist/Mapsmith-$version-windows-pdb.zip"
       - name: Publish release
         shell: pwsh
         env:
@@ -85,7 +87,8 @@ jobs:
           $version = (Get-Content VERSION).Trim()
           $tag = "${{ github.ref_name }}"
           $files = "dist/Mapsmith-Setup-$version.exe", "dist/Mapsmith-Setup-$version.exe.sha256",
-                   "dist/Mapsmith-$version-windows.zip", "dist/Mapsmith-$version-windows.zip.sha256"
+                   "dist/Mapsmith-$version-windows.zip", "dist/Mapsmith-$version-windows.zip.sha256",
+                   "dist/Mapsmith-$version-windows-pdb.zip"
           # A release drafted on github.com (which creates the tag) keeps its text; only the files are added.
           gh release view $tag --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
