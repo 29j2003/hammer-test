@@ -165,6 +165,22 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		p.fixLabel = "Make them flat";
 		problems.push_back(std::move(p));
 	}
+	// Displacements too large for their lightmap: VBSP cuts big brush faces itself, never a
+	// displacement, and stops with "Bad surface extents".
+	if (const auto big = oversizedDisplacements(doc); !big.empty()) {
+		Problem p;
+		p.kind = Problem::Kind::DisplacementLightmap;
+		p.severity = Problem::Severity::Error;
+		const auto& first = big.front();
+		p.message = std::to_string(big.size()) + " displacement face(s) are too large for their lightmap (the first, near " + formatPoint(first.center) +
+		            ", needs " + std::to_string(first.luxels) + " luxels at lightmap scale " + std::to_string(first.scale) + ", VBSP allows " +
+		            std::to_string(MAX_DISPLACEMENT_LUXELS) + ") - VBSP stops with \"Bad surface extents\".";
+		p.howToFix = "Raise their lightmap scale just enough (the first to " + std::to_string(first.neededScale) +
+		             "; slightly softer shadows on them), or cut the floor into shorter displacements.";
+		for (const auto& b : big) p.objects.faces.push_back(b.face);
+		p.fixLabel = "Raise lightmap scale";
+		problems.push_back(std::move(p));
+	}
 	// Corners off the grid (arches, rounded edges): one note for all, only brushes that can be snapped.
 	Problem offGrid;
 	offGrid.kind = Problem::Kind::OffGridCorners;
@@ -636,6 +652,8 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 		}
 		case Problem::Kind::NonQuadDisplacement:
 			return edit::fixNonQuadDisplacements(doc, problem.objects.faces);
+		case Problem::Kind::DisplacementLightmap:
+			return edit::fixOversizedDisplacements(doc, problem.objects.faces);
 		case Problem::Kind::OffGridCorners: {
 			int snapped = 0, refused = 0;
 			return edit::snapToGrid(doc, problem.objects, 1, &snapped, &refused);

@@ -628,3 +628,83 @@ TEST_CASE("displacement: non-quad displacements are found, made flat in one step
 	const std::string text = doc.serialize();
 	CHECK(MapDocument::parse(text).serialize() == text);
 }
+
+TEST_CASE("displacement: a displacement too large for its lightmap is found, gets a fitting lightmap scale, and an edit never leaves one") {
+	// The blend floor of Julius' report 1523: 2082.6 x 400 units, V along X, lightmap scale 16.
+	// VBSP: "Bad surface extents ... (dimension: 1, 131>126)".
+	MapDocument doc;
+	History history;
+	auto [create, ref] = edit::createBlock(doc, box({-3136, -1128, -32}, {-1053.3638216927648, -728, 8}), "CONCRETE/BLENDROAD_BROKEN01");
+	history.push(std::move(create));
+	const FaceRef top = topFace(doc, ref);
+	{
+		Transaction t(doc, "Align");
+		t.touchSolid(ref);
+		for (auto& side : doc.findSolid(ref)->sides) {
+			if (side.id != top.sideId) continue;
+			side.u = TextureAxis{{0, 1, 0}, 2887.68, 0.390625};
+			side.v = TextureAxis{{1, 0, 0}, 5529.6, 0.390625};
+		}
+		history.push(t.finish());
+	}
+	const auto faceOf = [&]() -> FaceGeometry {
+		const Solid* solid = doc.findSolid(ref);
+		for (const auto& face : buildBrushGeometry(*solid).faces) {
+			if (solid->sides[static_cast<std::size_t>(face.sideIndex)].id == top.sideId) return face;
+		}
+		return {};
+	};
+	// A flat face this size is fine (VBSP cuts it); as a displacement it is not.
+	CHECK(oversizedDisplacements(doc).empty());
+	const auto luxels = lightmapLuxels(faceOf(), sideOf(doc, top), 16);
+	CHECK(luxels[0] == 26);
+	CHECK(luxels[1] == 131);   // exactly VBSP's number
+	const std::string flat = doc.serialize();
+	Change made = edit::createDisplacements(doc, {top}, 3);
+	// The guard of the commit gives it a fitting scale at once (and the change's after state follows).
+	{
+		MapDocument copy = MapDocument::parse(doc.serialize());
+		const auto big = oversizedDisplacements(copy);
+		REQUIRE(big.size() == 1);
+		CHECK(big.front().face == top);
+		CHECK(big.front().luxels == 131);
+		CHECK(big.front().scale == 16);
+		CHECK(big.front().neededScale == 17);
+		// The check reports it as an error with a fix.
+		CheckContext context;
+		const auto problems = checkMap(copy, context);
+		const auto it = std::find_if(problems.begin(), problems.end(), [](const Problem& p) { return p.kind == Problem::Kind::DisplacementLightmap; });
+		REQUIRE(it != problems.end());
+		CHECK(it->severity == Problem::Severity::Error);
+		CHECK(it->objects.faces.size() == 1);
+		CHECK(it->message.find("Bad surface extents") != std::string::npos);
+		// The autofix on its own: one undo step, 17 fits with room.
+		int count = -1;
+		Change fix = edit::fixOversizedDisplacements(copy, {}, &count);
+		CHECK(count == 1);
+		CHECK_FALSE(fix.empty());
+		CHECK(oversizedDisplacements(copy).empty());
+		CHECK(sideOf(copy, top).lightmapScale == 17);
+		CHECK(sideOf(copy, top).dispInfo());
+	}
+	CHECK(fitDisplacementLightmaps(doc, made) == 1);
+	REQUIRE(made.solids.size() == 1);
+	REQUIRE(made.solids.front().after);
+	history.push(std::move(made));
+	CHECK(oversizedDisplacements(doc).empty());
+	CHECK(sideOf(doc, top).lightmapScale == 17);
+	CHECK(lightmapLuxels(faceOf(), sideOf(doc, top), 17)[1] <= MAX_DISPLACEMENT_LUXELS - 2);
+	history.undo(doc);
+	CHECK(doc.serialize() == flat);
+	history.redo(doc);
+	CHECK(sideOf(doc, top).lightmapScale == 17);
+	CHECK(sideOf(doc, top).dispInfo());
+	// A short displacement keeps its scale; tool faces have no lightmap.
+	auto [small, smallRef] = edit::createBlock(doc, box({0, 0, 0}, {512, 512, 16}), "NATURE/BLENDGROUNDTOGRASS");
+	history.push(std::move(small));
+	Change smallDisp = edit::createDisplacements(doc, {topFace(doc, smallRef)}, 2);
+	CHECK(fitDisplacementLightmaps(doc, smallDisp) == 0);
+	CHECK(sideOf(doc, topFace(doc, smallRef)).lightmapScale == 16);
+	const std::string text = doc.serialize();
+	CHECK(MapDocument::parse(text).serialize() == text);
+}

@@ -291,6 +291,112 @@ int dropNonQuadDisplacements(MapDocument& doc, Change& change) {
 	return dropped;
 }
 
+std::array<int, 2> lightmapLuxels(const FaceGeometry& face, const Side& side, int lightmapScale) {
+	std::array<int, 2> out{0, 0};
+	if (face.vertices.empty() || lightmapScale <= 0) return out;
+	const std::array<Vec3, 2> axes{normalize(side.u.axis), normalize(side.v.axis)};
+	for (std::size_t i = 0; i < 2; ++i) {
+		double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
+		for (const auto& v : face.vertices) {
+			const double luxel = dot(v, axes[i]) / static_cast<double>(lightmapScale);
+			lo = std::min(lo, luxel);
+			hi = std::max(hi, luxel);
+		}
+		// Snap away tiny noise first (a corner at exactly -3136 / 16 must stay -196).
+		const double eps = 1e-6;
+		out[i] = static_cast<int>(std::ceil(hi - eps) - std::floor(lo + eps));
+	}
+	return out;
+}
+
+namespace {
+
+/// Room below VBSP's limit: its luxel grid can shift by one against ours.
+constexpr int FITTING_LUXELS = MAX_DISPLACEMENT_LUXELS - 2;
+
+int longestSide(const std::array<int, 2>& luxels) { return std::max(luxels[0], luxels[1]); }
+
+/// Tool textures (nodraw, ...) get no lightmap in VBSP.
+bool hasLightmap(const Side& side) { return !startsWithI(side.material, "TOOLS/"); }
+
+bool oversized(const FaceGeometry& face, const Side& side) {
+	return side.dispInfo() && face.vertices.size() == 4 && hasLightmap(side) &&
+	       longestSide(lightmapLuxels(face, side, side.lightmapScale)) > MAX_DISPLACEMENT_LUXELS;
+}
+
+}   // namespace
+
+int fittingLightmapScale(const FaceGeometry& face, const Side& side) {
+	const int own = std::max(side.lightmapScale, 1);
+	if (longestSide(lightmapLuxels(face, side, own)) <= MAX_DISPLACEMENT_LUXELS) return own;
+	for (int scale = own + 1; scale <= 1024; ++scale) {
+		if (longestSide(lightmapLuxels(face, side, scale)) <= FITTING_LUXELS) return scale;
+	}
+	return 1024;
+}
+
+std::vector<OversizedDisplacement> oversizedDisplacements(const MapDocument& doc) {
+	std::vector<OversizedDisplacement> out;
+	const auto visit = [&](const SolidRef& ref, const Solid& solid) {
+		if (std::none_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; })) return;
+		const auto geometry = buildBrushGeometry(solid);
+		if (!geometry.valid) return;
+		for (const auto& face : geometry.faces) {
+			const Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
+			if (!oversized(face, side)) continue;
+			Vec3 center;
+			for (const auto& v : face.vertices) center = center + v;
+			center = center * (1.0 / static_cast<double>(face.vertices.size()));
+			out.push_back({FaceRef{ref, side.id}, longestSide(lightmapLuxels(face, side, side.lightmapScale)), side.lightmapScale,
+			               fittingLightmapScale(face, side), center});
+		}
+	};
+	for (const auto& solid : doc.world.solids) visit(SolidRef{0, solid.id}, solid);
+	for (const auto& entity : doc.entities) {
+		for (const auto& solid : entity.solids) visit(SolidRef{entity.id, solid.id}, solid);
+	}
+	return out;
+}
+
+int fitDisplacementLightmaps(Solid& solid) {
+	if (std::none_of(solid.sides.begin(), solid.sides.end(), [](const Side& s) { return s.dispInfo() != nullptr; })) return 0;
+	const auto geometry = buildBrushGeometry(solid);
+	if (!geometry.valid) return 0;
+	int changed = 0;
+	for (const auto& face : geometry.faces) {
+		Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
+		if (!oversized(face, side)) continue;
+		side.lightmapScale = fittingLightmapScale(face, side);
+		++changed;
+	}
+	return changed;
+}
+
+int fitDisplacementLightmaps(MapDocument& doc, Change& change) {
+	int changed = 0;
+	for (auto& state : change.solids) {
+		if (!state.after) continue;
+		Solid* solid = doc.findSolid(state.ref);
+		if (!solid) continue;
+		if (const int n = fitDisplacementLightmaps(*solid); n > 0) {
+			changed += n;
+			state.after = *solid;
+		}
+	}
+	for (auto& state : change.entities) {
+		if (!state.after) continue;
+		Entity* entity = doc.findEntity(state.entityId);
+		if (!entity) continue;
+		int n = 0;
+		for (auto& solid : entity->solids) n += fitDisplacementLightmaps(solid);
+		if (n > 0) {
+			changed += n;
+			state.after = *entity;
+		}
+	}
+	return changed;
+}
+
 std::vector<Vec3> displacementCorners(const FaceGeometry& face, const Vec3& start) {
 	if (face.vertices.size() != 4) return {};
 	// Clockwise seen from outside (the face's vertices run counter-clockwise), from the corner
@@ -645,6 +751,33 @@ Change fixNonQuadDisplacements(MapDocument& doc, const std::vector<FaceRef>& fac
 		Solid* touched = doc.findSolid(ref.solid);
 		for (auto& side : touched->sides) {
 			if (side.id == ref.sideId && removeDisplacement(side)) ++fixed;
+		}
+	}
+	if (count) *count = fixed;
+	return t.finish();
+}
+
+Change fixOversizedDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces, int* count) {
+	std::vector<FaceRef> targets = faces;
+	if (targets.empty()) {
+		for (const auto& big : oversizedDisplacements(doc)) targets.push_back(big.face);
+	}
+	Transaction t(doc, "Raise lightmap scale of large displacements");
+	int fixed = 0;
+	for (const auto& ref : targets) {
+		const Solid* solid = doc.findSolid(ref.solid);
+		if (!solid) continue;
+		const auto geometry = buildBrushGeometry(*solid);
+		const FaceGeometry* face = faceOfSide(geometry, *solid, ref.sideId);
+		const auto it = std::find_if(solid->sides.begin(), solid->sides.end(), [&](const Side& s) { return s.id == ref.sideId; });
+		if (!face || it == solid->sides.end() || !oversized(*face, *it)) continue;
+		const int scale = fittingLightmapScale(*face, *it);
+		t.touchSolid(ref.solid);
+		for (auto& side : doc.findSolid(ref.solid)->sides) {
+			if (side.id == ref.sideId) {
+				side.lightmapScale = scale;
+				++fixed;
+			}
 		}
 	}
 	if (count) *count = fixed;

@@ -8,6 +8,7 @@
 #include <sme/assets.h>
 #include <sme/audio.h>
 #include <sme/brush.h>
+#include <sme/displacement.h>
 #include <sme/editor_report.h>
 #include <sme/entity_catalog.h>
 #include <sme/game.h>
@@ -392,8 +393,17 @@ int cmdVmf(const Args& args) {
 	const bool stable = differences.empty() && MapDocument::parse(written).serialize() == written;
 	std::cout << doc.solidCount() << " brushes, " << sides << " faces, " << displacements << " displacements, "
 	          << doc.entities.size() << " entities, " << connections << " outputs\n"
-	          << invalid << " invalid brushes\n"
-	          << "save/load round trip: "
+	          << invalid << " invalid brushes\n";
+	// The displacement faces VBSP stops at (non-quad, lightmap too large).
+	for (const auto& bad : nonQuadDisplacements(doc)) {
+		std::cout << "  displacement without four corners: brush " << bad.face.solid.solidId << " side " << bad.face.sideId << " (" << bad.corners
+		          << " corners)\n";
+	}
+	for (const auto& big : oversizedDisplacements(doc)) {
+		std::cout << "  displacement too large for its lightmap: brush " << big.face.solid.solidId << " side " << big.face.sideId << " (" << big.luxels
+		          << " luxels at scale " << big.scale << ", fits at " << big.neededScale << ")\n";
+	}
+	std::cout << "save/load round trip: "
 	          << (identical ? "stable (identical, byte for byte)" : stable ? "stable (same keys and values; spacing differs)" : "CHANGES DATA")
 	          << "\n";
 	for (const auto& line : differences) {

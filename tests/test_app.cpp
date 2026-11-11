@@ -11575,7 +11575,7 @@ TEST_CASE("an autosave opened by hand edits its map, the recent list keeps the m
 	if (finished.isEmpty()) finished.wait(5000);
 }
 
-TEST_CASE("compile: a displacement without four corners stops the compile with Fix and compile (Julius' map of 11.11.2026)") {
+TEST_CASE("compile: displacements without four corners or too large for their lightmap stop the compile with Fix and compile (Julius' map of 11.11.2026)") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());
 	QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -11603,6 +11603,15 @@ TEST_CASE("compile: a displacement without four corners stops the compile with F
 		corner.planePoints = {Vec3{256, 200, 0}, Vec3{200, 256, 0}, Vec3{200, 256, -16}};
 		solid->sides.push_back(corner);
 		REQUIRE(nonQuadDisplacements(doc).size() == 1);
+		// And a blend floor 2088 units long at lightmap scale 16: VBSP's "Bad surface extents".
+		auto [longFloor, longRef] = edit::createBlock(doc, box({512, 0, -16}, {2600, 256, 0}), "DEMO/CONCRETEFLOOR001");
+		const Solid* longSolid = doc.findSolid(longRef);
+		int longTop = 0;
+		for (const auto& face : buildBrushGeometry(*longSolid).faces) {
+			if (face.normal.z > 0.9) longTop = longSolid->sides[static_cast<std::size_t>(face.sideIndex)].id;
+		}
+		(void)edit::createDisplacements(doc, {FaceRef{longRef, longTop}}, 2);
+		REQUIRE(oversizedDisplacements(doc).size() == 1);
 		const std::string text = doc.serialize();
 		std::filesystem::create_directories(f.mod / "mapsrc");
 		std::ofstream(toPath(mapPath), std::ios::binary) << text;
@@ -11620,6 +11629,7 @@ TEST_CASE("compile: a displacement without four corners stops the compile with F
 	// The Problems check lists it as an error.
 	window.problems()->runChecks();
 	CHECK(window.problems()->problemsText().contains("non-quad"));
+	CHECK(window.problems()->problemsText().contains("Bad surface extents"));
 	auto* button = window.findChild<QToolButton*>("playFromHere");
 	REQUIRE(button);
 	const QString copyPath = fromPath(f.mod / "mapsrc/bad_disp_here.vmf");
@@ -11630,7 +11640,7 @@ TEST_CASE("compile: a displacement without four corners stops the compile with F
 	watcher.setInterval(30);
 	QObject::connect(&watcher, &QTimer::timeout, [&] {
 		auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-		if (!box || box->objectName() != "nonQuadDisplacements") return;
+		if (!box || box->objectName() != "displacementProblems") return;
 		asked = true;
 		if (answer == "fix") {
 			if (auto* fix = box->findChild<QAbstractButton*>("fixAndCompile")) fix->click();
@@ -11644,6 +11654,7 @@ TEST_CASE("compile: a displacement without four corners stops the compile with F
 	CHECK(asked);
 	CHECK_FALSE(QFile::exists(copyPath));
 	CHECK(nonQuadDisplacements(editor.doc()).size() == 1);
+	CHECK(oversizedDisplacements(editor.doc()).size() == 1);
 	// Fix and compile: the face is flat (one undo step) and the copy is compiled.
 	asked = false;
 	answer = "fix";
@@ -11652,12 +11663,16 @@ TEST_CASE("compile: a displacement without four corners stops the compile with F
 	watcher.stop();
 	CHECK(asked);
 	CHECK(nonQuadDisplacements(editor.doc()).empty());
+	CHECK(oversizedDisplacements(editor.doc()).empty());
 	CHECK(QFile::exists(copyPath));
 	if (window.compiler().running()) {
 		QSignalSpy done(&window.compiler(), &CompileRunner::finished);
 		window.compiler().cancel();
 		done.wait(5000);
 	}
+	// Two undo steps: the lightmap scale, then the flat faces.
+	editor.undo();
+	CHECK(oversizedDisplacements(editor.doc()).size() == 1);
 	editor.undo();
 	CHECK(nonQuadDisplacements(editor.doc()).size() == 1);
 }

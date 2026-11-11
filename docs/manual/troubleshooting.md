@@ -114,6 +114,14 @@ every compile: **Fix and compile** makes those faces flat (their material stays,
 them. The Problems panel lists them as an error with the same fix. Cutting a displacement now always makes the cut
 faces flat, as Hammer does.
 
+**VBSP stops with "Bad surface extents" (and "surface is too big to have a lightmap")**
+A displacement is too long for its lightmap. VBSP cuts large flat faces into pieces by itself, but never a
+displacement: at lightmap scale 16 one may be about 2000 units long (125 luxels × 16). Mapsmith checks this before
+every compile too: **Fix and compile** raises the lightmap scale of those faces just enough (for example 16 → 17; the
+shadows on them get slightly softer, one undo step). Every edit that makes a displacement that long does the same at
+once and says so in the log; the Problems panel lists them with the fix **Raise lightmap scale**. For sharper shadows
+cut the floor into shorter displacements instead.
+
 ## Maps and files
 
 **Mapsmith crashed. Is my work gone?**

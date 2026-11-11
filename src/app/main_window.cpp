@@ -2247,32 +2247,54 @@ void MainWindow::compile() {
 }
 
 bool MainWindow::readyDisplacements(const QString& title) {
+	// The two displacement problems that stop VBSP at once: faces without four corners and
+	// displacements too large for their lightmap.
 	const auto bad = nonQuadDisplacements(m_editor->doc());
-	if (bad.empty()) {
+	const auto big = oversizedDisplacements(m_editor->doc());
+	if (bad.empty() && big.empty()) {
 		return true;
 	}
-	QMessageBox box(QMessageBox::Warning, title,
-	                tr("%n displacement face(s) do not have four corners - VBSP would stop with \"Trying to create a non-quad displacement!\".", nullptr,
-	                   static_cast<int>(bad.size())),
-	                QMessageBox::NoButton, this);
-	box.setObjectName("nonQuadDisplacements");
-	box.setInformativeText(tr("Fix and compile makes them flat faces: their material stays, the sculpt and blend of those faces go (one undo step)."));
+	QStringList what, fixes;
+	if (!bad.empty()) {
+		what << tr("%n displacement face(s) do not have four corners - VBSP would stop with \"Trying to create a non-quad displacement!\".", nullptr,
+		           static_cast<int>(bad.size()));
+		fixes << tr("Faces without four corners become flat faces: their material stays, their sculpt and blend go.");
+	}
+	if (!big.empty()) {
+		what << tr("%n displacement face(s) are too large for their lightmap - VBSP would stop with \"Bad surface extents\".", nullptr,
+		           static_cast<int>(big.size()));
+		fixes << tr("Displacements that are too large get a larger lightmap scale (the first %1 instead of %2): their shadows get slightly softer.")
+		             .arg(big.front().neededScale)
+		             .arg(big.front().scale);
+	}
+	QMessageBox box(QMessageBox::Warning, title, what.join("\n"), QMessageBox::NoButton, this);
+	box.setObjectName("displacementProblems");
+	box.setInformativeText(tr("Fix and compile: %1 Each fix is one undo step.").arg(fixes.join(" ")));
 	auto* fix = box.addButton(tr("Fix and compile"), QMessageBox::AcceptRole);
 	fix->setObjectName("fixAndCompile");
 	auto* show = box.addButton(tr("Show them"), QMessageBox::ActionRole);
-	show->setObjectName("showNonQuad");
+	show->setObjectName("showDisplacementProblems");
 	box.addButton(QMessageBox::Cancel);
 	box.setDefaultButton(fix);
 	box.exec();
 	if (box.clickedButton() == fix) {
-		int count = 0;
-		m_editor->commit(edit::fixNonQuadDisplacements(m_editor->doc(), {}, &count));
-		m_log->append(tr("Made %n displacement face(s) without four corners flat.", nullptr, count), QColor(255, 200, 100));
+		if (!bad.empty()) {
+			int count = 0;
+			m_editor->commit(edit::fixNonQuadDisplacements(m_editor->doc(), {}, &count));
+			m_log->append(tr("Made %n displacement face(s) without four corners flat.", nullptr, count), QColor(255, 200, 100));
+		}
+		// After the first fix: what is still too large (a face made flat no longer counts).
+		if (!oversizedDisplacements(m_editor->doc()).empty()) {
+			int count = 0;
+			m_editor->commit(edit::fixOversizedDisplacements(m_editor->doc(), {}, &count));
+			m_log->append(tr("Raised the lightmap scale of %n large displacement face(s).", nullptr, count), QColor(255, 200, 100));
+		}
 		return true;
 	}
 	if (box.clickedButton() == show) {
 		Selection selection;
 		for (const auto& b : bad) selection.faces.push_back(b.face);
+		for (const auto& b : big) selection.faces.push_back(b.face);
 		m_editor->setSelectMode(Editor::SelectMode::Face);
 		m_editor->setSelection(std::move(selection));
 		activeView()->frameSelection();

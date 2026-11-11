@@ -424,6 +424,13 @@ void Editor::guardDisplacements(Change& change) {
 		emit message(tr("%n displacement face(s) lost their displacement in \"%1\": they no longer have four corners (VBSP would stop).", nullptr, dropped)
 		                 .arg(QString::fromStdString(change.name)));
 	}
+	// Nor a displacement too large for its lightmap ("Bad surface extents"): its lightmap scale
+	// goes up just enough.
+	if (const int raised = fitDisplacementLightmaps(m_doc, change); raised > 0) {
+		emit message(tr("%n displacement face(s) got a larger lightmap scale in \"%1\": VBSP cannot light them at the old one (\"Bad surface extents\").",
+		                nullptr, raised)
+		                 .arg(QString::fromStdString(change.name)));
+	}
 }
 
 void Editor::commit(Change change) {

@@ -43,8 +43,9 @@ constexpr std::array KNOWN = {
 	             "A face's texture lies edge-on to it (its texture axes run into the face), so it cannot be drawn. Select the face (Face mode), "
 	             "then Justify > Fit or reset its alignment."},
 	KnownMessage{"bad surface extents", CompileMessage::Severity::Error,
-	             "A face is too large for its lightmap scale (or its texture scale is tiny). Raise the face's lightmap scale, or cut the face "
-	             "into smaller pieces; Problems lists extreme scales."},
+	             "A face is too large for its lightmap - almost always a displacement (VBSP cuts brush faces itself, never a displacement): "
+	             "longer than about 125 times its lightmap scale. Compile and Problems offer \"Raise lightmap scale\"; or cut the floor "
+	             "into shorter displacements."},
 	KnownMessage{"max_points_on_winding", CompileMessage::Severity::Error,
 	             "A brush is broken or very far from the grid (a side with too many corners). Snap it to the grid (Ctrl+B) or rebuild it."},
 	KnownMessage{"doesn't touch two areas", CompileMessage::Severity::Error,

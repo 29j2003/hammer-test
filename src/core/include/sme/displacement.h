@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -136,11 +137,41 @@ int dropNonQuadDisplacements(Solid& solid);
 /// of faces without four corners, and the change's "after" states follow. Returns how many.
 int dropNonQuadDisplacements(MapDocument& doc, Change& change);
 
+/// VBSP's largest lightmap of a displacement face, in luxels along each lightmap axis
+/// (MAX_DISP_LIGHTMAP_DIM_WITHOUT_BORDER): a larger one stops the compile with "Bad surface
+/// extents". VBSP cuts big brush faces itself, but never a displacement.
+constexpr int MAX_DISPLACEMENT_LUXELS = 126;
+/// The luxels a face's lightmap spans along its two lightmap axes at `lightmapScale`, as VBSP
+/// computes them (CalcFaceExtents: the texture axes, normalized, one luxel per lightmapScale units).
+[[nodiscard]] std::array<int, 2> lightmapLuxels(const FaceGeometry& face, const Side& side, int lightmapScale);
+/// The smallest lightmap scale above the side's own at which the face fits with a little room
+/// (VBSP's grid can shift by a luxel), or the side's own scale if it fits already.
+[[nodiscard]] int fittingLightmapScale(const FaceGeometry& face, const Side& side);
+/// A displacement whose lightmap is larger than VBSP allows (a long blend floor at scale 16).
+struct OversizedDisplacement {
+	FaceRef face;
+	int luxels = 0;        ///< The longer side of its lightmap
+	int scale = 16;        ///< Its lightmap scale
+	int neededScale = 16;  ///< The scale at which it fits
+	Vec3 center;           ///< Middle of the face, for messages
+};
+/// Every displacement face of the map whose lightmap is too large (world and brush entities).
+[[nodiscard]] std::vector<OversizedDisplacement> oversizedDisplacements(const MapDocument& doc);
+/// Raises the lightmap scale of the brush's displacement faces that are too large, just enough
+/// to fit. Returns how many changed.
+int fitDisplacementLightmaps(Solid& solid);
+/// The guard of every edit (Editor::commit), like dropNonQuadDisplacements: displacements of the
+/// change's brushes get a lightmap scale VBSP accepts. Returns how many faces changed.
+int fitDisplacementLightmaps(MapDocument& doc, Change& change);
+
 namespace edit {
 
 /// Makes the listed displacement faces flat (or, with no list, every face of the map that
 /// nonQuadDisplacements finds). One undo step; `count` gets the number of faces.
 [[nodiscard]] Change fixNonQuadDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces = {}, int* count = nullptr);
+/// Raises the lightmap scale of the listed displacement faces (or, with no list, of every face
+/// oversizedDisplacements finds) just enough for VBSP. One undo step; `count` gets the faces.
+[[nodiscard]] Change fixOversizedDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces = {}, int* count = nullptr);
 /// Turns the faces into displacements of `power` (faces without four corners and faces that
 /// already are displacements are skipped and counted in `skipped`). One undo step.
 [[nodiscard]] Change createDisplacements(MapDocument& doc, const std::vector<FaceRef>& faces, int power, double elevation = 0, int* skipped = nullptr);
