@@ -1237,5 +1237,57 @@ VertexMoveOutcome moveVertices(MapDocument& doc, const std::vector<SolidRef>& so
 	return outcome;
 }
 
+std::vector<FaceRef> edgeOnTextureFaces(const MapDocument& doc) {
+	std::vector<FaceRef> out;
+	const auto visit = [&](const SolidRef& ref, const Solid& solid) {
+		for (const auto& side : solid.sides) {
+			if (textureEdgeOn(side)) out.push_back({ref, side.id});
+		}
+	};
+	for (const auto& solid : doc.world.solids) visit(SolidRef{0, solid.id}, solid);
+	for (const auto& entity : doc.entities) {
+		for (const auto& solid : entity.solids) visit(SolidRef{entity.id, solid.id}, solid);
+	}
+	return out;
+}
+
+int guardEdgeOnTextures(MapDocument& doc, Change& change) {
+	const auto alignSolid = [](Solid& solid) {
+		int n = 0;
+		for (auto& side : solid.sides) n += alignEdgeOnTexture(side) ? 1 : 0;
+		return n;
+	};
+	int aligned = 0;
+	for (auto& state : change.solids) {
+		if (!state.after) continue;
+		Solid* solid = doc.findSolid(state.ref);
+		if (!solid) continue;
+		if (const int n = alignSolid(*solid); n > 0) {
+			aligned += n;
+			state.after = *solid;
+		}
+	}
+	for (auto& state : change.entities) {
+		if (!state.after) continue;
+		Entity* entity = doc.findEntity(state.entityId);
+		if (!entity) continue;
+		int n = 0;
+		for (auto& solid : entity->solids) n += alignSolid(solid);
+		if (n > 0) {
+			aligned += n;
+			state.after = *entity;
+		}
+	}
+	return aligned;
+}
+
+Change alignEdgeOnTextures(MapDocument& doc, const std::vector<FaceRef>& faces, int* count) {
+	const std::vector<FaceRef> targets = faces.empty() ? edgeOnTextureFaces(doc) : faces;
+	int aligned = 0;
+	Change change = modifyFaces(doc, targets, "Align edge-on textures to world", [&](Side& side) { aligned += alignEdgeOnTexture(side) ? 1 : 0; });
+	if (count) *count = aligned;
+	return change;
+}
+
 } // namespace edit
 } // namespace sme

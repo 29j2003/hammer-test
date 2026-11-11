@@ -104,8 +104,18 @@ namespace edit {
 [[nodiscard]] std::pair<Change, int> placeEntity(MapDocument& doc, const std::string& classname, const Vec3& origin, const EntityClass* definition,
                                                  const std::vector<std::pair<std::string, std::string>>& keys = {});
 
+/// World alignment for the listed faces whose texture lies edge-on (or, with no list, every such
+/// face of the map), scales kept. One undo step; `count` gets the faces.
+[[nodiscard]] Change alignEdgeOnTextures(MapDocument& doc, const std::vector<FaceRef>& faces = {}, int* count = nullptr);
+
 /// Material on the selected faces (face mode) or on every face of the selected brushes/brush entities.
 [[nodiscard]] Change applyMaterial(MapDocument& doc, const Selection& selection, const std::string& material);
+
+/// Every face of the map whose texture lies edge-on to it (textureEdgeOn).
+[[nodiscard]] std::vector<FaceRef> edgeOnTextureFaces(const MapDocument& doc);
+/// The guard of every edit (Editor::commit): faces of the change's brushes whose texture lies
+/// edge-on get world alignment (scales kept), and the change's "after" states follow. Returns how many.
+int guardEdgeOnTextures(MapDocument& doc, Change& change);
 
 /// Runs `modify` on every selected face (texture scale, shift, alignment, ...).
 template<typename F>

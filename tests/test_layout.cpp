@@ -7,11 +7,14 @@
 #include <sme/brush.h>
 #include <sme/checks.h>
 #include <sme/compile_log.h>
+#include <sme/csg.h>
+#include <sme/editing.h>
 #include <sme/history.h>
 #include <sme/layout_checks.h>
 #include <sme/map_helpers.h>
 #include <sme/optimization_checks.h>
 #include <sme/shapes.h>
+#include <sme/text.h>
 
 #include <algorithm>
 
@@ -362,4 +365,104 @@ TEST_CASE("optimization: faces flat against func_detail brushes nobody sees beco
 	CHECK(hiddenFaces(doc, [](const std::string&) { return false; }).size() == 5);
 	CHECK(seeThroughByName("glass/glasswindow001a"));
 	CHECK_FALSE(seeThroughByName("concrete/concretefloor001a"));
+}
+
+TEST_CASE("textures edge-on to their face: found, aligned to the world by the fix and every edit, cut faces never get one (Julius' VRAD log of 11.11.2026)") {
+	// VRAD printed "face vectors parallel to face normal" hundreds of times: 124 faces of his map
+	// had the top's axes (X, -Y) on vertical cut sides, and two brick faces 2 degrees off X had X as U.
+	MapDocument doc;
+	Solid block = makeBlock(doc, box({0, 0, 0}, {256, 256, 64}), "DEV/DEV_BLENDMEASURE2");
+	Side* front = nullptr;
+	for (auto& side : block.sides) {
+		if (side.plane().normal.y < -0.9) front = &side;
+	}
+	REQUIRE(front);
+	CHECK_FALSE(textureEdgeOn(*front));
+	front->u = TextureAxis{{1, 0, 0}, 16, 0.5};
+	front->v = TextureAxis{{0, -1, 0}, 8, 0.25};
+	CHECK(textureEdgeOn(*front));
+	// Tool textures have no lightmap and never count.
+	Side tool = *front;
+	tool.material = "TOOLS/TOOLSNODRAW";
+	CHECK_FALSE(textureEdgeOn(tool));
+	// The fix keeps both scales.
+	Side fixed = *front;
+	CHECK(alignEdgeOnTexture(fixed));
+	CHECK_FALSE(textureEdgeOn(fixed));
+	CHECK(fixed.u.scale == doctest::Approx(0.5));
+	CHECK(fixed.v.scale == doctest::Approx(0.25));
+	CHECK_FALSE(alignEdgeOnTexture(fixed));
+
+	// A cut with a slanted vertical plane: the new face takes the top's texture but not its axes.
+	{
+		MapDocument cutDoc;
+		const Solid floor = makeBlock(cutDoc, box({0, 0, 0}, {256, 256, 64}), "DEV/DEV_BLENDMEASURE2");
+		const Side* top = nullptr;
+		for (const auto& side : floor.sides) {
+			if (side.plane().normal.z > 0.9) top = &side;
+		}
+		REQUIRE(top);
+		const Vec3 normal = normalize(Vec3{-0.195, -0.981, 0});
+		const auto [back, frontPart] = splitSolid(cutDoc, floor, Plane{normal, dot(normal, Vec3{128, 128, 0})}, *top);
+		REQUIRE(back);
+		REQUIRE(frontPart);
+		for (const auto* part : {&*back, &*frontPart}) {
+			for (const auto& side : part->sides) {
+				CHECK_FALSE(textureEdgeOn(side));
+				CHECK(iequals(side.material, "DEV/DEV_BLENDMEASURE2"));
+			}
+		}
+	}
+
+	// The map check, its fix (one undo step) and the guard of every edit.
+	History history;
+	Transaction add(doc, "Add");
+	doc.world.solids.push_back(block);
+	add.touchSolid({0, block.id});
+	history.push(add.finish());
+	const SolidRef ref{0, block.id};
+	REQUIRE(edit::edgeOnTextureFaces(doc).size() == 1);
+	CheckContext context;
+	const auto problems = checkMap(doc, context);
+	const auto it = std::find_if(problems.begin(), problems.end(), [](const Problem& p) { return p.kind == Problem::Kind::EdgeOnTexture; });
+	REQUIRE(it != problems.end());
+	CHECK(it->severity == Problem::Severity::Warning);
+	CHECK(it->message.find("face vectors parallel to face normal") != std::string::npos);
+	const std::string before = doc.serialize();
+	int count = -1;
+	history.push(edit::alignEdgeOnTextures(doc, {}, &count));
+	CHECK(count == 1);
+	CHECK(edit::edgeOnTextureFaces(doc).empty());
+	history.undo(doc);
+	CHECK(doc.serialize() == before);
+	// An edit that leaves one: the guard aligns it and the change's after state follows.
+	Transaction t(doc, "Move");
+	t.touchSolid(ref);
+	for (auto& side : doc.findSolid(ref)->sides) {
+		for (auto& p : side.planePoints) p.z += 16;
+	}
+	Change change = t.finish();
+	CHECK(edit::guardEdgeOnTextures(doc, change) == 1);
+	CHECK(edit::edgeOnTextureFaces(doc).empty());
+	REQUIRE(change.solids.size() == 1);
+	REQUIRE(change.solids.front().after);
+	CHECK(std::none_of(change.solids.front().after->sides.begin(), change.solids.front().after->sides.end(), [](const Side& s) { return textureEdgeOn(s); }));
+}
+
+TEST_CASE("compile log: VRAD's repeated lines read without the progress dots, edge-on textures explained, fidelity's lights file harmless") {
+	CHECK(problemText("BuildFacelights:     0...1...2...3...4. warning - face vectors parallel to face normal. bad lighting will be produced") ==
+	      "warning - face vectors parallel to face normal. bad lighting will be produced");
+	CHECK(problemText(". warning - face vectors parallel to face normal.") == "warning - face vectors parallel to face normal.");
+	CHECK(problemText("5 warning - face vectors parallel") == "warning - face vectors parallel");
+	CHECK(problemText(".7... warning - x") == "warning - x");
+	CHECK(problemText("warning - x") == "warning - x");
+	CHECK(problemText("ERROR: MAX_MAP_BRUSHES") == "ERROR: MAX_MAP_BRUSHES");
+	CHECK(problemText("Warning: Overriding 'lights/x' from 'lights.rad'") == "Warning: Overriding 'lights/x' from 'lights.rad'");
+	const auto parallel = classifyCompileLine("FinalLightFace:      0...1...2...3...4.. warning - face vectors parallel to face normal. bad lighting will be produced");
+	REQUIRE(parallel);
+	CHECK(parallel->severity == CompileMessage::Severity::Warning);
+	CHECK(parallel->explanation.find("Align to world") != std::string::npos);
+	const auto overriding = classifyCompileLine("Warning: Overriding 'lights/physgunlight' from 'lights.rad' with 'fidelity_lights.rad'!");
+	REQUIRE(overriding);
+	CHECK(overriding->severity == CompileMessage::Severity::Info);
 }

@@ -50,10 +50,14 @@ void copyTexture(Side& side, const Side& from) {
 	side.rotation = from.rotation;
 	side.lightmapScale = from.lightmapScale;
 	side.smoothingGroups = from.smoothingGroups;
-	// Axes along the new face normal would smear the texture: fall back to world alignment.
+	// Axes along the new face normal, or a texture plane standing more than 60 degrees to the new
+	// face (the top's axes on a cut side), would smear the texture and give VRAD "face vectors
+	// parallel to face normal": fall back to world alignment, keeping the scales.
 	const Vec3 n = side.plane().normal;
 	if (std::abs(dot(normalize(side.u.axis), n)) > 0.99 || std::abs(dot(normalize(side.v.axis), n)) > 0.99) {
 		alignToWorld(side, side.u.scale != 0 ? std::abs(side.u.scale) : 0.25);
+	} else {
+		(void)alignEdgeOnTexture(side, 0.5);
 	}
 }
 

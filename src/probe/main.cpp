@@ -403,6 +403,10 @@ int cmdVmf(const Args& args) {
 		std::cout << "  displacement too large for its lightmap: brush " << big.face.solid.solidId << " side " << big.face.sideId << " (" << big.luxels
 		          << " luxels at scale " << big.scale << ", fits at " << big.neededScale << ")\n";
 	}
+	if (const auto edgeOn = edit::edgeOnTextureFaces(doc); !edgeOn.empty()) {
+		std::cout << "  " << edgeOn.size() << " face(s) with the texture edge-on (VRAD: face vectors parallel to face normal), first: brush "
+		          << edgeOn.front().solid.solidId << " side " << edgeOn.front().sideId << "\n";
+	}
 	std::cout << "save/load round trip: "
 	          << (identical ? "stable (identical, byte for byte)" : stable ? "stable (same keys and values; spacing differs)" : "CHANGES DATA")
 	          << "\n";

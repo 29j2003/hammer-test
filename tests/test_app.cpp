@@ -11640,7 +11640,7 @@ TEST_CASE("compile: displacements without four corners or too large for their li
 	watcher.setInterval(30);
 	QObject::connect(&watcher, &QTimer::timeout, [&] {
 		auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-		if (!box || box->objectName() != "displacementProblems") return;
+		if (!box || box->objectName() != "compileProblems") return;
 		asked = true;
 		if (answer == "fix") {
 			if (auto* fix = box->findChild<QAbstractButton*>("fixAndCompile")) fix->click();

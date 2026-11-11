@@ -238,6 +238,22 @@ void alignToWorld(Side& side, double scale) {
 	side.rotation = 0;
 }
 
+bool textureEdgeOn(const Side& side, double limit) {
+	if (startsWithI(side.material, "TOOLS/")) return false;
+	const Vec3 texNormal = normalize(cross(side.u.axis, side.v.axis));
+	if (length(texNormal) < 0.5) return true;   // parallel or zero axes: no texture plane at all
+	return std::abs(dot(texNormal, side.plane().normal)) < limit;
+}
+
+bool alignEdgeOnTexture(Side& side, double limit) {
+	if (!textureEdgeOn(side, limit)) return false;
+	const double uScale = side.u.scale != 0 ? std::abs(side.u.scale) : 0.25;
+	const double vScale = side.v.scale != 0 ? std::abs(side.v.scale) : 0.25;
+	alignToWorld(side, uScale);
+	side.v.scale = vScale;
+	return true;
+}
+
 void alignToFace(Side& side, double scale) {
 	alignToWorld(side, scale);
 	const auto n = side.plane().normal;

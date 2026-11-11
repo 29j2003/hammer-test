@@ -424,6 +424,11 @@ void Editor::guardDisplacements(Change& change) {
 		emit message(tr("%n displacement face(s) lost their displacement in \"%1\": they no longer have four corners (VBSP would stop).", nullptr, dropped)
 		                 .arg(QString::fromStdString(change.name)));
 	}
+	// Nor a texture edge-on to its face (smeared; VRAD: "face vectors parallel to face normal").
+	if (const int aligned = edit::guardEdgeOnTextures(m_doc, change); aligned > 0) {
+		emit message(tr("%n face(s) in \"%1\" had their texture edge-on: aligned to the world (scales kept).", nullptr, aligned)
+		                 .arg(QString::fromStdString(change.name)));
+	}
 	// Nor a displacement too large for its lightmap ("Bad surface extents"): its lightmap scale
 	// goes up just enough.
 	if (const int raised = fitDisplacementLightmaps(m_doc, change); raised > 0) {

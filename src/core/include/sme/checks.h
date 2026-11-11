@@ -65,6 +65,7 @@ struct Problem {
 		ScenePlan,              ///< choreography: a scene step without an NPC, sound or way (objects = the scene)
 		HiddenFaces,            ///< optimization_checks: faces flat against a func_detail brush nobody sees (fix: nodraw)
 		NonQuadDisplacement,    ///< Displacements on faces without four corners: VBSP stops (objects.faces; fix: make them flat)
+		EdgeOnTexture,          ///< Faces whose texture lies edge-on: smeared, VRAD "face vectors parallel to face normal" (fix: align to world)
 		DisplacementLightmap,   ///< Displacements whose lightmap is too large: VBSP stops, "Bad surface extents" (fix: raise lightmap scale)
 	};
 

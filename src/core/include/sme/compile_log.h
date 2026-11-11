@@ -22,6 +22,11 @@ struct CompileMessage {
 /// Classifies one output line; nullopt for ordinary progress/info lines.
 [[nodiscard]] std::optional<CompileMessage> classifyCompileLine(std::string_view line);
 
+/// The text of a problem line without the progress dots VRAD/VVIS print in front of it on the
+/// same line ("BuildFacelights:  0...1...4. warning - ..." -> "warning - ..."): the compile
+/// window groups repeated lines by it.
+[[nodiscard]] std::string problemText(std::string_view line);
+
 /// Progress of the current phase in percent from the tools' "0...1...2...10" dots, or nullopt.
 [[nodiscard]] std::optional<int> compileProgress(std::string_view text);
 

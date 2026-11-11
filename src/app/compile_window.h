@@ -5,6 +5,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QTimer>
 #include <QWidget>
 
@@ -14,6 +15,7 @@ class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
 class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace sme::app {
 
@@ -60,6 +62,10 @@ private:
 	QPushButton* m_reportButton;   ///< Shown once a run is done: one tests in the game next
 	QTreeWidget* m_steps;
 	QTreeWidget* m_problems;
+	/// Problem rows by step and text (without the progress dots in front): a line VRAD repeats
+	/// hundreds of times is one row with a count.
+	QHash<QString, QTreeWidgetItem*> m_problemRows;
+	QHash<QTreeWidgetItem*, int> m_problemCounts;
 	QLabel* m_summary;
 	QPlainTextEdit* m_log;
 	QTimer m_tick;

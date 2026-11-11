@@ -57,6 +57,12 @@ struct BrushHit {
 void alignToWorld(Side& side, double scale = 0.25);
 /// Texture axes lying in the face plane (Hammer's "face" alignment).
 void alignToFace(Side& side, double scale = 0.25);
+/// True if the face's texture lies (nearly) edge-on to it: the plane of its texture axes stands
+/// at more than about 84 degrees to the face (|cos| below `limit`). The texture is smeared and
+/// VRAD warns "face vectors parallel to face normal" (bad lighting). Tool textures never count.
+[[nodiscard]] bool textureEdgeOn(const Side& side, double limit = 0.1);
+/// World alignment for an edge-on face, keeping its texture scales. Returns false if it was fine.
+bool alignEdgeOnTexture(Side& side, double limit = 0.1);
 
 /// Axis-aligned block with six sides (new ids from the document).
 [[nodiscard]] Solid makeBlock(MapDocument& doc, const Bounds& box, const std::string& material);

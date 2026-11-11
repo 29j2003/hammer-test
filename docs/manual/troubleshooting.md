@@ -122,6 +122,16 @@ shadows on them get slightly softer, one undo step). Every edit that makes a dis
 once and says so in the log; the Problems panel lists them with the fix **Raise lightmap scale**. For sharper shadows
 cut the floor into shorter displacements instead.
 
+**VRAD warns "face vectors parallel to face normal. bad lighting will be produced" (many times)**
+A face's texture lies edge-on to it: its texture axes run into the face, so the texture is smeared and VRAD cannot lay
+its lightmap on it. Cut pieces made by older Mapsmith versions had this on their new sides. Before compiling Mapsmith
+offers **Fix and compile** (aligns those textures to the world, scales stay, one undo step) or **Compile as is**; the
+Problems panel lists them with **Align to world**, and every edit fixes the faces it touches. The compile window shows
+a line that repeats as one row with a count.
+
+**VRAD warns "Overriding '...' from 'lights.rad' with 'fidelity_lights.rad'"**
+Harmless: the lights file of the installed features gives those glowing materials their own values.
+
 ## Maps and files
 
 **Mapsmith crashed. Is my work gone?**

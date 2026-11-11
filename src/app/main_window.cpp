@@ -2247,11 +2247,13 @@ void MainWindow::compile() {
 }
 
 bool MainWindow::readyDisplacements(const QString& title) {
-	// The two displacement problems that stop VBSP at once: faces without four corners and
-	// displacements too large for their lightmap.
+	// The two displacement problems that stop VBSP at once (faces without four corners,
+	// displacements too large for their lightmap), and textures edge-on to their face (VRAD
+	// lights them badly; the compile may go on without fixing them).
 	const auto bad = nonQuadDisplacements(m_editor->doc());
 	const auto big = oversizedDisplacements(m_editor->doc());
-	if (bad.empty() && big.empty()) {
+	const auto edgeOn = edit::edgeOnTextureFaces(m_editor->doc());
+	if (bad.empty() && big.empty() && edgeOn.empty()) {
 		return true;
 	}
 	QStringList what, fixes;
@@ -2267,13 +2269,24 @@ bool MainWindow::readyDisplacements(const QString& title) {
 		             .arg(big.front().neededScale)
 		             .arg(big.front().scale);
 	}
+	if (!edgeOn.empty()) {
+		what << tr("%n face(s) have their texture edge-on - it is smeared, and VRAD lights them badly (\"face vectors parallel to face normal\").", nullptr,
+		           static_cast<int>(edgeOn.size()));
+		fixes << tr("Edge-on textures are aligned to the world (their scales stay).");
+	}
 	QMessageBox box(QMessageBox::Warning, title, what.join("\n"), QMessageBox::NoButton, this);
-	box.setObjectName("displacementProblems");
+	box.setObjectName("compileProblems");
 	box.setInformativeText(tr("Fix and compile: %1 Each fix is one undo step.").arg(fixes.join(" ")));
 	auto* fix = box.addButton(tr("Fix and compile"), QMessageBox::AcceptRole);
 	fix->setObjectName("fixAndCompile");
 	auto* show = box.addButton(tr("Show them"), QMessageBox::ActionRole);
-	show->setObjectName("showDisplacementProblems");
+	show->setObjectName("showCompileProblems");
+	// Edge-on textures alone do not stop VBSP: the compile may go on as it is.
+	QAbstractButton* asIs = nullptr;
+	if (bad.empty() && big.empty()) {
+		asIs = box.addButton(tr("Compile as is"), QMessageBox::DestructiveRole);
+		asIs->setObjectName("compileAsIs");
+	}
 	box.addButton(QMessageBox::Cancel);
 	box.setDefaultButton(fix);
 	box.exec();
@@ -2289,12 +2302,21 @@ bool MainWindow::readyDisplacements(const QString& title) {
 			m_editor->commit(edit::fixOversizedDisplacements(m_editor->doc(), {}, &count));
 			m_log->append(tr("Raised the lightmap scale of %n large displacement face(s).", nullptr, count), QColor(255, 200, 100));
 		}
+		if (!edit::edgeOnTextureFaces(m_editor->doc()).empty()) {
+			int count = 0;
+			m_editor->commit(edit::alignEdgeOnTextures(m_editor->doc(), {}, &count));
+			m_log->append(tr("Aligned %n edge-on texture(s) to the world.", nullptr, count), QColor(255, 200, 100));
+		}
+		return true;
+	}
+	if (asIs && box.clickedButton() == asIs) {
 		return true;
 	}
 	if (box.clickedButton() == show) {
 		Selection selection;
 		for (const auto& b : bad) selection.faces.push_back(b.face);
 		for (const auto& b : big) selection.faces.push_back(b.face);
+		selection.faces.insert(selection.faces.end(), edgeOn.begin(), edgeOn.end());
 		m_editor->setSelectMode(Editor::SelectMode::Face);
 		m_editor->setSelection(std::move(selection));
 		activeView()->frameSelection();

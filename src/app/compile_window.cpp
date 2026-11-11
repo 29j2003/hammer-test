@@ -6,6 +6,8 @@
 #include "mod_code_panel.h"
 #include "text_copy.h"
 
+#include <sme/compile_log.h>
+
 #include <QApplication>
 #include <QClipboard>
 #include <QFileInfo>
@@ -124,6 +126,8 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 		m_title->setText(tr("Compiling %1").arg(m_mapName));
 		m_steps->clear();
 		m_problems->clear();
+		m_problemRows.clear();
+		m_problemCounts.clear();
 		m_log->clear();
 		m_warnings = m_errors = 0;
 		m_leaked = false;
@@ -166,14 +170,25 @@ CompileWindow::CompileWindow(CompileRunner* runner, QWidget* parent) : QWidget(p
 	});
 	connect(runner, &CompileRunner::stepSkipped, this, [this](int index, const QString& reason) { setState(index, StepState::Skipped, reason); });
 	connect(runner, &CompileRunner::problem, this, [this](int index, const QString& line, int severity, const QString& explanation) {
-		if (severity >= 2) ++m_errors;
-		else ++m_warnings;
 		if (line.contains("leak", Qt::CaseInsensitive)) {
 			m_leaked = true;
 			m_leakButton->setVisible(true);
 		}
 		const QString step = index >= 0 && m_steps->topLevelItem(index) ? m_steps->topLevelItem(index)->text(0) : QString();
-		auto* item = new QTreeWidgetItem(m_problems, {QStringLiteral("%1 %2: %3").arg(severity >= 2 ? QStringLiteral("✖") : QStringLiteral("⚠"), step, line)});
+		const QString text = QString::fromStdString(problemText(line.toStdString()));
+		const QString label = QStringLiteral("%1 %2: %3").arg(severity >= 2 ? QStringLiteral("✖") : QStringLiteral("⚠"), step, text);
+		// The same line again (VRAD prints one per face and thread): count it on its row.
+		const QString key = step + QLatin1Char('\n') + text;
+		if (auto* row = m_problemRows.value(key)) {
+			const int count = ++m_problemCounts[row];
+			row->setText(0, QStringLiteral("%1 (×%2)").arg(label).arg(count));
+			return;
+		}
+		if (severity >= 2) ++m_errors;
+		else ++m_warnings;
+		auto* item = new QTreeWidgetItem(m_problems, {label});
+		m_problemRows.insert(key, item);
+		m_problemCounts.insert(item, 1);
 		item->setForeground(0, severity >= 2 ? QColor(255, 120, 120) : QColor(255, 200, 100));
 		item->setToolTip(0, line);
 		if (!explanation.isEmpty()) {

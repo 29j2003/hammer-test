@@ -46,6 +46,12 @@ constexpr std::array KNOWN = {
 	             "A face is too large for its lightmap - almost always a displacement (VBSP cuts brush faces itself, never a displacement): "
 	             "longer than about 125 times its lightmap scale. Compile and Problems offer \"Raise lightmap scale\"; or cut the floor "
 	             "into shorter displacements."},
+	KnownMessage{"face vectors parallel to face normal", CompileMessage::Severity::Warning,
+	             "A face's texture lies edge-on to it (its texture axes run into the face, so the texture is smeared and VRAD cannot place "
+	             "its lightmap: bad light on it). Problems lists them (\"textures edge-on\") with \"Align to world\"; Compile offers it "
+	             "before VBSP. Cut pieces made by older Mapsmith versions had them on their new sides."},
+	KnownMessage{"with 'fidelity_lights.rad'", CompileMessage::Severity::Info,
+	             "Harmless: mapbase-fidelity's lights file gives these glowing materials their own values instead of lights.rad's."},
 	KnownMessage{"max_points_on_winding", CompileMessage::Severity::Error,
 	             "A brush is broken or very far from the grid (a side with too many corners). Snap it to the grid (Ctrl+B) or rebuild it."},
 	KnownMessage{"doesn't touch two areas", CompileMessage::Severity::Error,
@@ -145,6 +151,27 @@ std::optional<CompileMessage> classifyCompileLine(std::string_view line) {
 		return CompileMessage{CompileMessage::Severity::Warning, {}};
 	}
 	return std::nullopt;
+}
+
+std::string problemText(std::string_view line) {
+	std::size_t i = 0;
+	const auto skipProgress = [&] {
+		const std::size_t start = i;
+		while (i < line.size() && (std::isdigit(static_cast<unsigned char>(line[i])) || line[i] == '.' || line[i] == ' ' || line[i] == '\t')) ++i;
+		// Only digits and dots before the text count as progress ("5 warning", "7... warning").
+		if (i == start || line.substr(start, i - start).find_first_of("0123456789.") == std::string_view::npos) i = start;
+	};
+	// "BuildFacelights:     0...1...2...4. warning - ..." - a phase name followed by its dots.
+	std::size_t j = 0;
+	while (j < line.size() && std::isalpha(static_cast<unsigned char>(line[j]))) ++j;
+	if (j > 0 && j < line.size() && line[j] == ':') {
+		std::size_t k = j + 1;
+		while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+		if (k < line.size() && std::isdigit(static_cast<unsigned char>(line[k]))) i = k;
+	}
+	skipProgress();
+	std::string_view rest = line.substr(i);
+	return std::string(rest.empty() ? line : rest);
 }
 
 std::optional<int> compileProgress(std::string_view text) {

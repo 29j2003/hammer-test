@@ -181,6 +181,18 @@ std::vector<Problem> checkMap(const MapDocument& doc, const CheckContext& contex
 		p.fixLabel = "Raise lightmap scale";
 		problems.push_back(std::move(p));
 	}
+	// Textures edge-on to their face: smeared, and VRAD lights them badly.
+	if (const auto edgeOn = edit::edgeOnTextureFaces(doc); !edgeOn.empty()) {
+		Problem p;
+		p.kind = Problem::Kind::EdgeOnTexture;
+		p.severity = Problem::Severity::Warning;
+		p.message = std::to_string(edgeOn.size()) + " face(s) have their texture edge-on (its axes run into the face): it is smeared, and VRAD warns "
+		            "\"face vectors parallel to face normal\" and lights them badly.";
+		p.howToFix = "Align their textures to the world (scales stay); then adjust them in Face mode if needed.";
+		p.objects.faces = edgeOn;
+		p.fixLabel = "Align to world";
+		problems.push_back(std::move(p));
+	}
 	// Corners off the grid (arches, rounded edges): one note for all, only brushes that can be snapped.
 	Problem offGrid;
 	offGrid.kind = Problem::Kind::OffGridCorners;
@@ -652,6 +664,8 @@ Change applyFix(MapDocument& doc, const Problem& problem, const EntityCatalog* e
 		}
 		case Problem::Kind::NonQuadDisplacement:
 			return edit::fixNonQuadDisplacements(doc, problem.objects.faces);
+		case Problem::Kind::EdgeOnTexture:
+			return edit::alignEdgeOnTextures(doc, problem.objects.faces);
 		case Problem::Kind::DisplacementLightmap:
 			return edit::fixOversizedDisplacements(doc, problem.objects.faces);
 		case Problem::Kind::OffGridCorners: {
