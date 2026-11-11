@@ -58,6 +58,7 @@ add_library(smecore STATIC
 	src/relief_pattern.cpp
 	src/road_texture.cpp
 	src/road_builder.cpp
+	src/building_builder.cpp
 	src/road_corridor.cpp
 	src/prism_tidy.cpp
 	src/grid_snap.cpp

@@ -441,6 +441,99 @@ different width usually does it). If a road comes out wrong, **Help > Make edito
 report ...** right after building records the selection, the settings and what the builder decided
 (the street's width, its centre line, every curve), so it can be rebuilt exactly.
 
+## Building buildings
+
+**Brushes > Build buildings ...** (or right-click the selection) turns the selected brushes into
+buildings - no interiors, made the way a mapper builds a facade by hand. Each brush is one lot: its
+outline seen from above (any convex shape, slanted sides too) and its height. Brushes that touch
+form a row: the sides they share get no facade. Curves and L or U shapes are several brushes that
+touch (a quarter circle of wedge brushes, for example); the cornices and the facade texture run on
+round them. The dialog stays open beside the map: every change shows the result in the views at
+once (the props as ghosts), **Build** makes it one undo step.
+
+**Shape**
+- **Build**: *Block* - a solid mass that seals the map with the facades in front of it; *Facade
+  only* - a wall of **Wall thickness** behind each chosen side, any of them: one front, a U of three
+  as a backdrop; where a wall ends at an open side it gets an end cap, or turns the corner for
+  **Return at open ends** units; *One model per lot* - each lot becomes one building model of the
+  game (**Lot model**).
+- **Facades on**: which sides get windows and doors while a side is on *Auto*: all outer sides, the
+  sides facing the street (a side against another brush of the map does not), the front only (the
+  longest side facing the street; the other sides become plain walls), or the front and the two
+  beside it.
+- The list shows every side of every lot: its length and what it is now. **State** sets it by hand
+  (*Facade*, *Plain wall* - the wall material without openings, *Open* - no wall, facade only,
+  *Nodraw*); **Windows**, **Pattern** and **Doors** give the side its own (*as set* takes the
+  building's). **Pick side in the view**, then click next to a wall: that side is selected in the list.
+
+**Floors & windows**
+- **Height**: *From the brush*, *Set the height* (**Building height**) - as many floors as fit -, or
+  *From the floors* (**Floors**: the height is the ground floor + the floors above + **Wall above the
+  top floor**). **Floor height** 128 matches many building textures and the game's broken facade
+  models.
+- **Windows**: *Recessed* (set **Window depth** into the wall, a panel with the window texture
+  fitted exactly once at the back), *Panels on the wall* (fewer brushes) or *None*.
+- **How many**: *A number per side* (**Windows per side**, spread evenly; narrower if they do not
+  fit) or *By spacing* (as many as fit with **Between windows** of wall; they grow with the length).
+  **Window width / height**, **Sill height** (from the floor), **At the corners** (wall kept at each
+  end of a side).
+- **Pattern**: `x` window, `.` wall, repeated over the columns - `x.x` leaves every second one out.
+  Several patterns with `;` between them: each building gets one at random.
+- **Sills under the windows**; **Interior behind the glass**: a plate with the interior material
+  behind each window (see-through glass would show the void through the nodraw behind it in the game).
+
+**Ground floor**
+- **At street level**, **Raised (with steps)** - the ground floor lifted by **Raised / sunk by**, steps
+  up to each door (never more than 18 units each, so players walk up; **Step depth**) and small
+  basement windows below -, or **Half sunk** (its floor below the street).
+- **Windows**: like the floors above, **Shop windows** (wide, low) or none. **Doors** on the front,
+  on every facade or none; **Doors per side**, **Door place** (middle, spread out, at the start / end),
+  **Door width / height**.
+
+**Roof & bands**
+- **Roof**: *Flat* with a **Parapet** (0: none), *Gable* (the ridge along the front) or *Hip*;
+  **Roof angle**, **Overhang**. A row of lots gets one roof per lot.
+- **Cornices between the floors**, **Cornice at the top**, **Plinth at the bottom**.
+- **Reach down to displacement ground**: a lot on displacement terrain gets a foundation down to the
+  lowest ground under it - no gap, nothing floats.
+- **Plain walls bulge** / **Flat roof sags**: displacement surfaces (**power**, **strength**), each
+  on its own thin brush with only nodraw besides it, four-cornered and with a lightmap scale VBSP
+  accepts.
+
+**Materials** - walls, ground floor, windows, broken windows, doors, trim (reveals, sills, steps),
+cornices and plinth, roof, interior (what shows through damage and behind the glass); empty fields
+take the walls' or the trim's. Below them every part has its own texture settings: **Fit** *Scale*
+(scale and shift as set), *Per floor* (one tile per floor height), *Per bay* (one tile per window bay
+and floor) or *Per opening* (windows and doors: exactly once over each); **Scale**, **Shift U / V**,
+**Rotation**. Facade textures run on along each side and from one lot to the next.
+
+**Models** - props from the game, placed as `prop_static`: drop a model from the asset browser on the
+list, **Add selected model**, **Suggestions** (models of the game found by their names for each place)
+or type a path. **Where**: in each window, below or above the windows, at the doors, at the corners,
+*Wall bay* (replaces a bay of a floor: the wall there is left open - for the game's broken facade
+models; their box decides how wide and high), along the base, on the roof. **Every** N-th place,
+**Chance**, **When** (always / only intact / only where damaged), **Out** (units from the wall; the
+model's back touches the wall by its box).
+
+**Condition & variation**
+- **Damage**: floors missing from the top and a jagged top edge (each bay ends at its own height),
+  broken windows, broken facade models in bays and rubble (the rows set to *only where damaged*);
+  the inside shows the interior material. **Damage seed** gives another arrangement.
+- **Seed**, **Floors +-** and **More wall materials**: each building gets its own number of floors and
+  wall material at random, the same again with the same seed. **Brushes that touch are one building**:
+  for a curve or an L - one material, the doors only on its longest front.
+- The list below sets a building's floors, height or wall material by hand.
+
+**Editing a building later.** A building keeps its settings and outline (in its func_detail). Clicking
+any of its pieces selects the whole building; **Build buildings ...** (or **Edit building ...** in the
+right-click menu) shows its settings - change any of them, its **Size** (length and depth) or its
+height, and **Apply** rebuilds it (one undo step). With several buildings selected, the fields show
+the first one's settings: what you change applies to all, what you leave stays each one's own.
+**Unlink** (or **Brushes > Unlink buildings**) turns buildings into plain brushes and props.
+
+The mass is a world brush (it seals and blocks visibility); everything else of a building is one
+`func_detail`. Pieces that would reach into a brush of the map (a sidewalk) are cut around it.
+
 ## Road texture
 
 To lay a road material onto floor brushes that are already there, select them (or their top faces in

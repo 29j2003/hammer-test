@@ -171,10 +171,16 @@ void Viewport::drawMeasureLabels(OverlayRecorder& p) const {
 
 void Viewport::drawPropPreview(const SceneRenderer::Params& params, std::vector<LineVertex>& lines) {
 	const auto& placements = m_editor->propPreview();
-	if (placements.empty()) return;
-	const QString model = m_editor->propPreviewModel();
+	const auto& items = m_editor->propPreviewItems();
+	if (placements.empty() && items.empty()) return;
+	const QString single = m_editor->propPreviewModel();
 	int drawn = 0;
-	for (const auto& placement : placements) {
+	// One model for all (Place props), or each its own (the building builder).
+	const std::size_t total = placements.size() + items.size();
+	for (std::size_t i = 0; i < total; ++i) {
+		const bool own = i >= placements.size();
+		const PropPlacement& placement = own ? items[i - placements.size()].second : placements[i];
+		const QString& model = own ? items[i - placements.size()].first : single;
 		const Vec3& o = placement.origin;
 		// A post with a tick showing which way the prop faces.
 		const double yaw = placement.yaw * 3.14159265358979323846 / 180.0;

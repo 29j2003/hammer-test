@@ -503,7 +503,43 @@ void Editor::redo() {
 void Editor::setSelection(Selection selection) {
 	m_selection = std::move(selection);
 	m_selection.prune(m_doc);
+	// A piece of a building made by the building builder selects the whole building.
+	if (m_selection.hasObjects() && m_selection.faces.empty()) {
+		if (const auto ids = buildingIdsOf(m_doc, m_selection); !ids.empty()) {
+			const Selection members = buildingMembers(m_doc, ids);
+			for (const auto& ref : members.solids) {
+				if (!m_selection.contains(ref)) m_selection.solids.push_back(ref);
+			}
+			for (const int id : members.entities) {
+				if (std::find(m_selection.entities.begin(), m_selection.entities.end(), id) == m_selection.entities.end()) m_selection.entities.push_back(id);
+			}
+			// A brush of the building's func_detail stands for the whole entity.
+			std::erase_if(m_selection.solids, [&](const SolidRef& ref) {
+				return ref.entityId != 0 && std::find(m_selection.entities.begin(), m_selection.entities.end(), ref.entityId) != m_selection.entities.end();
+			});
+		}
+	}
 	emit selectionChanged();
+}
+
+std::vector<BuildingRecord> Editor::selectedBuildings() const {
+	const auto ids = buildingIdsOf(m_doc, m_selection);
+	std::vector<BuildingRecord> out;
+	if (ids.empty()) return out;
+	for (auto& record : buildingsInMap(m_doc)) {
+		if (ids.contains(record.id)) out.push_back(std::move(record));
+	}
+	return out;
+}
+
+void Editor::unlinkSelectedBuildings() {
+	const auto ids = buildingIdsOf(m_doc, m_selection);
+	if (ids.empty()) {
+		emit message(tr("No building selected (only buildings made with Build buildings can be unlinked)"));
+		return;
+	}
+	commit(edit::unlinkBuildings(m_doc, ids));
+	emit message(tr("%n building(s) unlinked: plain brushes and props now", nullptr, int(ids.size())));
 }
 
 void Editor::clearSelection() {
@@ -1593,6 +1629,168 @@ void Editor::applyRoadBuildJob(const RoadBuildJob& job, const RoadBuildResult& r
 	selection.solids = refs;
 	setSelection(std::move(selection));
 	emit message(tr("Road built: %n brush(es)", nullptr, int(refs.size())));
+}
+
+Editor::BuildingJob Editor::buildingJob(const BuildingOptions& options, const std::set<std::string>& changed, std::optional<std::pair<double, double>> size) const {
+	BuildingJob job;
+	job.edits = selectedBuildings();
+	job.changed = changed;
+	job.size = size;
+	if (!m_docSnapshot || m_docSnapshotSerial != m_docSerial || m_docSnapshot->idCounters() != m_doc.idCounters()) {
+		m_docSnapshot = std::make_shared<const MapDocument>(m_doc);
+		m_docSnapshotSerial = m_docSerial;
+	}
+	job.doc = m_docSnapshot;
+	job.idCounters = m_doc.idCounters();
+	job.serial = m_docSerial;
+	job.revision = m_history.revision();
+	job.solids = m_selection.solids;
+	job.options = options;
+	job.options.cancelled = nullptr;
+	job.options.modelBounds = nullptr;
+	// Texture sizes of every material the plan may use: the settings' and the lots' own.
+	const GameFileSystem* files = m_game ? &m_game->files : nullptr;
+	std::set<std::string> materials{options.facadeMaterial, options.groundMaterial, options.windowMaterial, options.brokenWindowMaterial, options.doorMaterial,
+	                                options.trimMaterial,    options.corniceMaterial, options.roofMaterial, options.interiorMaterial};
+	for (const auto& m : options.facadeVariants) materials.insert(m);
+	for (const auto& [lot, s] : options.lotSettings) materials.insert(s.facadeMaterial);
+	for (const auto& ref : m_selection.solids) {
+		if (const Solid* solid = m_doc.findSolid(ref)) {
+			for (const auto& side : solid->sides) materials.insert(side.material);
+		}
+		if (materials.size() > 64) break;
+	}
+	materials.erase(std::string());
+	for (const auto& material : materials) job.textureSizes[material] = files ? materialTextureSize(*files, material) : std::pair<int, int>{512, 512};
+	std::set<std::string> models;
+	for (const auto& prop : options.props) models.insert(prop.model);
+	models.insert(options.lotModel);
+	for (const auto& record : job.edits) {
+		for (const auto& prop : record.options.props) models.insert(prop.model);
+		models.insert(record.options.lotModel);
+		for (const auto* m : {&record.options.facadeMaterial, &record.options.windowMaterial, &record.options.doorMaterial, &record.options.trimMaterial,
+		                      &record.options.groundMaterial, &record.options.roofMaterial, &record.options.corniceMaterial, &record.options.interiorMaterial,
+		                      &record.options.brokenWindowMaterial}) {
+			if (!m->empty() && !job.textureSizes.contains(*m)) job.textureSizes[*m] = files ? materialTextureSize(*files, *m) : std::pair<int, int>{512, 512};
+		}
+	}
+	models.erase(std::string());
+	for (const auto& model : models) job.modelBounds[model] = modelBounds(model);
+	return job;
+}
+
+Editor::BuildingResult Editor::runBuildingJob(const BuildingJob& job) {
+	BuildingResult result;
+	const auto t0 = std::chrono::steady_clock::now();
+	try {
+		if (!job.doc) return result;
+		MapDocument ids;
+		ids.setIdCounters(job.idCounters);
+		const auto& sizes = job.textureSizes;
+		const TextureSizeFn size = [&sizes](const std::string& material) {
+			const auto it = sizes.find(material);
+			return it != sizes.end() ? it->second : std::pair<int, int>{512, 512};
+		};
+		BuildingOptions options = job.options;
+		const auto& boxes = job.modelBounds;
+		options.modelBounds = [&boxes](const std::string& model) -> std::optional<Bounds> {
+			const auto it = boxes.find(model);
+			return it != boxes.end() ? it->second : std::nullopt;
+		};
+		if (job.edits.empty()) {
+			result.plan = planBuildings(*job.doc, ids, job.solids, options, size);
+		} else {
+			// Editing buildings that are there: each keeps its own settings except what was changed.
+			std::vector<BuildingRecord> records = job.edits;
+			for (auto& record : records) {
+				record.options = mergeBuildingOptions(record.options, job.options, job.changed);
+				if (job.size && records.size() == 1) record.outline = resizeOutline(record.outline, job.size->first, job.size->second);
+			}
+			result.plan = planRebuild(*job.doc, ids, records, size, options.modelBounds, job.options.cancelled);
+		}
+	} catch (const std::exception& e) {
+		result.plan = {};
+		result.error = e.what();
+	} catch (...) {
+		result.plan = {};
+		result.error = "unknown error";
+	}
+	result.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	return result;
+}
+
+std::string Editor::buildingJobKey(const BuildingJob& job) {
+	std::string key = describeBuildingOptions(job.options) + "solids = " + formatSolids(job.solids) + "\n";
+	for (const auto& record : job.edits) key += "edit " + std::to_string(record.id) + "\n";
+	for (const auto& changed : job.changed) key += "changed " + changed + "\n";
+	if (job.size) key += "size " + std::to_string(job.size->first) + " " + std::to_string(job.size->second) + "\n";
+	for (const auto& [model, box] : job.modelBounds) key += "model " + model + (box ? " known" : " loading") + "\n";
+	return key;
+}
+
+bool Editor::buildingJobCurrent(const BuildingJob& job) const {
+	return job.serial == m_docSerial && job.revision == m_history.revision() && job.idCounters == m_doc.idCounters();
+}
+
+void Editor::noteBuildingDone(const BuildingJob& job, const BuildingResult& result) const {
+	std::string text = "building builder: " + std::to_string(job.solids.size()) + " brush(es) selected (" + formatSolids(job.solids) + "), settings:\n" +
+	                   describeBuildingOptions(job.options) + describeBuildingPlan(result.plan);
+	if (!result.error.empty()) text += "error: " + result.error + "\n";
+	text += "planned in " + std::to_string(std::lround(result.milliseconds)) + " ms\n";
+	notePlan(text);
+}
+
+void Editor::applyBuildings(const BuildingOptions& options, const std::set<std::string>& changed, std::optional<std::pair<double, double>> size) {
+	clearBrushPreview();
+	setPropPreviewItems({});
+	const auto job = buildingJob(options, changed, size);
+	applyBuildingJob(job, runBuildingJob(job));
+}
+
+void Editor::applyBuildingJob(const BuildingJob& job, const BuildingResult& result) {
+	clearBrushPreview();
+	setPropPreviewItems({});
+	if (!buildingJobCurrent(job)) {
+		applyBuildings(job.options, job.changed, job.size);   // the map changed since: planned again now
+		return;
+	}
+	if (!result.plan.ok() && result.plan.removeSolids.empty()) {
+		emit message(result.error.empty() ? tr("No buildings: select the brushes to build on (each brush one building)")
+		                                  : tr("No buildings: %1").arg(QString::fromStdString(result.error)));
+		return;
+	}
+	notePlan("applied:\n" + describeBuildingPlan(result.plan));
+	// The classes' FGD defaults (spawnflags included).
+	const auto defaultsOf = [this](const std::string& classname) {
+		std::vector<std::pair<std::string, std::string>> defaults;
+		if (const auto* catalog = entities()) {
+			if (const auto* definition = catalog->find(classname)) {
+				for (const auto& property : definition->properties) {
+					if (property.kind == EntityProperty::Kind::Flags) {
+						std::uint64_t flags = 0;
+						for (const auto& flag : property.flags) flags |= flag.enabledByDefault ? flag.value : 0;
+						defaults.emplace_back(property.name, std::to_string(flags));
+					} else if (!property.defaultValue.empty() && !iequals(property.name, "origin")) {
+						defaults.emplace_back(property.name, property.defaultValue);
+					}
+				}
+			}
+		}
+		return defaults;
+	};
+	auto [change, selection] = edit::applyBuildings(m_doc, result.plan, defaultsOf("func_detail"), defaultsOf("prop_static"));
+	m_doc.updateIdCounters();
+	commit(std::move(change));
+	setSelection(std::move(selection));
+	emit message(tr("Built %n building(s): %1 brushes, %2 props", nullptr, int(result.plan.buildings.size()))
+	                 .arg(result.plan.brushCount())
+	                 .arg(result.plan.props.size()));
+}
+
+void Editor::setPropPreviewItems(std::vector<std::pair<QString, PropPlacement>> items) {
+	if (items.empty() && m_propPreviewItems.empty()) return;
+	m_propPreviewItems = std::move(items);
+	emit propPreviewChanged();
 }
 
 FlowPlan Editor::planSelectedTextureFlow(const FlowOptions& options) const {

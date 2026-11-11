@@ -38,6 +38,7 @@ namespace sme::app {
 class RoundEdgeDialog;
 class RoadDialog;
 class RoadBuilderDialog;
+class BuildingDialog;
 class GapFillDialog;
 class PropPlacementDialog;
 class TextureFlowDialog;
@@ -197,6 +198,7 @@ private:
 	void roadDialog(const QString& material = {});
 	/// "Build road ...": along the selected floor brushes, or clicked points without a selection.
 	void roadBuilderDialog();
+	void buildingDialog();
 	/// "Fill gap ...": the space between the selected brushes, with a live preview.
 	void gapFillDialog();
 	/// "Place props ...": many props along a path or scattered over faces, with a live preview.
@@ -256,6 +258,7 @@ private:
 	QPointer<ImportDialog> m_importDialog;     ///< The open import dialog
 	QPointer<RoadDialog> m_roadDialog;          ///< The open "Road" dialog
 	QPointer<RoadBuilderDialog> m_roadBuilderDialog;   ///< The open "Build road" dialog
+	QPointer<BuildingDialog> m_buildingDialog;   ///< The open "Build buildings" dialog
 	QPointer<GapFillDialog> m_gapFillDialog;    ///< The open "Fill gap" dialog
 	QPointer<PropPlacementDialog> m_propsDialog;   ///< The open "Place props" dialog
 	QPointer<TextureFlowDialog> m_flowDialog;   ///< The open "Texture flow" dialog
