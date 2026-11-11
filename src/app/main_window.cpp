@@ -34,6 +34,7 @@
 #include "properties_panel.h"
 #include "choreography_panel.h"
 #include "road_builder_dialog.h"
+#include "building_dialog.h"
 #include "gap_fill_dialog.h"
 #include "prop_placement_dialog.h"
 #include "command_palette.h"
@@ -1194,6 +1195,15 @@ void MainWindow::createActions() {
 	build->setObjectName("brushesBuildRoad");
 	build->setToolTip(tr("Builds a road: click points along it (or select floor blocks), corners become curves with the texture running on, optionally displacements with a raised middle, kerbs, fitted into the floor"));
 	brushes->addAction(build);
+	auto* buildings = action(tr("Build buildings ..."), QKeySequence(), [this] { buildingDialog(); });
+	buildings->setObjectName("brushesBuildBuildings");
+	buildings->setToolTip(tr("Turns the selected brushes into buildings: facades with windows and doors, floors, cornices, roofs, props - or only facades "
+	                         "for a backdrop; live preview, highly adjustable"));
+	brushes->addAction(buildings);
+	auto* unlink = action(tr("Unlink buildings"), QKeySequence(), [this] { m_editor->unlinkSelectedBuildings(); });
+	unlink->setObjectName("brushesUnlinkBuildings");
+	unlink->setToolTip(tr("Turns the selected buildings (made with Build buildings) into plain brushes and props"));
+	brushes->addAction(unlink);
 	auto* road = action(tr("Road texture ..."), QKeySequence(), [this] { roadDialog(); });
 	road->setObjectName("brushesRoad");
 	road->setToolTip(tr("Lays a road material along the selected floor brushes: along the road, across its width, on through curves and ramps"));
@@ -2521,8 +2531,16 @@ QMenu* MainWindow::buildContextMenu() {
 		// Brushes or faces: the road tool lays a road material along them.
 		if (!selection.solids.empty() || !selection.faces.empty()) {
 			if (!selection.solids.empty()) menu.addAction(tr("Build road ..."), this, [this] { roadBuilderDialog(); })->setObjectName("contextBuildRoad");
+			if (!selection.solids.empty() && m_editor->selectedBuildings().empty()) {
+				menu.addAction(tr("Build buildings ..."), this, [this] { buildingDialog(); })->setObjectName("contextBuildBuildings");
+			}
 			menu.addAction(tr("Road texture ..."), this, [this] { roadDialog(); })->setObjectName("contextRoad");
 			menu.addAction(tr("Texture flow ..."), this, [this] { textureFlowDialog(); })->setObjectName("contextTextureFlow");
+		}
+		if (!m_editor->selectedBuildings().empty()) {
+			menu.addSeparator();
+			menu.addAction(tr("Edit building ..."), this, [this] { buildingDialog(); })->setObjectName("contextEditBuilding");
+			menu.addAction(tr("Unlink buildings"), this, [this] { m_editor->unlinkSelectedBuildings(); })->setObjectName("contextUnlinkBuildings");
 		}
 		if (!selection.solids.empty() || !selection.entities.empty()) {
 			menu.addAction(tr("Snap vertices to grid"), this, [this] { m_editor->snapVerticesToGrid(); })->setObjectName("contextSnapVertices");
@@ -2854,6 +2872,25 @@ void MainWindow::roadBuilderDialog() {
 	m_roadBuilderDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_roadBuilderDialog->show();
 	if (m_active) m_roadBuilderDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::buildingDialog() {
+	if (m_buildingDialog) {
+		m_buildingDialog->raise();
+		m_buildingDialog->activateWindow();
+		return;
+	}
+	const auto browserModel = [this]() -> QString {
+		if (!m_assets || !m_assets->modelView()) return {};
+		const QModelIndex index = m_assets->modelView()->currentIndex();
+		return index.isValid() ? index.data(Qt::UserRole).toString() : QString();
+	};
+	// Beside the map, not in front of it: the views show the buildings while they are set up.
+	m_buildingDialog = new BuildingDialog(m_editor, browserModel, this);
+	m_buildingDialog->setAssets(m_assets);
+	m_buildingDialog->setAttribute(Qt::WA_DeleteOnClose);
+	m_buildingDialog->show();
+	if (m_active) m_buildingDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
 }
 
 void MainWindow::gapFillDialog() {

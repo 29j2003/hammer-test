@@ -140,6 +140,7 @@
 #include "compile_window.h"
 #include "properties_panel.h"
 #include "road_builder_dialog.h"
+#include "building_dialog.h"
 #include "material_field.h"
 #include "surface_dialogs.h"
 #include <sme/grid_snap.h>
@@ -11783,3 +11784,105 @@ TEST_CASE("play from here: both parts of the button on a map with an NPC scene, 
 	CHECK(editor.filePath() == mapPath);
 }
 #endif
+
+TEST_CASE("building builder: select a brush, set windows, Build - one undo step; a piece selects the whole building, Edit changes its height and size") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1600, 1000);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	SolidRef lot;
+	{
+		auto [change, ref] = edit::createBlock(editor.doc(), Bounds{{0, 0, 0}, {512, 256, 416}}, "DEMO/BRICKWALL001");
+		editor.commit(std::move(change));
+		lot = ref;
+	}
+	const std::string before = editor.doc().serialize();
+	{
+		Selection s;
+		s.solids = {lot};
+		editor.setSelection(s);
+	}
+	auto* action = window.findChild<QAction*>("brushesBuildBuildings");
+	REQUIRE(action);
+	action->trigger();
+	settle();
+	auto* dialog = window.findChild<BuildingDialog*>("buildingDialog");
+	REQUIRE(dialog);
+	CHECK_FALSE(dialog->editing());
+	dialog->findChild<QComboBox*>("buildingLayout")->setCurrentIndex(0);   // a number per side
+	dialog->findChild<QSpinBox*>("buildingWindowCount")->setValue(3);
+	QTest::qWait(200);
+	dialog->waitForPlan();
+	settle();
+	INFO("note: " << dialog->note().toStdString());
+	REQUIRE(dialog->shownPlan());
+	CHECK_FALSE(editor.brushPreview().empty());
+	for (const auto& side : dialog->shownPlan()->sides) CHECK(side.windowsPerFloor == 3);
+	// More windows: the preview follows.
+	dialog->findChild<QSpinBox*>("buildingWindowCount")->setValue(5);
+	QTest::qWait(200);
+	dialog->waitForPlan();
+	settle();
+	REQUIRE(dialog->shownPlan());
+	for (const auto& side : dialog->shownPlan()->sides) CHECK(side.windowsPerFloor == 5);
+	dialog->findChild<QPushButton*>("buildingBuild")->click();
+	settle();
+	CHECK(editor.brushPreview().empty());
+	CHECK_FALSE(editor.doc().findSolid(lot));
+	const auto records = buildingsInMap(editor.doc());
+	REQUIRE(records.size() == 1);
+	CHECK(records.front().options.windowsPerSide == 5);
+	// One piece selected: the whole building is.
+	{
+		Selection s;
+		s.solids = {records.front().members.solids.front()};
+		editor.setSelection(s);
+	}
+	CHECK(editor.selection().entities.size() == records.front().members.entities.size());
+	REQUIRE(editor.selectedBuildings().size() == 1);
+	// Edit: the dialog shows its settings; a new height and length rebuild it (one undo step).
+	action->trigger();
+	settle();
+	dialog = window.findChild<BuildingDialog*>("buildingDialog");
+	REQUIRE(dialog);
+	QTest::qWait(200);
+	dialog->waitForPlan();
+	settle();
+	CHECK(dialog->editing());
+	CHECK(dialog->findChild<QSpinBox*>("buildingWindowCount")->value() == 5);
+	CHECK(dialog->findChild<QDoubleSpinBox*>("buildingSizeLength")->value() == doctest::Approx(512));
+	const std::string built = editor.doc().serialize();
+	dialog->findChild<QComboBox*>("buildingHeightMode")->setCurrentIndex(1);   // set the height
+	dialog->findChild<QDoubleSpinBox*>("buildingHeight")->setValue(320);
+	dialog->findChild<QDoubleSpinBox*>("buildingSizeLength")->setValue(768);
+	QTest::qWait(200);
+	dialog->waitForPlan();
+	settle();
+	REQUIRE(dialog->shownPlan());
+	CHECK(dialog->shownPlan()->buildings.front().top == doctest::Approx(320));
+	dialog->findChild<QPushButton*>("buildingBuild")->click();
+	settle();
+	const auto edited = buildingsInMap(editor.doc());
+	REQUIRE(edited.size() == 1);
+	CHECK(outlineSize(edited.front().outline).first == doctest::Approx(768));
+	CHECK(edited.front().options.height == doctest::Approx(320));
+	CHECK(edited.front().options.windowsPerSide == 5);   // kept
+	editor.undo();
+	CHECK(editor.doc().serialize() == built);
+	editor.undo();
+	CHECK(editor.doc().serialize() == before);
+}

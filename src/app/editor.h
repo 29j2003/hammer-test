@@ -26,6 +26,7 @@
 #include <sme/editor_report.h>
 #include <sme/gap_fill.h>
 #include <sme/prop_placement.h>
+#include <sme/building_builder.h>
 #include <sme/road_builder.h>
 #include <sme/road_texture.h>
 #include <sme/texture_flow.h>
@@ -346,6 +347,47 @@ public:
 	/// Builds a finished job's plan (one undo step): as planned if the map is unchanged, else planned
 	/// again now. Selects the new road; clears the preview.
 	void applyRoadBuildJob(const RoadBuildJob& job, const RoadBuildResult& result);
+	/// Building builder (building_builder.h): buildings on the selected brushes, planned like the
+	/// road builder's plans (on another thread, the map shared until it changes; newest wins).
+	struct BuildingJob {
+		std::shared_ptr<const MapDocument> doc;
+		std::pair<int, int> idCounters;
+		unsigned serial = 0;
+		unsigned revision = 0;
+		std::vector<SolidRef> solids;
+		BuildingOptions options;
+		std::map<std::string, std::pair<int, int>> textureSizes;   ///< Read here (the game's files are not read on the other thread)
+		std::map<std::string, std::optional<Bounds>> modelBounds;   ///< Boxes of the models (unknown while they load)
+		std::vector<BuildingRecord> edits;        ///< Buildings that are there, to edit (else new ones on the selected brushes)
+		std::set<std::string> changed;            ///< Editing: the settings changed (the rest stays each building's own)
+		std::optional<std::pair<double, double>> size;   ///< Editing one building: its new length and depth
+	};
+	struct BuildingResult {
+		BuildingPlan plan;
+		std::string error;
+		double milliseconds = 0;
+	};
+	/// A job for the selection: the selected buildings to edit (with what was `changed` and, for one,
+	/// a new size), or new buildings on the selected brushes.
+	[[nodiscard]] BuildingJob buildingJob(const BuildingOptions& options, const std::set<std::string>& changed = {},
+	                                      std::optional<std::pair<double, double>> size = std::nullopt) const;
+	/// Buildings made by the building builder among the selection (their settings and outlines).
+	[[nodiscard]] std::vector<BuildingRecord> selectedBuildings() const;
+	/// Makes the selected buildings plain brushes and props (one undo step).
+	void unlinkSelectedBuildings();
+	/// Plans a job; reads nothing but the job (safe on another thread). Never throws.
+	[[nodiscard]] static BuildingResult runBuildingJob(const BuildingJob& job);
+	/// The job's settings, selection and model boxes as one text (equal texts plan the same).
+	[[nodiscard]] static std::string buildingJobKey(const BuildingJob& job);
+	[[nodiscard]] bool buildingJobCurrent(const BuildingJob& job) const;
+	/// For the editor report: the plan's settings and what it made.
+	void noteBuildingDone(const BuildingJob& job, const BuildingResult& result) const;
+	/// Builds a finished job's plan (one undo step "Build buildings"): as planned if the map is
+	/// unchanged, else planned again now. Selects the new buildings; clears the preview.
+	void applyBuildingJob(const BuildingJob& job, const BuildingResult& result);
+	/// Plans and builds at once (the selected brushes).
+	void applyBuildings(const BuildingOptions& options, const std::set<std::string>& changed = {},
+	                    std::optional<std::pair<double, double>> size = std::nullopt);
 	/// The paths through the selected floor brushes; `suggested` gets their width, thickness and material.
 	[[nodiscard]] std::vector<RoadPath> selectedRoadPaths(RoadBuildOptions* suggested = nullptr) const;
 	/// Texture flow (see texture_flow.h) over the selected faces (or all faces of the selected
@@ -375,6 +417,9 @@ public:
 	bool applySelectedGapFill(const GapFillOptions& options);
 	/// Props shown where they would be placed (prop_placement.h), drawn as ghosts of `model`.
 	void setPropPreview(const QString& model, std::vector<PropPlacement> placements);
+	/// Props of several models shown where they would be placed (the building builder's preview).
+	void setPropPreviewItems(std::vector<std::pair<QString, PropPlacement>> items);
+	[[nodiscard]] const std::vector<std::pair<QString, PropPlacement>>& propPreviewItems() const { return m_propPreviewItems; }
 	void clearPropPreview() { setPropPreview({}, {}); }
 	[[nodiscard]] const std::vector<PropPlacement>& propPreview() const { return m_propPreview; }
 	[[nodiscard]] const QString& propPreviewModel() const { return m_propPreviewModel; }
@@ -591,6 +636,7 @@ private:
 	mutable Selection m_hiddenAll;        ///< m_hidden plus the filtered kinds, made when needed
 	mutable bool m_hiddenDirty = true;
 	std::vector<PropPlacement> m_propPreview;   ///< Props shown before they are placed
+	std::vector<std::pair<QString, PropPlacement>> m_propPreviewItems;
 	QString m_propPreviewModel;
 	MeasureLine m_measure;
 	std::vector<Solid> m_brushPreview;        ///< Live preview of an edit (see setBrushPreview)
