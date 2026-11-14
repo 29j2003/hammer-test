@@ -3867,9 +3867,9 @@ TEST_CASE("models page: folders, search, 3D view with skins and body groups, pla
 		if ((*it)->text(0) == "props_demo") demoFolder = *it;
 	}
 	REQUIRE(demoFolder);
-	CHECK(demoFolder->text(1) == "4");
+	CHECK(demoFolder->text(1) == "8");
 	page->folders()->setCurrentItem(demoFolder);
-	CHECK(page->list()->model()->rowCount() == 4);
+	CHECK(page->list()->model()->rowCount() == 8);
 	page->search()->setText("supply");
 	CHECK(page->list()->model()->rowCount() == 1);
 	page->search()->clear();
@@ -11883,6 +11883,112 @@ TEST_CASE("building builder: select a brush, set windows, Build - one undo step;
 	CHECK(edited.front().options.windowsPerSide == 5);   // kept
 	editor.undo();
 	CHECK(editor.doc().serialize() == built);
+	editor.undo();
+	CHECK(editor.doc().serialize() == before);
+}
+
+TEST_CASE("building builder: the simple page - a City 17 style right away, windows from the facade texture, Detail, a side set from the view, Advanced folded") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1600, 1000);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	QTest::qWait(500);
+	settle();
+	SolidRef lot;
+	{
+		auto [change, ref] = edit::createBlock(editor.doc(), Bounds{{0, 0, 0}, {640, 384, 256}}, "DEMO/BRICKWALL001");
+		editor.commit(std::move(change));
+		lot = ref;
+	}
+	const std::string before = editor.doc().serialize();
+	{
+		Selection s;
+		s.solids = {lot};
+		editor.setSelection(s);
+	}
+	window.findChild<QAction*>("brushesBuildBuildings")->trigger();
+	settle();
+	auto* dialog = window.findChild<BuildingDialog*>("buildingDialog");
+	REQUIRE(dialog);
+	// Simple by default: the Advanced sections are folded away.
+	auto* tabs = dialog->findChild<QTabWidget*>("buildingTabs");
+	REQUIRE(tabs);
+	CHECK(tabs->isHidden());
+	CHECK(tabs->count() == 3);
+	// The first time a style is applied at once: a facade with its windows in the texture.
+	auto* style = dialog->findChild<QComboBox*>("buildingStyle");
+	REQUIRE(style);
+	CHECK(style->currentIndex() == static_cast<int>(BuildingStyle::PlasterBlock));
+	CHECK(dialog->findChild<QCheckBox*>("buildingWindowsFromTexture")->isChecked());
+	CHECK(dialog->options().facadeMaterial.find("BUILDING_TEMPLATE") != std::string::npos);
+	CHECK(dialog->options().roofMaterial.find("ROOF") != std::string::npos);
+	dialog->findChild<QSpinBox*>("simpleFloors")->setValue(3);
+	QTest::qWait(200);
+	dialog->waitForPlan();
+	settle();
+	REQUIRE(dialog->shownPlan());
+	CHECK(dialog->shownPlan()->windows == 0);
+	CHECK(dialog->shownPlan()->buildings.front().floors == 3);
+	CHECK(dialog->options().heightMode == HeightMode::Floors);
+	CHECK(visibleNodrawFaces(editor.doc(), *dialog->shownPlan(), {lot}).empty());
+	// Windows built into the wall instead.
+	dialog->findChild<QComboBox*>("simpleWindows")->setCurrentIndex(1);
+	QTest::qWait(200);
+	dialog->waitForPlan();
+	settle();
+	REQUIRE(dialog->shownPlan());
+	CHECK(dialog->shownPlan()->windows > 0);
+	CHECK_FALSE(dialog->findChild<QCheckBox*>("buildingWindowsFromTexture")->isChecked());
+	// Detail None: no rows of its own; Lots: its rows come back (the demo game has vents and railings).
+	auto* detail = dialog->findChild<QComboBox*>("buildingDetail");
+	detail->setCurrentIndex(0);
+	const auto automatic = [&] {
+		const auto props = dialog->options().props;
+		return std::count_if(props.begin(), props.end(), [](const FacadeProp& p) { return p.automatic; });
+	};
+	CHECK(automatic() == 0);
+	detail->setCurrentIndex(2);
+	CHECK(dialog->options().detail == 2);
+	// A side from the view: the small menu's choice (here set directly) changes the plan.
+	dialog->setPickMenuQuiet(true);
+	dialog->setSideState({0, 0}, SideState::Plain);
+	QTest::qWait(200);
+	dialog->waitForPlan();
+	settle();
+	REQUIRE(dialog->shownPlan());
+	const auto& sides = dialog->shownPlan()->sides;
+	const auto it = std::find_if(sides.begin(), sides.end(), [](const BuildingSideInfo& s) { return s.lot == 0 && s.side == 0; });
+	REQUIRE(it != sides.end());
+	CHECK(it->state == SideState::Plain);
+	if (const QByteArray shots = qgetenv("SME_SHOT_DIR"); !shots.isEmpty()) dialog->grab().save(QString::fromUtf8(shots) + "/dialog_simple.png");
+	// Advanced opens the three sections.
+	dialog->findChild<QToolButton*>("buildingAdvanced")->click();
+	CHECK_FALSE(tabs->isHidden());
+	if (const QByteArray shots = qgetenv("SME_SHOT_DIR"); !shots.isEmpty()) {
+		settle();
+		dialog->grab().save(QString::fromUtf8(shots) + "/dialog_advanced.png");
+	}
+	dialog->findChild<QPushButton*>("buildingBuild")->click();
+	settle();
+	const auto records = buildingsInMap(editor.doc());
+	REQUIRE(records.size() == 1);
+	CHECK(records.front().options.style == BuildingStyle::PlasterBlock);
+	CHECK(records.front().options.version == 2);
 	editor.undo();
 	CHECK(editor.doc().serialize() == before);
 }

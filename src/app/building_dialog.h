@@ -3,7 +3,11 @@
 // (not modal): every change plans again on another thread (Editor::runBuildingJob, the newest
 // wins) and the views show the result at once (brushes, and the props as ghosts); Build applies it
 // as one undo step, Cancel or closing leaves the map as it was.
-// Tabs: Shape (block / facade only / model, which sides: presets, a list of every side with its
+// It opens on a short page: Style (City 17 presets), Floors, Facade, Roof, Windows (from the facade
+// texture / built into the wall / none), Detail, Condition, Seed, "Change a side ..." (a click next
+// to a wall, then a small menu). The fields there write into the ones under "Advanced", folded
+// away in three sections:
+// Shape (block / facade only / model, which sides: presets, a list of every side with its
 // own state and windows, "Pick side" takes a click in a view), Floors & windows, Ground floor,
 // Roof & bands (roof, cornices, plinth, displacements), Materials (each part's material and its
 // texture: scale / fit, shift, rotation), Models (props per slot: drop a model from the asset
@@ -35,8 +39,10 @@ class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QSlider;
 class QSpinBox;
 class QTabWidget;
+class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -72,8 +78,15 @@ public:
 	[[nodiscard]] bool editing() const { return !m_editIds.empty(); }
 	/// The settings changed since the dialog showed the buildings (they apply to every one).
 	[[nodiscard]] const std::set<std::string>& changed() const { return m_changed; }
-	/// Selects the side a point is next to (what a click with "Pick side" does).
+	/// Selects the side a point is next to (what a click with "Pick side" does) and offers what it
+	/// gets in a small menu.
 	void pickSideAt(const Vec3& point);
+	/// What a side gets (the side menu, tests).
+	void setSideState(const std::pair<int, int>& key, SideState state);
+	/// Applies a look preset to the fields (the Style box does it).
+	void applyStyle(BuildingStyle style);
+	/// Tests: pickSideAt selects without the menu.
+	void setPickMenuQuiet(bool quiet) { m_pickMenuQuiet = quiet; }
 
 public slots:
 	void accept() override;
@@ -88,6 +101,12 @@ private:
 	void fillLots(const BuildingPlan& plan);
 	void loadSettings();
 	void saveSettings() const;
+	/// The simple page shows what the fields behind it say.
+	void syncSimple();
+	/// The Models rows of the Detail amount follow it (and the game's models).
+	void updateDetailProps();
+	[[nodiscard]] std::vector<std::string> gameMaterials() const;
+	[[nodiscard]] std::vector<std::string> gameModels() const;
 	/// A field was changed by hand: noted (editing several buildings applies only what changed).
 	void noteChanged(const QString& name);
 	/// The selection is (or no longer is) buildings made before: their settings into the fields.
@@ -98,6 +117,23 @@ private:
 	Editor* m_editor;
 	std::function<QString()> m_browserModel;
 	QTabWidget* m_tabs;
+	// The simple page (it writes into the fields of the Advanced sections)
+	QComboBox* m_style;
+	QSpinBox* m_simpleFloors;
+	MaterialField* m_simpleFacade;
+	MaterialField* m_simpleRoof;
+	QComboBox* m_simpleWindows;
+	QComboBox* m_detail;
+	QSlider* m_simpleCondition;
+	QSpinBox* m_simpleSeed;
+	QToolButton* m_advanced;
+	QCheckBox* m_windowsFromTexture;
+	QSpinBox* m_textureFloors;
+	QCheckBox* m_wholeTiles;
+	MaterialField* m_pipeMaterial;
+	bool m_syncing = false;
+	bool m_fresh = false;           ///< No settings saved yet: the first style is applied
+	bool m_pickMenuQuiet = false;
 	// Shape
 	QComboBox* m_mode;
 	QDoubleSpinBox* m_facadeThickness;
@@ -108,6 +144,7 @@ private:
 	QLineEdit* m_lotModel;
 	QLabel* m_editInfo;
 	QWidget* m_sizeRow;
+	QLabel* m_sizeLabel;
 	QDoubleSpinBox* m_sizeLength;
 	QDoubleSpinBox* m_sizeDepth;
 	QPushButton* m_unlink;

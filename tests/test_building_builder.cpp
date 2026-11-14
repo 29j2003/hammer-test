@@ -18,7 +18,9 @@
 #include <numbers>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <set>
+#include <tuple>
 
 using namespace sme;
 
@@ -844,4 +846,228 @@ TEST_CASE("building builder: touching lots as one building (a curve) - one mater
 	o.touchingIsOne = false;
 	p = plan(doc, lots, o);
 	CHECK(p.doors == 6);
+}
+
+namespace {
+
+/// Fixture names like a game's: windowed building textures, plain walls, trims, roofs, metal.
+const std::vector<std::string> GAME_MATERIALS{
+    "BUILDING_TEMPLATE/BUILDING_TEMPLATE007A", "PLASTER/PLASTERWALL021A", "BRICK/BRICKWALL031D", "CONCRETE/CONCRETEWALL004A", "CONCRETE/CONCRETEFLOOR011A",
+    "TRIM/TRIM_CORNICE001A", "ROOF/ROOF_TAR001A", "METAL/METALPIPE001A", "GLASS/WINDOW001A", "GLASS/WINDOW_BROKEN001A", "DOORS/DOOR001A",
+    "STORE/STOREFRONT001A", "TOOLS/TOOLSNODRAW", "DECALS/DECAL001"};
+const std::vector<std::string> GAME_MODELS{"models/props_vents/vent_large001.mdl", "models/props_rooftop/antenna01a.mdl", "models/props_c17/air_conditioner001a.mdl",
+                                           "models/props_c17/railing_short.mdl", "models/props_debris/concrete_chunk01a.mdl"};
+
+const TextureSizeFn GAME_SIZE = [](const std::string&) { return std::pair<int, int>{512, 512}; };
+
+BuildingPlan gamePlan(const MapDocument& doc, const std::vector<SolidRef>& lots, const BuildingOptions& o) {
+	MapDocument ids;
+	ids.setIdCounters(doc.idCounters());
+	return planBuildings(doc, ids, lots, o, GAME_SIZE);
+}
+
+double fracOf(double value, double size) {
+	double r = std::fmod(value, size);
+	if (r < 0) r += size;
+	return std::min(r, size - r);
+}
+
+} // namespace
+
+TEST_CASE("building builder pass 2: styles pick the game's materials; a facade with its windows in the texture builds no windows, fits whole tiles") {
+	CHECK(materialHasWindows("BUILDING_TEMPLATE/BUILDING_TEMPLATE007A"));
+	CHECK(materialHasWindows("store/storefront001a"));
+	CHECK_FALSE(materialHasWindows("PLASTER/PLASTERWALL021A"));
+	CHECK_FALSE(materialHasWindows("GLASS/WINDOW001A"));
+	CHECK(textureFloorsFor(512, 128) == 1);
+	CHECK(textureFloorsFor(1024, 128) == 2);
+	CHECK(textureFloorsFor(256, 128) == 1);
+
+	const BuildingOptions plaster = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::PlasterBlock, GAME_MATERIALS, GAME_MODELS);
+	CHECK(plaster.style == BuildingStyle::PlasterBlock);
+	CHECK(plaster.facadeMaterial == "BUILDING_TEMPLATE/BUILDING_TEMPLATE007A");
+	CHECK(plaster.windowsFromTexture);
+	CHECK(plaster.roofMaterial == "ROOF/ROOF_TAR001A");
+	CHECK(plaster.corniceMaterial == "TRIM/TRIM_CORNICE001A");
+	CHECK(plaster.pipeMaterial == "METAL/METALPIPE001A");
+	CHECK(plaster.texture(BuildingPart::Facade).fit == TextureFit::Tiles);
+	CHECK(plaster.texture(BuildingPart::Cornice).fit == TextureFit::Band);
+	CHECK(plaster.detail >= 1);
+	CHECK(std::any_of(plaster.props.begin(), plaster.props.end(), [](const FacadeProp& p) { return p.automatic && p.anchor == FacadePropAnchor::Roof; }));
+	const BuildingOptions brick = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::BrickTenement, GAME_MATERIALS, GAME_MODELS);
+	CHECK(brick.facadeMaterial == "BRICK/BRICKWALL031D");
+	CHECK_FALSE(brick.windowsFromTexture);
+	CHECK(brick.windowMaterial == "GLASS/WINDOW001A");
+	const BuildingOptions shops = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::ShopRow, GAME_MATERIALS, GAME_MODELS);
+	CHECK(shops.groundMaterial == "STORE/STOREFRONT001A");
+	CHECK(shops.groundWindows == GroundWindows::None);   // the storefront has its windows in it
+
+	// A 600 x 384 lot, 4 floors of 128: one mass (no window pieces), its sides start with a whole
+	// tile and end at a tile edge, the floors on tile rows.
+	MapDocument doc;
+	const auto lot = addLot(doc, box({0, 0, 0}, {600, 384, 512}));
+	const auto p = gamePlan(doc, {lot}, plaster);
+	REQUIRE(p.buildings.size() == 1);
+	checkClean(p);
+	CHECK(p.windows == 0);
+	CHECK(p.buildings.front().world.size() == 1);
+	CHECK(visibleNodrawFaces(doc, p, {lot}).empty());
+	int facades = 0;
+	for (const auto& side : p.buildings.front().world.front().sides) {
+		if (side.material != plaster.facadeMaterial) continue;
+		++facades;
+		const Vec3 n = side.plane().normal;
+		INFO("normal " << n.x << " " << n.y << " " << n.z << " world " << p.buildings.front().world.size());
+		REQUIRE(std::abs(n.z) < 0.1);
+		const double width = std::abs(n.x) > 0.5 ? 384.0 : 600.0;
+		// A whole number of repeats over the side, within 10 % of the 0.25 scale.
+		const double repeats = width / (512 * side.u.scale);
+		CHECK(std::abs(repeats - std::round(repeats)) < 1e-6);
+		CHECK(std::abs(side.u.scale / 0.25 - 1) <= 0.10 + 1e-9);
+		CHECK(side.v.scale == doctest::Approx(0.25));
+		// The tile starts at the side's left corner (seen from outside) and at the ground floor's top.
+		const Vec3 u = normalize(side.u.axis);
+		double left = 1e18;
+		for (const Vec3 c : {Vec3{0, 0, 0}, Vec3{600, 0, 0}, Vec3{600, 384, 0}, Vec3{0, 384, 0}}) {
+			if (std::abs(dot(c, n) - side.plane().dist) < 0.5) left = std::min(left, dot(c, u));
+		}
+		CHECK(fracOf(left / side.u.scale + side.u.shift, 512) < 0.01);
+		CHECK(fracOf(dot(Vec3{0, 0, 128}, normalize(side.v.axis)) / side.v.scale + side.v.shift, 512) < 0.01);
+	}
+	CHECK(facades == 4);
+	// Bands: the cornice texture once over the band's height.
+	bool band = false;
+	for (const auto& s : p.buildings.front().detail) {
+		for (const auto& side : s.sides) {
+			if (side.material != plaster.corniceMaterial || std::abs(side.plane().normal.z) > 0.1) continue;
+			const auto g = buildBrushGeometry(s);
+			const double h = g.bounds.max.z - g.bounds.min.z;
+			if (h < 1) continue;
+			std::string all;
+			for (const auto& other : s.sides) all += other.material + " ";
+			INFO("piece " << g.bounds.min.x << " " << g.bounds.min.y << " " << g.bounds.min.z << " - " << g.bounds.max.x << " " << g.bounds.max.y << " " << g.bounds.max.z << " " << all);
+			CHECK(side.v.scale == doctest::Approx(h / 512));
+			band = true;
+		}
+	}
+	CHECK(band);
+	// Detail: drainpipes of the pipe material, the roof props on the roof.
+	bool pipe = false;
+	for (const auto& s : p.buildings.front().detail) {
+		pipe = pipe || std::any_of(s.sides.begin(), s.sides.end(), [&](const Side& side) { return side.material == plaster.pipeMaterial; });
+	}
+	CHECK(pipe);
+	// The roof is roof, never the facade.
+	for (const auto& side : p.buildings.front().world.front().sides) {
+		if (side.plane().normal.z > 0.9) CHECK(side.material == "ROOF/ROOF_TAR001A");
+	}
+	// A shop row: the ground floor is a mass of its own with the storefront, tiles on its rows too.
+	const auto ps = gamePlan(doc, {lot}, shops);
+	checkClean(ps);
+	CHECK(ps.buildings.front().world.size() == 2);
+	CHECK(visibleNodrawFaces(doc, ps, {lot}).empty());
+	// Old buildings (no version key) keep their meaning.
+	const auto old = decodeBuildingOptions("buildingMode=0&buildingFloors=3");
+	CHECK(old.version == 1);
+	CHECK_FALSE(old.windowsFromTexture);
+	CHECK(old.detail == 0);
+	const auto again = decodeBuildingOptions(encodeBuildingOptions(plaster));
+	CHECK(again.version == 2);
+	CHECK(again.windowsFromTexture);
+	CHECK(again.style == BuildingStyle::PlasterBlock);
+	CHECK(again.props.size() == plaster.props.size());
+	CHECK(again.props.back().automatic == plaster.props.back().automatic);
+}
+
+TEST_CASE("building builder pass 2: nodraw only where nothing can see it (every preset, neighbours lower, facade only, bands at open corners)") {
+	MapDocument doc;
+	// A lower building of the map beside the lot (its side shows above it), and a floor.
+	(void)addLot(doc, box({-512, -256, -16}, {1600, 1200, 0}), "CONCRETE/CONCRETEFLOOR001A");
+	(void)addLot(doc, box({608, 0, 0}, {900, 384, 160}), "CONCRETE/CONCRETEWALL004A");
+	const auto lot = addLot(doc, box({0, 0, 0}, {600, 384, 512}));
+	const auto lot2 = addLot(doc, box({0, 384, 0}, {300, 700, 384}));
+	for (const auto sides : {BuildingSides::AllOuter, BuildingSides::Street, BuildingSides::Front, BuildingSides::FrontAndSides}) {
+		for (const auto mode : {BuildingMode::Block, BuildingMode::Facade}) {
+			for (const bool texture : {false, true}) {
+				BuildingOptions o = baseOptions();
+				o.sides = sides;
+				o.mode = mode;
+				o.windowsFromTexture = texture;
+				o.groundLevel = texture ? GroundLevel::Raised : GroundLevel::Street;
+				o.detail = 2;
+				o.returnDepth = mode == BuildingMode::Facade ? 32 : 0;
+				INFO("sides " << static_cast<int>(sides) << " mode " << static_cast<int>(mode) << " texture " << texture);
+				const auto p = plan(doc, {lot, lot2}, o);
+				REQUIRE(p.ok());
+				checkClean(p);
+				const auto seen = visibleNodrawFaces(doc, p, {lot, lot2});
+				CHECK(seen.empty());
+			}
+		}
+	}
+}
+
+TEST_CASE("building builder: City 17 street for screenshots (pass 2 styles)" * doctest::skip()) {
+	// SME_BUILDING_DEMO2=<file.vmf>: a street of styled buildings on the demo materials (the demo
+	// fixture writes them), for looking at with --screenshot.
+	const char* out = std::getenv("SME_BUILDING_DEMO2");
+	if (!out) return;
+	const std::vector<std::string> materials{"DEMO/BUILDING_TEMPLATE_PLASTER001", "DEMO/PLASTERWALL001", "DEMO/BRICKWALL001", "DEMO/CONCRETEWALL001",
+	                                         "DEMO/TRIM_CORNICE001", "DEMO/ROOF_TAR001", "DEMO/METALPIPE001", "DEMO/STOREFRONT001", "DEMO/WINDOW001",
+	                                         "DEMO/WOOD001", "DEMO/GLASS001", "DEMO/FLOORTILE001"};
+	const std::vector<std::string> models{"models/props_demo/vent_roof01.mdl", "models/props_demo/air_conditioner01.mdl", "models/props_demo/antenna01.mdl",
+	                                      "models/props_demo/railing01.mdl", "models/props_demo/barrel01.mdl"};
+	const TextureSizeFn size = [](const std::string& m) {
+		const std::string lower = toLower(m);
+		if (lower.find("building_template") != std::string::npos || lower.find("storefront") != std::string::npos) return std::pair<int, int>{512, 512};
+		if (lower.find("metal") != std::string::npos || lower.find("glass") != std::string::npos) return std::pair<int, int>{128, 128};
+		return std::pair<int, int>{256, 256};
+	};
+	const auto bounds = [](const std::string& model) -> std::optional<Bounds> {
+		if (model.find("vent") != std::string::npos) return box({-16, -16, 0}, {16, 16, 32});
+		if (model.find("air_cond") != std::string::npos) return box({-12, -20, -16}, {12, 20, 16});
+		if (model.find("antenna") != std::string::npos) return box({-2, -20, 0}, {2, 20, 72});
+		if (model.find("railing") != std::string::npos) return box({-1, -32, 0}, {1, 32, 40});
+		return box({-14, -14, 0}, {14, 14, 44});
+	};
+	MapDocument doc;
+	(void)edit::createBlock(doc, box({-1024, -1536, -64}, {3072, 1024, 0}), "DEMO/FLOORTILE001");
+	struct Street {
+		BuildingStyle style;
+		double x, w, d;
+		int floors;
+		std::uint32_t seed;
+	};
+	const Street street[] = {{BuildingStyle::PlasterBlock, 0, 448, 384, 5, 1}, {BuildingStyle::BrickTenement, 448, 384, 384, 4, 2},
+	                         {BuildingStyle::ShopRow, 832, 512, 384, 3, 3}, {BuildingStyle::PlasterBlock, 1344, 320, 384, 4, 4},
+	                         {BuildingStyle::Industrial, 1664, 640, 512, 2, 5}};
+	for (const auto& lot : street) {
+		const auto ref = addLot(doc, box({lot.x, 0, 0}, {lot.x + lot.w, lot.d, 256}), "DEMO/BRICKWALL001");
+		BuildingOptions o = applyBuildingStyle(defaultBuildingOptions(), lot.style, materials, models);
+		o.floors = lot.floors;
+		o.seed = lot.seed;
+		o.modelBounds = bounds;
+		MapDocument ids;
+		ids.setIdCounters(doc.idCounters());
+		const auto p = planBuildings(doc, ids, {ref}, o, size);
+		MESSAGE(describeBuildingPlan(p));
+		CHECK(visibleNodrawFaces(doc, p, {ref}).empty());
+		(void)edit::applyBuildings(doc, p);
+		doc.updateIdCounters();
+	}
+	// The other side of the street: a brick tenement with built windows and a panel block.
+	for (const auto& [style, x, w, floors] : std::vector<std::tuple<BuildingStyle, double, double, int>>{
+	         {BuildingStyle::BrickTenement, 0, 640, 4}, {BuildingStyle::PanelBlock, 640, 768, 7}, {BuildingStyle::ShopRow, 1408, 512, 3}}) {
+		const auto ref = addLot(doc, box({x, -1024, 0}, {x + w, -640, 256}), "DEMO/BRICKWALL001");
+		BuildingOptions o = applyBuildingStyle(defaultBuildingOptions(), style, materials, models);
+		o.floors = floors;
+		o.modelBounds = bounds;
+		MapDocument ids;
+		ids.setIdCounters(doc.idCounters());
+		const auto p = planBuildings(doc, ids, {ref}, o, size);
+		CHECK(visibleNodrawFaces(doc, p, {ref}).empty());
+		(void)edit::applyBuildings(doc, p);
+		doc.updateIdCounters();
+	}
+	std::ofstream(out, std::ios::binary) << doc.serialize();
 }

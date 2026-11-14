@@ -587,6 +587,74 @@ void createDemo(Fixture& f) {
 		writeStudioModel(f.mod / "models/humans/group01/male_07.mdl", makeStudioModel(citizen));
 	}
 	// Hammer's green player start figure (info_player_start: studio("models/editor/playerstart.mdl")).
+	// City 17 style building textures (the building builder's styles find them by name): a plaster
+	// facade with two windows per floor in the picture (one repeat = one 128-unit floor at 0.25), a
+	// plain plaster wall, a cornice strip with dentils, a tar roof, a metal pipe, a shop front and a
+	// window for openings.
+	const auto windowPane = [](double u, double v, double u0, double u1, double v0, double v1, Rgba wall) {
+		const double frame = 0.022;
+		if (u < u0 - frame || u > u1 + frame || v < v0 - frame || v > v1 + frame * 2.5) return std::optional<Rgba>{};
+		if (v > v1 + frame && v <= v1 + frame * 2.5) return std::optional<Rgba>{Rgba{wall.r * 0.7, wall.g * 0.7, wall.b * 0.7}};   // sill shadow
+		if (u < u0 || u > u1 || v < v0 || v > v1) return std::optional<Rgba>{Rgba{0.78, 0.77, 0.72}};   // frame
+		const double mu = (u - u0) / (u1 - u0), mv = (v - v0) / (v1 - v0);
+		if (std::abs(mu - 0.5) < 0.035 || std::abs(mv - 0.33) < 0.03) return std::optional<Rgba>{Rgba{0.7, 0.69, 0.64}};   // mullions
+		const double sky = 0.18 + (1 - mv) * 0.18 + std::max(0.0, std::sin((mu + mv) * 9) - 0.85) * 0.8;
+		const bool curtain = mu < 0.18 || mu > 0.82;
+		if (curtain) return std::optional<Rgba>{Rgba{0.55, 0.5, 0.42}};
+		return std::optional<Rgba>{Rgba{sky * 0.8, sky * 0.9, sky}};
+	};
+	writeBytes(mat / "demo/building_template_plaster001.vtf", makeTexture(512, [&](double u, double v) {
+		const double n = fbm(u, v, 81) * 0.18 - std::max(0.0, fbm(u * 0.5, v * 0.25, 82) - 0.55) * 0.5;
+		const Rgba wall{0.72 + n, 0.66 + n, 0.55 + n};
+		if (v > 0.965) return Rgba{wall.r * 0.82, wall.g * 0.82, wall.b * 0.82};   // floor line
+		if (auto w = windowPane(u, v, 0.14, 0.36, 0.2, 0.78, wall)) return *w;
+		if (auto w = windowPane(u, v, 0.64, 0.86, 0.2, 0.78, wall)) return *w;
+		return wall;
+	}));
+	writeBytes(mat / "demo/plasterwall001.vtf", makeTexture(256, [](double u, double v) {
+		const double n = fbm(u, v, 91) * 0.2 - std::max(0.0, fbm(u * 0.5, v * 0.5, 92) - 0.55) * 0.5;
+		return Rgba{0.7 + n, 0.65 + n, 0.55 + n};
+	}));
+	writeBytes(mat / "demo/trim_cornice001.vtf", makeTexture(256, [](double u, double v) {
+		const double n = fbm(u, v, 101) * 0.12;
+		const double base = 0.66 + n;
+		if (v < 0.12) return Rgba{base + 0.08, base + 0.08, base + 0.06};       // top edge, lit
+		if (v < 0.3) return Rgba{base - 0.04, base - 0.04, base - 0.05};
+		if (v < 0.36) return Rgba{base - 0.25, base - 0.25, base - 0.26};       // shadow line
+		if (v < 0.78) {                                                         // dentils
+			const bool block = std::fmod(u * 16, 1.0) < 0.55;
+			return block ? Rgba{base + 0.04, base + 0.04, base + 0.02} : Rgba{base - 0.3, base - 0.3, base - 0.31};
+		}
+		if (v < 0.86) return Rgba{base - 0.18, base - 0.18, base - 0.19};
+		return Rgba{base, base, base - 0.02};
+	}));
+	writeBytes(mat / "demo/roof_tar001.vtf", makeTexture(256, [](double u, double v) {
+		const double n = fbm(u * 2, v * 2, 111) * 0.12 + hash(int(u * 256), int(v * 256), 7) * 0.06;
+		return Rgba{0.2 + n, 0.2 + n, 0.21 + n};
+	}));
+	writeBytes(mat / "demo/metalpipe001.vtf", makeTexture(128, [](double u, double v) {
+		const double shade = 0.35 + 0.25 * std::sin(u * std::numbers::pi) + fbm(u, v, 121) * 0.08;
+		return Rgba{shade * 0.95, shade, shade * 1.02};
+	}));
+	writeBytes(mat / "demo/storefront001.vtf", makeTexture(512, [&](double u, double v) {
+		const double n = fbm(u, v, 131) * 0.1;
+		if (v < 0.2) {   // sign band
+			const bool letter = v > 0.06 && v < 0.14 && u > 0.25 && u < 0.75 && std::fmod(u * 24, 1.0) < 0.6;
+			return letter ? Rgba{0.85, 0.82, 0.6} : Rgba{0.18 + n, 0.3 + n, 0.24 + n};
+		}
+		if (v > 0.9) return Rgba{0.35 + n, 0.33 + n, 0.3 + n};   // kick plate
+		const Rgba wall{0.4 + n, 0.38 + n, 0.35 + n};
+		if (auto w = windowPane(u, v, 0.08, 0.92, 0.27, 0.86, wall)) return *w;
+		return wall;
+	}));
+	writeBytes(mat / "demo/window001.vtf", makeTexture(256, [&](double u, double v) {
+		const Rgba wall{0.75, 0.74, 0.7};
+		if (auto w = windowPane(u, v, 0.06, 0.94, 0.05, 0.93, wall)) return *w;
+		return wall;
+	}));
+	for (const char* name : {"building_template_plaster001", "plasterwall001", "trim_cornice001", "roof_tar001", "metalpipe001", "storefront001", "window001"}) {
+		writeText(mat / (std::string("demo/") + name + ".vmt"), vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/" + std::string(name) + "\"\n"));
+	}
 	writeBytes(mat / "models/editor/playerstart.vtf", makeTexture(32, [](double u, double v) {
 		return Rgba{0.15, 0.75 - v * 0.2, 0.2 + u * 0.05};
 	}));
@@ -600,6 +668,11 @@ void createDemo(Fixture& f) {
 	// A door model like HL2's: the origin is the hinge, the door runs along +Y from it.
 	writeStudioModel(f.mod / "models/props_demo/door01_left.mdl",
 	                 makeStudioModel({{-1, 0, 0, 1, 54, 104}, {1, 44, 46, 4, 50, 50}}, {"idle"}, "", "wood001", "demo/"));
+	// Roof and wall details for the building builder's Detail amount (found by their names).
+	writeStudioModel(f.mod / "models/props_demo/vent_roof01.mdl", makeStudioModel({{-16, -16, 0, 16, 16, 20}, {-10, -10, 20, 10, 10, 32}}, {"idle"}, "", "metal001", "demo/"));
+	writeStudioModel(f.mod / "models/props_demo/air_conditioner01.mdl", makeStudioModel({{-12, -20, -16, 12, 20, 16}}, {"idle"}, "", "metal001", "demo/"));
+	writeStudioModel(f.mod / "models/props_demo/antenna01.mdl", makeStudioModel({{-2, -2, 0, 2, 2, 72}, {-1, -20, 56, 1, 20, 58}}, {"idle"}, "", "metal001", "demo/"));
+	writeStudioModel(f.mod / "models/props_demo/railing01.mdl", makeStudioModel({{-1, -32, 0, 1, 32, 3}, {-1, -32, 36, 1, 32, 40}, {-1, -32, 0, 1, -29, 40}, {-1, 29, 0, 1, 32, 40}}, {"idle"}, "", "metal001", "demo/"));
 	writeStudioModel(f.mod / "models/props_demo/barrel01.mdl",
 	                 makeStudioModel({{-14, -14, 0, 14, 14, 44}, {-15, -15, 6, 15, 15, 10}, {-15, -15, 34, 15, 15, 38}}, {"idle"}, "", "metal001", "demo/"));
 	{
