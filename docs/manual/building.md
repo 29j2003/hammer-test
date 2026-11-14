@@ -451,6 +451,37 @@ touch (a quarter circle of wedge brushes, for example); the cornices and the fac
 round them. The dialog stays open beside the map: every change shows the result in the views at
 once (the props as ghosts), **Build** makes it one undo step.
 
+The dialog opens on a short page - that is all most buildings need:
+- **Style**: a look preset in the City 17 / Eastern bloc way - *Plaster block*, *Brick tenement*,
+  *Panel block*, *Shop row*, *Industrial*. It finds fitting materials of your game by their names
+  (facade, roof, cornice strip, trim, drainpipes, shop fronts), sets the floors, flat bands and a
+  flat roof with a low parapet, and adds detail. Pick one, then change what you like; *Custom* keeps
+  your settings. The first time the dialog opens, *Plaster block* is applied.
+- **Floors**: all floors, the ground floor included; the height follows.
+- **Facade** and **Roof**: the materials. The roof never takes the facade texture.
+- **Windows**: *From the facade texture* - Half-Life 2's building textures already show the
+  windows, so none are built: the texture is scaled so that one repeat is a whole number of floors
+  (a 512 texture is one 128-unit floor), each side starts with a whole tile at its left corner and
+  ends at a tile edge (its width changes by at most 10 %), and the rows line up with the floors.
+  Picking a facade whose name says it has windows (building_template, apartment, facade,
+  storefront ...) switches this on by itself. *Built into the wall*: shallow openings, each with one
+  window texture fitted to it; their reveals take the trim. *None*: plain walls.
+- **Detail**: *None*, *Some* or *Lots* - drainpipes down the corners (and along long walls), gutters
+  under pitched eaves, and the game's vents, AC units, antennas and railings on the roofs and under
+  some windows (only models your game has; they appear in the Models list and can be changed there).
+- **Condition**: intact ... destroyed. **Seed**: another number gives other random choices.
+- **Change a side ...**: click next to a wall in the 3D or top view; a small menu sets that side to
+  *Facade*, *Plain wall*, *Open* (facade only) or *Nodraw*.
+
+Nodraw is only where nothing can see it: every face the builder would leave nodraw is checked
+against the other pieces, the other buildings and the brushes of the map, and gets a real material
+if any part of it can be seen (the side of a cornice at a corner, a wall above a lower neighbour,
+the side that faced another brush with a gap). Pieces that reach into another building or a brush of
+the map are cut round it and keep their textures.
+
+Everything else is under **Advanced** (three sections: *Shape & sides*, *Facade*, *Materials,
+models & variation*):
+
 **Shape**
 - **Build**: *Block* - a solid mass that seals the map with the facades in front of it; *Facade
   only* - a wall of **Wall thickness** behind each chosen side, any of them: one front, a U of three
@@ -504,8 +535,14 @@ once (the props as ghosts), **Build** makes it one undo step.
 cornices and plinth, roof, interior (what shows through damage and behind the glass); empty fields
 take the walls' or the trim's. Below them every part has its own texture settings: **Fit** *Scale*
 (scale and shift as set), *Per floor* (one tile per floor height), *Per bay* (one tile per window bay
-and floor) or *Per opening* (windows and doors: exactly once over each); **Scale**, **Shift U / V**,
-**Rotation**. Facade textures run on along each side and from one lot to the next.
+and floor), *Per opening* (windows and doors: exactly once over each), *Whole tiles (floors)* (one
+repeat a whole number of floors high, the aspect kept, whole tiles per side - the styles use it for
+walls and the ground floor) or *Once over the band* (a cornice or plinth strip: its texture once over
+the band's height, running on along it); **Scale**, **Shift U / V**, **Rotation**. Facade textures run
+on along each side and from one lot to the next. **Drainpipes and gutters** has its own material. In
+*Floors & windows*, **The facade texture has the windows in it**, **Facade texture: floors per
+repeat** (0: from its size) and **Each side a whole number of texture repeats wide** belong to the
+simple page's *Windows: From the facade texture*.
 
 **Models** - props from the game, placed as `prop_static`: drop a model from the asset browser on the
 list, **Add selected model**, **Suggestions** (models of the game found by their names for each place)

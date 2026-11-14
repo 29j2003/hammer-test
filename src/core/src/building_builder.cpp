@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <set>
 #include <sstream>
@@ -126,7 +127,7 @@ double polygonArea(const std::vector<Vec3>& poly) {
 // --- Textures ------------------------------------------------------------------------------
 
 /// What a face of a piece is.
-enum class Role { Nodraw, Facade, Ground, Window, BrokenWindow, Door, Trim, Cornice, Roof, Interior };
+enum class Role { Nodraw, Facade, Ground, Window, BrokenWindow, Door, Trim, Cornice, Roof, Interior, Pipe };
 
 /// Where a face's texture starts: a point on its side (the side's start at the reference height),
 /// the side's direction, the floor height and the bay width (for the fitted settings).
@@ -135,6 +136,9 @@ struct TexRef {
 	Vec3 along{1, 0, 0};
 	double floor = 128;
 	double bay = 128;
+	double sideLength = 0;    ///< Tiles: the side's length (fitting whole repeats)
+	int tileFloors = 0;       ///< Tiles: floors per repeat (0: from the texture's size)
+	bool fitWhole = false;    ///< Tiles: the side is a whole number of repeats wide
 };
 
 /// An opening a panel fits its texture to: its left top corner, width and height.
@@ -144,7 +148,7 @@ struct Fit {
 };
 
 struct Materials {
-	std::string facade, ground, window, broken, door, trim, cornice, roof, interior;
+	std::string facade, ground, window, broken, door, trim, cornice, roof, interior, pipe;
 	[[nodiscard]] const std::string& of(Role role) const {
 		switch (role) {
 			case Role::Facade: return facade;
@@ -156,6 +160,7 @@ struct Materials {
 			case Role::Cornice: return cornice;
 			case Role::Roof: return roof;
 			case Role::Interior: return interior;
+			case Role::Pipe: return pipe;
 			case Role::Nodraw: break;
 		}
 		return NODRAW;
@@ -173,6 +178,7 @@ BuildingPart partOf(Role role) {
 		case Role::Cornice: return BuildingPart::Cornice;
 		case Role::Roof: return BuildingPart::Roof;
 		case Role::Interior: return BuildingPart::Interior;
+		case Role::Pipe: return BuildingPart::Trim;
 		case Role::Nodraw: break;
 	}
 	return BuildingPart::Trim;
@@ -215,8 +221,40 @@ void layTexture(Side& side, const std::string& material, const PartTexture& part
 		side.v.shift = wrap(-dot(fit->leftTop, v) / sv, th);
 		return;
 	}
+	const bool vertical = std::abs(n.z) < 0.1;
+	if (fit && part.fit == TextureFit::Band && vertical && fit->height > 0.5) {
+		// Once over the band's height, running on along it (cornice and plinth strips).
+		const double sc = fit->height / th;
+		side.u = TextureAxis{u, wrap(-dot(ref.origin, u) / sc + part.shiftU, tw), sc};
+		side.v = TextureAxis{v, wrap(-dot(fit->leftTop, v) / sc + part.shiftV, th), sc};
+		return;
+	}
 	double su = part.scale > 0 ? part.scale : 0.25, sv = su;
-	if (part.fit == TextureFit::Floor && ref.floor > 1) {
+	if (part.fit == TextureFit::Tiles && ref.floor > 1) {
+		// A whole number of floors per repeat (or of repeats per floor for a small texture: a plain
+		// brick wall), near the usual 0.25 scale, the aspect kept; a "nice" scale when it is that close.
+		double repeat = ref.floor;
+		const double natural = th * 0.25;
+		if (ref.tileFloors > 0) {
+			repeat = ref.tileFloors * ref.floor;
+		} else if (natural >= ref.floor) {
+			repeat = textureFloorsFor(static_cast<int>(th), ref.floor) * ref.floor;
+		} else {
+			repeat = ref.floor / std::max(1.0, std::round(ref.floor / natural));
+		}
+		sv = repeat / th;
+		for (const double nice : {0.125, 0.25, 0.5, 1.0, 2.0}) {
+			if (std::abs(sv - nice) <= nice * 0.03) sv = nice;
+		}
+		su = sv;
+		if (ref.fitWhole && vertical && ref.sideLength > 1) {
+			// The side ends at a tile edge: at most 10 % wider or narrower.
+			const double repeat = tw * su;
+			const double n = std::max(1.0, std::round(ref.sideLength / repeat));
+			const double fitted = ref.sideLength / (n * tw);
+			if (std::abs(fitted / su - 1) <= 0.10 + 1e-9) su = fitted;
+		}
+	} else if (part.fit == TextureFit::Floor && ref.floor > 1) {
 		sv = ref.floor / th;
 		su = sv;
 	} else if (part.fit == TextureFit::Bay && ref.floor > 1 && ref.bay > 1) {
@@ -242,6 +280,7 @@ struct HalfSpace {
 	Plane plane;   ///< Normal out of the piece
 	Role role = Role::Nodraw;
 	const Fit* fit = nullptr;
+	const TexRef* ref = nullptr;   ///< Where this face's texture starts (else the piece's)
 };
 
 HalfSpace hs(const Vec3& normal, double distance, Role role, const Fit* fit = nullptr) {
@@ -299,7 +338,10 @@ struct Builder {
 				side.material = NODRAW;
 				alignToWorld(side);
 			} else {
-				layTexture(side, materials.of(h.role), o.texture(partOf(h.role)), ref, size, h.fit);
+				TexRef r = h.ref ? *h.ref : ref;
+				// The ground floor's texture (a shop front) spans the ground floor's own height.
+				if (h.role == Role::Ground && o.groundFloorHeight > 1) r.floor = o.groundFloorHeight;
+				layTexture(side, materials.of(h.role), o.texture(partOf(h.role)), r, size, h.fit);
 			}
 			out.sides.push_back(std::move(side));
 		}
@@ -334,7 +376,21 @@ BuildingOptions defaultBuildingOptions() {
 	BuildingOptions o;
 	o.texture(BuildingPart::Window).fit = TextureFit::Opening;
 	o.texture(BuildingPart::Door).fit = TextureFit::Opening;
+	o.texture(BuildingPart::Cornice).fit = TextureFit::Band;
 	return o;
+}
+
+bool materialHasWindows(std::string_view name) {
+	const std::string lower = toLower(name);
+	for (const char* word : {"building_template", "apartment", "facade", "storefront", "shopfront", "windows", "highrise", "tenement"}) {
+		if (lower.find(word) != std::string::npos) return true;
+	}
+	return false;
+}
+
+int textureFloorsFor(int texHeight, double floorHeight) {
+	if (texHeight <= 0 || floorHeight <= 1) return 1;
+	return std::max(1, static_cast<int>(std::lround(texHeight * 0.25 / floorHeight)));
 }
 
 std::pair<int, double> stepsFor(double raise) {
@@ -512,6 +568,7 @@ std::vector<std::string> buildingModelSuggestions(const std::vector<std::string>
 		case FacadePropAnchor::Bay: wanted = {{"brokenexterior", 8}, {"brokeninterior", 3}, {"facade", 4}, {"panel", 2}}; break;
 		case FacadePropAnchor::Ground: wanted = {{"rubble", 6}, {"debris", 4}, {"trash", 4}, {"bin", 3}, {"crate", 2}, {"barrel", 2}, {"concrete_chunk", 5}}; break;
 		case FacadePropAnchor::Roof: wanted = {{"vent", 5}, {"chimney", 6}, {"antenna", 6}, {"air_cond", 5}, {"ac_unit", 5}, {"fan", 3}, {"watertank", 5}}; break;
+		case FacadePropAnchor::RoofEdge: wanted = {{"railing", 6}, {"handrail", 6}, {"guardrail", 4}, {"fence", 2}}; break;
 	}
 	if (damaged) {
 		for (const char* word : {"broken", "debris", "destroyed", "rubble", "damaged", "burnt", "gib"}) wanted.push_back({word, 4});
@@ -522,6 +579,235 @@ std::vector<std::string> buildingModelSuggestions(const std::vector<std::string>
 std::vector<std::string> buildingLotModelSuggestions(const std::vector<std::string>& names, std::size_t count) {
 	return suggest(names, {{"props_buildings/", 6}, {"building", 3}, {"row_res", 4}, {"row_corner", 4}, {"project_building", 5}, {"house", 2}},
 	               {"broken", "debris", "gib", "interior"}, count, false);
+}
+
+namespace {
+
+/// The best name for the keywords, or "" (none matched).
+std::string best(const std::vector<std::string>& names, const std::vector<Keyword>& wanted, const std::vector<const char*>& unwanted, bool materials = true) {
+	const auto found = suggest(names, wanted, unwanted, 1, materials);
+	return found.empty() ? std::string() : found.front();
+}
+
+} // namespace
+
+std::vector<FacadeProp> detailProps(int detail, const std::vector<std::string>& models, bool windows, bool damaged) {
+	std::vector<FacadeProp> out;
+	if (detail <= 0 && !damaged) return out;
+	const auto add = [&](const std::string& model, FacadePropAnchor anchor, double chance, double spacing, PropCondition when = PropCondition::Always) {
+		if (model.empty()) return;
+		FacadeProp p;
+		p.model = model;
+		p.anchor = anchor;
+		p.chance = chance;
+		p.spacing = spacing;
+		p.when = when;
+		p.automatic = true;
+		out.push_back(p);
+	};
+	if (detail >= 1) {
+		const auto roof = buildingModelSuggestions(models, FacadePropAnchor::Roof, false, 2);
+		if (!roof.empty()) add(roof[0], FacadePropAnchor::Roof, detail >= 2 ? 45 : 25, detail >= 2 ? 160 : 224);
+		if (detail >= 2 && roof.size() > 1) add(roof[1], FacadePropAnchor::Roof, 25, 224);
+		if (windows) {
+			const std::string ac = best(models, {{"air_cond", 6}, {"aircon", 6}, {"ac_unit", 6}, {"airconditioner", 6}}, {"_gib", "skybox"}, false);
+			add(ac, FacadePropAnchor::BelowWindow, detail >= 2 ? 25 : 10, 128);
+		}
+	}
+	if (detail >= 2) {
+		add(best(models, {{"railing", 6}, {"handrail", 6}, {"guardrail", 4}, {"fence", 2}}, {"_gib", "skybox", "gate", "door"}, false), FacadePropAnchor::RoofEdge, 100, 64);
+	}
+	if (damaged) {
+		const auto rubble = buildingModelSuggestions(models, FacadePropAnchor::Ground, true, 1);
+		if (!rubble.empty()) add(rubble[0], FacadePropAnchor::Ground, 40, 96, PropCondition::Damaged);
+	}
+	return out;
+}
+
+BuildingOptions applyBuildingStyle(const BuildingOptions& base, BuildingStyle style, const std::vector<std::string>& mats, const std::vector<std::string>& models) {
+	BuildingOptions o = base;
+	o.style = style;
+	if (style == BuildingStyle::Custom) return o;
+	// The facade: a texture with its windows in it if the game has one for the style, else a plain
+	// wall with windows built in it.
+	std::vector<std::string> windowed;
+	for (const auto& name : mats) {
+		if (materialHasWindows(name)) windowed.push_back(name);
+	}
+	const std::vector<const char*> notWall{"floor", "ground", "roof", "glass", "door", "road", "grass", "dirt", "sky", "water", "trim", "metal", "ceiling"};
+	std::vector<Keyword> look, plain;
+	bool preferTexture = true;
+	int floors = 4;
+	double floorHeight = 128;
+	switch (style) {
+		case BuildingStyle::PlasterBlock:
+			look = {{"plaster", 5}, {"stucco", 5}, {"apartment", 4}, {"building_template", 3}, {"concrete", 2}};
+			plain = {{"plaster", 6}, {"stucco", 6}, {"concrete", 3}, {"wall", 1}};
+			break;
+		case BuildingStyle::BrickTenement:
+			look = {{"brick", 6}, {"tenement", 4}, {"building_template", 2}};
+			plain = {{"brickwall", 7}, {"brick", 6}};
+			preferTexture = false;
+			break;
+		case BuildingStyle::PanelBlock:
+			look = {{"concrete", 5}, {"panel", 4}, {"apartment", 5}, {"highrise", 5}, {"building_template", 3}};
+			plain = {{"concrete", 6}, {"panel", 4}, {"wall", 1}};
+			floors = 8;
+			break;
+		case BuildingStyle::ShopRow:
+			look = {{"plaster", 4}, {"brick", 3}, {"apartment", 3}, {"building_template", 3}};
+			plain = {{"plaster", 5}, {"brick", 4}, {"stucco", 4}};
+			floors = 3;
+			break;
+		case BuildingStyle::Industrial:
+			look = {{"brick", 4}, {"concrete", 4}, {"warehouse", 6}, {"factory", 6}, {"industrial", 6}};
+			plain = {{"brickwall", 5}, {"brick", 5}, {"concrete", 4}, {"warehouse", 6}, {"factory", 6}};
+			preferTexture = false;
+			floors = 2;
+			floorHeight = 192;
+			break;
+		case BuildingStyle::Custom: break;
+	}
+	std::string facade = preferTexture ? best(windowed, look, {"broken", "destroyed", "floor", "roof"}) : std::string();
+	o.windowsFromTexture = !facade.empty();
+	if (facade.empty()) facade = best(mats, plain, notWall);
+	if (facade.empty()) facade = best(mats, {{"brick", 3}, {"plaster", 3}, {"concrete", 2}, {"wall", 1}}, notWall);
+	if (!facade.empty()) o.facadeMaterial = facade;
+	o.facadeVariants.clear();
+	// The others by their roles.
+	const auto set = [](std::string& field, const std::string& found) {
+		if (!found.empty()) field = found;
+	};
+	set(o.windowMaterial, best(mats, {{"window", 6}, {"glass", 3}}, {"broken", "floor", "frame", "shatter", "building_template", "apartment", "facade"}));
+	set(o.brokenWindowMaterial, best(mats, {{"boarded", 6}, {"broken", 5}, {"shatter", 4}, {"plywood", 4}}, {"floor"}));
+	set(o.doorMaterial, best(mats, {{"door", 6}, {"gate", 2}}, {"floor", "frame", "decal"}));
+	set(o.trimMaterial, best(mats, {{"concrete", 6}, {"stone", 4}, {"trim", 3}, {"ledge", 3}},
+	                          {"floor", "road", "grass", "glass", "window", "door", "sky", "water", "brick", "cornice", "molding", "moulding"}));
+	set(o.corniceMaterial, best(mats, {{"cornice", 8}, {"molding", 6}, {"moulding", 6}, {"trim", 5}, {"ledge", 5}, {"concrete", 2}},
+	                             {"floor", "road", "grass", "glass", "window", "door", "sky", "water", "brick"}));
+	set(o.roofMaterial, best(mats, {{"tar", 6}, {"gravel", 6}, {"roof", 5}, {"asphalt", 2}, {"concrete", 1}}, {"shingle", "tile", "glass", "window", "door", "wall", "sky", "water"}));
+	set(o.pipeMaterial, best(mats, {{"pipe", 6}, {"gutter", 6}, {"drain", 6}, {"metal", 4}}, {"floor", "grate", "glass", "window", "door", "sky", "water"}));
+	set(o.interiorMaterial, best(mats, {{"interior", 6}, {"plaster", 3}, {"wallpaper", 5}, {"concrete", 2}}, {"floor", "glass", "window", "door", "sky", "water"}));
+	// The shape: blocky, flat roofs with a low parapet, thin flat bands.
+	o.mode = BuildingMode::Block;
+	o.sides = BuildingSides::AllOuter;
+	o.sideSettings.clear();
+	o.heightMode = HeightMode::Floors;
+	o.floors = floors;
+	o.floorHeight = floorHeight;
+	o.groundFloorHeight = floorHeight;
+	o.floorVariation = 0;
+	o.groundLevel = GroundLevel::Street;
+	o.groundWindows = GroundWindows::SameAsUpper;
+	o.groundMaterial.clear();
+	o.doorSides = DoorSides::Longest;
+	o.doorsPerSide = 1;
+	o.doorPlace = DoorPlace::Middle;
+	o.doorWidth = 56;
+	o.doorHeight = 104;
+	o.windowStyle = WindowStyle::Recessed;
+	o.layout = WindowLayout::Spacing;
+	o.windowWidth = 56;
+	o.windowHeight = 80;
+	o.sillHeight = 32;
+	o.windowGap = 72;
+	o.cornerMargin = 48;
+	o.windowDepth = 6;
+	o.pattern = "x";
+	o.sills = true;
+	o.windowBacking = true;
+	o.cornices = false;
+	o.corniceHeight = 8;
+	o.corniceDepth = 4;
+	o.topCornice = true;
+	o.topCorniceHeight = 16;
+	o.topCorniceDepth = 8;
+	o.plinth = true;
+	o.plinthHeight = 16;
+	o.plinthDepth = 4;
+	o.roof = BuildingRoof::Flat;
+	o.parapetHeight = 16;
+	o.parapetThickness = 8;
+	o.detail = std::max(o.detail, 1);
+	switch (style) {
+		case BuildingStyle::PlasterBlock:
+			o.cornices = true;
+			o.corniceHeight = 6;
+			o.corniceDepth = 4;
+			break;
+		case BuildingStyle::BrickTenement:
+			o.windowWidth = 56;
+			o.windowHeight = 88;
+			o.sillHeight = 28;
+			o.windowGap = 64;
+			o.plinthHeight = 24;
+			o.plinthDepth = 6;
+			o.topCorniceHeight = 24;
+			o.topCorniceDepth = 10;
+			break;
+		case BuildingStyle::PanelBlock:
+			o.windowWidth = 64;
+			o.windowHeight = 72;
+			o.windowGap = 64;
+			o.cornerMargin = 32;
+			o.windowDepth = 4;
+			o.sills = false;
+			o.plinthHeight = 8;
+			o.topCorniceHeight = 8;
+			o.topCorniceDepth = 4;
+			o.parapetHeight = 24;
+			break;
+		case BuildingStyle::ShopRow: {
+			o.groundFloorHeight = 160;
+			o.cornices = true;   // the sign band over the shops
+			o.corniceHeight = 16;
+			o.corniceDepth = 6;
+			const std::string shop = best(mats, {{"storefront", 8}, {"shopfront", 8}, {"shop", 6}, {"store", 6}}, {"floor", "door", "sky", "water"});
+			if (!shop.empty() && shop != o.facadeMaterial) {
+				o.groundMaterial = shop;
+				o.groundWindows = materialHasWindows(shop) ? GroundWindows::None : GroundWindows::ShopWindows;
+			} else {
+				o.groundMaterial = best(mats, {{"concrete", 4}, {"stone", 4}, {"plaster", 2}}, notWall);
+				o.groundWindows = GroundWindows::ShopWindows;
+			}
+			o.shopWidth = 112;
+			o.shopHeight = 88;
+			o.shopSill = 24;
+			o.doorsPerSide = 2;
+			o.doorPlace = DoorPlace::Spread;
+			break;
+		}
+		case BuildingStyle::Industrial:
+			o.windowWidth = 112;
+			o.windowHeight = 80;
+			o.sillHeight = 64;
+			o.windowGap = 96;
+			o.windowDepth = 6;
+			o.sills = false;
+			o.topCorniceHeight = 16;
+			o.parapetHeight = 24;
+			o.doorWidth = 96;
+			o.doorHeight = 128;
+			break;
+		case BuildingStyle::Custom: break;
+	}
+	// The top wall is the top band: the facade's tiles end under it.
+	o.topWall = o.topCornice ? o.topCorniceHeight : 8;
+	// Textures: facade and ground floor in whole tiles, bands once over their height, openings fitted.
+	o.texture(BuildingPart::Facade) = PartTexture{TextureFit::Tiles, 0.25, 0, 0, 0};
+	o.texture(BuildingPart::Ground) = PartTexture{TextureFit::Tiles, 0.25, 0, 0, 0};
+	o.texture(BuildingPart::Cornice) = PartTexture{TextureFit::Band, 0.25, 0, 0, 0};
+	o.texture(BuildingPart::Window) = PartTexture{TextureFit::Opening, 0.25, 0, 0, 0};
+	o.texture(BuildingPart::Door) = PartTexture{TextureFit::Opening, 0.25, 0, 0, 0};
+	o.texture(BuildingPart::Trim) = PartTexture{TextureFit::Scale, 0.25, 0, 0, 0};
+	o.texture(BuildingPart::Roof) = PartTexture{TextureFit::Scale, 0.25, 0, 0, 0};
+	o.textureFloors = 0;
+	o.fitWholeTiles = true;
+	// Detail props of the game.
+	std::erase_if(o.props, [](const FacadeProp& p) { return p.automatic; });
+	const auto extra = detailProps(o.detail, models, !o.windowsFromTexture, o.damage > 0);
+	o.props.insert(o.props.end(), extra.begin(), extra.end());
+	return o;
 }
 
 namespace {
@@ -628,6 +914,7 @@ struct LotBuilder {
 	std::vector<std::vector<Opening>> openings;   ///< Per side
 	std::vector<std::vector<double>> columns;     ///< Per side: window columns (upper floors)
 	std::vector<double> bays;                     ///< Per side: bay width
+	std::vector<TexRef> massRefs;                 ///< Texture references of the mass's faces (per side)
 
 	[[nodiscard]] bool facadeMode() const { return o.mode == BuildingMode::Facade; }
 	[[nodiscard]] double floorBase(int floor) const {
@@ -642,6 +929,10 @@ struct LotBuilder {
 		r.along = e.e;
 		r.floor = o.floorHeight;
 		r.bay = side < static_cast<int>(bays.size()) && bays[static_cast<std::size_t>(side)] > 1 ? bays[static_cast<std::size_t>(side)] : o.windowWidth + o.windowGap;
+		r.sideLength = e.length;
+		r.tileFloors = o.textureFloors;
+		// A side whose texture runs on from the one before (a curve, a row) keeps one scale.
+		r.fitWhole = o.fitWholeTiles && std::abs(offset) < 0.01;
 		return r;
 	}
 	[[nodiscard]] double refZ(bool groundPart) const { return groundPart ? lot.groundBase : lot.groundBase + o.groundFloorHeight; }
@@ -705,6 +996,7 @@ struct LotBuilder {
 	void buildSteps();
 	void buildRoof();
 	void buildWallDisplacements();
+	void buildDetails();
 	void placeProps();
 	void build();
 };
@@ -715,7 +1007,7 @@ void LotBuilder::decideSides() {
 	wall.assign(static_cast<std::size_t>(count), false);
 	banded.assign(static_cast<std::size_t>(count), false);
 	returns.assign(static_cast<std::size_t>(count), {});
-	const bool recessed = o.windowStyle == WindowStyle::Recessed && o.windowDepth >= PANEL + 1;
+	const bool recessed = o.windowStyle == WindowStyle::Recessed && o.windowDepth >= PANEL + 1 && !o.windowsFromTexture;
 	depth = recessed ? o.windowDepth : 0;
 	plainDepth = 0;
 	for (int i = 0; i < count; ++i) {
@@ -762,14 +1054,17 @@ void LotBuilder::decideOpenings() {
 		BuildingOptions layout = o;
 		if (own && own->windows >= 0) layout.layout = WindowLayout::Count;
 		double width = o.windowWidth;
-		auto cols = o.windowStyle == WindowStyle::None ? std::vector<double>{} : windowColumns(e.length, layout, o.windowWidth, windowCount, &width);
+		// Windows from the texture: none built (only shop windows and doors on the ground floor).
+		const bool upperWindows = o.windowStyle != WindowStyle::None && !o.windowsFromTexture;
+		auto cols = upperWindows ? windowColumns(e.length, layout, o.windowWidth, windowCount, &width) : std::vector<double>{};
 		if (own && own->windows == 0) cols.clear();
 		columns[static_cast<std::size_t>(i)] = cols;
 		bays[static_cast<std::size_t>(i)] = cols.size() > 1 ? cols[1] - cols[0] : (cols.empty() ? e.length : std::min(e.length, width + o.windowGap));
 		// Ground floor slots.
 		double groundWidth = width;
 		std::vector<double> groundCols = cols;
-		if (o.groundWindows == GroundWindows::ShopWindows && o.windowStyle != WindowStyle::None) {
+		const bool shopWindows = o.groundWindows == GroundWindows::ShopWindows && (o.windowStyle != WindowStyle::None || o.windowsFromTexture);
+		if (shopWindows) {
 			groundCols = windowColumns(e.length, layout, o.shopWidth, windowCount, &groundWidth);
 			if (own && own->windows == 0) groundCols.clear();
 		}
@@ -823,7 +1118,7 @@ void LotBuilder::decideOpenings() {
 			return std::any_of(list.begin(), list.end(), [&](const Opening& d) { return d.kind == OpeningKind::Door && s0 < d.s1 + 4 && s1 > d.s0 - 4; });
 		};
 		// Ground floor windows.
-		if (o.groundWindows != GroundWindows::None && o.windowStyle != WindowStyle::None) {
+		if (o.groundWindows != GroundWindows::None && (upperWindows || shopWindows)) {
 			const bool shop = o.groundWindows == GroundWindows::ShopWindows;
 			const double w = groundWidth;
 			for (std::size_t k = 0; k < groundCols.size(); ++k) {
@@ -842,7 +1137,7 @@ void LotBuilder::decideOpenings() {
 			}
 		}
 		// Basement windows in a raised ground floor's socle.
-		if (o.groundLevel == GroundLevel::Raised && o.basementWindows && o.windowStyle != WindowStyle::None) {
+		if (o.groundLevel == GroundLevel::Raised && o.basementWindows && upperWindows) {
 			const double z0 = plinthTop + 4, z1 = lot.groundBase - 6;
 			if (z1 - z0 >= 12) {
 				const double w = std::min(o.windowWidth, 40.0);
@@ -889,31 +1184,49 @@ void LotBuilder::buildMass() {
 	const int count = static_cast<int>(lot.edges.size());
 	const bool flatRoof = o.roof == BuildingRoof::Flat || damage >= 0.3;
 	if (!facadeMode()) {
-		std::vector<HalfSpace> planes;
-		for (int i = 0; i < count; ++i) {
-			const Edge& e = lot.edges[static_cast<std::size_t>(i)];
-			const SideState state = lot.states[static_cast<std::size_t>(i)];
-			Role role = Role::Nodraw;
-			if (state == SideState::Facade) {
-				role = damage > 0 ? Role::Interior : Role::Nodraw;
-			} else if (state == SideState::Plain) {
-				role = Role::Facade;
-			} else if (lot.shared[static_cast<std::size_t>(i)]) {
-				// Seen above a lower neighbour: the plain wall.
-				double neighbourTop = massTop;
-				for (const auto& other : lots) {
-					if (other.index == lot.index) continue;
-					const Vec3 mid = (e.a + e.b) * 0.5 + e.n * 2;
-					if (insidePolygon(other.edges, Vec3{mid.x, mid.y, 0}, 0.5)) neighbourTop = std::min(neighbourTop, other.top);
+		// Without a wall layer (windows from the texture, panels, none) the facade is on the mass
+		// itself; a ground floor with its own material is a mass of its own below the floors.
+		const double groundTop = lot.groundBase + o.groundFloorHeight;
+		const bool split = b.materials.ground != b.materials.facade && groundTop > foundation + 8 && groundTop < massTop - 8;
+		massRefs.clear();
+		massRefs.reserve(static_cast<std::size_t>(count) * 2);
+		const auto mass = [&](double z0, double z1, bool groundPart, bool roofOnTop) {
+			std::vector<HalfSpace> planes;
+			for (int i = 0; i < count; ++i) {
+				const Edge& e = lot.edges[static_cast<std::size_t>(i)];
+				const SideState state = lot.states[static_cast<std::size_t>(i)];
+				const Role wallRole = groundPart ? Role::Ground : Role::Facade;
+				Role role = Role::Nodraw;
+				if (state == SideState::Facade) {
+					role = layer[static_cast<std::size_t>(i)] > 0 ? (damage > 0 ? Role::Interior : Role::Nodraw) : wallRole;
+				} else if (state == SideState::Plain) {
+					role = wallRole;
+				} else if (lot.shared[static_cast<std::size_t>(i)]) {
+					// Seen above a lower neighbour: the plain wall.
+					double neighbourTop = massTop;
+					for (const auto& other : lots) {
+						if (other.index == lot.index) continue;
+						const Vec3 mid = (e.a + e.b) * 0.5 + e.n * 2;
+						if (insidePolygon(other.edges, Vec3{mid.x, mid.y, 0}, 0.5)) neighbourTop = std::min(neighbourTop, other.top);
+					}
+					role = neighbourTop < z1 - 1 ? wallRole : Role::Nodraw;
 				}
-				role = neighbourTop < massTop - 1 ? Role::Facade : Role::Nodraw;
+				massRefs.push_back(ref(i, refZ(groundPart)));
+				HalfSpace h = below(e.n, e.c - layer[static_cast<std::size_t>(i)], role);
+				h.ref = &massRefs.back();
+				planes.push_back(h);
 			}
-			planes.push_back(below(e.n, e.c - layer[static_cast<std::size_t>(i)], role));
-		}
-		planes.push_back(above(Vec3{0, 0, 1}, foundation, Role::Nodraw));
+			planes.push_back(above(Vec3{0, 0, 1}, z0, Role::Nodraw));
+			planes.push_back(below(Vec3{0, 0, 1}, z1, roofOnTop ? Role::Roof : Role::Nodraw));
+			addWorld(b.piece(planes, ref(lot.front, refZ(groundPart))));
+		};
 		const bool roofOnMass = flatRoof && !roofDisp;
-		planes.push_back(below(Vec3{0, 0, 1}, massTop, roofOnMass ? Role::Roof : Role::Nodraw));
-		addWorld(b.piece(planes, ref(lot.front, refZ(false))));
+		if (split) {
+			mass(foundation, groundTop, true, false);
+			mass(groundTop, massTop, false, roofOnMass);
+		} else {
+			mass(foundation, massTop, false, roofOnMass);
+		}
 		return;
 	}
 	// Facade only: a slab behind each wall, mitred with the walls beside it; returns round open ends.
@@ -1113,15 +1426,21 @@ void LotBuilder::buildBands() {
 					parts = std::move(next);
 				}
 			}
+			// The band's texture once over its height (a cornice strip), running on along the side.
+			const Fit strip{Vec3{e.a.x, e.a.y, band.z1}, e.length, band.z1 - band.z0};
 			for (const auto& [a, bb] : parts) {
 				std::vector<HalfSpace> planes;
 				planes.push_back(above(e.n, e.c, Role::Nodraw));
-				planes.push_back(below(e.n, e.c + band.depth, Role::Cornice));
+				planes.push_back(below(e.n, e.c + band.depth, Role::Cornice, &strip));
 				planes.push_back(above(Vec3{0, 0, 1}, band.z0, band.z0 <= foundation + 0.01 ? Role::Nodraw : Role::Cornice));
 				planes.push_back(below(Vec3{0, 0, 1}, band.z1, Role::Cornice));
-				if (a > -1e8) planes.push_back(above(e.e, dot(e.e, e.a) + a, Role::Cornice));
-				if (bb < 1e8) planes.push_back(below(e.e, dot(e.e, e.a) + bb, Role::Cornice));
+				if (a > -1e8) planes.push_back(above(e.e, dot(e.e, e.a) + a, Role::Cornice, &strip));
+				if (bb < 1e8) planes.push_back(below(e.e, dot(e.e, e.a) + bb, Role::Cornice, &strip));
+				std::size_t before = planes.size();
 				sideBounds(planes, i, banded, Role::Cornice);
+				for (std::size_t k = before; k < planes.size(); ++k) {
+					if (planes[k].role == Role::Cornice) planes[k].fit = &strip;
+				}
 				addDetail(b.piece(planes, ref(i, band.z1)));
 			}
 		}
@@ -1523,6 +1842,111 @@ void LotBuilder::addDamage() {
 }
 
 /// Props on the facade grid (Bay props come with the damage).
+/// HL2 detail made of brushes (Detail amount): drainpipes down the facades - at corners, on long
+/// sides every few bays - cut where a band runs across, and gutters under the eaves of a pitched roof.
+void LotBuilder::buildDetails() {
+	if (o.detail <= 0) return;
+	constexpr double PIPE = 6;
+	const int count = static_cast<int>(lot.edges.size());
+	const double top = damage > 0 ? massTop : lot.top;
+	// The bands' heights: a pipe stops under each and goes on above it.
+	std::vector<std::pair<double, double>> bandsZ;
+	if (o.plinth && o.plinthHeight > 0 && o.plinthDepth > 0) bandsZ.emplace_back(foundation, lot.bottom + o.plinthHeight);
+	if (o.cornices && o.corniceHeight > 0 && o.corniceDepth > 0) {
+		for (int floor = 1; floor < lot.floors; ++floor) bandsZ.emplace_back(floorBase(floor) - o.corniceHeight, floorBase(floor));
+	}
+	if (o.topCornice && damage <= 0 && o.topCorniceHeight > 0 && o.topCorniceDepth > 0) bandsZ.emplace_back(lot.top - o.topCorniceHeight, lot.top);
+	std::sort(bandsZ.begin(), bandsZ.end());
+	const auto clear = [&](int i, double s) {
+		// No opening, door or step there.
+		for (const auto& op : openings[static_cast<std::size_t>(i)]) {
+			const double margin = op.kind == OpeningKind::Door && o.groundLevel == GroundLevel::Raised ? 16 : 6;
+			if (s + PIPE / 2 > op.s0 - margin && s - PIPE / 2 < op.s1 + margin) return false;
+		}
+		return s - PIPE / 2 > 2 && s + PIPE / 2 < lot.edges[static_cast<std::size_t>(i)].length - 2;
+	};
+	int made = 0;
+	const auto pipe = [&](int i, double s) {
+		const Edge& e = lot.edges[static_cast<std::size_t>(i)];
+		const double base = std::min(lot.bottom, foundation);
+		std::vector<std::pair<double, double>> runs;
+		double z = base;
+		for (const auto& [z0, z1] : bandsZ) {
+			if (z0 > z + 4) runs.emplace_back(z, z0);
+			z = std::max(z, z1);
+		}
+		if (top > z + 4) runs.emplace_back(z, top);
+		for (const auto& [z0, z1] : runs) {
+			std::vector<HalfSpace> planes;
+			planes.push_back(above(e.n, e.c, Role::Nodraw));
+			planes.push_back(below(e.n, e.c + PIPE, Role::Pipe));
+			planes.push_back(above(e.e, dot(e.e, e.a) + s - PIPE / 2, Role::Pipe));
+			planes.push_back(below(e.e, dot(e.e, e.a) + s + PIPE / 2, Role::Pipe));
+			planes.push_back(above(Vec3{0, 0, 1}, z0, z0 <= base + 0.01 ? Role::Nodraw : Role::Pipe));
+			planes.push_back(below(Vec3{0, 0, 1}, z1, Role::Pipe));
+			addDetail(b.piece(planes, ref(i, z1)));
+		}
+		++made;
+	};
+	for (int i = 0; i < count; ++i) {
+		const SideState state = lot.states[static_cast<std::size_t>(i)];
+		if (state != SideState::Facade && state != SideState::Plain) continue;
+		if (layer[static_cast<std::size_t>(i)] > 0) continue;   // recessed facades: their piers carry no pipe
+		if (state == SideState::Plain && o.wallDisplacement) continue;   // a bulging wall
+		const Edge& e = lot.edges[static_cast<std::size_t>(i)];
+		if (e.length < 96) continue;
+		// At the side's end corner (some: every other building corner, by the seed).
+		const bool corner = o.detail >= 2 || rand01(o.seed, lot.index, i, 61) < 0.5 || i == lot.front;
+		if (corner) {
+			for (double s = e.length - 12; s > e.length - 64; s -= 8) {
+				if (clear(i, s)) {
+					pipe(i, s);
+					break;
+				}
+			}
+		}
+		// Lots: along a long side every ~5 bays.
+		if (o.detail >= 2 && e.length > 768) {
+			const int n = static_cast<int>(e.length / 640);
+			for (int k = 1; k <= n; ++k) {
+				const double want = e.length * k / (n + 1);
+				for (double off = 0; off < 96; off += 8) {
+					if (clear(i, want + off)) {
+						pipe(i, want + off);
+						break;
+					}
+					if (clear(i, want - off)) {
+						pipe(i, want - off);
+						break;
+					}
+				}
+			}
+		}
+	}
+	// Gutters under the eaves of a pitched roof (on the sides with an overhang).
+	const bool pitched = o.roof != BuildingRoof::Flat && damage < 0.3 && !facadeMode();
+	if (pitched) {
+		const double over = std::max(0.0, o.roofOverhang);
+		const double inner = std::max(over - PIPE, o.topCornice ? o.topCorniceDepth : 0.0);
+		if (over - inner >= 4) {
+			for (int i = 0; i < count; ++i) {
+				if (lot.shared[static_cast<std::size_t>(i)]) continue;
+				const Edge& e = lot.edges[static_cast<std::size_t>(i)];
+				std::vector<HalfSpace> planes;
+				planes.push_back(above(e.n, e.c + inner, Role::Pipe));
+				planes.push_back(below(e.n, e.c + over, Role::Pipe));
+				planes.push_back(above(Vec3{0, 0, 1}, lot.top - PIPE, Role::Pipe));
+				planes.push_back(below(Vec3{0, 0, 1}, lot.top, Role::Nodraw));
+				// From corner to corner of the side.
+				std::vector<bool> none(lot.edges.size(), false);
+				sideBounds(planes, i, none, Role::Pipe);
+				addDetail(b.piece(planes, ref(i, lot.top)));
+			}
+		}
+	}
+	(void)made;
+}
+
 void LotBuilder::placeProps() {
 	const int count = static_cast<int>(lot.edges.size());
 	for (std::size_t p = 0; p < o.props.size(); ++p) {
@@ -1551,6 +1975,26 @@ void LotBuilder::placeProps() {
 					if (!propHere(prop, seed, damage, false, counter, lot.index)) continue;
 					const double yaw = std::floor(rand01(seed, lot.index, counter, 5) * 4) * 90;
 					add(Vec3{x, y, massTop - (box ? box->min.z : 0)}, yaw);
+				}
+			}
+			continue;
+		}
+		if (prop.anchor == FacadePropAnchor::RoofEdge) {
+			// Railings along the edge of a flat roof, one after the other.
+			if (facadeMode() || o.roof != BuildingRoof::Flat || damage >= 0.3) continue;
+			const double width = box ? std::max(16.0, box->max.y - box->min.y) : std::max(32.0, prop.spacing);
+			const double inset = std::max(depth, o.parapetHeight > 0 ? o.parapetThickness : 0.0) + (box ? std::max(0.0, box->max.x) : 4) + 2 + prop.wallOffset;
+			for (int i = 0; i < count; ++i) {
+				if (lot.shared[static_cast<std::size_t>(i)]) continue;
+				const Edge& e = lot.edges[static_cast<std::size_t>(i)];
+				const int n = static_cast<int>(std::floor((e.length - 2 * inset) / width));
+				if (n <= 0) continue;
+				const double start = (e.length - n * width) / 2 + width / 2;
+				for (int k = 0; k < n; ++k, ++counter) {
+					if (!propHere(prop, seed, damage, false, counter, lot.index * 131 + i)) continue;
+					Vec3 at = e.at(start + k * width) - e.n * inset;
+					at.z = massTop - (box ? box->min.z : 0);
+					add(at, yawOf(e.n));
 				}
 			}
 			continue;
@@ -1653,7 +2097,35 @@ void LotBuilder::build() {
 	buildSteps();
 	buildRoof();
 	buildWallDisplacements();
+	buildDetails();
 	placeProps();
+}
+
+/// After a cut: faces whose plane is none of `original`'s lie on the cutter - nodraw (the nodraw
+/// check later shows them if something can see them); the rest keep the piece's own face (ids change).
+void markCutFaces(Solid& cut, const Solid& original) {
+	for (auto& side : cut.sides) {
+		const Plane p = side.plane();
+		const Side* own = nullptr;
+		for (const auto& o : original.sides) {
+			const Plane q = o.plane();
+			if (dot(p.normal, q.normal) > 1 - 1e-6 && std::abs(p.dist - q.dist) < 0.01) {
+				own = &o;
+				break;
+			}
+		}
+		if (own) {
+			const int id = side.id;
+			const auto points = side.planePoints;
+			side = *own;
+			side.id = id;
+			side.planePoints = points;
+		} else {
+			side.material = NODRAW;
+			std::erase_if(side.extra, [](const KvNode& node) { return node.block && iequals(node.key, "dispinfo"); });
+			alignToWorld(side);
+		}
+	}
 }
 
 /// Cuts a new piece around the brushes of the map it would reach into (never a displacement or a
@@ -1670,15 +2142,8 @@ std::vector<Solid> clipToMap(const MapDocument& doc, MapDocument& ids, const Sol
 			}
 			Solid plain = p;
 			for (auto& side : plain.sides) std::erase_if(side.extra, [](const KvNode& node) { return node.block && iequals(node.key, "dispinfo"); });
-			std::set<int> before;
-			for (const auto& side : plain.sides) before.insert(side.id);
 			for (auto cut : subtractSolid(ids, plain, *n.solid)) {
-				for (auto& side : cut.sides) {
-					if (!before.contains(side.id)) {
-						side.material = NODRAW;
-						alignToWorld(side);
-					}
-				}
+				markCutFaces(cut, plain);
 				if (brushProblem(cut).empty()) next.push_back(std::move(cut));
 			}
 			++clipped;
@@ -1726,6 +2191,164 @@ BuildingOptions resolvedSettings(const BuildingOptions& o, const Lot& lot) {
 		s.floors = lot.floors;
 	}
 	return s;
+}
+
+} // namespace
+
+namespace {
+
+/// A piece seen by the nodraw check: its geometry and whether it hides what is behind it.
+struct Cover {
+	const Solid* solid = nullptr;
+	Bounds bounds;
+	bool opaque = true;
+};
+
+/// Points on a face to test what is in front of it: its middle and its corners pulled in a bit,
+/// moved a little out of the face.
+std::vector<Vec3> facePoints(const FaceGeometry& face) {
+	std::vector<Vec3> out;
+	if (face.vertices.empty()) return out;
+	Vec3 centre;
+	for (const auto& v : face.vertices) centre = centre + v;
+	centre = centre / static_cast<double>(face.vertices.size());
+	out.push_back(centre + face.normal * 0.25);
+	for (const auto& v : face.vertices) out.push_back(v + (centre - v) * 0.15 + face.normal * 0.25);
+	for (std::size_t i = 0; i < face.vertices.size(); ++i) {
+		const Vec3 mid = (face.vertices[i] + face.vertices[(i + 1) % face.vertices.size()]) * 0.5;
+		out.push_back(mid + (centre - mid) * 0.15 + face.normal * 0.25);
+	}
+	return out;
+}
+
+bool covered(const Vec3& p, const Solid* self, const std::vector<Cover>& covers) {
+	for (const auto& c : covers) {
+		if (c.solid == self || !c.opaque) continue;
+		if (p.x < c.bounds.min.x - 0.01 || p.x > c.bounds.max.x + 0.01 || p.y < c.bounds.min.y - 0.01 || p.y > c.bounds.max.y + 0.01 || p.z < c.bounds.min.z - 0.01 ||
+		    p.z > c.bounds.max.z + 0.01) {
+			continue;
+		}
+		if (containsPoint(*c.solid, p, 0.01)) return true;
+	}
+	return false;
+}
+
+} // namespace
+
+std::vector<std::pair<int, int>> visibleNodrawFaces(const MapDocument& doc, const BuildingPlan& plan, const std::vector<SolidRef>& lots) {
+	std::vector<std::pair<int, int>> out;
+	struct Piece {
+		const Solid* solid;
+		double base;   ///< The building's lowest point: faces looking down there stand on the ground
+	};
+	std::vector<Piece> pieces;
+	for (const auto& b : plan.buildings) {
+		const double base = std::min(b.bottom, b.foundation);
+		for (const auto& s : b.world) pieces.push_back({&s, base});
+		for (const auto& s : b.detail) pieces.push_back({&s, base});
+	}
+	if (pieces.empty()) return out;
+	Bounds all;
+	std::vector<Cover> covers;
+	for (const auto& piece : pieces) {
+		const auto g = buildBrushGeometry(*piece.solid);
+		all.add(g.bounds.min);
+		all.add(g.bounds.max);
+		// Glass hides nothing.
+		const bool glass = std::all_of(piece.solid->sides.begin(), piece.solid->sides.end(), [](const Side& side) {
+			const std::string lower = toLower(side.material);
+			return lower.starts_with("tools/") || lower.find("glass") != std::string::npos || lower.find("window") != std::string::npos;
+		});
+		covers.push_back({piece.solid, g.bounds, !glass});
+	}
+	for (const auto& n : blockers(doc, all, 4, lots)) covers.push_back({n.solid, buildBrushGeometry(*n.solid).bounds, true});
+	for (const auto& piece : pieces) {
+		const Solid* s = piece.solid;
+		// A displacement brush shows only its displacement (VBSP drops the rest).
+		if (std::any_of(s->sides.begin(), s->sides.end(), [](const Side& side) { return side.dispInfo() != nullptr; })) continue;
+		const auto g = buildBrushGeometry(*s);
+		for (const auto& face : g.faces) {
+			const Side& side = s->sides[static_cast<std::size_t>(face.sideIndex)];
+			if (!iequals(side.material, NODRAW)) continue;
+			if (face.normal.z < -0.7) {
+				double top = -1e18;
+				for (const auto& v : face.vertices) top = std::max(top, v.z);
+				if (top <= piece.base + 0.5) continue;   // on the ground
+			}
+			const auto points = facePoints(face);
+			if (std::all_of(points.begin(), points.end(), [&](const Vec3& p) { return covered(p, s, covers); })) continue;
+			out.push_back({s->id, side.id});
+		}
+	}
+	return out;
+}
+
+namespace {
+
+/// Nodraw only where nothing can see it: every nodraw face of the new pieces that is not hidden by
+/// another piece, by a brush of the map or the mass gets a real material - the piece's own (its most
+/// common visible one), else the wall (mass) or the trim (details) - laid like the rest.
+int revealNodraw(const MapDocument& doc, BuildingPlan& plan, const std::vector<Materials>& materials, const std::vector<SolidRef>& lots, const BuildingOptions& o,
+                 const TextureSizeFn& size) {
+	const auto hidden = visibleNodrawFaces(doc, plan, lots);
+	if (hidden.empty()) return 0;
+	std::set<std::pair<int, int>> todo;
+	for (const auto& [solidId, sideId] : hidden) todo.insert({solidId, sideId});
+	int fixed = 0;
+	for (std::size_t bi = 0; bi < plan.buildings.size(); ++bi) {
+		auto& building = plan.buildings[bi];
+		const Materials& m = materials[std::min(bi, materials.size() - 1)];
+		const auto partFor = [&](const std::string& material) {
+			if (material == m.facade) return BuildingPart::Facade;
+			if (material == m.ground) return BuildingPart::Ground;
+			if (material == m.cornice) return BuildingPart::Cornice;
+			if (material == m.roof) return BuildingPart::Roof;
+			return BuildingPart::Trim;
+		};
+		for (auto* list : {&building.world, &building.detail}) {
+			const bool mass = list == &building.world;
+			for (auto& solid : *list) {
+				std::map<std::string, int> used;
+				for (const auto& side : solid.sides) {
+					if (!iequals(side.material, NODRAW) && side.material != m.window && side.material != m.broken && side.material != m.door) ++used[side.material];
+				}
+				std::string own;
+				int most = 0;
+				for (const auto& [name, n] : used) {
+					if (n > most) {
+						most = n;
+						own = name;
+					}
+				}
+				const auto g = buildBrushGeometry(solid);
+				for (const auto& face : g.faces) {
+					Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
+					if (!todo.contains({solid.id, side.id})) continue;
+					std::string material = own.empty() ? (mass ? m.facade : m.trim) : own;
+					if (face.normal.z > 0.7) material = mass ? m.roof : (own.empty() ? m.trim : own);
+					// The texture starts at the face's left lower corner (walls) or the world (flat faces).
+					TexRef ref;
+					ref.floor = o.floorHeight;
+					ref.bay = o.windowWidth + o.windowGap;
+					const Vec3 u = normalize(Vec3{-face.normal.y, face.normal.x, 0});
+					double lowest = std::numeric_limits<double>::max();
+					for (const auto& v : face.vertices) {
+						if (dot(v, u) < lowest) {
+							lowest = dot(v, u);
+							ref.origin = v;
+						}
+					}
+					ref.origin.z = building.bottom;
+					ref.along = length(u) > 0.5 ? u : Vec3{1, 0, 0};
+					PartTexture part = o.texture(partFor(material));
+					if (part.fit == TextureFit::Opening || part.fit == TextureFit::Band) part.fit = TextureFit::Scale;
+					layTexture(side, material, part, ref, size, nullptr);
+					++fixed;
+				}
+			}
+		}
+	}
+	return fixed;
 }
 
 } // namespace
@@ -2021,6 +2644,7 @@ BuildingPlan planBuildings(const MapDocument& doc, MapDocument& ids, const std::
 		}
 	}
 	// Build each lot.
+	std::vector<Materials> usedMaterials;
 	for (auto& lot : lots) {
 		if (o.cancelled && o.cancelled()) return {};
 		Materials m;
@@ -2033,6 +2657,8 @@ BuildingPlan planBuildings(const MapDocument& doc, MapDocument& ids, const std::
 		m.cornice = o.corniceMaterial.empty() ? m.trim : o.corniceMaterial;
 		m.roof = o.roofMaterial.empty() ? m.trim : o.roofMaterial;
 		m.interior = o.interiorMaterial.empty() ? m.trim : o.interiorMaterial;
+		m.pipe = o.pipeMaterial.empty() ? m.trim : o.pipeMaterial;
+		usedMaterials.push_back(m);
 		Builder b{o, ids, textureSize, m, plan};
 		LotBuilder lb(doc, o, b, lot, lots, lotRefs);
 		lb.building.lot = lot.ref;
@@ -2080,6 +2706,51 @@ BuildingPlan planBuildings(const MapDocument& doc, MapDocument& ids, const std::
 		}
 		plan.buildings.push_back(std::move(building));
 	}
+	if (o.cancelled && o.cancelled()) return {};
+	// Lots of different depth side by side: a building's details (bands, sills, pipes) that reach into
+	// another building's mass, or into details another building built there first, are cut round them.
+	for (std::size_t bi = 0; bi < plan.buildings.size(); ++bi) {
+		struct Other {
+			const Solid* solid;
+			Bounds bounds;
+		};
+		std::vector<Other> others;
+		for (std::size_t bj = 0; bj < plan.buildings.size(); ++bj) {
+			if (bj == bi) continue;
+			for (const auto& w : plan.buildings[bj].world) others.push_back({&w, buildBrushGeometry(w).bounds});
+			if (bj < bi) {
+				for (const auto& d : plan.buildings[bj].detail) others.push_back({&d, buildBrushGeometry(d).bounds});
+			}
+		}
+		if (others.empty()) continue;
+		std::vector<Solid> kept;
+		for (const auto& piece : plan.buildings[bi].detail) {
+			const auto pb = buildBrushGeometry(piece).bounds;
+			std::vector<Solid> parts{piece};
+			for (const auto& other : others) {
+				bool apart = false;
+				for (int k = 0; k < 3; ++k) apart = apart || pb.max[k] <= other.bounds.min[k] + 0.01 || pb.min[k] >= other.bounds.max[k] - 0.01;
+				if (apart) continue;
+				std::vector<Solid> next;
+				for (const auto& part : parts) {
+					if (sharedVolume(part, *other.solid) <= 0.5) {
+						next.push_back(part);
+						continue;
+					}
+					Solid plain = part;
+					for (auto& side : plain.sides) std::erase_if(side.extra, [](const KvNode& node) { return node.block && iequals(node.key, "dispinfo"); });
+					for (auto cut : subtractSolid(ids, plain, *other.solid)) {
+						markCutFaces(cut, plain);
+						if (brushProblem(cut).empty()) next.push_back(std::move(cut));
+					}
+				}
+				parts = std::move(next);
+			}
+			kept.insert(kept.end(), parts.begin(), parts.end());
+		}
+		plan.buildings[bi].detail = std::move(kept);
+	}
+	revealNodraw(doc, plan, usedMaterials, lotRefs, o, textureSize);
 	if (plan.clipped > 0) plan.notes.push_back(std::to_string(plan.clipped) + " piece(s) cut round brushes of the map they reached into.");
 	if (plan.skipped > 0) plan.notes.push_back(std::to_string(plan.skipped) + " piece(s) left out (they would have been too thin).");
 	const int brushes = plan.brushCount();
@@ -2258,6 +2929,13 @@ Field member(const char* key, T BuildingOptions::*m) {
 const std::vector<Field>& fields() {
 	static const std::vector<Field> list = [] {
 		std::vector<Field> f{
+		    member("buildingVersion", &BuildingOptions::version),
+		    member("buildingStyle", &BuildingOptions::style),
+		    member("buildingWindowsFromTexture", &BuildingOptions::windowsFromTexture),
+		    member("buildingTextureFloors", &BuildingOptions::textureFloors),
+		    member("buildingWholeTiles", &BuildingOptions::fitWholeTiles),
+		    member("buildingDetail", &BuildingOptions::detail),
+		    member("buildingPipeMaterial", &BuildingOptions::pipeMaterial),
 		    member("buildingMode", &BuildingOptions::mode),
 		    member("buildingFacadeThickness", &BuildingOptions::facadeThickness),
 		    member("buildingReturn", &BuildingOptions::returnDepth),
@@ -2409,7 +3087,7 @@ const std::vector<Field>& fields() {
 			             for (const auto& p : o.props) {
 				             out += (out.empty() ? "" : ";") + escape(p.model) + "," + std::to_string(static_cast<int>(p.anchor)) + "," + std::to_string(p.every) + "," +
 				                    num(p.chance) + "," + std::to_string(static_cast<int>(p.when)) + "," + (p.groundFloor ? "1" : "0") + "," + (p.upperFloors ? "1" : "0") +
-				                    "," + num(p.wallOffset) + "," + num(p.up) + "," + num(p.yaw) + "," + num(p.spacing);
+				                    "," + num(p.wallOffset) + "," + num(p.up) + "," + num(p.yaw) + "," + num(p.spacing) + "," + (p.automatic ? "1" : "0");
 			             }
 			             return out;
 		             },
@@ -2417,10 +3095,10 @@ const std::vector<Field>& fields() {
 			             o.props.clear();
 			             for (const auto& entry : splitOn(v, ';')) {
 				             const auto values = splitOn(entry, ',');
-				             if (values.size() != 11) continue;
+				             if (values.size() != 11 && values.size() != 12) continue;
 				             FacadeProp p;
 				             p.model = unescape(values[0]);
-				             p.anchor = static_cast<FacadePropAnchor>(std::clamp(toInt(values[1], 0), 0, static_cast<int>(FacadePropAnchor::Roof)));
+				             p.anchor = static_cast<FacadePropAnchor>(std::clamp(toInt(values[1], 0), 0, static_cast<int>(FacadePropAnchor::RoofEdge)));
 				             p.every = toInt(values[2], 1);
 				             p.chance = toDouble(values[3], 100);
 				             p.when = static_cast<PropCondition>(std::clamp(toInt(values[4], 0), 0, 2));
@@ -2430,6 +3108,7 @@ const std::vector<Field>& fields() {
 				             p.up = toDouble(values[8], 0);
 				             p.yaw = toDouble(values[9], 0);
 				             p.spacing = toDouble(values[10], 128);
+				             p.automatic = values.size() > 11 && values[11] == "1";
 				             o.props.push_back(p);
 			             }
 		             }});
@@ -2489,6 +3168,8 @@ std::string encodeBuildingOptions(const BuildingOptions& options) {
 
 BuildingOptions decodeBuildingOptions(std::string_view text) {
 	BuildingOptions o = defaultBuildingOptions();
+	// No version key: a building of the first settings format (its new fields keep their old meaning).
+	o.version = 1;
 	std::map<std::string, std::string> values;
 	for (const auto& pair : splitOn(text, '&')) {
 		const auto at = pair.find('=');

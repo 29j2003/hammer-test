@@ -3,6 +3,7 @@
 #include "building_dialog.h"
 
 #include "asset_browser.h"
+#include "dialog_fit.h"
 #include "editor.h"
 #include "material_field.h"
 #include "model_cache.h"
@@ -12,12 +13,14 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -25,6 +28,8 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QSlider>
 #include <QSettings>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -34,6 +39,8 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <cmath>
+
+#include <sme/text.h>
 
 namespace sme::app {
 
@@ -72,11 +79,12 @@ QCheckBox* check(QWidget* parent, const char* name, const QString& text, bool on
 	return box;
 }
 
-QWidget* page(QTabWidget* tabs, const QString& title, QFormLayout*& form) {
-	auto* w = new QWidget(tabs);
+/// A titled group of fields in one of the Advanced sections.
+QWidget* page(QWidget* section, const QString& title, QFormLayout*& form) {
+	auto* w = new QGroupBox(title, section);
 	form = new QFormLayout(w);
 	form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-	tabs->addTab(w, title);
+	section->layout()->addWidget(w);
 	return w;
 }
 
@@ -88,7 +96,8 @@ const char* const PART_NAMES[] = {QT_TRANSLATE_NOOP("BuildingDialog", "Walls"), 
 const char* const ANCHOR_NAMES[] = {QT_TRANSLATE_NOOP("BuildingDialog", "In each window"), QT_TRANSLATE_NOOP("BuildingDialog", "Below windows"),
                                     QT_TRANSLATE_NOOP("BuildingDialog", "Above windows"),  QT_TRANSLATE_NOOP("BuildingDialog", "At doors"),
                                     QT_TRANSLATE_NOOP("BuildingDialog", "Corners"),        QT_TRANSLATE_NOOP("BuildingDialog", "Wall bay (replaces it)"),
-                                    QT_TRANSLATE_NOOP("BuildingDialog", "Along the base"), QT_TRANSLATE_NOOP("BuildingDialog", "On the roof")};
+                                    QT_TRANSLATE_NOOP("BuildingDialog", "Along the base"), QT_TRANSLATE_NOOP("BuildingDialog", "On the roof"),
+                                    QT_TRANSLATE_NOOP("BuildingDialog", "Along the roof edge")};
 
 /// The Models list takes models dropped from the asset browser.
 class PropDropFilter : public QObject {
@@ -133,14 +142,103 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	auto* intro = new QLabel(tr("Each selected brush becomes a building (no interiors). Brushes that touch form a row: the sides they share get no facade."), this);
 	intro->setWordWrap(true);
 	outer->addWidget(intro);
+	const BuildingOptions d = defaultBuildingOptions();
+	// --- The simple page: a style and the few things that matter -------------------------
+	{
+		auto* simple = new QFormLayout;
+		simple->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+		m_style = choices(this, "buildingStyle", {tr("Custom (keep my settings)"), tr("Plaster block"), tr("Brick tenement"), tr("Panel block"), tr("Shop row"),
+		                                           tr("Industrial")});
+		m_style->setToolTip(tr("City 17 / Eastern bloc looks: materials of the game found by their names, floors, flat bands, the roof and details. Pick one, "
+		                       "then change what you like"));
+		simple->addRow(tr("Style"), m_style);
+		m_simpleFloors = count(this, "simpleFloors", 1, 100, d.floors);
+		m_simpleFloors->setToolTip(tr("All floors, the ground floor included (the height follows; Advanced has other ways)"));
+		simple->addRow(tr("Floors"), m_simpleFloors);
+		m_simpleFacade = new MaterialField("simpleFacade", editor, this);
+		m_simpleFacade->setToolTip(tr("The walls. A texture with its windows in it (HL2's building textures) is fitted to the floors: no windows are built"));
+		simple->addRow(tr("Facade"), m_simpleFacade);
+		m_simpleRoof = new MaterialField("simpleRoof", editor, this);
+		simple->addRow(tr("Roof"), m_simpleRoof);
+		m_simpleWindows = choices(this, "simpleWindows", {tr("From the facade texture"), tr("Built into the wall"), tr("None")});
+		m_simpleWindows->setToolTip(tr("From the facade texture: the wall texture already shows the windows - it is fitted so they line up with the floors. "
+		                               "Built into the wall: shallow openings with one window texture each"));
+		simple->addRow(tr("Windows"), m_simpleWindows);
+		m_detail = choices(this, "buildingDetail", {tr("None"), tr("Some"), tr("Lots")});
+		m_detail->setToolTip(tr("Drainpipes, gutters, and the game's vents, AC units, antennas and railings on roofs and walls"));
+		simple->addRow(tr("Detail"), m_detail);
+		m_simpleCondition = new QSlider(Qt::Horizontal, this);
+		m_simpleCondition->setObjectName("simpleCondition");
+		m_simpleCondition->setRange(0, 100);
+		m_simpleCondition->setToolTip(tr("Intact ... destroyed: lost floors, a jagged top, broken windows, rubble"));
+		{
+			auto* row = new QWidget(this);
+			auto* h = new QHBoxLayout(row);
+			h->setContentsMargins(0, 0, 0, 0);
+			h->addWidget(new QLabel(tr("Intact"), row));
+			h->addWidget(m_simpleCondition, 1);
+			h->addWidget(new QLabel(tr("Destroyed"), row));
+			simple->addRow(tr("Condition"), row);
+		}
+		m_simpleSeed = count(this, "simpleSeed", 1, 999999, 1);
+		m_simpleSeed->setToolTip(tr("Another number gives other random choices (which floors, which props)"));
+		{
+			auto* row = new QWidget(this);
+			auto* h = new QHBoxLayout(row);
+			h->setContentsMargins(0, 0, 0, 0);
+			h->addWidget(m_simpleSeed, 1);
+			auto* pick = new QPushButton(tr("Change a side ..."), row);
+			pick->setObjectName("buildingPickSideSimple");
+			pick->setToolTip(tr("Click next to a wall in the 3D or top view to set that side: facade, plain wall, open or nodraw"));
+			connect(pick, &QPushButton::clicked, this, [this] {
+				m_editor->requestScenePoint(tr("Buildings: click next to a side - Esc stops"), [this](const Vec3& point) { pickSideAt(point); });
+			});
+			h->addWidget(pick);
+			simple->addRow(tr("Seed"), row);
+		}
+		outer->addLayout(simple);
+	}
+	m_advanced = new QToolButton(this);
+	m_advanced->setObjectName("buildingAdvanced");
+	m_advanced->setCheckable(true);
+	m_advanced->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	m_advanced->setArrowType(Qt::RightArrow);
+	m_advanced->setText(tr("Advanced"));
+	m_advanced->setAutoRaise(true);
+	outer->addWidget(m_advanced);
 	m_tabs = new QTabWidget(this);
 	m_tabs->setObjectName("buildingTabs");
 	outer->addWidget(m_tabs, 1);
-	const BuildingOptions d = defaultBuildingOptions();
+	std::array<QWidget*, 3> sections{};
+	{
+		const QString titles[] = {tr("Shape && sides"), tr("Facade"), tr("Materials, models && variation")};
+		for (std::size_t i = 0; i < sections.size(); ++i) {
+			auto* scroll = new QScrollArea(m_tabs);
+			scroll->setWidgetResizable(true);
+			scroll->setFrameShape(QFrame::NoFrame);
+			sections[i] = new QWidget(scroll);
+			new QVBoxLayout(sections[i]);
+			scroll->setWidget(sections[i]);
+			m_tabs->addTab(scroll, titles[i]);
+		}
+	}
+	m_tabs->hide();
+	connect(m_advanced, &QToolButton::toggled, this, [this](bool on) {
+		m_tabs->setVisible(on);
+		m_advanced->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+		QSettings().setValue("buildings/advanced", on);
+		if (on) {
+			// Room for the sections, within the screen.
+			const QRect area = availableWindowArea(this);
+			resize(std::max(width(), std::min(760, area.width() - 32)), std::max(height(), std::min(860, area.height() - 48)));
+		} else {
+			adjustSize();
+		}
+	});
 	QFormLayout* form = nullptr;
 
 	// --- Shape ---------------------------------------------------------------
-	page(m_tabs, tr("Shape"), form);
+	page(sections[0], tr("Shape"), form);
 	m_editInfo = new QLabel(this);
 	m_editInfo->setObjectName("buildingEditInfo");
 	m_editInfo->setWordWrap(true);
@@ -170,8 +268,10 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 		});
 		h->addWidget(m_unlink);
 	}
+	m_sizeLabel = new QLabel(tr("Size"), this);
+	form->addRow(m_sizeLabel, m_sizeRow);
 	m_sizeRow->hide();
-	form->addRow(tr("Size"), m_sizeRow);
+	m_sizeLabel->hide();
 	m_mode = choices(this, "buildingMode", {tr("Block (solid, facades outside)"), tr("Facade only (walls on the chosen sides)"), tr("One model per lot")});
 	m_mode->setToolTip(tr("Block: a solid mass that seals, the facades in front. Facade only: a wall slab behind each chosen side - one front, a U of three "
 	                      "(a backdrop) ... Model: each lot becomes one building model of the game"));
@@ -224,7 +324,7 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	form->addRow(m_pickSide);
 
 	// --- Floors & windows ----------------------------------------------------
-	page(m_tabs, tr("Floors && windows"), form);
+	page(sections[1], tr("Floors && windows"), form);
 	m_heightMode = choices(this, "buildingHeightMode", {tr("From the brush"), tr("Set the height"), tr("From the floors")});
 	m_heightMode->setToolTip(tr("From the brush or a height you set: as many floors as fit. From the floors: the height follows (ground floor + floors above + the top)"));
 	form->addRow(tr("Height"), m_heightMode);
@@ -241,6 +341,14 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	m_topWall = units(this, "buildingTopWall", 0, 512, d.topWall, 8);
 	m_topWall->setToolTip(tr("Wall above the top floor's windows"));
 	form->addRow(tr("Wall above the top floor"), m_topWall);
+	m_windowsFromTexture = check(this, "buildingWindowsFromTexture", tr("The facade texture has the windows in it (build none)"), false);
+	form->addRow(m_windowsFromTexture);
+	m_textureFloors = count(this, "buildingTextureFloors", 0, 16, 0);
+	m_textureFloors->setSpecialValueText(tr("from its size"));
+	m_textureFloors->setToolTip(tr("Floors one repeat of the facade texture spans (0: from its size - a 512 texture is one 128-unit floor)"));
+	form->addRow(tr("Facade texture: floors per repeat"), m_textureFloors);
+	m_wholeTiles = check(this, "buildingWholeTiles", tr("Each side a whole number of texture repeats wide (scale changes at most 10 %)"), true);
+	form->addRow(m_wholeTiles);
 	m_windowStyle = choices(this, "buildingWindowStyle", {tr("Recessed (panel at the back)"), tr("Panels on the wall (fewer brushes)"), tr("None")});
 	form->addRow(tr("Windows"), m_windowStyle);
 	m_layout = choices(this, "buildingLayout", {tr("A number per side"), tr("By spacing")});
@@ -278,7 +386,7 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	form->addRow(m_backing);
 
 	// --- Ground floor --------------------------------------------------------
-	page(m_tabs, tr("Ground floor"), form);
+	page(sections[1], tr("Ground floor"), form);
 	m_groundLevel = choices(this, "buildingGroundLevel", {tr("At street level"), tr("Raised (with steps)"), tr("Half sunk")});
 	m_groundLevel->setToolTip(tr("Raised: the ground floor lifted (Hochparterre), steps up to each door (never more than 18 units each, players walk "
 	                             "up them), small basement windows below. Half sunk: its floor below the street"));
@@ -307,7 +415,7 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	form->addRow(tr("Step depth"), m_stepDepth);
 
 	// --- Roof & bands --------------------------------------------------------
-	page(m_tabs, tr("Roof && bands"), form);
+	page(sections[1], tr("Roof && bands"), form);
 	m_roof = choices(this, "buildingRoof", {tr("Flat"), tr("Gable"), tr("Hip")});
 	form->addRow(tr("Roof"), m_roof);
 	m_parapet = units(this, "buildingParapet", 0, 256, d.parapetHeight, 8);
@@ -345,7 +453,7 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 
 	// --- Materials -----------------------------------------------------------
 	{
-		auto* w = new QWidget(m_tabs);
+		auto* w = new QGroupBox(tr("Materials"), sections[2]);
 		auto* v = new QVBoxLayout(w);
 		auto* materials = new QFormLayout;
 		v->addLayout(materials);
@@ -359,6 +467,10 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 			materials->addRow(labels[i], m_materials[i]);
 			connect(m_materials[i], &MaterialField::textChanged, this, [this] { m_soon.start(); });
 		}
+		m_pipeMaterial = new MaterialField("buildingPipeMaterial", editor, w);
+		m_pipeMaterial->setPlaceholderText(tr("the trim's"));
+		materials->addRow(tr("Drainpipes and gutters"), m_pipeMaterial);
+		connect(m_pipeMaterial, &MaterialField::textChanged, this, [this] { m_soon.start(); });
 		auto* grid = new QGridLayout;
 		v->addWidget(new QLabel(tr("Textures - each part on its own (fit: one tile per floor, per window bay, or once over each opening)"), w));
 		v->addLayout(grid);
@@ -371,7 +483,7 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 			const QString base = QString("buildingTexture%1").arg(i);
 			t.fit = new QComboBox(w);
 			t.fit->setObjectName(base + "Fit");
-			t.fit->addItems({tr("Scale"), tr("Per floor"), tr("Per bay"), tr("Per opening")});
+			t.fit->addItems({tr("Scale"), tr("Per floor"), tr("Per bay"), tr("Per opening"), tr("Whole tiles (floors)"), tr("Once over the band")});
 			t.fit->setCurrentIndex(static_cast<int>(d.textures[i].fit));
 			t.scale = new QDoubleSpinBox(w);
 			t.scale->setObjectName(base + "Scale");
@@ -396,12 +508,12 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 			grid->addWidget(t.rotation, row, 5);
 		}
 		v->addStretch(1);
-		m_tabs->addTab(w, tr("Materials"));
+		sections[2]->layout()->addWidget(w);
 	}
 
 	// --- Models --------------------------------------------------------------
 	{
-		auto* w = new QWidget(m_tabs);
+		auto* w = new QGroupBox(tr("Models"), sections[2]);
 		auto* v = new QVBoxLayout(w);
 		auto* hint = new QLabel(tr("Drop models from the asset browser on the list, use \"Add\" (the browser's selected model) or type a path. Each row: where, "
 		                           "every N-th place, the chance, when (always / only intact / only where damaged) and how far out from the wall."),
@@ -441,7 +553,7 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 				for (const auto& m : m_assets->modelNames()) names.push_back(m.toStdString());
 			}
 			const bool damaged = m_damage->value() > 0;
-			for (int a = 0; a <= static_cast<int>(FacadePropAnchor::Roof); ++a) {
+			for (int a = 0; a <= static_cast<int>(FacadePropAnchor::RoofEdge); ++a) {
 				const auto anchor = static_cast<FacadePropAnchor>(a);
 				auto* sub = menu->addMenu(tr(ANCHOR_NAMES[a]));
 				const auto list = buildingModelSuggestions(names, anchor, damaged || anchor == FacadePropAnchor::Bay);
@@ -456,11 +568,11 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 		row->addWidget(suggest);
 		row->addStretch(1);
 		v->addLayout(row);
-		m_tabs->addTab(w, tr("Models"));
+		sections[2]->layout()->addWidget(w);
 	}
 
 	// --- Condition & variation -----------------------------------------------
-	page(m_tabs, tr("Condition && variation"), form);
+	page(sections[2], tr("Condition && variation"), form);
 	m_damage = new QDoubleSpinBox(this);
 	m_damage->setObjectName("buildingDamage");
 	m_damage->setRange(0, 100);
@@ -506,7 +618,60 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	connect(m_buttons, &QDialogButtonBox::rejected, this, &BuildingDialog::reject);
 	outer->addWidget(m_buttons);
 
+	for (auto* section : sections) static_cast<QVBoxLayout*>(section->layout())->addStretch(1);
 	loadSettings();
+	syncSimple();
+	// The simple page writes into the fields behind it (and follows them).
+	connect(m_simpleFloors, &QSpinBox::valueChanged, this, [this](int n) {
+		if (m_syncing) return;
+		m_heightMode->setCurrentIndex(static_cast<int>(HeightMode::Floors));
+		m_floors->setValue(n);
+	});
+	connect(m_simpleFacade, &MaterialField::textChanged, this, [this] {
+		if (!m_syncing) m_materials[0]->setText(m_simpleFacade->text());
+	});
+	connect(m_simpleRoof, &MaterialField::textChanged, this, [this] {
+		if (!m_syncing) m_materials[7]->setText(m_simpleRoof->text());
+	});
+	connect(m_simpleWindows, &QComboBox::currentIndexChanged, this, [this](int index) {
+		if (m_syncing) return;
+		m_windowsFromTexture->setChecked(index == 0);
+		if (index == 2) m_windowStyle->setCurrentIndex(static_cast<int>(WindowStyle::None));
+		if (index == 1 && m_windowStyle->currentIndex() == static_cast<int>(WindowStyle::None)) m_windowStyle->setCurrentIndex(static_cast<int>(WindowStyle::Recessed));
+		updateDetailProps();
+	});
+	connect(m_simpleCondition, &QSlider::valueChanged, this, [this](int v) {
+		if (!m_syncing) m_damage->setValue(v);
+	});
+	connect(m_simpleSeed, &QSpinBox::valueChanged, this, [this](int v) {
+		if (!m_syncing) m_seed->setValue(v);
+	});
+	for (auto* box : {m_floors}) connect(box, &QSpinBox::valueChanged, this, [this] { syncSimple(); });
+	connect(m_seed, &QSpinBox::valueChanged, this, [this] { syncSimple(); });
+	connect(m_heightMode, &QComboBox::currentIndexChanged, this, [this] { syncSimple(); });
+	connect(m_windowStyle, &QComboBox::currentIndexChanged, this, [this] { syncSimple(); });
+	connect(m_windowsFromTexture, &QCheckBox::toggled, this, [this] { syncSimple(); });
+	connect(m_damage, &QDoubleSpinBox::valueChanged, this, [this] { syncSimple(); });
+	connect(m_materials[7], &MaterialField::textChanged, this, [this] { syncSimple(); });
+	connect(m_materials[0], &MaterialField::textChanged, this, [this] {
+		// A facade with its windows in the picture builds none; a plain wall gets them built.
+		if (!m_filling && !m_syncing) {
+			const bool windowed = materialHasWindows(m_materials[0]->text().toStdString());
+			if (windowed != m_windowsFromTexture->isChecked()) {
+				m_windowsFromTexture->setChecked(windowed);
+				if (!windowed && m_windowStyle->currentIndex() == static_cast<int>(WindowStyle::None)) m_windowStyle->setCurrentIndex(static_cast<int>(WindowStyle::Recessed));
+				updateDetailProps();
+			}
+		}
+		syncSimple();
+	});
+	connect(m_style, &QComboBox::currentIndexChanged, this, [this](int index) {
+		if (!m_filling && !m_syncing) applyStyle(static_cast<BuildingStyle>(index));
+	});
+	connect(m_detail, &QComboBox::currentIndexChanged, this, [this] {
+		if (!m_filling && !m_syncing) updateDetailProps();
+	});
+	m_advanced->setChecked(QSettings().value("buildings/advanced", false).toBool());
 
 	// Every change plans again soon (not on every key press).
 	m_soon.setSingleShot(true);
@@ -539,6 +704,59 @@ BuildingDialog::~BuildingDialog() {
 	m_watcher.waitForFinished();
 }
 
+void BuildingDialog::syncSimple() {
+	if (m_syncing) return;
+	m_syncing = true;
+	m_simpleFloors->setValue(m_floors->value());
+	m_simpleFloors->setEnabled(m_heightMode->currentIndex() == static_cast<int>(HeightMode::Floors) || m_floors->isEnabled());
+	m_simpleFacade->setText(m_materials[0]->text());
+	m_simpleRoof->setText(m_materials[7]->text());
+	m_simpleWindows->setCurrentIndex(m_windowsFromTexture->isChecked() ? 0 : (m_windowStyle->currentIndex() == static_cast<int>(WindowStyle::None) ? 2 : 1));
+	m_simpleCondition->setValue(static_cast<int>(std::lround(m_damage->value())));
+	m_simpleSeed->setValue(m_seed->value());
+	m_syncing = false;
+}
+
+std::vector<std::string> BuildingDialog::gameMaterials() const {
+	return m_assets ? m_assets->materialNames() : std::vector<std::string>{};
+}
+
+std::vector<std::string> BuildingDialog::gameModels() const {
+	std::vector<std::string> names;
+	if (m_assets) {
+		for (const auto& m : m_assets->modelNames()) names.push_back(m.toStdString());
+	}
+	return names;
+}
+
+void BuildingDialog::applyStyle(BuildingStyle style) {
+	if (style == BuildingStyle::Custom) return;
+	const BuildingOptions next = applyBuildingStyle(options(), style, gameMaterials(), gameModels());
+	setOptions(next);
+	// Editing buildings: the style's settings apply to all of them.
+	if (editing()) {
+		for (const auto& pair : QString::fromStdString(encodeBuildingOptions(next)).split('&', Qt::SkipEmptyParts)) {
+			const QString key = pair.section('=', 0, 0);
+			if (!key.isEmpty()) m_changed.insert(key.toStdString());
+		}
+	}
+	m_soon.start();
+}
+
+void BuildingDialog::updateDetailProps() {
+	// The rows the Detail amount added go; the ones for the new amount come.
+	for (int i = m_props->topLevelItemCount() - 1; i >= 0; --i) {
+		auto* item = m_props->topLevelItem(i);
+		if (item->data(ColSlot, Qt::UserRole).toBool()) delete item;
+	}
+	const bool windows = !m_windowsFromTexture->isChecked() && m_windowStyle->currentIndex() != static_cast<int>(WindowStyle::None);
+	for (const auto& prop : detailProps(m_detail->currentIndex(), gameModels(), windows, m_damage->value() > 0)) {
+		addProp(QString::fromStdString(prop.model), prop.anchor, &prop);
+	}
+	noteChanged("buildingProps");
+	m_soon.start();
+}
+
 void BuildingDialog::setAssets(AssetBrowser* assets) {
 	m_assets = assets;
 	const std::vector<std::string> names = assets ? assets->materialNames() : std::vector<std::string>{};
@@ -559,6 +777,32 @@ void BuildingDialog::setAssets(AssetBrowser* assets) {
 		const auto best = buildingMaterialSuggestions(names, BuildingMaterialRole::Window, 1);
 		if (!best.empty()) m_materials[2]->setText(QString::fromStdString(best.front()).toUpper());
 	}
+	m_simpleFacade->setAssets(assets);
+	m_simpleRoof->setAssets(assets);
+	m_pipeMaterial->setAssets(assets);
+	{
+		QStringList facades, roofs, pipes;
+		for (const auto& name : buildingMaterialSuggestions(names, BuildingMaterialRole::Facade, 12)) facades << QString::fromStdString(name).toUpper();
+		for (const auto& name : names) {
+			if (materialHasWindows(name) && facades.size() < 24) facades.prepend(QString::fromStdString(name).toUpper());
+		}
+		for (const auto& name : buildingMaterialSuggestions(names, BuildingMaterialRole::Roof)) roofs << QString::fromStdString(name).toUpper();
+		for (const auto& name : names) {
+			const std::string lower = toLower(name);
+			if ((lower.find("pipe") != std::string::npos || lower.find("metal") != std::string::npos) && pipes.size() < 8) pipes << QString::fromStdString(name).toUpper();
+		}
+		m_simpleFacade->setSuggestions(facades);
+		m_simpleRoof->setSuggestions(roofs);
+		m_pipeMaterial->setSuggestions(pipes);
+	}
+	// The first time: a City 17 look right away; later: the Detail rows from this game's models.
+	if (assets && m_fresh && !editing()) {
+		m_fresh = false;
+		m_style->setCurrentIndex(static_cast<int>(BuildingStyle::PlasterBlock));   // applies it
+	} else if (assets) {
+		updateDetailProps();
+	}
+	syncSimple();
 }
 
 void BuildingDialog::addProp(const QString& modelPath, FacadePropAnchor anchor, const FacadeProp* values) {
@@ -604,6 +848,8 @@ void BuildingDialog::addProp(const QString& modelPath, FacadePropAnchor anchor, 
 		out->setValue(values->wallOffset);
 	}
 	m_props->setItemWidget(item, ColRemove, remove);
+	item->setData(ColSlot, Qt::UserRole, values && values->automatic);
+	if (values && values->automatic) item->setToolTip(ColModel, tr("Added by the Detail amount"));
 	const auto later = [this] {
 		noteChanged("buildingProps");
 		if (!m_filling) m_soon.start();
@@ -652,6 +898,7 @@ void BuildingDialog::followSelection() {
 	if (records.empty()) {
 		m_editInfo->hide();
 		m_sizeRow->hide();
+		m_sizeLabel->hide();
 		m_buttons->button(QDialogButtonBox::Ok)->setText(tr("Build"));
 		return;
 	}
@@ -671,11 +918,18 @@ void BuildingDialog::followSelection() {
 	                             nullptr, int(records.size())));
 	m_editInfo->show();
 	m_sizeRow->show();
+	m_sizeLabel->show();
 	m_buttons->button(QDialogButtonBox::Ok)->setText(tr("Apply"));
 }
 
 void BuildingDialog::setOptions(const BuildingOptions& o) {
 	m_filling = true;
+	m_style->setCurrentIndex(static_cast<int>(o.style));
+	m_windowsFromTexture->setChecked(o.windowsFromTexture);
+	m_textureFloors->setValue(o.textureFloors);
+	m_wholeTiles->setChecked(o.fitWholeTiles);
+	m_detail->setCurrentIndex(std::clamp(o.detail, 0, 2));
+	m_pipeMaterial->setText(QString::fromStdString(o.pipeMaterial));
 	m_mode->setCurrentIndex(static_cast<int>(o.mode));
 	m_facadeThickness->setValue(o.facadeThickness);
 	m_returnDepth->setValue(o.returnDepth);
@@ -751,11 +1005,18 @@ void BuildingDialog::setOptions(const BuildingOptions& o) {
 	m_sides->clear();
 	m_lots->clear();
 	m_filling = false;
+	syncSimple();
 	m_soon.start();
 }
 
 BuildingOptions BuildingDialog::options() const {
 	BuildingOptions o = defaultBuildingOptions();
+	o.style = static_cast<BuildingStyle>(m_style->currentIndex());
+	o.windowsFromTexture = m_windowsFromTexture->isChecked();
+	o.textureFloors = m_textureFloors->value();
+	o.fitWholeTiles = m_wholeTiles->isChecked();
+	o.detail = m_detail->currentIndex();
+	o.pipeMaterial = m_pipeMaterial->text().trimmed().toUpper().toStdString();
 	o.mode = static_cast<BuildingMode>(m_mode->currentIndex());
 	o.facadeThickness = m_facadeThickness->value();
 	o.returnDepth = m_returnDepth->value();
@@ -836,6 +1097,7 @@ BuildingOptions BuildingDialog::options() const {
 		prop.chance = chance->value();
 		prop.when = static_cast<PropCondition>(when->currentIndex());
 		prop.wallOffset = out->value();
+		prop.automatic = item->data(ColSlot, Qt::UserRole).toBool();
 		// Awnings over the shop windows; AC units and the like on the floors above; in windows: all.
 		prop.groundFloor = prop.anchor == FacadePropAnchor::AboveWindow || prop.anchor == FacadePropAnchor::Window || prop.when == PropCondition::Damaged;
 		prop.upperFloors = prop.anchor != FacadePropAnchor::AboveWindow || prop.when == PropCondition::Damaged;
@@ -1093,13 +1355,56 @@ void BuildingDialog::pickSideAt(const Vec3& point) {
 	auto* item = m_sides->topLevelItem(index);
 	m_sides->setCurrentItem(item);
 	m_sides->scrollToItem(item);
+	// A small menu right there: what this side gets.
+	const auto& side = m_shown->second.plan.sides[static_cast<std::size_t>(index)];
+	const std::pair<int, int> key{side.lot, side.side};
+	QMenu menu(this);
+	menu.setObjectName("buildingSideMenu");
+	menu.addSection(tr("Building %1 side %2").arg(side.lot + 1).arg(side.side + 1));
+	const std::pair<SideState, QString> states[] = {{SideState::Auto, tr("Auto (the style decides)")}, {SideState::Facade, tr("Facade")},
+	                                                 {SideState::Plain, tr("Plain wall")},          {SideState::Open, tr("Open (facade only)")},
+	                                                 {SideState::Nodraw, tr("Nodraw")}};
+	const SideState current = m_sideSettings.contains(key) ? m_sideSettings[key].state : SideState::Auto;
+	for (const auto& [state, label] : states) {
+		auto* action = menu.addAction(label);
+		action->setCheckable(true);
+		action->setChecked(state == current);
+		action->setData(static_cast<int>(state));
+	}
+	if (!m_pickMenuQuiet) {
+		if (auto* chosen = menu.exec(QCursor::pos())) setSideState(key, static_cast<SideState>(chosen->data().toInt()));
+	}
 	if (auto* state = m_sides->itemWidget(item, ColState)) state->setFocus();
+}
+
+void BuildingDialog::setSideState(const std::pair<int, int>& key, SideState state) {
+	SideSettings settings = m_sideSettings.contains(key) ? m_sideSettings[key] : SideSettings{};
+	settings.state = state;
+	if (settings.state == SideState::Auto && settings.windows < 0 && settings.pattern.empty() && settings.doors < 0) {
+		m_sideSettings.erase(key);
+	} else {
+		m_sideSettings[key] = settings;
+	}
+	// The side list shows it too.
+	for (int i = 0; i < m_sides->topLevelItemCount(); ++i) {
+		auto* item = m_sides->topLevelItem(i);
+		if (item->data(ColSide, Qt::UserRole).toInt() == key.first && item->data(ColLength, Qt::UserRole).toInt() == key.second) {
+			if (auto* box = qobject_cast<QComboBox*>(m_sides->itemWidget(item, ColState))) {
+				m_filling = true;
+				box->setCurrentIndex(static_cast<int>(state));
+				m_filling = false;
+			}
+		}
+	}
+	noteChanged("buildingSides");
+	m_soon.start();
 }
 
 void BuildingDialog::loadSettings() {
 	// Every field remembers what it was last time (by its name).
 	QSettings settings;
 	settings.beginGroup("buildings");
+	m_fresh = !settings.contains("buildingStyle");
 	for (auto* box : findChildren<QDoubleSpinBox*>()) {
 		if (!box->objectName().isEmpty() && settings.contains(box->objectName())) box->setValue(settings.value(box->objectName()).toDouble());
 	}
@@ -1119,7 +1424,10 @@ void BuildingDialog::loadSettings() {
 	for (const auto& line : props) {
 		const auto parts = line.split('|');
 		if (parts.size() < 2) continue;
-		addProp(parts[1], static_cast<FacadePropAnchor>(std::clamp(parts[0].toInt(), 0, static_cast<int>(FacadePropAnchor::Roof))));
+		FacadeProp values;
+		values.automatic = parts.size() > 2 && parts[2] == "auto";
+		if (values.automatic) continue;   // the Detail amount adds those again
+		addProp(parts[1], static_cast<FacadePropAnchor>(std::clamp(parts[0].toInt(), 0, static_cast<int>(FacadePropAnchor::RoofEdge))));
 	}
 	settings.endGroup();
 }
@@ -1153,7 +1461,9 @@ void BuildingDialog::saveSettings() const {
 		}
 	}
 	QStringList props;
-	for (const auto& prop : options().props) props << QString::number(static_cast<int>(prop.anchor)) + '|' + QString::fromStdString(prop.model);
+	for (const auto& prop : options().props) {
+		props << QString::number(static_cast<int>(prop.anchor)) + '|' + QString::fromStdString(prop.model) + (prop.automatic ? "|auto" : "");
+	}
 	settings.setValue("props", props);
 	settings.endGroup();
 }

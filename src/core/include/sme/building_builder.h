@@ -38,8 +38,16 @@
 // - Textures: every part (walls, ground floor, windows, doors, trim, cornices, roof, interior) has
 //   its own alignment: scale and shift, rotation, or fitted to the floor height, to the window bay
 //   or to the opening. Facade textures run on along each side; never edge-on.
-// The mass is world; every other piece goes into one func_detail per building. Hidden faces are
-// nodraw. Pieces that would reach into a brush of the map are cut around it.
+// - Styles (City 17 / Eastern bloc): materials of the game found by name, floors, flat bands, a flat
+//   roof with a low parapet, detail. A facade texture with its windows in the picture builds no
+//   windows: it is fitted in whole tiles - one repeat a whole number of floors high, each side
+//   starting with a whole tile at its corner and ending at a tile edge (TextureFit::Tiles); bands
+//   take their texture once over their height (TextureFit::Band).
+// - Detail: drainpipes (brushes, broken by the bands), gutters under pitched eaves, the game's
+//   vents / AC units / antennas / railings (detailProps).
+// The mass is world; every other piece goes into one func_detail per building. Nodraw only where
+// nothing can see it (visibleNodrawFaces; anything seen gets a real material). Pieces that would
+// reach into a brush of the map or another building are cut around it, keeping their textures.
 // The plan is computed without changing the map (live preview); applying it is one undo step.
 
 #pragma once
@@ -94,7 +102,8 @@ enum class FacadePropAnchor {
 	Corner,        ///< At the bottom of each facade corner (drainpipes, pillars)
 	Bay,           ///< Replaces a bay of a floor (broken facade panels): the wall there is left open
 	Ground,        ///< Along the base of the facades (rubble, bins)
-	Roof           ///< On a flat roof, spread out (vents, AC units)
+	Roof,          ///< On a flat roof, spread out (vents, AC units)
+	RoofEdge       ///< Along the edge of a flat roof, one after the other (railings): spaced by the model's width
 };
 /// When a prop is placed.
 enum class PropCondition { Always, Intact, Damaged };
@@ -112,6 +121,7 @@ struct FacadeProp {
 	double up = 0;                          ///< Extra units up
 	double yaw = 0;                         ///< Extra turn (a model facing sideways: 90)
 	double spacing = 128;                   ///< Ground / roof: units between two places
+	bool automatic = false;                 ///< Added by the Detail amount (replaced when it changes)
 };
 
 /// How a part's texture is laid.
@@ -119,7 +129,12 @@ enum class TextureFit {
 	Scale,     ///< Scale and shift as set (along the side, from its start)
 	Floor,     ///< One tile per floor height (width keeps the texture's aspect)
 	Bay,       ///< One tile per window bay and floor
-	Opening    ///< Exactly once over each opening (windows, doors)
+	Opening,   ///< Exactly once over each opening (windows, doors)
+	/// Whole tiles: uniform scale so one repeat is a whole number of floors high (a facade texture
+	/// with its windows in it lines up with the floors), each side starting with a whole tile at its
+	/// left corner; with BuildingOptions::fitWholeTiles a side's width is a whole number of repeats.
+	Tiles,
+	Band       ///< Once over the height of a band (cornice, plinth strip), running on along it
 };
 struct PartTexture {
 	TextureFit fit = TextureFit::Scale;
@@ -145,8 +160,23 @@ struct LotSettings {
 	std::string facadeMaterial;
 };
 
+/// Look presets (City 17 / Eastern bloc): materials found by name in the game, floors, bands, roof,
+/// details. Custom keeps what is set.
+enum class BuildingStyle { Custom, PlasterBlock, BrickTenement, PanelBlock, ShopRow, Industrial };
+
 /// Settings of the building builder.
 struct BuildingOptions {
+	/// Settings format: 1 the first one, 2 adds style, windows from the texture, whole tiles, detail
+	/// (missing keys of an older building keep their old meaning).
+	int version = 2;
+	BuildingStyle style = BuildingStyle::Custom;
+	/// The facade material has its windows in it (HL2 building textures): no window geometry is
+	/// built, the texture is fitted to the floors (TextureFit::Tiles).
+	bool windowsFromTexture = false;
+	int textureFloors = 0;                  ///< Floors one repeat of the facade texture spans (0: from its size)
+	bool fitWholeTiles = true;              ///< Tiles: each side a whole number of repeats wide (scale changes at most 10 %)
+	int detail = 0;                         ///< 0 none, 1 some, 2 lots: drainpipes, gutters; the dialog adds roof / wall props
+	std::string pipeMaterial;               ///< Drainpipes and gutters (empty: trim)
 	BuildingMode mode = BuildingMode::Block;
 	double facadeThickness = 32;            ///< Facade only: slab thickness behind the facade
 	double returnDepth = 0;                 ///< Facade only: an open end turns the corner this far
@@ -260,8 +290,24 @@ struct BuildingOptions {
 	[[nodiscard]] PartTexture& texture(BuildingPart part) { return textures[static_cast<std::size_t>(part)]; }
 };
 
-/// The default texture setting of each part (fitted windows and doors, the rest by scale).
+/// The default texture setting of each part (fitted windows and doors, bands, the rest by scale).
 [[nodiscard]] BuildingOptions defaultBuildingOptions();
+
+/// Whether a facade material has windows in its picture, judged by its name (HL2's
+/// building_template, apartment, facade, storefront ... textures).
+[[nodiscard]] bool materialHasWindows(std::string_view name);
+/// Floors one repeat of a facade texture `texHeight` pixels high spans at `floorHeight` (HL2 scale
+/// 0.25: a 512 texture is one 128-unit floor, a 1024 one two).
+[[nodiscard]] int textureFloorsFor(int texHeight, double floorHeight);
+/// A look preset applied to `base`: materials of the game found by name (`materials`; what is not
+/// found keeps `base`'s), floors, window settings (windows from the texture when the facade has
+/// them), bands as flat strips, the roof, the detail amount, and the detail props from `models`.
+[[nodiscard]] BuildingOptions applyBuildingStyle(const BuildingOptions& base, BuildingStyle style, const std::vector<std::string>& materials,
+                                                 const std::vector<std::string>& models);
+/// The props the Detail amount adds (FacadeProp::automatic): vents / AC units / antennas on flat
+/// roofs, railings along low roof edges, AC units under some windows, rubble when damaged - only
+/// models that are in `models`.
+[[nodiscard]] std::vector<FacadeProp> detailProps(int detail, const std::vector<std::string>& models, bool windows, bool damaged);
 
 /// A side of a lot as the builder saw it.
 struct BuildingSideInfo {
@@ -365,6 +411,10 @@ struct BuildingRecord {
 /// are not usable as a lot (broken, too small) are left alone with a note.
 [[nodiscard]] BuildingPlan planBuildings(const MapDocument& doc, MapDocument& ids, const std::vector<SolidRef>& lots, const BuildingOptions& options,
                                          const TextureSizeFn& textureSize);
+
+/// Nodraw faces of a plan's pieces that something could see: not hidden by another piece of the plan
+/// or a brush of the map (glass does not hide). (solid id, side id) pairs; planBuildings leaves none.
+[[nodiscard]] std::vector<std::pair<int, int>> visibleNodrawFaces(const MapDocument& doc, const BuildingPlan& plan, const std::vector<SolidRef>& lots);
 
 /// The settings as text, one "key = value" per line (two equal texts plan the same buildings; the
 /// editor report shows them).
