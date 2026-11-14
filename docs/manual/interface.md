@@ -162,6 +162,14 @@ list, **Hide triggers and tool brushes** and **Only geometry** hide several kind
 everything back. The same list is in **View > Show** and in each view's corner menu. While anything is hidden, the
 top right corner of each view says what (*Hidden: triggers, tool brushes*).
 
+Two sky switches sit in the same list under **Sky**:
+
+- **Sky behind everything** (on by default): the 3D view draws the map's sky behind the whole scene, so you see the sky
+  where the map does not cover it, also with the sky brushes hidden – no grey room.
+- **Click through sky faces** (on by default): faces with `tools/toolsskybox` stay visible but a click goes through
+  them to what is behind. To change a sky brush, turn it off, select it with a frame, in the Outliner or with
+  **Go to a brush** (Ctrl+Shift+G).
+
 ### Frame rate limit
 
 The views only draw when something changes. While you fly, drag or move things they draw at most as often as

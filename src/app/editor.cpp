@@ -64,6 +64,8 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_shadows = settings.value("editor/shadows", true).toBool();
 	m_reflections = settings.value("editor/reflections", true).toBool();
 	m_showGrid3D = settings.value("view/grid3D", true).toBool();
+	m_skyBackground = settings.value("view/skyBackground", true).toBool();
+	m_skyClickThrough = settings.value("view/skyClickThrough", true).toBool();
 	m_maxFps = std::max(0, settings.value("view/maxFps", 144).toInt());
 	m_displace.mode = static_cast<DisplaceMode>(std::clamp(settings.value("displace/mode", int(DisplaceMode::Raise)).toInt(), 0, int(DisplaceMode::Alpha)));
 	m_displace.radius = std::clamp(settings.value("displace/radius", 64.0).toDouble(), 4.0, 1024.0);
@@ -807,6 +809,14 @@ bool setViewOption(bool& member, bool on, const char* key) {
 }
 
 } // namespace
+
+void Editor::setSkyBackground(bool on) {
+	if (setViewOption(m_skyBackground, on, "view/skyBackground")) emit settingsChanged();
+}
+
+void Editor::setSkyClickThrough(bool on) {
+	if (setViewOption(m_skyClickThrough, on, "view/skyClickThrough")) emit settingsChanged();
+}
 
 void Editor::setShowGrid3D(bool on) {
 	if (setViewOption(m_showGrid3D, on, "view/grid3D")) emit settingsChanged();

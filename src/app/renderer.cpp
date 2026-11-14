@@ -14,6 +14,7 @@
 #include <sme/decals.h>
 #include <sme/studio_model.h>
 #include <sme/text.h>
+#include <sme/visibility.h>
 
 #include "model_cache.h"
 
@@ -433,7 +434,9 @@ void main() {
 		color = skyClouds(dir, skyTexture(dir));
 		color = grade(color);
 		if ((v_flag & 1u) != 0u && u_probePass == 0) color = mix(color, vec3(1.0, 0.45, 0.1), 0.35);
-		fragColor = vec4(color, 1.0);
+		// Clamped: a float framebuffer keeps values above 1, and lines blended over them wrap
+		// (the 3D grid turned yellow over a bright sky).
+		fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 		return;
 	}
 	if (u_mode == 1 || u_fullbright == 1) {
@@ -879,6 +882,9 @@ void SceneRenderer::release() {
 	glDeleteBuffers(1, &m_previewVbo);
 	glDeleteBuffers(1, &m_previewEdgeVbo);
 	glDeleteVertexArrays(1, &m_previewVao);
+	if (m_skyCubeVao) glDeleteVertexArrays(1, &m_skyCubeVao);
+	if (m_skyCubeVbo) glDeleteBuffers(1, &m_skyCubeVbo);
+	m_skyCubeVao = m_skyCubeVbo = 0;
 	if (m_posedVao) {
 		glDeleteBuffers(1, &m_posedVbo);
 		glDeleteVertexArrays(1, &m_posedVao);
@@ -1603,7 +1609,7 @@ void SceneRenderer::setCommonUniforms(QOpenGLShaderProgram& program, const Param
 	glActiveTexture(GL_TEXTURE0);
 }
 
-void SceneRenderer::bindSky(QOpenGLShaderProgram& program, const Params& params) {
+bool SceneRenderer::bindSky(QOpenGLShaderProgram& program, const Params& params) {
 	// The six faces of the map's skybox ("skybox/<skyname>rt" ...), in the shader's order.
 	static const char* SUFFIXES[6] = {"rt", "lf", "bk", "ft", "up", "dn"};
 	bool all = !m_skyName.isEmpty();
@@ -1635,6 +1641,66 @@ void SceneRenderer::bindSky(QOpenGLShaderProgram& program, const Params& params)
 		program.setUniformValue("u_viewport", QVector2D(float(std::max(1, viewport[2])), float(std::max(1, viewport[3]))));
 		program.setUniformValue("u_vignette", QVector2D(std::clamp(g.vignette, 0.f, 1.f), float(std::max(1, viewport[3])) / float(std::max(1, viewport[2]))));
 	}
+	m_skyLoaded = all;
+	return all;
+}
+
+void SceneRenderer::drawSkyBackground(const Params& params) {
+	if (!m_skyBackground || !m_skyLoaded || m_probesDrawing || (params.mode != Mode::Lit && params.mode != Mode::Unlit)) {
+		return;
+	}
+	if (m_skyCubeVao == 0) {
+		// 36 vertices of a cube from -1 to 1 in the scene's vertex layout (only the position counts).
+		std::vector<float> data;
+		const auto corner = [](int i) { return QVector3D(i & 1 ? 1.f : -1.f, i & 2 ? 1.f : -1.f, i & 4 ? 1.f : -1.f); };
+		const int quads[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+		for (const auto& q : quads) {
+			for (const int i : {q[0], q[1], q[2], q[0], q[2], q[3]}) {
+				const QVector3D p = corner(i);
+				data.insert(data.end(), {p.x(), p.y(), p.z(), 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f});
+			}
+		}
+		glGenVertexArrays(1, &m_skyCubeVao);
+		glGenBuffers(1, &m_skyCubeVbo);
+		glBindVertexArray(m_skyCubeVao);
+		glBindBuffer(GL_ARRAY_BUFFER, m_skyCubeVbo);
+		glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(data.size() * sizeof(float)), data.data(), GL_STATIC_DRAW);
+		const GLsizei stride = FLOATS_PER_VERTEX * sizeof(float);
+		for (GLuint i = 0; i < 4; ++i) glEnableVertexAttribArray(i);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(3 * sizeof(float)));
+		glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(6 * sizeof(float)));
+		glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(9 * sizeof(float)));
+	}
+	// A small cube around the camera (inside the far plane, outside the near plane of 2 units),
+	// drawn without depth: everything drawn after it covers it.
+	QMatrix4x4 model;
+	model.translate(params.cameraPosition);
+	model.scale(64.f);
+	m_program->setUniformValue("u_model", model);
+	m_program->setUniformValue("u_faceOverride", -2);
+	m_program->setUniformValue("u_flatColor", QVector4D(0, 0, 0, 0));
+	m_program->setUniformValue("u_useColor", 0);
+	m_program->setUniformValue("u_hasTex2", 0);
+	m_program->setUniformValue("u_alphaTest", 0);
+	m_program->setUniformValue("u_opacity", 1.f);
+	m_program->setUniformValue("u_skyFace", 1);
+	m_program->setUniformValue("u_fullbright", 1);
+	m_program->setUniformValue("u_texSize", QVector2D(1, 1));
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, m_whiteTexture);
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_BLEND);
+	glBindVertexArray(m_skyCubeVao);
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+	glDepthMask(GL_TRUE);
+	glEnable(GL_DEPTH_TEST);
+	m_program->setUniformValue("u_skyFace", 0);
+	m_program->setUniformValue("u_fullbright", 0);
+	m_program->setUniformValue("u_faceOverride", -1);
+	m_program->setUniformValue("u_model", QMatrix4x4());
 }
 
 void SceneRenderer::drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass, const std::vector<std::pair<int, int>>* only) {
@@ -1822,6 +1888,7 @@ void SceneRenderer::drawSurfaces(const Params& params, bool probePass) {
 	m_program->setUniformValueArray("u_lightSpot", spot, MAX_LIGHTS);
 	m_program->setUniformValueArray("u_lightSpot2", spot2, MAX_LIGHTS);
 
+	drawSkyBackground(params);
 	glBindVertexArray(m_vao);
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_BACK);
@@ -2550,7 +2617,8 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			// Displacements: pick the triangles; other faces of the brush still use the planes.
 			for (std::size_t t = 0; t + 2 < item.triangles.size(); t += 3) {
 				double dist;
-				if (!item.detached && m_hiddenSides.contains(solid->sides[static_cast<std::size_t>(item.triangleSides[t / 3])].id)) continue;
+				const Side& triangleSide = solid->sides[static_cast<std::size_t>(item.triangleSides[t / 3])];
+				if ((!item.detached && m_hiddenSides.contains(triangleSide.id)) || (m_skyClickThrough && isSkyMaterialName(triangleSide.material))) continue;
 				if (intersectTriangle(ray, item.triangles[t], item.triangles[t + 1], item.triangles[t + 2], dist) && (!best || dist < bestRank + SAME_SURFACE)) {
 					PickResult r;
 					r.distance = dist;
@@ -2572,7 +2640,7 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 			if (trace && !hit) skip(item, "its box is on the ray, the brush is not");
 			if (hit) {
 				const Side& side = solid->sides[static_cast<std::size_t>(hit->sideIndex)];
-				const bool hiddenFace = !item.detached && m_hiddenSides.contains(side.id);
+				const bool hiddenFace = (!item.detached && m_hiddenSides.contains(side.id)) || (m_skyClickThrough && isSkyMaterialName(side.material));
 				if (side.dispInfo() || hiddenFace) {
 					if (trace) skip(item, "plane hit on side " + std::to_string(side.id) + (hiddenFace ? " (hidden)" : " (the displaced side: its triangles count)"));
 				} else if (best && hit->distance >= bestRank + SAME_SURFACE) {
@@ -2598,8 +2666,10 @@ std::optional<PickResult> SceneRenderer::pick(const Ray& ray, bool facesOnly, in
 		const auto hit = intersectSeen(ray, *solid, &inside);
 		if (trace && hit && best && hit->distance >= bestRank + SAME_SURFACE) skip(item, "hit at " + reportNumber(hit->distance) + ", behind the nearest hit");
 		if (trace && !hit) skip(item, "its box is on the ray, the brush is not");
-		const bool hiddenFace = hit && !item.detached && m_hiddenSides.contains(solid->sides[static_cast<std::size_t>(hit->sideIndex)].id);
-		if (hiddenFace) skip(item, "the face hit is hidden (side " + std::to_string(solid->sides[static_cast<std::size_t>(hit->sideIndex)].id) + ")");
+		const Side* hitSide = hit ? &solid->sides[static_cast<std::size_t>(hit->sideIndex)] : nullptr;
+		const bool skyFace = hitSide && m_skyClickThrough && isSkyMaterialName(hitSide->material);
+		const bool hiddenFace = hitSide && ((!item.detached && m_hiddenSides.contains(hitSide->id)) || skyFace);
+		if (hiddenFace) skip(item, std::string(skyFace ? "the face hit is sky (clicks go through sky)" : "the face hit is hidden") + " (side " + std::to_string(hitSide->id) + ")");
 		if (hit && (!best || hit->distance < bestRank + SAME_SURFACE) && !hiddenFace) {
 			PickResult r;
 			r.distance = hit->distance;

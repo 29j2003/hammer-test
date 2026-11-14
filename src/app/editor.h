@@ -166,6 +166,13 @@ public:
 	/// lines from the selected entities to the entities their outputs fire at (and back).
 	[[nodiscard]] bool showGrid3D() const { return m_showGrid3D; }
 	void setShowGrid3D(bool on);
+	/// The map's skybox drawn behind everything in the 3D views (also where sky brushes are hidden).
+	[[nodiscard]] bool skyBackground() const { return m_skyBackground; }
+	void setSkyBackground(bool on);
+	/// Clicks go through faces with the sky material (they stay visible; box select, the
+	/// Outliner and Ctrl+Shift+G still reach their brushes).
+	[[nodiscard]] bool skyClickThrough() const { return m_skyClickThrough; }
+	void setSkyClickThrough(bool on);
 	/// Highest frame rate of the map views (0: no limit). The views only draw when something
 	/// changes; the limit caps flying, dragging and other continuous movement.
 	[[nodiscard]] int maxFps() const { return m_maxFps; }
@@ -647,6 +654,8 @@ private:
 	bool m_shadows = true;
 	bool m_reflections = true;
 	bool m_showGrid3D = true;
+	bool m_skyBackground = true;
+	bool m_skyClickThrough = true;
 	int m_maxFps = 144;
 	DisplaceSettings m_displace;
 	bool m_showEntityNames = true;

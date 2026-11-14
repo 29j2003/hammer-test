@@ -382,6 +382,17 @@ void Viewport::fillShowMenu(QMenu* menu, Editor* editor) {
 		action->setObjectName(QStringLiteral("show%1").arg(static_cast<std::uint32_t>(kind)));
 		connect(action, &QAction::toggled, editor, [editor, kind](bool on) { editor->setKindVisible(kind, on); });
 	}
+	menu->addSection(tr("Sky"));
+	auto* skyBackground = menu->addAction(tr("Sky behind everything (also with sky brushes hidden)"));
+	skyBackground->setCheckable(true);
+	skyBackground->setChecked(editor->skyBackground());
+	skyBackground->setObjectName("skyBackground");
+	connect(skyBackground, &QAction::toggled, editor, &Editor::setSkyBackground);
+	auto* skyThrough = menu->addAction(tr("Click through sky faces"));
+	skyThrough->setCheckable(true);
+	skyThrough->setChecked(editor->skyClickThrough());
+	skyThrough->setObjectName("skyClickThrough");
+	connect(skyThrough, &QAction::toggled, editor, &Editor::setSkyClickThrough);
 	auto* all = menu->addAction(tr("Show everything"));
 	all->setEnabled(editor->hiddenKinds() != 0);
 	connect(all, &QAction::triggered, editor, [editor] {
@@ -580,6 +591,8 @@ void Viewport::paintGL() {
 	// Clip and vertex previews replace the selected brushes while they are shown.
 	const bool toolPreview = m_drag == Drag::Vertex || (m_editor->tool() == Editor::Tool::Clip && clipPlane());
 	m_renderer.setHideSelected(dragging || toolPreview);
+	m_renderer.setSkyBackground(m_editor->skyBackground());
+	m_renderer.setSkyClickThrough(m_editor->skyClickThrough());
 	m_renderer.render(params);
 	// Cubemaps wait to be drawn (a moment after the map changed, then a few faces per frame).
 	if (params.mode == SceneRenderer::Mode::Lit && params.reflections && m_renderer.cubemapWorkPending() && !m_cubemapTimer.isActive()) {
@@ -645,6 +658,16 @@ void Viewport::paintGL() {
 
 	m_renderer.endFrame();
 	drawOverlay();
+	// Opaque alpha everywhere: blended lines and glass lower the framebuffer's alpha, and Qt
+	// composes the view as premultiplied - bright colours (the sky) then overflow into wrong
+	// colours (the 3D grid turned yellow over the sky).
+	{
+		auto* f = QOpenGLContext::currentContext()->functions();
+		f->glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+		f->glClearColor(0, 0, 0, 1);
+		f->glClear(GL_COLOR_BUFFER_BIT);
+		f->glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	}
 
 	// Frame statistics.
 	m_frameMs = m_frameClock.nsecsElapsed() / 1e6;

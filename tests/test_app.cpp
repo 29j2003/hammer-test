@@ -11992,3 +11992,63 @@ TEST_CASE("building builder: the simple page - a City 17 style right away, windo
 	editor.undo();
 	CHECK(editor.doc().serialize() == before);
 }
+
+TEST_CASE("sky: clicks go through sky faces (they stay visible), the switch turns it off, and the sky option is in the Show menu") {
+	// Julius, 14.11.2026: "I want to be able to see the skybox but not be able to click on it;
+	// if I hide the skybox it is back to the grey room".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	window.setQuadLayout(false);
+	window.resize(1200, 800);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	editor.setGrid(16);
+	editor.setShapeOptions(ShapeOptions{});
+	editor.setTool(Editor::Tool::Select);
+	Viewport* view = window.view3D();
+	CHECK(editor.skyClickThrough());   // on by default
+	CHECK(editor.skyBackground());
+	// A wall, and a sky brush in front of it.
+	editor.createShape(box({0, 640, 0}, {512, 704, 320}));
+	const SolidRef wall = editor.selection().solids.front();
+	editor.createShape(box({0, 256, 0}, {512, 288, 320}));
+	const SolidRef sky = editor.selection().solids.front();
+	editor.commit(edit::applyMaterial(editor.doc(), editor.selection(), "TOOLS/TOOLSSKYBOX"));
+	settle();
+	view->camera().position = QVector3D(256, -500, 128);
+	view->camera().yaw = 90;
+	view->camera().pitch = 0;
+	view->update();
+	settle();
+	const auto click = [&] {
+		editor.setSelection({});
+		QTest::mouseClick(view, Qt::LeftButton, {}, screen(view, Vec3{256, 272, 128}));
+		settle();
+	};
+	click();
+	REQUIRE(editor.selection().solids.size() == 1);
+	CHECK(editor.selection().solids.front() == wall);
+	// Switched off: the sky brush is clicked like any brush.
+	editor.setSkyClickThrough(false);
+	view->update();
+	settle();
+	click();
+	REQUIRE(editor.selection().solids.size() == 1);
+	CHECK(editor.selection().solids.front() == sky);
+	// Both switches are in the view's Show menu.
+	QMenu menu;
+	Viewport::fillShowMenu(&menu, &editor);
+	CHECK(menu.findChild<QAction*>("skyClickThrough"));
+	CHECK(menu.findChild<QAction*>("skyBackground"));
+	editor.setSkyClickThrough(true);
+}

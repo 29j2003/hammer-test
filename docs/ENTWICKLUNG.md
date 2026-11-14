@@ -311,6 +311,12 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
   Sichtbarkeit: Kern-Modul `visibility` (`ObjectKind`, `objectsOfKinds` – ganze Brushes/Entities, bei normalen
   Brushes einzelne Tool-/Himmelsflächen); `Editor::hidden()` = von Hand versteckt (H) + gefilterte Arten, zwischengespeichert
   und bei jeder Änderung neu (`m_hiddenDirty`), Maske in QSettings `view/hiddenKinds`; Menü `Viewport::fillShowMenu`.
+  Himmel (Julius 14.11.2026: „Skybox sehen, aber nicht anklicken; ausgeblendet ist es wieder der graue Raum“):
+  `Editor::skyBackground` (`view/skyBackground`) → `SceneRenderer::drawSkyBackground` (Würfel ±64 um die Kamera im
+  Himmels-Zweig des Shaders, ohne Tiefe, vor allem anderen; nur Lit/Unlit, nur wenn `bindSky` alle sechs Seiten hat),
+  `Editor::skyClickThrough` (`view/skyClickThrough`) → `pick` überspringt Flächen mit Himmelsmaterial wie versteckte.
+  Am Ende jedes Bildes setzt `paintGL` Alpha auf 1 (halbtransparente Linien senkten es, Qt setzt vormultipliziert
+  zusammen – helle Farben liefen über, das 3D-Gitter wurde über dem Himmel gelb).
   Versteckt wird nur über Flags (`FLAG_HIDDEN`), die Geometrie bleibt.
   Statusleiste: `MainWindow::updateStatusInfo` (Auswahl, Maße, Raster/Snap/Winkel), `Viewport::showHoverInfo`
   (3D: Punkt unter der Maus + Abstand, im Flächenmodus das Material), `statsChanged` = Zeit pro Bild (die Views

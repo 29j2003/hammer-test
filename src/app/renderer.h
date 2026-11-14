@@ -112,6 +112,10 @@ public:
 		float scale = 1;
 	};
 	void setSkyLook(const SkyLook& look) { m_skyLook = look; }
+	/// The map's skybox behind everything (3D views, lit and textured modes).
+	void setSkyBackground(bool on) { m_skyBackground = on; }
+	/// Picking passes through faces with the sky material.
+	void setSkyClickThrough(bool on) { m_skyClickThrough = on; }
 	/// mapbase-fidelity's colour grading in the lighting preview.
 	struct Grade {
 		bool on = false;
@@ -262,8 +266,12 @@ private:
 	void drawBatches(QOpenGLShaderProgram& program, const Params& params, bool translucentPass, const std::vector<std::pair<int, int>>* only = nullptr);
 	/// Vertex ranges of the faces of the brushes the camera is inside: they are drawn from inside.
 	[[nodiscard]] std::vector<std::pair<int, int>> rangesAround(const Vec3& point) const;
-	/// The map's skybox faces on units 5..10 and the cloud settings.
-	void bindSky(QOpenGLShaderProgram& program, const Params& params);
+	/// The map's skybox faces on units 5..10 and the cloud settings; false if the map has no
+	/// complete skybox.
+	bool bindSky(QOpenGLShaderProgram& program, const Params& params);
+	/// The skybox around the camera, before everything else (no depth): what is not covered by
+	/// the map shows the sky instead of the background colour.
+	void drawSkyBackground(const Params& params);
 	void setCommonUniforms(QOpenGLShaderProgram& program, const Params& params, const QMatrix4x4& model);
 	void ensureFlagTexture();
 	/// Uploads m_faceLightmap (one byte per face, same layout as the flags).
@@ -288,6 +296,10 @@ private:
 	ModelCache* m_models = nullptr;
 	std::vector<ModelInstance> m_modelInstances;
 	QString m_skyName;          ///< worldspawn "skyname"
+	bool m_skyBackground = false;
+	bool m_skyClickThrough = false;
+	bool m_skyLoaded = false;   ///< bindSky found all six faces this frame
+	GLuint m_skyCubeVao = 0, m_skyCubeVbo = 0;   ///< unit cube for drawSkyBackground
 	SkyLook m_skyLook;
 	Grade m_grade;
 	QHash<QString, GpuModel> m_gpuModels;
