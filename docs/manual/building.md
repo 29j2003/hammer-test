@@ -453,23 +453,48 @@ once (the props as ghosts), **Build** makes it one undo step.
 
 The dialog opens on a short page - that is all most buildings need:
 - **Style**: a look preset in the City 17 / Eastern bloc way - *Plaster block*, *Brick tenement*,
-  *Panel block*, *Shop row*, *Industrial*. It finds fitting materials of your game by their names
-  (facade, roof, cornice strip, trim, drainpipes, shop fronts), sets the floors, flat bands and a
-  flat roof with a low parapet, and adds detail. Pick one, then change what you like; *Custom* keeps
-  your settings. The first time the dialog opens, *Plaster block* is applied.
+  *Panel block*, *Shop row*, *Industrial*. It picks materials of your game for the facade, roof,
+  cornice strip, ground floor, trim and drainpipes, sets the floors, flat bands and a flat roof with
+  a low parapet, and adds detail. The names only make a short list: Mapsmith looks at each
+  candidate's picture and takes what fits the part (a facade with windows or a plain wall for the
+  walls, a strip for the cornices, tar or gravel for the roof, a shop front for a shop row), a world
+  material (LightmappedGeneric) of at least 256 pixels - never a model, decal, tool, overlay, glass,
+  sign or skybox texture. A facade you pick by hand is remembered for that style. Pick a style, then
+  change what you like; *Custom* keeps your settings. The first time the dialog opens, *Plaster
+  block* is applied.
 - **Floors**: all floors, the ground floor included; the height follows.
-- **Facade** and **Roof**: the materials. The roof never takes the facade texture.
+- **Facade** and **Roof**: the materials. The roof never takes the facade texture. Under the facade
+  is its picture with the windows Mapsmith found in it outlined, and one line on what it reads the
+  texture as, for example *facade with windows · 2 windows per tile · 1 floor per tile · scale 0.25*,
+  *plain wall · scale 0.25*, *trim strip*, *roof* or *unsuitable* (with why: a far facade with
+  tiny windows, a garish colour, a decal). That decides everything else: where the texture goes, its
+  scale (whole floors and whole windows) and whether windows are built. If it read a texture
+  wrong, **Read as** sets what it is (remembered for that material); *Automatic* reads the picture
+  again. The Materials section shows the same line for the walls, ground floor, cornices and roof.
 - **Windows**: *From the facade texture* - Half-Life 2's building textures already show the
   windows, so none are built: the texture is scaled so that one repeat is a whole number of floors
   (a 512 texture is one 128-unit floor), each side starts with a whole tile at its left corner and
   ends at a tile edge (its width changes by at most 10 %), and the rows line up with the floors.
-  Picking a facade whose name says it has windows (building_template, apartment, facade,
-  storefront ...) switches this on by itself. *Built into the wall*: shallow openings, each with one
-  window texture fitted to it; their reveals take the trim. *None*: plain walls.
+  Picking a facade with windows in its picture switches this on by itself, and the sills, AC units
+  and broken windows sit exactly at the painted windows. *Built into the wall*: shallow openings,
+  each with one window texture fitted to it; their reveals take the trim - only for a texture
+  without windows (it is greyed out for one that has them, so windows are never doubled; **Read as:
+  Plain wall** builds them anyway). *None*: plain walls.
+- **How many windows**: *many* ... *few* - about one window column every 96 to 512 units along a wall
+  (176 to start with; the leftmost step is every window). With windows from the facade texture
+  whole repeats stay as they are and plain wall strips (2 units in front, the texture's plain part
+  or **Wall between windows**) cover the painted windows in between; built windows get fewer per
+  floor.
 - **Detail**: *None*, *Some* or *Lots* - drainpipes down the corners (and along long walls), gutters
   under pitched eaves, and the game's vents, AC units, antennas and railings on the roofs and under
   some windows (only models your game has; they appear in the Models list and can be changed there).
-- **Condition**: intact ... destroyed. **Seed**: another number gives other random choices.
+- **Condition**: intact ... destroyed. 0 % is clean; around 30 % some windows are broken (the game's
+  broken window models) and a few holes are knocked into the walls, with the interior dark behind
+  them; from about 70 % the top floors are gone - a jagged broken top where each bay ends at its own
+  height, the edges and floor slabs sticking out, big holes (with the game's broken facade models
+  fitted by their size), broken pillars at the corners, rubble heaps at the base and on the broken
+  top. Only models your game has are used; without them it is all brushes.
+- **Seed**: another number gives other random choices.
 - **Change a side ...**: click next to a wall in the 3D or top view; a small menu sets that side to
   *Facade*, *Plain wall*, *Open* (facade only) or *Nodraw*.
 
@@ -504,6 +529,7 @@ models & variation*):
   models.
 - **Windows**: *Recessed* (set **Window depth** into the wall, a panel with the window texture
   fitted exactly once at the back), *Panels on the wall* (fewer brushes) or *None*.
+- **One window every**: what *How many windows* sets (units; *every window*: no spacing).
 - **How many**: *A number per side* (**Windows per side**, spread evenly; narrower if they do not
   fit) or *By spacing* (as many as fit with **Between windows** of wall; they grow with the length).
   **Window width / height**, **Sill height** (from the floor), **At the corners** (wall kept at each
@@ -538,7 +564,9 @@ take the walls' or the trim's. Below them every part has its own texture setting
 and floor), *Per opening* (windows and doors: exactly once over each), *Whole tiles (floors)* (one
 repeat a whole number of floors high, the aspect kept, whole tiles per side - the styles use it for
 walls and the ground floor) or *Once over the band* (a cornice or plinth strip: its texture once over
-the band's height, running on along it); **Scale**, **Shift U / V**, **Rotation**. Facade textures run
+the band's height, running on along it); **Scale**, **Shift U / V**, **Rotation**. **Wall between
+windows**: the strips that cover the painted windows left out (empty: a plain part of the facade
+texture); **Rubble**: the heaps and the broken top of damaged buildings. Facade textures run
 on along each side and from one lot to the next. **Drainpipes and gutters** has its own material. In
 *Floors & windows*, **The facade texture has the windows in it**, **Facade texture: floors per
 repeat** (0: from its size) and **Each side a whole number of texture repeats wide** belong to the
@@ -550,12 +578,16 @@ or type a path. **Where**: in each window, below or above the windows, at the do
 *Wall bay* (replaces a bay of a floor: the wall there is left open - for the game's broken facade
 models; their box decides how wide and high), along the base, on the roof. **Every** N-th place,
 **Chance**, **When** (always / only intact / only where damaged), **Out** (units from the wall; the
-model's back touches the wall by its box).
+model's back touches the wall by its box). Big roof models (towers, masts, water tanks: taller than
+a floor or wider than a quarter of the roof) are landmarks: at most one in a selection, on few
+buildings (seeded), never on two neighbours, and only where it fits on the roof.
 
 **Condition & variation**
-- **Damage**: floors missing from the top and a jagged top edge (each bay ends at its own height),
-  broken windows, broken facade models in bays and rubble (the rows set to *only where damaged*);
-  the inside shows the interior material. **Damage seed** gives another arrangement.
+- **Damage**: what *Condition* sets - up to about a third broken windows and holes, from there on
+  floors missing from the top with a jagged top edge (each bay ends at its own height), broken facade
+  models in bays and rubble (the rows set to *only where damaged*); the inside shows the interior
+  material (HL2's black for voids, `tools/toolsblack`, when the style picks it). **Damage seed**
+  gives another arrangement.
 - **Seed**, **Floors +-** and **More wall materials**: each building gets its own number of floors and
   wall material at random, the same again with the same seed. **Brushes that touch are one building**:
   for a curve or an L - one material, the doors only on its longest front.

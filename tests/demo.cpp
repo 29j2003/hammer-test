@@ -652,7 +652,20 @@ void createDemo(Fixture& f) {
 		if (auto w = windowPane(u, v, 0.06, 0.94, 0.05, 0.93, wall)) return *w;
 		return wall;
 	}));
-	for (const char* name : {"building_template_plaster001", "plasterwall001", "trim_cornice001", "roof_tar001", "metalpipe001", "storefront001", "window001"}) {
+	// Traps for the default pick (like HL2's): a garish orange tile with "building" in its name, a far
+	// facade with tiny windows (skybox buildings) - their pictures say they are no walls for a building.
+	writeBytes(mat / "demo/building_tiles_orange001.vtf", makeTexture(128, [](double u, double v) {
+		const bool joint = std::fmod(u * 16, 1.0) < 0.12 || std::fmod(v * 16, 1.0) < 0.12;
+		return joint ? Rgba{0.55, 0.3, 0.1} : Rgba{0.95, 0.5, 0.12};
+	}));
+	writeBytes(mat / "demo/building_skybox_apartment001.vtf", makeTexture(256, [](double u, double v) {
+		const double n = fbm(u, v, 141) * 0.08;
+		const double cu = std::fmod(u * 8, 1.0), cv = std::fmod(v * 8, 1.0);
+		if (cu > 0.3 && cu < 0.7 && cv > 0.25 && cv < 0.75) return Rgba{0.15 + n, 0.17 + n, 0.2 + n};
+		return Rgba{0.6 + n, 0.58 + n, 0.52 + n};
+	}));
+	for (const char* name : {"building_template_plaster001", "plasterwall001", "trim_cornice001", "roof_tar001", "metalpipe001", "storefront001", "window001",
+	                         "building_tiles_orange001", "building_skybox_apartment001"}) {
 		writeText(mat / (std::string("demo/") + name + ".vmt"), vmt("LightmappedGeneric", "\t\"$basetexture\" \"demo/" + std::string(name) + "\"\n"));
 	}
 	writeBytes(mat / "models/editor/playerstart.vtf", makeTexture(32, [](double u, double v) {
@@ -673,6 +686,23 @@ void createDemo(Fixture& f) {
 	writeStudioModel(f.mod / "models/props_demo/air_conditioner01.mdl", makeStudioModel({{-12, -20, -16, 12, 20, 16}}, {"idle"}, "", "metal001", "demo/"));
 	writeStudioModel(f.mod / "models/props_demo/antenna01.mdl", makeStudioModel({{-2, -2, 0, 2, 2, 72}, {-1, -20, 56, 1, 20, 58}}, {"idle"}, "", "metal001", "demo/"));
 	writeStudioModel(f.mod / "models/props_demo/railing01.mdl", makeStudioModel({{-1, -32, 0, 1, 32, 3}, {-1, -32, 36, 1, 32, 40}, {-1, -32, 0, 1, -29, 40}, {-1, 29, 0, 1, 32, 40}}, {"idle"}, "", "metal001", "demo/"));
+	// Destroyed pieces with HL2's sizes and names (City 17's props_debris): broken facade panels for
+	// holes, a broken window, a broken pillar for corners, a concrete chunk; a radio tower for roofs
+	// (a landmark: rare).
+	writeStudioModel(f.mod / "models/props_debris/building_brokenexterior001a.mdl",
+	                 makeStudioModel({{-13, -64, 0, 13, 64, 36}, {-13, -64, 36, 13, -24, 128}, {-13, 30, 36, 13, 64, 104}, {-10, -24, 36, 10, 30, 52}}, {"idle"}, "",
+	                                 "plasterwall001", "demo/"));
+	writeStudioModel(f.mod / "models/props_debris/building_brokenwindow001a.mdl",
+	                 makeStudioModel({{-11, -20, -37, 11, -16, 37}, {-11, 16, -37, 11, 20, 37}, {-11, -20, -37, 11, 20, -31}, {-4, -16, -31, 4, 4, 10}}, {"idle"}, "",
+	                                 "window001", "demo/"));
+	writeStudioModel(f.mod / "models/props_debris/building_brokenpillar001c.mdl",
+	                 makeStudioModel({{-8, -10.5, 0, 8, 10.5, 40}, {-6, -8, 40, 6, 4, 58}}, {"idle"}, "", "plasterwall001", "demo/"));
+	writeStudioModel(f.mod / "models/props_debris/concrete_chunk01a.mdl",
+	                 makeStudioModel({{-12, -12, 0, 12, 12, 6}, {-8, -6, 6, 6, 8, 10}}, {"idle"}, "", "plasterwall001", "demo/"));
+	writeStudioModel(f.mod / "models/props_rooftop/radio_tower01.mdl",
+	                 makeStudioModel({{-24, -24, 0, -20, -20, 384}, {20, -24, 0, 24, -20, 384}, {-24, 20, 0, -20, 24, 384}, {20, 20, 0, 24, 24, 384},
+	                                  {-24, -24, 120, 24, 24, 124}, {-24, -24, 250, 24, 24, 254}, {-2, -2, 384, 2, 2, 448}},
+	                                 {"idle"}, "", "metal001", "demo/"));
 	writeStudioModel(f.mod / "models/props_demo/barrel01.mdl",
 	                 makeStudioModel({{-14, -14, 0, 14, 14, 44}, {-15, -15, 6, 15, 15, 10}, {-15, -15, 34, 15, 15, 38}}, {"idle"}, "", "metal001", "demo/"));
 	{
