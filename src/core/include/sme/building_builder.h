@@ -64,6 +64,7 @@
 #include <vector>
 
 #include <sme/editing.h>
+#include <sme/facade_texture.h>
 #include <sme/history.h>
 #include <sme/map.h>
 #include <sme/prop_placement.h>
@@ -166,14 +167,25 @@ enum class BuildingStyle { Custom, PlasterBlock, BrickTenement, PanelBlock, Shop
 
 /// Settings of the building builder.
 struct BuildingOptions {
-	/// Settings format: 1 the first one, 2 adds style, windows from the texture, whole tiles, detail
-	/// (missing keys of an older building keep their old meaning).
-	int version = 2;
+	/// Settings format: 1 the first one, 2 adds style, windows from the texture, whole tiles, detail;
+	/// 3 adds the window spacing, the texture's window positions, plain strips and rubble (missing
+	/// keys of an older building keep their old meaning).
+	int version = 3;
 	BuildingStyle style = BuildingStyle::Custom;
 	/// The facade material has its windows in it (HL2 building textures): no window geometry is
 	/// built, the texture is fitted to the floors (TextureFit::Tiles).
 	bool windowsFromTexture = false;
 	int textureFloors = 0;                  ///< Floors one repeat of the facade texture spans (0: from its size)
+	/// Where the facade texture's windows are (one tile, from its picture: analyzeTexture); windows
+	/// from the texture get sills, props and damage exactly there.
+	std::vector<FacadeWindowRect> textureWindows;
+	/// Average units from one window to the next along a facade (0: every window / the gap as set; the
+	/// dialog starts at 176 - City 17 blocks have few windows).
+	/// Built windows: the gap follows (gap = spacing - width). Windows from the texture: only every
+	/// N-th window column stays, the others are covered by a plain strip (a flat pilaster).
+	double windowSpacing = 0;
+	std::string plainMaterial;              ///< The plain strips (empty: the facade texture's plain part)
+	std::string rubbleMaterial;             ///< Broken edges and rubble heaps (empty: trim)
 	bool fitWholeTiles = true;              ///< Tiles: each side a whole number of repeats wide (scale changes at most 10 %)
 	int detail = 0;                         ///< 0 none, 1 some, 2 lots: drainpipes, gutters; the dialog adds roof / wall props
 	std::string pipeMaterial;               ///< Drainpipes and gutters (empty: trim)
@@ -293,6 +305,16 @@ struct BuildingOptions {
 /// The default texture setting of each part (fitted windows and doors, bands, the rest by scale).
 [[nodiscard]] BuildingOptions defaultBuildingOptions();
 
+/// What a material is for in the building builder (its suggestions).
+enum class BuildingMaterialRole { Facade, Ground, Window, BrokenWindow, Door, Trim, Roof, Interior };
+/// What Mapsmith knows about a material besides its name: its shader, texture size and what its
+/// picture is (analyzeTexture). The dialog reads it from the game; tests make it up.
+struct MaterialFacts {
+	std::string shader;                     ///< "LightmappedGeneric" ...
+	int width = 0, height = 0;
+	TextureAnalysis analysis;
+};
+using MaterialInspector = std::function<std::optional<MaterialFacts>(const std::string& material)>;
 /// Whether a facade material has windows in its picture, judged by its name (HL2's
 /// building_template, apartment, facade, storefront ... textures).
 [[nodiscard]] bool materialHasWindows(std::string_view name);
@@ -303,7 +325,19 @@ struct BuildingOptions {
 /// found keeps `base`'s), floors, window settings (windows from the texture when the facade has
 /// them), bands as flat strips, the roof, the detail amount, and the detail props from `models`.
 [[nodiscard]] BuildingOptions applyBuildingStyle(const BuildingOptions& base, BuildingStyle style, const std::vector<std::string>& materials,
-                                                 const std::vector<std::string>& models);
+                                                 const std::vector<std::string>& models, const MaterialInspector& inspect = {});
+/// The best material of `names` for a part of a building in a style: names only shortlist and
+/// break ties - what the picture is (`inspect`: role, windows, size, shader) decides. `why` gets
+/// one line about the choice. "" if nothing fits.
+[[nodiscard]] std::string chooseBuildingMaterial(const std::vector<std::string>& names, BuildingMaterialRole role, BuildingStyle style,
+                                                 const MaterialInspector& inspect, std::string* why = nullptr);
+/// A facade material's picture into the settings: windows from the texture (and where they are,
+/// how many floors a tile spans) when it is a facade with windows, else windows built in the wall.
+void applyFacadeFacts(BuildingOptions& options, const TextureAnalysis& analysis);
+/// Whether a roof prop is a landmark (a tower, mast, water tank): taller than a floor or wider than a
+/// quarter of the roof. Landmarks are rare: at most one per selection, on no neighbouring buildings.
+[[nodiscard]] bool roofLandmark(const Bounds& box, double floorHeight, double roofWidth);
+
 /// The props the Detail amount adds (FacadeProp::automatic): vents / AC units / antennas on flat
 /// roofs, railings along low roof edges, AC units under some windows, rubble when damaged - only
 /// models that are in `models`.
@@ -360,6 +394,7 @@ struct BuildingPlan {
 	int steps = 0;
 	int displacements = 0;
 	int clipped = 0;                        ///< Pieces cut around brushes of the map
+	std::vector<int> landmarks;             ///< Lots that got a roof landmark (at most one per plan)
 	int skipped = 0;                        ///< Pieces left out (would be broken)
 
 	[[nodiscard]] bool ok() const { return !buildings.empty() || !props.empty(); }
@@ -422,8 +457,6 @@ struct BuildingRecord {
 /// A plan as text (the editor report): buildings, sides, counts, notes.
 [[nodiscard]] std::string describeBuildingPlan(const BuildingPlan& plan);
 
-/// What a material is for in the building builder (its suggestions).
-enum class BuildingMaterialRole { Facade, Ground, Window, BrokenWindow, Door, Trim, Roof, Interior };
 /// Materials of the game that fit a role, best first (at most `count`), found by their names.
 /// Tool textures, decals, overlays and blends are never suggested.
 [[nodiscard]] std::vector<std::string> buildingMaterialSuggestions(const std::vector<std::string>& names, BuildingMaterialRole role, std::size_t count = 8);

@@ -27,11 +27,14 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStandardItemModel>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -40,7 +43,9 @@
 
 #include <cmath>
 
+#include <sme/material.h>
 #include <sme/text.h>
+#include <sme/texture.h>
 
 namespace sme::app {
 
@@ -86,6 +91,27 @@ QWidget* page(QWidget* section, const QString& title, QFormLayout*& form) {
 	form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 	section->layout()->addWidget(w);
 	return w;
+}
+
+/// "How many windows" from many to few: about one window column every so many units (0: every one).
+constexpr std::array<double, 9> WINDOW_SPACINGS{0, 96, 128, 160, 176, 224, 288, 384, 512};
+constexpr double DEFAULT_WINDOW_SPACING = 176;
+
+/// The slider step nearest a spacing.
+int windowAmountFor(double spacing) {
+	int best = 0;
+	for (std::size_t i = 1; i < WINDOW_SPACINGS.size(); ++i) {
+		if (std::abs(WINDOW_SPACINGS[i] - spacing) < std::abs(WINDOW_SPACINGS[static_cast<std::size_t>(best)] - spacing)) best = static_cast<int>(i);
+	}
+	return best;
+}
+
+/// Where "Read as" keeps the role a user set for each material.
+const char* const ROLE_SETTINGS = "buildings/materialRoles";
+
+/// The material's key: lower case, forward slashes.
+std::string materialKey(const std::string& material) {
+	return toLower(normalizeMaterialName(trim(material)));
 }
 
 const char* const PART_NAMES[] = {QT_TRANSLATE_NOOP("BuildingDialog", "Walls"),   QT_TRANSLATE_NOOP("BuildingDialog", "Ground floor"),
@@ -158,12 +184,59 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 		m_simpleFacade = new MaterialField("simpleFacade", editor, this);
 		m_simpleFacade->setToolTip(tr("The walls. A texture with its windows in it (HL2's building textures) is fitted to the floors: no windows are built"));
 		simple->addRow(tr("Facade"), m_simpleFacade);
+		{
+			// What the facade's picture is: the windows found in it outlined, one line, "Read as".
+			auto* row = new QWidget(this);
+			auto* h = new QHBoxLayout(row);
+			h->setContentsMargins(0, 0, 0, 0);
+			m_facadePicture = new QLabel(row);
+			m_facadePicture->setObjectName("simpleFacadeWindows");
+			m_facadePicture->setFixedSize(72, 72);
+			m_facadePicture->setAlignment(Qt::AlignCenter);
+			m_facadePicture->setToolTip(tr("The facade texture; the windows Mapsmith found in it are outlined"));
+			h->addWidget(m_facadePicture);
+			auto* v = new QVBoxLayout;
+			m_facadeDecision = new QLabel(row);
+			m_facadeDecision->setObjectName("simpleFacadeDecision");
+			m_facadeDecision->setWordWrap(true);
+			m_facadeDecision->setToolTip(tr("What Mapsmith reads the facade texture as - it decides where the texture goes, its scale (whole floors and "
+			                                "windows) and whether windows are built"));
+			v->addWidget(m_facadeDecision);
+			auto* readAs = new QHBoxLayout;
+			readAs->addWidget(new QLabel(tr("Read as"), row));
+			m_facadeRole = choices(row, "simpleFacadeRole", {tr("Automatic (from the picture)"), tr("Facade with windows"), tr("Plain wall"), tr("Trim strip"),
+			                                                 tr("Roof"), tr("Shop front"), tr("Unsuitable")});
+			m_facadeRole->setToolTip(tr("If the picture was read wrong: what this texture is (remembered for this material)"));
+			readAs->addWidget(m_facadeRole, 1);
+			v->addLayout(readAs);
+			h->addLayout(v, 1);
+			simple->addRow(QString(), row);
+		}
 		m_simpleRoof = new MaterialField("simpleRoof", editor, this);
 		simple->addRow(tr("Roof"), m_simpleRoof);
 		m_simpleWindows = choices(this, "simpleWindows", {tr("From the facade texture"), tr("Built into the wall"), tr("None")});
 		m_simpleWindows->setToolTip(tr("From the facade texture: the wall texture already shows the windows - it is fitted so they line up with the floors. "
 		                               "Built into the wall: shallow openings with one window texture each"));
 		simple->addRow(tr("Windows"), m_simpleWindows);
+		m_windowAmount = new QSlider(Qt::Horizontal, this);
+		m_windowAmount->setObjectName("simpleWindowAmount");
+		m_windowAmount->setRange(0, static_cast<int>(WINDOW_SPACINGS.size()) - 1);
+		m_windowAmount->setPageStep(1);
+		m_windowAmount->setTickPosition(QSlider::TicksBelow);
+		m_windowAmount->setToolTip(tr("Facade textures: only every few painted windows stay, plain wall strips cover the others. Built windows: fewer per floor"));
+		{
+			auto* row = new QWidget(this);
+			auto* h = new QHBoxLayout(row);
+			h->setContentsMargins(0, 0, 0, 0);
+			h->addWidget(new QLabel(tr("Many"), row));
+			h->addWidget(m_windowAmount, 1);
+			h->addWidget(new QLabel(tr("Few"), row));
+			m_windowAmountLabel = new QLabel(row);
+			m_windowAmountLabel->setObjectName("simpleWindowAmountLabel");
+			m_windowAmountLabel->setMinimumWidth(m_windowAmountLabel->fontMetrics().horizontalAdvance(tr("one every 512 units")));
+			h->addWidget(m_windowAmountLabel);
+			simple->addRow(tr("How many windows"), row);
+		}
 		m_detail = choices(this, "buildingDetail", {tr("None"), tr("Some"), tr("Lots")});
 		m_detail->setToolTip(tr("Drainpipes, gutters, and the game's vents, AC units, antennas and railings on roofs and walls"));
 		simple->addRow(tr("Detail"), m_detail);
@@ -354,6 +427,11 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	m_layout = choices(this, "buildingLayout", {tr("A number per side"), tr("By spacing")});
 	m_layout->setCurrentIndex(1);
 	form->addRow(tr("How many"), m_layout);
+	m_windowSpacing = units(this, "buildingWindowSpacing", 0, 4096, DEFAULT_WINDOW_SPACING, 16);
+	m_windowSpacing->setSpecialValueText(tr("every window"));
+	m_windowSpacing->setToolTip(tr("About one window column every so many units along a wall. Facade textures: the painted windows in between are "
+	                               "covered by plain wall strips. Built windows (By spacing): the wall between them follows"));
+	form->addRow(tr("One window every"), m_windowSpacing);
 	m_windowCount = count(this, "buildingWindowCount", 0, 64, d.windowsPerSide);
 	m_windowCount->setToolTip(tr("Windows per floor on each facade side (A number per side)"));
 	form->addRow(tr("Windows per side"), m_windowCount);
@@ -465,12 +543,34 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 			m_materials[i] = new MaterialField(names[i], editor, w);
 			if (i > 0) m_materials[i]->setPlaceholderText(i == 1 ? tr("the walls'") : tr("the trim's / walls'"));
 			materials->addRow(labels[i], m_materials[i]);
-			connect(m_materials[i], &MaterialField::textChanged, this, [this] { m_soon.start(); });
+			if (i == 0 || i == 1 || i == 6 || i == 7) {
+				// What the picture is read as (walls, ground floor, cornices, roof).
+				m_materialNotes[i] = new QLabel(w);
+				m_materialNotes[i]->setObjectName(QString("materialNote%1").arg(i));
+				m_materialNotes[i]->setWordWrap(true);
+				m_materialNotes[i]->setEnabled(false);   // grey: a note, not a field
+				materials->addRow(QString(), m_materialNotes[i]);
+			}
+			connect(m_materials[i], &MaterialField::textChanged, this, [this] {
+				showDecisions();
+				m_soon.start();
+			});
 		}
 		m_pipeMaterial = new MaterialField("buildingPipeMaterial", editor, w);
 		m_pipeMaterial->setPlaceholderText(tr("the trim's"));
 		materials->addRow(tr("Drainpipes and gutters"), m_pipeMaterial);
 		connect(m_pipeMaterial, &MaterialField::textChanged, this, [this] { m_soon.start(); });
+		m_plainMaterial = new MaterialField("buildingPlainMaterial", editor, w);
+		m_plainMaterial->setPlaceholderText(tr("the facade texture's plain part"));
+		m_plainMaterial->setToolTip(tr("Fewer windows on a facade texture: the strips over the windows left out get this (empty: a plain part of the "
+		                               "facade texture, stretched)"));
+		materials->addRow(tr("Wall between windows"), m_plainMaterial);
+		connect(m_plainMaterial, &MaterialField::textChanged, this, [this] { m_soon.start(); });
+		m_rubbleMaterial = new MaterialField("buildingRubbleMaterial", editor, w);
+		m_rubbleMaterial->setPlaceholderText(tr("the interior's"));
+		m_rubbleMaterial->setToolTip(tr("Damaged buildings: the rubble heaps and the broken top"));
+		materials->addRow(tr("Rubble"), m_rubbleMaterial);
+		connect(m_rubbleMaterial, &MaterialField::textChanged, this, [this] { m_soon.start(); });
 		auto* grid = new QGridLayout;
 		v->addWidget(new QLabel(tr("Textures - each part on its own (fit: one tile per floor, per window bay, or once over each opening)"), w));
 		v->addLayout(grid);
@@ -620,7 +720,14 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 
 	for (auto* section : sections) static_cast<QVBoxLayout*>(section->layout())->addStretch(1);
 	loadSettings();
+	if (m_windowsFromTexture->isChecked()) {
+		// Where the painted windows are is not kept between runs: read again from the picture.
+		if (const auto facts = inspectMaterial(m_materials[0]->text().toStdString()); facts && facts->analysis.role == TextureRole::FacadeWindows) {
+			m_textureWindows = facts->analysis.windows;
+		}
+	}
 	syncSimple();
+	showDecisions();
 	// The simple page writes into the fields behind it (and follows them).
 	connect(m_simpleFloors, &QSpinBox::valueChanged, this, [this](int n) {
 		if (m_syncing) return;
@@ -654,17 +761,21 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	connect(m_damage, &QDoubleSpinBox::valueChanged, this, [this] { syncSimple(); });
 	connect(m_materials[7], &MaterialField::textChanged, this, [this] { syncSimple(); });
 	connect(m_materials[0], &MaterialField::textChanged, this, [this] {
-		// A facade with its windows in the picture builds none; a plain wall gets them built.
-		if (!m_filling && !m_syncing) {
-			const bool windowed = materialHasWindows(m_materials[0]->text().toStdString());
-			if (windowed != m_windowsFromTexture->isChecked()) {
-				m_windowsFromTexture->setChecked(windowed);
-				if (!windowed && m_windowStyle->currentIndex() == static_cast<int>(WindowStyle::None)) m_windowStyle->setCurrentIndex(static_cast<int>(WindowStyle::Recessed));
-				updateDetailProps();
-			}
-		}
+		// What the facade's picture is decides: a facade with its windows in it builds none, a plain
+		// wall gets them built.
+		if (!m_filling && !m_syncing) facadeChanged(true);
 		syncSimple();
 	});
+	connect(m_facadeRole, &QComboBox::currentIndexChanged, this, [this](int index) {
+		if (m_syncing || m_filling) return;
+		setMaterialRole(m_materials[0]->text(), static_cast<TextureRole>(index));
+	});
+	connect(m_windowAmount, &QSlider::valueChanged, this, [this](int index) {
+		if (m_syncing) return;
+		m_windowSpacing->setValue(WINDOW_SPACINGS[static_cast<std::size_t>(std::clamp(index, 0, static_cast<int>(WINDOW_SPACINGS.size()) - 1))]);
+	});
+	connect(m_windowSpacing, &QDoubleSpinBox::valueChanged, this, [this] { syncSimple(); });
+	connect(m_floorHeight, &QDoubleSpinBox::valueChanged, this, [this] { showDecisions(); });
 	connect(m_style, &QComboBox::currentIndexChanged, this, [this](int index) {
 		if (!m_filling && !m_syncing) applyStyle(static_cast<BuildingStyle>(index));
 	});
@@ -714,6 +825,8 @@ void BuildingDialog::syncSimple() {
 	m_simpleWindows->setCurrentIndex(m_windowsFromTexture->isChecked() ? 0 : (m_windowStyle->currentIndex() == static_cast<int>(WindowStyle::None) ? 2 : 1));
 	m_simpleCondition->setValue(static_cast<int>(std::lround(m_damage->value())));
 	m_simpleSeed->setValue(m_seed->value());
+	m_windowAmount->setValue(windowAmountFor(m_windowSpacing->value()));
+	m_windowAmountLabel->setText(m_windowSpacing->value() <= 0 ? tr("every window") : tr("one every %1 units").arg(m_windowSpacing->value()));
 	m_syncing = false;
 }
 
@@ -731,8 +844,25 @@ std::vector<std::string> BuildingDialog::gameModels() const {
 
 void BuildingDialog::applyStyle(BuildingStyle style) {
 	if (style == BuildingStyle::Custom) return;
-	const BuildingOptions next = applyBuildingStyle(options(), style, gameMaterials(), gameModels());
+	MaterialInspector inspect;
+	if (m_editor->game()) inspect = [this](const std::string& material) { return inspectMaterial(material); };
+	const std::vector<std::string> materials = gameMaterials();
+	BuildingOptions next = applyBuildingStyle(options(), style, materials, gameModels(), inspect);
+	// The facade picked last time for this style (if the game has it).
+	const std::string remembered = materialKey(QSettings().value(QString("buildings/facade/%1").arg(static_cast<int>(style))).toString().toStdString());
+	bool own = false;
+	if (!remembered.empty()) {
+		for (const auto& name : materials) {
+			if (materialKey(name) != remembered) continue;
+			next.facadeMaterial = QString::fromStdString(name).toUpper().toStdString();
+			if (const auto facts = inspect ? inspectMaterial(name) : std::nullopt) applyFacadeFacts(next, facts->analysis);
+			else next.windowsFromTexture = materialHasWindows(name);
+			own = true;
+			break;
+		}
+	}
 	setOptions(next);
+	if (own) updateDetailProps();   // AC units under windows only where windows are built
 	// Editing buildings: the style's settings apply to all of them.
 	if (editing()) {
 		for (const auto& pair : QString::fromStdString(encodeBuildingOptions(next)).split('&', Qt::SkipEmptyParts)) {
@@ -771,20 +901,38 @@ void BuildingDialog::setAssets(AssetBrowser* assets) {
 	}
 	if (m_materials[0]->text().isEmpty() && !names.empty()) {
 		const auto best = buildingMaterialSuggestions(names, BuildingMaterialRole::Facade, 1);
-		if (!best.empty()) m_materials[0]->setText(QString::fromStdString(best.front()).toUpper());
+		if (!best.empty()) {
+			m_filling = true;
+			m_materials[0]->setText(QString::fromStdString(best.front()).toUpper());
+			m_filling = false;
+			facadeChanged(false);
+		}
 	}
 	if (m_materials[2]->text().isEmpty() && !names.empty()) {
 		const auto best = buildingMaterialSuggestions(names, BuildingMaterialRole::Window, 1);
 		if (!best.empty()) m_materials[2]->setText(QString::fromStdString(best.front()).toUpper());
 	}
 	m_simpleFacade->setAssets(assets);
+	m_plainMaterial->setAssets(assets);
+	m_rubbleMaterial->setAssets(assets);
 	m_simpleRoof->setAssets(assets);
 	m_pipeMaterial->setAssets(assets);
 	{
 		QStringList facades, roofs, pipes;
 		for (const auto& name : buildingMaterialSuggestions(names, BuildingMaterialRole::Facade, 12)) facades << QString::fromStdString(name).toUpper();
+		// Facades with windows in their picture first (their names when there is no picture).
 		for (const auto& name : names) {
-			if (materialHasWindows(name) && facades.size() < 24) facades.prepend(QString::fromStdString(name).toUpper());
+			if (facades.size() >= 24) break;
+			const QString upper = QString::fromStdString(name).toUpper();
+			if (facades.contains(upper)) continue;
+			const std::string lower = toLower(name);
+			if (lower.find("building") == std::string::npos && lower.find("facade") == std::string::npos && lower.find("apartment") == std::string::npos &&
+			    !materialHasWindows(name)) {
+				continue;   // only plausible ones are read (each picture is loaded)
+			}
+			const auto facts = m_editor->game() ? inspectMaterial(name) : std::nullopt;
+			const bool windowed = facts && facts->analysis.role != TextureRole::Unknown ? facts->analysis.role == TextureRole::FacadeWindows : materialHasWindows(name);
+			if (windowed) facades.prepend(upper);
 		}
 		for (const auto& name : buildingMaterialSuggestions(names, BuildingMaterialRole::Roof)) roofs << QString::fromStdString(name).toUpper();
 		for (const auto& name : names) {
@@ -803,6 +951,155 @@ void BuildingDialog::setAssets(AssetBrowser* assets) {
 		updateDetailProps();
 	}
 	syncSimple();
+	showDecisions();
+}
+
+std::optional<MaterialFacts> BuildingDialog::inspectMaterial(const std::string& material) const {
+	const std::string key = materialKey(material);
+	if (key.empty()) return std::nullopt;
+	auto it = m_facts.find(key);
+	if (it == m_facts.end()) {
+		std::optional<MaterialFacts> facts;
+		if (const LoadedGame* game = m_editor->game()) {
+			if (const auto vmt = loadMaterial(game->files, key)) {
+				MaterialFacts f;
+				f.shader = vmt->shader;
+				const std::string texture = normalizeMaterialName(vmt->previewTexture());
+				if (const auto data = texture.empty() ? std::nullopt : game->files.read("materials/" + texture + ".vtf")) {
+					if (const auto info = readTextureInfo(*data)) {
+						f.width = info->width;
+						f.height = info->height;
+					}
+					// A small mip is enough to find windows (and cheap): read once per material.
+					if (const auto image = decodeTexture(*data, 256)) {
+						f.analysis = analyzeTexture(*image, key, f.width, f.height);
+						QImage picture(reinterpret_cast<const uchar*>(image->pixels.data()), image->width, image->height, image->width * 4, QImage::Format_RGBA8888);
+						m_pictures[key] = picture.copy();
+					}
+				}
+				facts = f;
+			}
+		}
+		it = m_facts.emplace(key, facts).first;
+	}
+	std::optional<MaterialFacts> result = it->second;
+	if (result) {
+		const QVariantMap roles = QSettings().value(ROLE_SETTINGS).toMap();
+		const TextureRole own = textureRoleFromKey(roles.value(QString::fromStdString(key)).toString().toStdString());
+		if (own != TextureRole::Unknown && own != result->analysis.role) {
+			result->analysis.role = own;
+			result->analysis.reason = "set with Read as";
+			if (own != TextureRole::FacadeWindows && own != TextureRole::ShopFront) {
+				result->analysis.windows.clear();
+				result->analysis.hasWindows = false;
+			}
+		}
+	}
+	return result;
+}
+
+void BuildingDialog::setMaterialRole(const QString& material, TextureRole role) {
+	const std::string key = materialKey(material.toStdString());
+	if (key.empty()) return;
+	QSettings settings;
+	QVariantMap roles = settings.value(ROLE_SETTINGS).toMap();
+	if (role == TextureRole::Unknown) roles.remove(QString::fromStdString(key));
+	else roles.insert(QString::fromStdString(key), QString::fromLatin1(textureRoleKey(role)));
+	settings.setValue(ROLE_SETTINGS, roles);
+	if (materialKey(m_materials[0]->text().toStdString()) == key) facadeChanged(false);
+	else showDecisions();
+}
+
+QString BuildingDialog::facadeDecision() const {
+	return m_facadeDecision->text();
+}
+
+void BuildingDialog::facadeChanged(bool byUser) {
+	const std::string facade = m_materials[0]->text().trimmed().toUpper().toStdString();
+	const bool before = m_windowsFromTexture->isChecked();
+	const auto facts = facade.empty() ? std::nullopt : inspectMaterial(facade);
+	if (facts && facts->analysis.role != TextureRole::Unknown) {
+		// The picture decides: windows from the texture (where they are, floors per tile) or built.
+		BuildingOptions o;
+		applyFacadeFacts(o, facts->analysis);
+		m_windowsFromTexture->setChecked(o.windowsFromTexture);
+		m_textureFloors->setValue(o.textureFloors);
+		m_textureWindows = o.textureWindows;
+	} else {
+		m_windowsFromTexture->setChecked(materialHasWindows(facade));   // no picture: its name
+		m_textureWindows.clear();
+	}
+	noteChanged("buildingTextureWindows");
+	const bool windowed = m_windowsFromTexture->isChecked();
+	if (windowed != before) {
+		if (!windowed && m_windowStyle->currentIndex() == static_cast<int>(WindowStyle::None)) m_windowStyle->setCurrentIndex(static_cast<int>(WindowStyle::Recessed));
+		updateDetailProps();
+	}
+	if (byUser && !facade.empty() && m_style->currentIndex() != static_cast<int>(BuildingStyle::Custom)) {
+		QSettings().setValue(QString("buildings/facade/%1").arg(m_style->currentIndex()), QString::fromStdString(facade));   // the style starts with it next time
+	}
+	showDecisions();
+	m_soon.start();
+}
+
+void BuildingDialog::showDecisions() {
+	const double floorHeight = m_floorHeight->value();
+	const auto line = [&](const QString& material) -> QString {
+		if (material.trimmed().isEmpty()) return {};
+		const auto facts = inspectMaterial(material.toStdString());
+		if (!facts) return m_editor->game() ? tr("Not found in the game") : QString();
+		if (facts->analysis.role == TextureRole::Unknown) return tr("No picture - judged by its name");
+		QString text = QString::fromStdString(facts->analysis.describe(floorHeight));
+		if (facts->analysis.reason == "set with Read as") text += tr(" (set with Read as)");
+		return text;
+	};
+	for (std::size_t i = 0; i < m_materialNotes.size(); ++i) {
+		if (m_materialNotes[i]) m_materialNotes[i]->setText(line(m_materials[i]->text()));
+	}
+	const QString facade = m_materials[0]->text();
+	const auto facts = facade.trimmed().isEmpty() ? std::nullopt : inspectMaterial(facade.toStdString());
+	m_facadeDecision->setText(facade.trimmed().isEmpty() ? tr("No facade material") : line(facade));
+	// The picture, the windows found in it outlined.
+	QPixmap pixmap;
+	if (const auto found = m_pictures.find(materialKey(facade.toStdString())); found != m_pictures.end() && !found->second.isNull()) {
+		pixmap = QPixmap::fromImage(found->second.scaled(m_facadePicture->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+		if (facts) {
+			QPainter painter(&pixmap);
+			painter.setPen(QPen(QColor(255, 210, 40), 2));
+			for (const auto& w : facts->analysis.windows) {
+				for (const double shift : {0.0, -1.0}) {
+					if (w.u1 + shift <= 0) continue;
+					painter.drawRect(QRectF((w.u0 + shift) * pixmap.width(), w.v0 * pixmap.height(), (w.u1 - w.u0) * pixmap.width(), (w.v1 - w.v0) * pixmap.height()));
+				}
+			}
+		}
+	}
+	m_facadePicture->setPixmap(pixmap);
+	// "Read as" shows the role a user set (Automatic otherwise).
+	{
+		const QVariantMap roles = QSettings().value(ROLE_SETTINGS).toMap();
+		const TextureRole own = textureRoleFromKey(roles.value(QString::fromStdString(materialKey(facade.toStdString()))).toString().toStdString());
+		const bool was = m_syncing;
+		m_syncing = true;
+		m_facadeRole->setCurrentIndex(static_cast<int>(own));
+		m_syncing = was;
+		m_facadeRole->setEnabled(facts.has_value() && !facade.trimmed().isEmpty());
+	}
+	// Windows: "Built into the wall" makes no sense over painted windows, "From the facade texture"
+	// none on a plain wall ("Read as" changes what the texture is).
+	if (auto* model = qobject_cast<QStandardItemModel*>(m_simpleWindows->model())) {
+		const TextureRole role = facts ? facts->analysis.role : TextureRole::Unknown;
+		const bool painted = role == TextureRole::FacadeWindows;
+		const bool plain = role != TextureRole::Unknown && !painted;
+		if (auto* item = model->item(0)) {
+			item->setEnabled(!plain);
+			item->setToolTip(plain ? tr("The facade texture has no windows in it - set Read as: Facade with windows if it has") : QString());
+		}
+		if (auto* item = model->item(1)) {
+			item->setEnabled(!painted);
+			item->setToolTip(painted ? tr("The facade texture already has windows - set Read as: Plain wall to build them anyway") : QString());
+		}
+	}
 }
 
 void BuildingDialog::addProp(const QString& modelPath, FacadePropAnchor anchor, const FacadeProp* values) {
@@ -927,6 +1224,10 @@ void BuildingDialog::setOptions(const BuildingOptions& o) {
 	m_style->setCurrentIndex(static_cast<int>(o.style));
 	m_windowsFromTexture->setChecked(o.windowsFromTexture);
 	m_textureFloors->setValue(o.textureFloors);
+	m_textureWindows = o.textureWindows;
+	m_windowSpacing->setValue(o.windowSpacing);
+	m_plainMaterial->setText(QString::fromStdString(o.plainMaterial));
+	m_rubbleMaterial->setText(QString::fromStdString(o.rubbleMaterial));
 	m_wholeTiles->setChecked(o.fitWholeTiles);
 	m_detail->setCurrentIndex(std::clamp(o.detail, 0, 2));
 	m_pipeMaterial->setText(QString::fromStdString(o.pipeMaterial));
@@ -1006,6 +1307,7 @@ void BuildingDialog::setOptions(const BuildingOptions& o) {
 	m_lots->clear();
 	m_filling = false;
 	syncSimple();
+	showDecisions();
 	m_soon.start();
 }
 
@@ -1014,6 +1316,10 @@ BuildingOptions BuildingDialog::options() const {
 	o.style = static_cast<BuildingStyle>(m_style->currentIndex());
 	o.windowsFromTexture = m_windowsFromTexture->isChecked();
 	o.textureFloors = m_textureFloors->value();
+	o.textureWindows = m_textureWindows;
+	o.windowSpacing = m_windowSpacing->value();
+	o.plainMaterial = m_plainMaterial->text().trimmed().toUpper().toStdString();
+	o.rubbleMaterial = m_rubbleMaterial->text().trimmed().toUpper().toStdString();
 	o.fitWholeTiles = m_wholeTiles->isChecked();
 	o.detail = m_detail->currentIndex();
 	o.pipeMaterial = m_pipeMaterial->text().trimmed().toUpper().toStdString();

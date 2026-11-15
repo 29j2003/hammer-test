@@ -3,9 +3,11 @@
 // (not modal): every change plans again on another thread (Editor::runBuildingJob, the newest
 // wins) and the views show the result at once (brushes, and the props as ghosts); Build applies it
 // as one undo step, Cancel or closing leaves the map as it was.
-// It opens on a short page: Style (City 17 presets), Floors, Facade, Roof, Windows (from the facade
-// texture / built into the wall / none), Detail, Condition, Seed, "Change a side ..." (a click next
-// to a wall, then a small menu). The fields there write into the ones under "Advanced", folded
+// It opens on a short page: Style (City 17 presets), Floors, Facade (with its picture, the windows
+// found in it outlined, what Mapsmith reads it as and "Read as" to correct that), Roof, Windows
+// (from the facade texture / built into the wall / none), How many windows (many ... few), Detail,
+// Condition, Seed, "Change a side ..." (a click next to a wall, then a small menu). What a material
+// is comes from its picture (sme/facade_texture.h), read once per material on this thread. The fields there write into the ones under "Advanced", folded
 // away in three sections:
 // Shape (block / facade only / model, which sides: presets, a list of every side with its
 // own state and windows, "Pick side" takes a click in a view), Floors & windows, Ground floor,
@@ -18,6 +20,7 @@
 
 #include <QDialog>
 #include <QFutureWatcher>
+#include <QImage>
 #include <QTimer>
 
 #include <array>
@@ -85,6 +88,13 @@ public:
 	void setSideState(const std::pair<int, int>& key, SideState state);
 	/// Applies a look preset to the fields (the Style box does it).
 	void applyStyle(BuildingStyle style);
+	/// What the game's material is (shader, size, what its picture shows), read once and kept; the
+	/// role a user set with "Read as" replaces the one read from the picture.
+	[[nodiscard]] std::optional<MaterialFacts> inspectMaterial(const std::string& material) const;
+	/// The line about the facade the simple page shows ("facade with windows · 2 windows per tile ...").
+	[[nodiscard]] QString facadeDecision() const;
+	/// Reads `material` as `role` from now on (Unknown: as its picture says) - "Read as".
+	void setMaterialRole(const QString& material, TextureRole role);
 	/// Tests: pickSideAt selects without the menu.
 	void setPickMenuQuiet(bool quiet) { m_pickMenuQuiet = quiet; }
 
@@ -107,6 +117,11 @@ private:
 	void updateDetailProps();
 	[[nodiscard]] std::vector<std::string> gameMaterials() const;
 	[[nodiscard]] std::vector<std::string> gameModels() const;
+	/// The facade changed: its picture decides the windows (from the texture or built), the floors per
+	/// tile and where the painted windows are; `byUser` remembers it for the style.
+	void facadeChanged(bool byUser);
+	/// The facade's picture, decision line and "Read as", and the per-material lines under Materials.
+	void showDecisions();
 	/// A field was changed by hand: noted (editing several buildings applies only what changed).
 	void noteChanged(const QString& name);
 	/// The selection is (or no longer is) buildings made before: their settings into the fields.
@@ -126,6 +141,15 @@ private:
 	QComboBox* m_detail;
 	QSlider* m_simpleCondition;
 	QSpinBox* m_simpleSeed;
+	QSlider* m_windowAmount;        ///< Many ... few windows: writes the window spacing
+	QLabel* m_windowAmountLabel;
+	QLabel* m_facadePicture;
+	QLabel* m_facadeDecision;
+	QComboBox* m_facadeRole;        ///< "Read as": Automatic / a role
+	QDoubleSpinBox* m_windowSpacing;
+	MaterialField* m_plainMaterial;
+	MaterialField* m_rubbleMaterial;
+	std::vector<FacadeWindowRect> m_textureWindows;   ///< Where the facade texture's windows are
 	QToolButton* m_advanced;
 	QCheckBox* m_windowsFromTexture;
 	QSpinBox* m_textureFloors;
@@ -198,6 +222,7 @@ private:
 	QDoubleSpinBox* m_dispStrength;
 	// Materials and their textures
 	std::array<MaterialField*, 9> m_materials{};
+	std::array<QLabel*, 9> m_materialNotes{};   ///< What each material is read as (walls, ground, cornices, roof)
 	struct TextureRow {
 		QComboBox* fit;
 		QDoubleSpinBox* scale;
@@ -236,6 +261,8 @@ private:
 	std::vector<int> m_editIds;          ///< The buildings being edited
 	std::set<std::string> m_changed;
 	bool m_sizeTouched = false;
+	mutable std::map<std::string, std::optional<MaterialFacts>> m_facts;   ///< Per material (lower case), as read
+	mutable std::map<std::string, QImage> m_pictures;                    ///< Their pictures (small mip)
 };
 
 } // namespace sme::app

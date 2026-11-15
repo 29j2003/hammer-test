@@ -9,15 +9,22 @@
 #include <sme/displacement.h>
 #include <sme/edge_round.h>
 #include <sme/editing.h>
+#include <sme/filesystem.h>
 #include <sme/history.h>
+#include <sme/material.h>
+#include <sme/road_texture.h>
 #include <sme/text.h>
+#include <sme/texture.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <numbers>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -436,7 +443,7 @@ TEST_CASE("building builder: damage - lost floors, jagged top, broken bays with 
 	const SolidRef lot = addLot(doc, box({0, 0, 0}, {512, 256, 672}));
 	BuildingOptions o = baseOptions();
 	o.interiorMaterial = "PLASTER/PLASTERWALL001A";
-	o.damage = 1;
+	o.damage = 0.8;   // 100 % leaves hardly more than the ground floor
 	o.damageSeed = 3;
 	FacadeProp broken;
 	broken.model = "models/props_debris/building_brokenexterior001a.mdl";
@@ -972,7 +979,7 @@ TEST_CASE("building builder pass 2: styles pick the game's materials; a facade w
 	CHECK_FALSE(old.windowsFromTexture);
 	CHECK(old.detail == 0);
 	const auto again = decodeBuildingOptions(encodeBuildingOptions(plaster));
-	CHECK(again.version == 2);
+	CHECK(again.version == 3);
 	CHECK(again.windowsFromTexture);
 	CHECK(again.style == BuildingStyle::PlasterBlock);
 	CHECK(again.props.size() == plaster.props.size());
@@ -1070,4 +1077,402 @@ TEST_CASE("building builder: City 17 street for screenshots (pass 2 styles)" * d
 		doc.updateIdCounters();
 	}
 	std::ofstream(out, std::ios::binary) << doc.serialize();
+}
+
+namespace {
+
+/// What the pictures of the fixture materials are (the dialog reads them from the game's files).
+MaterialInspector gameInspector() {
+	return [](const std::string& name) -> std::optional<MaterialFacts> {
+		MaterialFacts f;
+		f.shader = "LightmappedGeneric";
+		f.width = f.height = 512;
+		const std::string lower = toLower(name);
+		TextureAnalysis& a = f.analysis;
+		a.width = a.height = 512;
+		if (lower == "building_template/building_template007a") {
+			a.role = TextureRole::FacadeWindows;
+			a.hasWindows = true;
+			a.columns = 2;
+			a.rows = 1;
+			a.windows = {{0.14, 0.2, 0.36, 0.78}, {0.64, 0.2, 0.86, 0.78}};
+		} else if (lower == "building_template/building_template001a") {
+			a.role = TextureRole::Unsuitable;   // the orange far facade of Julius' first try
+			a.reason = "tiny windows in a dense grid (a far or skybox facade)";
+		} else if (lower.find("storefront") != std::string::npos) {
+			a.role = TextureRole::ShopFront;
+			a.hasWindows = true;
+			a.rows = a.columns = 1;
+			a.windows = {{0.08, 0.27, 0.92, 0.86}};
+		} else if (lower.find("trim") != std::string::npos) {
+			a.role = TextureRole::Trim;
+		} else if (lower.find("roof") != std::string::npos) {
+			a.role = TextureRole::Roof;
+		} else if (lower.find("models/") != std::string::npos) {
+			f.shader = "VertexLitGeneric";
+			a.role = TextureRole::Wall;
+		} else {
+			a.role = TextureRole::Wall;
+		}
+		return f;
+	};
+}
+
+std::vector<std::string> gameMaterials3() {
+	auto names = GAME_MATERIALS;
+	names.insert(names.begin(), "BUILDING_TEMPLATE/BUILDING_TEMPLATE001A");
+	names.push_back("MODELS/PROPS_C17/BUILDING_TEMPLATE_PLASTER");
+	names.push_back("RUBBLE/RUBBLE_CONCRETE001A");
+	return names;
+}
+
+const std::vector<std::string> BROKEN_MODELS{"models/props_debris/building_brokenexterior001a.mdl", "models/props_debris/building_brokenexterior002a.mdl",
+                                             "models/props_debris/building_brokenwindow001a.mdl", "models/props_debris/building_brokenpillar001c.mdl",
+                                             "models/props_debris/concrete_chunk01a.mdl", "models/props_vents/vent_large001.mdl",
+                                             "models/props_rooftop/antenna01a.mdl"};
+
+std::optional<Bounds> brokenBounds(const std::string& model) {
+	// HL2's sizes (Mapsmith's info line): exterior panels 26 x 128 x 128 and 27 x 256 x 128, window 22 x 40 x 74.
+	if (model.find("brokenexterior001a") != std::string::npos) return box({-13, -64, 0}, {13, 64, 128});
+	if (model.find("brokenexterior002a") != std::string::npos) return box({-13.5, -128, 0}, {13.5, 128, 128});
+	if (model.find("brokenwindow") != std::string::npos) return box({-11, -20, -37}, {11, 20, 37});
+	if (model.find("brokenpillar") != std::string::npos) return box({-8, -10.5, 0}, {8, 10.5, 58});
+	if (model.find("concrete_chunk") != std::string::npos) return box({-12, -12, 0}, {12, 12, 10});
+	if (model.find("vent") != std::string::npos) return box({-16, -16, 0}, {16, 16, 32});
+	if (model.find("antenna") != std::string::npos) return box({-2, -2, 0}, {2, 2, 72});
+	if (model.find("tower") != std::string::npos) return box({-48, -48, 0}, {48, 48, 512});
+	return std::nullopt;
+}
+
+int facesWith(const BuildingPlan& p, const std::string& material) {
+	int n = 0;
+	for (const auto& s : p.resultSolids()) {
+		for (const auto& side : s.sides) n += iequals(side.material, material) ? 1 : 0;
+	}
+	return n;
+}
+
+int propsWith(const BuildingPlan& p, const std::string& word) {
+	return static_cast<int>(std::count_if(p.props.begin(), p.props.end(), [&](const BuildingProp& prop) { return prop.model.find(word) != std::string::npos; }));
+}
+
+} // namespace
+
+TEST_CASE("building builder pass 3: the pictures decide the materials - a far facade or a model's texture is never the default, why is told") {
+	const auto inspect = gameInspector();
+	const auto names = gameMaterials3();
+	std::string why;
+	// The orange far facade comes first by its name; its picture rules it out.
+	CHECK(chooseBuildingMaterial(names, BuildingMaterialRole::Facade, BuildingStyle::PlasterBlock, inspect, &why) == "BUILDING_TEMPLATE/BUILDING_TEMPLATE007A");
+	CHECK(why.find("facade with windows") != std::string::npos);
+	CHECK(chooseBuildingMaterial(names, BuildingMaterialRole::Facade, BuildingStyle::BrickTenement, inspect) == "BRICK/BRICKWALL031D");
+	CHECK(chooseBuildingMaterial(names, BuildingMaterialRole::Roof, BuildingStyle::PlasterBlock, inspect) == "ROOF/ROOF_TAR001A");
+	CHECK(chooseBuildingMaterial(names, BuildingMaterialRole::Trim, BuildingStyle::PlasterBlock, inspect) == "TRIM/TRIM_CORNICE001A");
+	CHECK(chooseBuildingMaterial(names, BuildingMaterialRole::Ground, BuildingStyle::ShopRow, inspect) == "STORE/STOREFRONT001A");
+	// Only unsuitable ones: none at all is better than a wrong one... but a plain wall beats nothing.
+	CHECK(chooseBuildingMaterial({"BUILDING_TEMPLATE/BUILDING_TEMPLATE001A", "PLASTER/PLASTERWALL021A"}, BuildingMaterialRole::Facade, BuildingStyle::PlasterBlock,
+	                             inspect) == "PLASTER/PLASTERWALL021A");
+
+	// The style takes the picture's windows: where they are, a tile is one floor.
+	const auto o = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::PlasterBlock, names, GAME_MODELS, inspect);
+	CHECK(o.facadeMaterial == "BUILDING_TEMPLATE/BUILDING_TEMPLATE007A");
+	CHECK(o.windowsFromTexture);
+	CHECK(o.textureFloors == 1);
+	CHECK(o.textureWindows.size() == 2);
+	// A plain wall picked by hand: windows are built (applyFacadeFacts).
+	BuildingOptions plainWall = o;
+	TextureAnalysis wall;
+	wall.role = TextureRole::Wall;
+	applyFacadeFacts(plainWall, wall);
+	CHECK_FALSE(plainWall.windowsFromTexture);
+	CHECK(plainWall.textureWindows.empty());
+	// What shows through damage is never a picture with windows: rubble and the interior are plain,
+	// the interior HL2's black for voids when the game has it.
+	CHECK_FALSE(materialHasWindows(o.interiorMaterial));
+	CHECK(o.interiorMaterial.find("BUILDING_TEMPLATE") == std::string::npos);
+	CHECK(o.rubbleMaterial.find("BUILDING_TEMPLATE") == std::string::npos);
+	auto withBlack = names;
+	withBlack.push_back("TOOLS/TOOLSBLACK");
+	CHECK(applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::PlasterBlock, withBlack, GAME_MODELS, inspect).interiorMaterial == "TOOLS/TOOLSBLACK");
+}
+
+TEST_CASE("building builder pass 3: windows from the texture - sills exactly under the painted windows, fewer windows by the spacing, plain strips over the rest, never doubled") {
+	auto o = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::PlasterBlock, gameMaterials3(), GAME_MODELS, gameInspector());
+	o.floors = 4;
+	o.cornices = false;
+	MapDocument doc;
+	const auto lot = addLot(doc, box({0, 0, 0}, {768, 384, 512}));
+	o.windowSpacing = 0;
+	const auto all = gamePlan(doc, {lot}, o);
+	REQUIRE(all.buildings.size() == 1);
+	checkClean(all);
+	CHECK(visibleNodrawFaces(doc, all, {lot}).empty());
+	// No window geometry over a texture that has its windows (Julius' doubled windows, 15.11.2026).
+	CHECK(facesWith(all, o.windowMaterial) == 0);
+	const auto front = std::find_if(all.sides.begin(), all.sides.end(), [](const BuildingSideInfo& s) { return s.front; });
+	REQUIRE(front != all.sides.end());
+	// 768 units = 6 tiles of 128, two windows each.
+	CHECK(front->windowsPerFloor == 12);
+	// The sills sit under the painted windows: their middle maps into a window of the texture.
+	const Solid& mass = all.buildings.front().world.front();
+	int sills = 0;
+	for (const auto& piece : all.buildings.front().detail) {
+		const auto g = buildBrushGeometry(piece);
+		const Vec3 size = g.bounds.size();
+		if (std::abs(size.z - o.sillThickness) > 0.01 || g.bounds.min.y > -1 || size.y > o.sillDepth + 0.01) continue;   // front sills only (the front faces -y)
+		const Vec3 mid = (g.bounds.min + g.bounds.max) * 0.5;
+		for (const auto& side : mass.sides) {
+			if (side.plane().normal.y > -0.9 || side.material != o.facadeMaterial) continue;
+			double u = std::fmod((dot(mid, normalize(side.u.axis)) / side.u.scale + side.u.shift) / 512.0, 1.0);
+			if (u < 0) u += 1;
+			const bool inWindow = std::any_of(o.textureWindows.begin(), o.textureWindows.end(), [&](const FacadeWindowRect& w) { return u > w.u0 - 0.01 && u < w.u1 + 0.01; });
+			CHECK(inWindow);
+			++sills;
+		}
+	}
+	CHECK(sills >= 12);
+	// The spacing: every third column (64-unit pitch, 176 apart), plain strips 2 units proud over the rest.
+	o.windowSpacing = 176;
+	const auto fewer = gamePlan(doc, {lot}, o);
+	checkClean(fewer);
+	CHECK(visibleNodrawFaces(doc, fewer, {lot}).empty());
+	const auto front2 = std::find_if(fewer.sides.begin(), fewer.sides.end(), [](const BuildingSideInfo& s) { return s.front; });
+	REQUIRE(front2 != fewer.sides.end());
+	CHECK(front2->windowsPerFloor >= 3);
+	CHECK(front2->windowsPerFloor <= 5);
+	int strips = 0;
+	for (const auto& piece : fewer.buildings.front().detail) {
+		const auto g = buildBrushGeometry(piece);
+		if (g.bounds.max.y > 0.01 || g.bounds.min.y < -2.01 || g.bounds.size().z < 128) continue;
+		++strips;
+		for (const auto& side : piece.sides) {
+			if (side.plane().normal.y < -0.9) CHECK(side.material == o.facadeMaterial);   // the plain part of the facade texture, stretched
+		}
+	}
+	CHECK(strips >= 2);
+	// A plain material for the strips if one is set.
+	o.plainMaterial = "PLASTER/PLASTERWALL021A";
+	CHECK(facesWith(gamePlan(doc, {lot}, o), "PLASTER/PLASTERWALL021A") > 0);
+	// Built windows follow the spacing too: the gap is spacing - width.
+	auto built = baseOptions();
+	built.layout = WindowLayout::Spacing;
+	built.windowWidth = 48;
+	built.cornerMargin = 48;
+	built.windowSpacing = 0;
+	built.windowGap = 48;
+	const auto close = plan(doc, {lot}, built);
+	const int dense = std::find_if(close.sides.begin(), close.sides.end(), [](const BuildingSideInfo& s) { return s.front; })->windowsPerFloor;
+	built.windowSpacing = 192;
+	const auto sparse = plan(doc, {lot}, built);
+	const int few = std::find_if(sparse.sides.begin(), sparse.sides.end(), [](const BuildingSideInfo& s) { return s.front; })->windowsPerFloor;
+	CHECK(few < dense);
+	CHECK(few == 4);   // (768 - 96 + 144) / 192
+}
+
+TEST_CASE("building builder pass 3: destroyed looks destroyed - broken top with jagged walls, holes with broken models, rubble; intact stays clean") {
+	auto o = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::PlasterBlock, gameMaterials3(), BROKEN_MODELS, gameInspector());
+	o.floors = 5;
+	o.windowSpacing = 0;
+	o.modelBounds = brokenBounds;
+	MapDocument doc;
+	const auto lot = addLot(doc, box({0, 0, 0}, {768, 384, 512}));
+	const std::string rubble = o.rubbleMaterial;
+	REQUIRE_FALSE(rubble.empty());
+	struct Look {
+		int worldPieces, rubbleFaces, interiorFaces, brokenModels, panels, ruins;
+		double massTop;
+	};
+	const auto look = [&](double damage) {
+		BuildingOptions d = o;
+		d.damage = damage;
+		d.props.erase(std::remove_if(d.props.begin(), d.props.end(), [](const FacadeProp& p) { return p.automatic; }), d.props.end());
+		const auto extra = detailProps(d.detail, BROKEN_MODELS, false, damage > 0);
+		d.props.insert(d.props.end(), extra.begin(), extra.end());
+		const auto p = gamePlan(doc, {lot}, d);
+		REQUIRE(p.buildings.size() == 1);
+		checkClean(p);
+		CHECK(visibleNodrawFaces(doc, p, {lot}).empty());
+		Look l{};
+		l.worldPieces = static_cast<int>(p.buildings.front().world.size());
+		l.massTop = -1e9;
+		for (const auto& piece : p.buildings.front().world) l.massTop = std::max(l.massTop, buildBrushGeometry(piece).bounds.max.z);
+		l.rubbleFaces = facesWith(p, rubble);
+		l.interiorFaces = facesWith(p, d.interiorMaterial.empty() ? d.trimMaterial : d.interiorMaterial);
+		l.brokenModels = propsWith(p, "props_debris/building_broken");
+		l.panels = propsWith(p, "brokenexterior");
+		for (const auto& piece : p.buildings.front().detail) {
+			const auto g = buildBrushGeometry(piece);
+			if (g.bounds.min.z > p.buildings.front().top - 160 && g.bounds.size().z > 16 && piece.sides.size() >= 6) ++l.ruins;
+		}
+		// Reproducible: the same seed plans the same.
+		CHECK(describeBuildingPlan(gamePlan(doc, {lot}, d)) == describeBuildingPlan(p));
+		return l;
+	};
+	const Look intact = look(0);
+	CHECK(intact.worldPieces == 1);
+	CHECK(intact.rubbleFaces == 0);
+	CHECK(intact.brokenModels == 0);
+	const Look damaged = look(0.4);
+	CHECK(damaged.worldPieces > 1);          // holes cut into the mass
+	CHECK(damaged.rubbleFaces > 0);          // broken edges, the floor of the ruined top
+	CHECK(damaged.interiorFaces > 0);        // dark behind the holes
+	CHECK(damaged.brokenModels > 0);         // broken windows, panels, pillars of the game
+	CHECK(damaged.ruins > 0);                // the top floor's walls broken to jagged heights
+	const Look light = look(0.25);
+	CHECK(light.massTop == doctest::Approx(intact.massTop));   // about a quarter: windows and holes, the floors stand
+	CHECK(light.brokenModels > 0);
+	CHECK(light.worldPieces > 1);
+	const Look ruined = look(0.85);
+	CHECK(ruined.massTop < damaged.massTop - 100);   // more floors gone
+	CHECK(ruined.rubbleFaces > damaged.rubbleFaces);
+	CHECK(ruined.worldPieces >= damaged.worldPieces);
+	CHECK(ruined.panels > 0);                // the 128 / 256-wide broken exterior panels in holes of their size
+}
+
+TEST_CASE("building builder pass 3: a roof landmark (tower, mast) is rare - one per selection at most, standing on the roof; small roof props as before") {
+	MapDocument doc;
+	std::vector<SolidRef> lots;
+	for (int i = 0; i < 6; ++i) lots.push_back(addLot(doc, box({i * 384.0, 0, 0}, {i * 384.0 + 384, 384, 512})));
+	auto o = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::PlasterBlock, gameMaterials3(), GAME_MODELS, gameInspector());
+	o.modelBounds = brokenBounds;
+	o.props.clear();
+	FacadeProp tower;
+	tower.model = "models/props_rooftop/radio_tower01.mdl";
+	tower.anchor = FacadePropAnchor::Roof;
+	tower.chance = 100;
+	tower.spacing = 96;
+	FacadeProp vent;
+	vent.model = "models/props_vents/vent_large001.mdl";
+	vent.anchor = FacadePropAnchor::Roof;
+	vent.chance = 100;
+	vent.spacing = 160;
+	o.props = {tower, vent};
+	CHECK(roofLandmark(*brokenBounds(tower.model), 128, 384));
+	CHECK_FALSE(roofLandmark(*brokenBounds(vent.model), 128, 384));
+	int planned = 0, withTower = 0;
+	for (std::uint32_t seed = 1; seed <= 40; ++seed) {
+		o.seed = seed;
+		const auto p = gamePlan(doc, lots, o);
+		const int towers = propsWith(p, "radio_tower");
+		CHECK(towers <= 1);
+		withTower += towers;
+		++planned;
+		CHECK(propsWith(p, "vent_large") >= 6);   // small props on every roof
+		for (const auto& prop : p.props) {
+			if (prop.model.find("radio_tower") == std::string::npos) continue;
+			// Wholly on its building's roof (96 x 96 footprint inside the 384 x 384 lot).
+			const Vec3 at = prop.placement.origin;
+			const double x0 = std::floor(at.x / 384) * 384;
+			CHECK(at.x - 48 >= x0);
+			CHECK(at.x + 48 <= x0 + 384);
+			CHECK(at.y - 48 >= 0);
+			CHECK(at.y + 48 <= 384);
+		}
+	}
+	// Rare: on some plans, never on most (15 % per building, the first one wins).
+	CHECK(withTower > 0);
+	CHECK(withTower < planned);
+}
+
+TEST_CASE("building builder pass 3: settings format 3 keeps spacing, the texture's windows, plain and rubble materials; format 2 keeps every window") {
+	auto o = applyBuildingStyle(defaultBuildingOptions(), BuildingStyle::PlasterBlock, gameMaterials3(), GAME_MODELS, gameInspector());
+	o.windowSpacing = 200;
+	o.plainMaterial = "PLASTER/PLASTERWALL021A";
+	o.rubbleMaterial = "RUBBLE/RUBBLE_CONCRETE001A";
+	const auto back = decodeBuildingOptions(encodeBuildingOptions(o));
+	CHECK(back.version == 3);
+	CHECK(back.windowSpacing == doctest::Approx(200));
+	CHECK(back.plainMaterial == o.plainMaterial);
+	CHECK(back.rubbleMaterial == o.rubbleMaterial);
+	REQUIRE(back.textureWindows.size() == o.textureWindows.size());
+	CHECK(back.textureWindows.front().u0 == doctest::Approx(o.textureWindows.front().u0));
+	CHECK(describeBuildingOptions(back) == describeBuildingOptions(o));
+	const auto old = decodeBuildingOptions("buildingVersion=2&buildingWindowsFromTexture=1");
+	CHECK(old.windowSpacing == 0);
+}
+
+TEST_CASE("building builder: pass 3 pictures for screenshots (default pick, how many windows, destroyed)" * doctest::skip()) {
+	// SME_BUILDING_DEMO3=<folder> and SME_BUILDING_DEMO3_MOD=<the demo mod's folder> (sme-make-fixture
+	// demo): VMFs with the demo game's real textures read like the dialog does, for --screenshot.
+	const char* out = std::getenv("SME_BUILDING_DEMO3");
+	const char* mod = std::getenv("SME_BUILDING_DEMO3_MOD");
+	if (!out || !mod) return;
+	const std::filesystem::path modDir(mod);
+	GameFileSystem fs;
+	fs.addDirectory(modDir, {"GAME"});
+	std::vector<std::string> materials, models;
+	for (const auto& e : std::filesystem::recursive_directory_iterator(modDir / "materials")) {
+		if (e.path().extension() == ".vmt") {
+			std::string name = std::filesystem::relative(e.path(), modDir / "materials").replace_extension().generic_string();
+			std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+			materials.push_back(name);
+		}
+	}
+	for (const auto& e : std::filesystem::recursive_directory_iterator(modDir / "models")) {
+		if (e.path().extension() == ".mdl") models.push_back(std::filesystem::relative(e.path(), modDir).generic_string());
+	}
+	std::sort(materials.begin(), materials.end());
+	const MaterialInspector inspect = [&](const std::string& name) -> std::optional<MaterialFacts> {
+		const auto vmt = loadMaterial(fs, name);
+		if (!vmt) return std::nullopt;
+		MaterialFacts f;
+		f.shader = vmt->shader;
+		const std::string texture = normalizeMaterialName(vmt->previewTexture());
+		if (const auto data = fs.read("materials/" + texture + ".vtf")) {
+			if (const auto info = readTextureInfo(*data)) {
+				f.width = info->width;
+				f.height = info->height;
+			}
+			if (const auto image = decodeTexture(*data, 256)) f.analysis = analyzeTexture(*image, toLower(name), f.width, f.height);
+		}
+		return f;
+	};
+	for (const auto& m : materials) {
+		if (const auto f = inspect(m)) MESSAGE(m << ": " << f->analysis.describe());
+	}
+	std::string why;
+	MESSAGE("default facade: " << chooseBuildingMaterial(materials, BuildingMaterialRole::Facade, BuildingStyle::PlasterBlock, inspect, &why) << " - " << why);
+	const TextureSizeFn size = [&](const std::string& m) { return materialTextureSize(fs, m); };
+	const auto bounds = [](const std::string& model) -> std::optional<Bounds> {
+		if (const auto b = brokenBounds(model)) return b;
+		if (model.find("radio_tower") != std::string::npos) return box({-24, -24, 0}, {24, 24, 448});
+		if (model.find("air_cond") != std::string::npos) return box({-12, -20, -16}, {12, 20, 16});
+		if (model.find("railing") != std::string::npos) return box({-1, -32, 0}, {1, 32, 40});
+		if (model.find("barrel") != std::string::npos) return box({-14, -14, 0}, {14, 14, 44});
+		return box({-16, -16, 0}, {16, 16, 32});
+	};
+	const auto scene = [&](const std::string& file, const std::vector<std::function<void(BuildingOptions&)>>& lots, BuildingStyle style) {
+		MapDocument doc;
+		(void)edit::createBlock(doc, box({-512, -1536, -64}, {2560, 1024, 0}), "DEMO/FLOORTILE001");
+		double x = 0;
+		for (const auto& change : lots) {
+			const auto ref = addLot(doc, box({x, 0, 0}, {x + 576, 384, 256}), "DEMO/BRICKWALL001");
+			BuildingOptions o = applyBuildingStyle(defaultBuildingOptions(), style, materials, models, inspect);
+			o.floors = 5;
+			o.windowSpacing = 176;
+			o.modelBounds = bounds;
+			change(o);
+			// The Detail rows follow the condition (as the dialog's do).
+			o.props.erase(std::remove_if(o.props.begin(), o.props.end(), [](const FacadeProp& p) { return p.automatic; }), o.props.end());
+			const auto extra = detailProps(o.detail, models, !o.windowsFromTexture && o.windowStyle != WindowStyle::None, o.damage > 0);
+			o.props.insert(o.props.end(), extra.begin(), extra.end());
+			MapDocument ids;
+			ids.setIdCounters(doc.idCounters());
+			const auto p = planBuildings(doc, ids, {ref}, o, size);
+			MESSAGE(file << " @" << x << ": " << describeBuildingPlan(p));
+			CHECK(visibleNodrawFaces(doc, p, {ref}).empty());
+			(void)edit::applyBuildings(doc, p);
+			doc.updateIdCounters();
+			x += 704;
+		}
+		std::ofstream(std::filesystem::path(out) / file, std::ios::binary) << doc.serialize();
+	};
+	// Fewer ... default ... more windows, on the facade texture's painted windows and built in a brick wall.
+	scene("spacing_texture.vmf", {[](BuildingOptions& o) { o.windowSpacing = 384; }, [](BuildingOptions&) {}, [](BuildingOptions& o) { o.windowSpacing = 0; }},
+	      BuildingStyle::PlasterBlock);
+	scene("spacing_built.vmf", {[](BuildingOptions& o) { o.windowSpacing = 384; }, [](BuildingOptions&) {}, [](BuildingOptions& o) { o.windowSpacing = 0; }},
+	      BuildingStyle::BrickTenement);
+	// Intact, 40 %, 80 %.
+	scene("damage.vmf", {[](BuildingOptions& o) { o.damage = 0; }, [](BuildingOptions& o) { o.damage = 0.4; }, [](BuildingOptions& o) { o.damage = 0.8; }},
+	      BuildingStyle::PlasterBlock);
 }

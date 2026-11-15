@@ -51,6 +51,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSlider>
+#include <QStandardItemModel>
 #include <QSemaphore>
 #include <QSettings>
 #include <QStatusBar>
@@ -11946,7 +11947,10 @@ TEST_CASE("building builder: the simple page - a City 17 style right away, windo
 	CHECK(dialog->shownPlan()->buildings.front().floors == 3);
 	CHECK(dialog->options().heightMode == HeightMode::Floors);
 	CHECK(visibleNodrawFaces(editor.doc(), *dialog->shownPlan(), {lot}).empty());
-	// Windows built into the wall instead.
+	// Windows built into the wall instead: not over painted windows - "Read as: Plain wall" first.
+	auto* readAs = dialog->findChild<QComboBox*>("simpleFacadeRole");
+	REQUIRE(readAs);
+	readAs->setCurrentIndex(static_cast<int>(TextureRole::Wall));
 	dialog->findChild<QComboBox*>("simpleWindows")->setCurrentIndex(1);
 	QTest::qWait(200);
 	dialog->waitForPlan();
@@ -11988,9 +11992,124 @@ TEST_CASE("building builder: the simple page - a City 17 style right away, windo
 	const auto records = buildingsInMap(editor.doc());
 	REQUIRE(records.size() == 1);
 	CHECK(records.front().options.style == BuildingStyle::PlasterBlock);
-	CHECK(records.front().options.version == 2);
+	CHECK(records.front().options.version == 3);
 	editor.undo();
 	CHECK(editor.doc().serialize() == before);
+}
+
+TEST_CASE("building builder pass 3: the facade's picture decides (default pick, painted windows, Read as), How many windows, remembered") {
+	// Julius, 15.11.2026: the default facade "made hardly any sense" (an orange tile), "Built into the
+	// wall" doubled the windows of a facade texture, far too many windows.
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.setQuadLayout(false);
+	window.resize(1600, 1000);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	QTest::qWait(500);
+	settle();
+	SolidRef lot;
+	{
+		auto [change, ref] = edit::createBlock(editor.doc(), Bounds{{0, 0, 0}, {1024, 384, 512}}, "DEMO/BRICKWALL001");
+		editor.commit(std::move(change));
+		lot = ref;
+	}
+	{
+		Selection s;
+		s.solids = {lot};
+		editor.setSelection(s);
+	}
+	window.findChild<QAction*>("brushesBuildBuildings")->trigger();
+	settle();
+	auto* dialog = window.findChild<BuildingDialog*>("buildingDialog");
+	REQUIRE(dialog);
+	const auto plan = [&] {
+		QTest::qWait(200);
+		dialog->waitForPlan();
+		settle();
+		REQUIRE(dialog->shownPlan());
+		return dialog->shownPlan();
+	};
+	// The default pick: the facade with windows in its picture - not the orange tile or the far
+	// (skybox) facade, though their names say "building" too.
+	const std::string facade = dialog->options().facadeMaterial;
+	INFO("facade: " << facade << " - " << dialog->facadeDecision().toStdString());
+	CHECK(facade == "DEMO/BUILDING_TEMPLATE_PLASTER001");
+	CHECK(dialog->facadeDecision().contains("facade with windows"));
+	CHECK(dialog->facadeDecision().contains("2 windows per tile"));
+	CHECK(dialog->options().windowsFromTexture);
+	CHECK(dialog->options().textureWindows.size() == 2);
+	auto* simpleWindows = dialog->findChild<QComboBox*>("simpleWindows");
+	auto* model = qobject_cast<QStandardItemModel*>(simpleWindows->model());
+	REQUIRE(model);
+	CHECK_FALSE(model->item(1)->isEnabled());   // no windows built over painted ones
+	CHECK(model->item(0)->isEnabled());
+	// Fewer windows by default; the slider: many ... few.
+	auto* amount = dialog->findChild<QSlider*>("simpleWindowAmount");
+	REQUIRE(amount);
+	CHECK(dialog->options().windowSpacing == doctest::Approx(176));
+	const auto pieces = [&] {   // window columns that show (painted or built), all sides
+		const auto* p = plan();
+		int n = 0;
+		for (const auto& side : p->sides) n += side.windowsPerFloor;
+		return n;
+	};
+	const int normal = pieces();
+	if (const QByteArray shots = qgetenv("SME_SHOT_DIR"); !shots.isEmpty()) dialog->grab().save(QString::fromUtf8(shots) + "/dialog_pass3.png");
+	amount->setValue(0);
+	CHECK(dialog->options().windowSpacing == 0);
+	const int many = pieces();
+	amount->setValue(amount->maximum());
+	CHECK(dialog->options().windowSpacing == doctest::Approx(512));
+	const int few = pieces();
+	CHECK(many > normal);   // every painted window shows: no plain strips over some
+	CHECK(few < normal);    // more of them covered
+	CHECK(few > 0);
+	CHECK(plan()->windows == 0);
+	// Read as: a plain wall - windows are built (fewer per floor with the slider).
+	auto* readAs = dialog->findChild<QComboBox*>("simpleFacadeRole");
+	readAs->setCurrentIndex(static_cast<int>(TextureRole::Wall));
+	CHECK(dialog->facadeDecision().contains("plain wall"));
+	CHECK_FALSE(dialog->options().windowsFromTexture);
+	CHECK(model->item(1)->isEnabled());
+	CHECK_FALSE(model->item(0)->isEnabled());
+	const int builtFew = plan()->windows;
+	amount->setValue(0);
+	const int builtMany = plan()->windows;
+	CHECK(builtFew > 0);
+	CHECK(builtMany > builtFew);
+	// Remembered for the material; Automatic again reads the picture.
+	CHECK(QSettings().value("buildings/materialRoles").toMap().contains("demo/building_template_plaster001"));
+	readAs->setCurrentIndex(0);
+	CHECK(dialog->options().windowsFromTexture);
+	CHECK_FALSE(QSettings().value("buildings/materialRoles").toMap().contains("demo/building_template_plaster001"));
+	// An unsuitable facade says so (and gets windows built).
+	auto* simpleFacade = dialog->findChild<QLineEdit*>("simpleFacade");
+	REQUIRE(simpleFacade);
+	simpleFacade->setText("DEMO/BUILDING_TILES_ORANGE001");
+	CHECK(dialog->facadeDecision().contains("unsuitable"));
+	CHECK_FALSE(dialog->options().windowsFromTexture);
+	// The facade picked by hand is the style's next time (a plain brick wall here).
+	simpleFacade->setText("DEMO/BRICKWALL001");
+	CHECK(dialog->facadeDecision().contains("plain wall"));
+	dialog->findChild<QComboBox*>("buildingStyle")->setCurrentIndex(static_cast<int>(BuildingStyle::BrickTenement));
+	dialog->findChild<QComboBox*>("buildingStyle")->setCurrentIndex(static_cast<int>(BuildingStyle::PlasterBlock));
+	CHECK(dialog->options().facadeMaterial == "DEMO/BRICKWALL001");
+	dialog->reject();
+	settle();
 }
 
 TEST_CASE("sky: clicks go through sky faces (they stay visible), the switch turns it off, and the sky option is in the Show menu") {
