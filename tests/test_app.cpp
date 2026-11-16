@@ -142,6 +142,9 @@
 #include "properties_panel.h"
 #include "road_builder_dialog.h"
 #include "building_dialog.h"
+#include "material_decision_store.h"
+#include "material_editor.h"
+#include "material_review_dialog.h"
 #include "material_field.h"
 #include "surface_dialogs.h"
 #include <sme/grid_snap.h>
@@ -405,7 +408,7 @@ TEST_CASE("editing with the mouse in the real window") {
 		const auto scaled = boundsOf(editor, block);
 		CHECK(scaled.min.x == doctest::Approx(0));
 		CHECK(scaled.max.x == doctest::Approx(192));
-		CHECK(editor.doc().findSolid(block)->sides.front().u.scale == doctest::Approx(uaxisBefore.scale));
+		CHECK((editor.doc().findSolid(block)->sides.front().u.scale == doctest::Approx(uaxisBefore.scale)));
 		if (scaled.max.x != b.max.x) {
 			editor.undo();
 		}
@@ -11944,7 +11947,7 @@ TEST_CASE("building builder: the simple page - a City 17 style right away, windo
 	settle();
 	REQUIRE(dialog->shownPlan());
 	CHECK(dialog->shownPlan()->windows == 0);
-	CHECK(dialog->shownPlan()->buildings.front().floors == 3);
+	CHECK((dialog->shownPlan()->buildings.front().floors == 3));
 	CHECK(dialog->options().heightMode == HeightMode::Floors);
 	CHECK(visibleNodrawFaces(editor.doc(), *dialog->shownPlan(), {lot}).empty());
 	// Windows built into the wall instead: not over painted windows - "Read as: Plain wall" first.
@@ -12170,4 +12173,170 @@ TEST_CASE("sky: clicks go through sky faces (they stay visible), the switch turn
 	CHECK(menu.findChild<QAction*>("skyClickThrough"));
 	CHECK(menu.findChild<QAction*>("skyBackground"));
 	editor.setSkyClickThrough(true);
+}
+
+TEST_CASE("material decisions: Parallax Off for two selected materials from the list's menu, the editor shows it, an answer from the chat merges, the export writes its parts") {
+	// Julius, 16.11.2026: "I could not set whether I want parallax or not" and "make a tool where I can send you all
+	// the textures and you decide how each one is used".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	auto* store = editor.materialDecisions();
+	REQUIRE(store);
+	CHECK(store->decisions().entryCount() == 0);
+	const auto file = materialDecisionsFile(f.mod);
+	CHECK_FALSE(std::filesystem::exists(file));
+
+	// Two materials selected in the list, its menu: Parallax for 2 materials > Off.
+	auto* list = window.assets()->findChild<QListView*>("materialList");
+	REQUIRE(list);
+	REQUIRE(list->model()->rowCount() > 3);
+	list->selectionModel()->select(list->model()->index(1, 0), QItemSelectionModel::ClearAndSelect);
+	list->selectionModel()->select(list->model()->index(2, 0), QItemSelectionModel::Select);
+	const QString first = list->model()->index(1, 0).data(Qt::UserRole).toString();
+	const QString second = list->model()->index(2, 0).data(Qt::UserRole).toString();
+	settle();
+	bool triggered = false;
+	QTimer::singleShot(150, [&] {
+		auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+		if (!menu) return;
+		for (auto* sub : menu->findChildren<QMenu*>("parallaxMenu")) {
+			CHECK(sub->title().contains("2 materials"));
+			if (auto* off = sub->findChild<QAction*>("parallaxOff")) {
+				triggered = true;
+				off->trigger();
+			}
+		}
+		menu->close();
+	});
+	const QRect rect = list->visualRect(list->model()->index(1, 0));
+	emit list->customContextMenuRequested(rect.center());
+	settle();
+	REQUIRE(triggered);
+	REQUIRE(std::filesystem::exists(file));
+	CHECK((store->lookup(first).parallax == ParallaxChoice::Off));
+	CHECK((store->lookup(second).parallax == ParallaxChoice::Off));
+	const auto written = MaterialDecisions::parse(*readFileText(file));
+	CHECK(written.entryCount() == 2);
+	CHECK((written.lookup(first.toStdString()).parallax == ParallaxChoice::Off));
+
+	// The material editor shows what the file says and sets a depth.
+	window.showPage(MainWindow::Page::Materials);
+	settle();
+	window.materialEditor()->openMaterial(first);
+	settle();
+	auto* choice = window.materialEditor()->findChild<QComboBox*>("decisionParallax");
+	auto* depth = window.materialEditor()->findChild<QDoubleSpinBox*>("decisionDepth");
+	REQUIRE(choice);
+	REQUIRE(depth);
+	CHECK(static_cast<ParallaxChoice>(choice->currentData().toInt()) == ParallaxChoice::Off);
+	depth->setValue(0.004);
+	emit depth->editingFinished();
+	settle();
+	CHECK((store->lookup(first).depth == doctest::Approx(0.004)));
+	choice->setCurrentIndex(choice->findData(int(ParallaxChoice::Auto)));
+	emit choice->activated(choice->currentIndex());
+	settle();
+	CHECK_FALSE(store->lookup(first).parallax);
+	window.showPage(MainWindow::Page::Map);
+	settle();
+
+	// An answer from the chat: merged, previewed, applied.
+	{
+		MaterialDecisionsDialog dialog(&editor);
+		dialog.setText(QString("%1  parallax=on\nbuilding_template/*  role=facade windows=2x1\nrole=wall\n").arg(second));
+		const QStringList preview = dialog.previewLines();
+		REQUIRE(preview.size() == 2);
+		CHECK(preview[0].startsWith(second.toLower() + ": parallax=off -> parallax=on"));
+		CHECK(dialog.findChild<QLabel*>("decisionsProblems")->text().contains("Line 3"));
+		REQUIRE(dialog.apply());
+	}
+	CHECK((store->lookup(second).parallax == ParallaxChoice::On));
+	CHECK((store->lookup("building_template/plaster01").role == std::string("facade")));
+	CHECK((store->lookup(first).depth == doctest::Approx(0.004)));   // merged: the rest stays
+
+	// Edited by hand outside: read again.
+	{
+		std::ofstream(file, std::ios::app) << "nature/grass*  parallax=off\n";
+	}
+	for (int i = 0; i < 100 && !store->lookup("nature/grass01").parallax; ++i) QTest::qWait(30);
+	CHECK((store->lookup("nature/grass01").parallax == ParallaxChoice::Off));
+
+	// A face of the map: its menu has Parallax for this material.
+	editor.createShape(box({0, 0, 0}, {128, 128, 128}));
+	settle();
+	const SolidRef brush = editor.selection().solids.front();
+	const Solid* solid = editor.doc().findSolid(brush);
+	REQUIRE(solid);
+	Selection faces;
+	faces.faces.push_back({brush, solid->sides.front().id});
+	editor.setSelectMode(Editor::SelectMode::Face);
+	editor.setSelection(faces);
+	settle();
+	{
+		std::unique_ptr<QMenu> menu(window.buildContextMenu());
+		QAction* parallax = nullptr;
+		for (auto* action : menu->actions()) {
+			if (action->objectName() == "contextParallax") parallax = action;
+		}
+		REQUIRE(parallax);
+		REQUIRE(parallax->menu());
+		CHECK(parallax->menu()->findChild<QAction*>("parallaxOn"));
+	}
+
+	// Export for review: the demo's maps (the open map's material) - sheets, index, README and a part.
+	{
+		MaterialReviewDialog dialog(&editor);
+		const auto materials = dialog.chosenMaterials();
+		REQUIRE_FALSE(materials.empty());
+		dialog.findChild<QLineEdit*>("reviewOutput")->setText(QDir(home.path()).filePath("review"));
+		dialog.start();
+		for (int i = 0; i < 400 && dialog.running(); ++i) QTest::qWait(25);
+		const auto& result = dialog.result();
+		CHECK(result.error.isEmpty());
+		CHECK(result.materials == int(materials.size()));
+		REQUIRE(result.zips.size() == 1);
+		const auto names = zipEntryNames(toPath(result.zips.front()));
+		CHECK(std::find(names.begin(), names.end(), "index.csv") != names.end());
+		CHECK(std::find(names.begin(), names.end(), "README.txt") != names.end());
+		CHECK(std::find(names.begin(), names.end(), "sheet_001.jpg") != names.end());
+		QImage sheet(QDir(result.folder).filePath("sheet_001.jpg"));
+		CHECK(sheet.width() > 1500);
+	}
+}
+
+// Writes an export for review of every demo material (skipped: run with --no-skip, SME_REVIEW_SAMPLE=<folder>).
+TEST_CASE("material review: sample export of the demo materials" * doctest::skip()) {
+	const char* out = std::getenv("SME_REVIEW_SAMPLE");
+	if (!out) return;
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	ReviewScope scope;
+	scope.kind = ReviewScope::Kind::AllWorld;
+	const auto materials = reviewMaterialList(editor.game()->files, scope, {});
+	REQUIRE_FALSE(materials.empty());
+	const auto decisions = MaterialDecisions::parse("demo/brickwall001  role=wall parallax=on depth=0.006 pattern=brick\n");
+	const auto result = exportMaterialReview(editor.game()->files, materials, decisions, QString::fromLocal8Bit(out), "Demo mod");
+	CHECK(result.error.isEmpty());
+	MESSAGE(result.materials << " materials, " << result.sheets << " sheets, " << result.zips.size() << " part(s)");
 }

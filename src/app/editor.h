@@ -44,6 +44,7 @@
 namespace sme::app {
 
 class GameEnhancements;
+class MaterialDecisionStore;
 class ModelCache;
 class ScenePoser;
 
@@ -185,6 +186,8 @@ public:
 	[[nodiscard]] bool hasFidelity() const { return m_hasFidelity; }
 	/// Game enhancements of the mod (mapbase-fidelity's effects on its materials).
 	[[nodiscard]] GameEnhancements* enhancements() const { return m_enhancements.get(); }
+	/// The open mod's decisions about its materials (mapsmith_materials.txt).
+	[[nodiscard]] MaterialDecisionStore* materialDecisions() const { return m_materialDecisions.get(); }
 	/// Lighting preview shows mapbase-fidelity's look (clouds, colour grading, relief): on by
 	/// default for mods that have it, switchable for any mod (to try it without deploying).
 	[[nodiscard]] bool fidelityLook() const;
@@ -604,6 +607,7 @@ private:
 	DiscoveryResult m_discovery;
 	std::unique_ptr<LoadedGame> m_game;
 	std::unique_ptr<ModelCache> m_models;   ///< After m_game: stops reading before the game goes away
+	std::unique_ptr<MaterialDecisionStore> m_materialDecisions;   ///< Before m_enhancements (they read it)
 	std::unique_ptr<GameEnhancements> m_enhancements;   ///< After m_game, as m_models
 	std::unique_ptr<ScenePoser> m_poser;                ///< After m_game, as m_models
 	QString m_gameKey;

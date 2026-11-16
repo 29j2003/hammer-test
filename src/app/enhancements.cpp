@@ -3,6 +3,7 @@
 #include "enhancements.h"
 
 #include "editor.h"
+#include "material_decision_store.h"
 #include "toggle_switch.h"
 
 #include <QDir>
@@ -81,6 +82,12 @@ GameEnhancements::GameEnhancements(Editor* editor) : m_editor(editor) {
 		m_watcher.waitForFinished();   // it reads and writes the old game's files
 	});
 	connect(editor, &Editor::gameChanged, this, &GameEnhancements::gameChanged);
+	// The decision file (parallax on / off, depth): the materials follow it at once.
+	connect(editor->materialDecisions(), &MaterialDecisionStore::changed, this, [this] {
+		const auto* entry = m_editor->gameEntry();
+		if (!available() || !entry || entry->gameDir != m_modDir) return;   // the game is just changing: gameChanged syncs
+		sync();
+	});
 	connect(&m_watcher, &QFutureWatcherBase::finished, this, &GameEnhancements::finished);
 }
 
@@ -131,7 +138,7 @@ void GameEnhancements::sync() {
 	m_running = true;
 	const QString mapDir = m_editor->gameSettings().mapDir;
 	m_watcher.setFuture(QtConcurrent::run([fs, scan, generation = m_generation, modDir = m_modDir, settings = m_settings, candidates = m_candidates,
-	                                       mapDir, openMap = m_openMapMaterials] {
+	                                       mapDir, openMap = m_openMapMaterials, decisions = m_editor->materialDecisions()->decisions()] {
 		Result result;
 		result.generation = generation;
 		result.scanned = scan;
@@ -144,6 +151,7 @@ void GameEnhancements::sync() {
 		EnhancementOptions options;
 		options.shaderDll = modHasShaderDll(modDir);
 		options.mapMaterials = &mapMaterials;
+		options.decisions = &decisions;
 		result.shaderDll = options.shaderDll;
 		result.plan = planEnhancements(*fs, modDir, settings, result.excluded, &result.candidates, options);
 		for (const auto& change : result.plan.changes) {

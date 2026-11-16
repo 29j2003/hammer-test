@@ -500,6 +500,43 @@ std::string ReliefLayout::describe() const {
 	return out.str();
 }
 
+ReliefDepth reliefDepthForLayout(const ReliefLayout& layout, double baseDepth, int textureHeight, double faceScale) {
+	ReliefDepth out;
+	out.depth = baseDepth;
+	if (!layout.found() || layout.courseHeight <= 0) return out;
+	const double across = layout.transposed ? layout.width : layout.height;   // the grid along the courses' stacking
+	if (across <= 0) return out;
+	const double course = layout.courseHeight / across;                        // a course as a part of the texture
+	const double full = textureHeight > 0 ? textureHeight : across;
+	const double texels = course * full;
+	const double units = texels * (faceScale > 0 ? faceScale : 0.25);
+	const auto fmt = [](double v, int digits) {
+		std::ostringstream s;
+		s.setf(std::ios::fixed);
+		s.precision(digits);
+		s << v;
+		return s.str();
+	};
+	const int courses = int(std::lround(1.0 / course));
+	if (texels < MIN_RELIEF_COURSE_TEXELS) {
+		out.on = false;
+		out.depth = 0;
+		out.reason = "courses only " + fmt(texels, 1) + " texels high: too fine for relief";
+		return out;
+	}
+	const double limit = RELIEF_DEPTH_PER_COURSE * course;
+	if (limit < MIN_RELIEF_DEPTH) {
+		out.on = false;
+		out.depth = 0;
+		out.reason = "small bricks or tiles (" + std::to_string(courses) + " courses per texture): too fine for relief";
+		return out;
+	}
+	out.depth = std::min(baseDepth, limit);
+	out.reason = std::to_string(courses) + " courses, about " + fmt(units, 0) + " units high: depth " + fmt(out.depth, 4) +
+	             (out.depth < baseDepth ? " (shallower: small bricks or tiles swim with deep relief)" : "");
+	return out;
+}
+
 ReliefLayout detectReliefLayout(const ImageRgba& baseTexture) {
 	const Gray g = gray(baseTexture, MAX_SIZE);
 	if (g.w < 16 || g.h < 16) return {};

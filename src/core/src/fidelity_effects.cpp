@@ -12,6 +12,7 @@
 #include <sme/filesystem.h>
 #include <sme/keyvalues.h>
 #include <sme/map_tools.h>
+#include <sme/material_decisions.h>
 #include <sme/material.h>
 #include <sme/relief_pattern.h>
 #include <sme/text.h>
@@ -397,8 +398,9 @@ namespace {
 
 /// Bumped when the pattern relief changes (the hash makes the walls new).
 /// (pattern2: shallow joints, rounded edges, depth 0.006 - Julius, 29.10.2026; pattern3: flat faces
-/// again with a short bevel, windows divided by bars stay flat)
-constexpr std::string_view PATTERN_RULES = "pattern3";
+/// again with a short bevel, windows divided by bars stay flat; pattern4: the depth follows the
+/// pattern - fine bricks shallower, too fine ones none, 16.11.2026)
+constexpr std::string_view PATTERN_RULES = "pattern4";
 /// deploy.ps1: -ParallaxDepth 0.01 x $CourseDepth 0.6 for walls laid in courses.
 constexpr const char* PATTERN_DEPTH = "0.006";
 /// The shader's default for the darkening of deep parts, written out: a bundle older than this
@@ -422,7 +424,7 @@ void fnv(std::uint64_t& h, const void* data, std::size_t size) {
 /// The base texture of a plain wall that can carry a pattern relief, or "" - LightmappedGeneric
 /// only (blends keep deploy's two-layer relief), no texture transforms (the height map lies in
 /// the base texture's coordinates, the shader reads it in the bump map's), relief that fits.
-std::string patternWallTexture(std::string_view material, std::string_view originalVmt) {
+std::string patternWallTexture(std::string_view material, std::string_view originalVmt, bool force = false) {
 	static const std::regex plain("^(SDK_)?LightmappedGeneric$", ICASE);
 	if (!std::regex_match(shaderOf(originalVmt), plain)) return {};
 	const std::string c = clean(originalVmt);
@@ -431,6 +433,14 @@ std::string patternWallTexture(std::string_view material, std::string_view origi
 	const auto parsed = parseMaterial(originalVmt, material);
 	if (!parsed) return {};
 	const std::string base = baseTexture(c);
+	if (force) {
+		// The decision file says on: only what cannot carry relief at all stays out.
+		if (base.empty()) return {};
+		for (const char* flag : {"$alphatest", "$translucent", "$additive", "$decal"}) {
+			if (parsed->flag(flag)) return {};
+		}
+		return base;
+	}
 	if (!fidelityReliefSource(material, *parsed)) {
 		// Also walls whose name tells nothing (a concrete floor laid in slabs): there the pattern
 		// decides - with the same blockers as everywhere else (see-through, decals, wood ...).
@@ -446,40 +456,82 @@ std::string patternWallTexture(std::string_view material, std::string_view origi
 
 } // namespace
 
-std::string patternReliefHash(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt) {
-	const std::string texture = patternWallTexture(material, originalVmt);
+std::string patternReliefHash(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt, const PatternReliefOptions& options) {
+	const std::string texture = patternWallTexture(material, originalVmt, options.force);
 	if (texture.empty()) return {};
 	const auto bytes = fs.read("materials/" + toLower(texture) + ".vtf");
 	if (!bytes) return {};
 	std::uint64_t h = 1469598103934665603ull;
 	fnv(h, PATTERN_RULES.data(), PATTERN_RULES.size());
+	if (options.any() || options.faceScale != 0.25) {
+		// What the decision file says changes the relief, so it changes the hash (old files go).
+		const std::string said = std::string(options.force ? "force;" : "") + (options.noPattern ? "nopattern;" : "") +
+		                         (options.depth ? "depth=" + std::to_string(*options.depth) + ";" : "") + "scale=" + std::to_string(options.faceScale);
+		fnv(h, said.data(), said.size());
+	}
 	fnv(h, originalVmt.data(), originalVmt.size());
 	fnv(h, bytes->data(), bytes->size());
 	return hexHash(h);
 }
 
-std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt) {
-	const std::string hash = patternReliefHash(fs, material, originalVmt);
+std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt,
+                                              const PatternReliefOptions& options, std::string* tooFine) {
+	if (tooFine) tooFine->clear();
+	const std::string hash = patternReliefHash(fs, material, originalVmt, options);
 	if (hash.empty()) return std::nullopt;
 	// Textures without a clear pattern are remembered by their hash (texture, material text and
 	// rules): the open map's walls are checked again after every edit, and decoding and analysing
 	// a 512 px texture each time for nothing made those checks slow.
 	static std::mutex mutex;
-	static std::set<std::string> without;
+	static std::map<std::string, std::string> without;   // hash -> why too fine ("" = no pattern)
 	{
 		std::lock_guard lock(mutex);
-		if (without.count(hash)) return std::nullopt;
+		if (const auto it = without.find(hash); it != without.end()) {
+			if (tooFine) *tooFine = it->second;
+			return std::nullopt;
+		}
 	}
-	const auto noPattern = [&hash] {
+	const auto noPattern = [&hash, tooFine](std::string why = {}) {
 		std::lock_guard lock(mutex);
-		without.insert(hash);
+		without[hash] = why;
+		if (tooFine) *tooFine = why;
 		return std::nullopt;
 	};
-	const auto image = loadTexture(fs, patternWallTexture(material, originalVmt), 512);
+	const std::string textureName = patternWallTexture(material, originalVmt, options.force);
+	const auto image = loadTexture(fs, textureName, 512);
 	if (!image) return noPattern();
 	ReliefLayout layout;
-	auto heights = heightFromTexture(*image, &layout);
-	if (!heights || !layout.found() || layout.confidence < 0.5) return noPattern();   // deploy's relief stays
+	std::optional<HeightMap> heights;
+	if (options.noPattern) {
+		heights = heightFromColor(*image);
+	} else {
+		heights = heightFromTexture(*image, &layout);
+	}
+	const bool patternFound = layout.found() && layout.confidence >= 0.5;
+	if (!heights || (!patternFound && !options.force)) return noPattern();   // deploy's relief stays
+	// The depth: the decision file's, else from the pattern (fine bricks shallower, too fine none).
+	std::string depthText = PATTERN_DEPTH;
+	std::string depthNote;
+	if (options.depth) {
+		std::ostringstream d;
+		d << *options.depth;
+		depthText = d.str();
+		depthNote = ", depth " + depthText + " from the decision file";
+	} else if (patternFound) {
+		int fullHeight = 0;
+		if (const auto bytes = fs.read("materials/" + toLower(textureName) + ".vtf")) {
+			if (const auto info = readTextureInfo(*bytes)) fullHeight = layout.transposed ? info->width : info->height;
+		}
+		const ReliefDepth rule = reliefDepthForLayout(layout, std::atof(PATTERN_DEPTH), fullHeight, options.faceScale);
+		if (!rule.on) {
+			if (!options.force) return noPattern(rule.reason);
+		} else {
+			std::ostringstream d;
+			d << std::round(rule.depth * 10000.0) / 10000.0;
+			depthText = d.str();
+			if (rule.depth < std::atof(PATTERN_DEPTH)) depthNote = ", " + rule.reason;
+		}
+	}
 	PatternRelief out;
 	out.hash = hash;
 	out.heightName = toLower(material) + std::string(PATTERN_RELIEF_SUFFIX);
@@ -491,7 +543,7 @@ std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::st
 	static const std::regex head(R"re(^\s*"?[A-Za-z0-9_]+"?(\s*\{))re");
 	std::smatch m;
 	if (!std::regex_search(c, m, head)) return std::nullopt;
-	std::vector<std::string> lines{param("$parallaxmap", out.heightName), param("$parallaxdepth", PATTERN_DEPTH), param("$parallaxao", PATTERN_AO)};
+	std::vector<std::string> lines{param("$parallaxmap", out.heightName), param("$parallaxdepth", depthText), param("$parallaxao", PATTERN_AO)};
 	static const std::regex envmap(R"re("?\$envmap"?\s)re", ICASE);
 	if (!std::regex_search(c, envmap)) {
 		// As deploy.bat: the map's cubemap, shown only where the wall is wet from rain.
@@ -503,7 +555,8 @@ std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::st
 	std::string body = m[1].str() + CRLF;
 	for (std::size_t i = 0; i < lines.size(); ++i) body += lines[i] + (i + 1 < lines.size() ? CRLF : "");
 	out.text = std::string(PATTERN_RELIEF_MARKER) + " (relief) from " + vmtPath(toLower(std::string(material))) + " hash " + hash + " " +
-	           layout.describe() + " (Mapsmith > Project > Game enhancements)" + CRLF + "\"Fidelity_Parallax\"" + body +
+	           (patternFound ? layout.describe() : std::string("from the brightness (decision file: parallax=on)")) + depthNote +
+	           " (Mapsmith > Project > Game enhancements)" + CRLF + "\"Fidelity_Parallax\"" + body +
 	           c.substr(std::size_t(m.position(0) + m.length(0)));
 	return out;
 }
@@ -772,6 +825,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
                                  const EnhancementOptions& options) {
 	EnhancementPlan plan;
 	std::set<std::string> kept;
+	std::set<std::string> reliefVisited;   // materials whose relief file this plan decided about
 	const EffectCandidates found = candidates ? EffectCandidates{} : findEffectCandidates(fs, modDir);
 	const EffectCandidates& all = candidates ? *candidates : found;
 	const auto heightFileOf = [&modDir](const std::string& material) {
@@ -829,33 +883,57 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			return;
 		}
 		if (effect == GameEffect::Relief) {
+			reliefVisited.insert(toLower(material));
+			// The mod's decision file first: parallax=off keeps it off, parallax=on gives it relief
+			// (also where name and look would not), depth and pattern shape Mapsmith's relief.
+			const MaterialDecision decided = options.decisions ? options.decisions->lookup(material) : MaterialDecision{};
+			const ParallaxChoice choice = decided.parallax.value_or(ParallaxChoice::Auto);
+			PatternReliefOptions reliefOptions;
+			reliefOptions.force = choice == ParallaxChoice::On;
+			reliefOptions.depth = decided.depth;
+			reliefOptions.noPattern = decided.pattern && *decided.pattern == "none";
+			if (decided.scale && *decided.scale > 0) reliefOptions.faceScale = *decided.scale;
 			// By name, flags and the texture's look - as the viewport decides (relief_pattern).
 			const auto parsed = parseMaterial(*original, material);
-			const ReliefFit fit = parsed ? reliefFitInGame(fs, material, *parsed) : reliefFitByName(material, baseTexture(clean(*original)));
-			if (want && fit.suits) {
-				// Walls of the mod's maps: the relief from the texture's pattern (bricks up, joints
-				// down), where one is found clearly; else deploy.bat makes it (from the normal map
-				// or the brightness).
-				if (options.mapMaterials && options.mapMaterials->count(toLower(material))) {
+			ReliefFit fit = parsed ? reliefFitInGame(fs, material, *parsed) : reliefFitByName(material, baseTexture(clean(*original)));
+			bool wantIt = want;
+			if (choice == ParallaxChoice::Off) {
+				wantIt = false;
+				fit = {false, "material the decision file keeps flat (parallax=off)"};
+			} else if (choice == ParallaxChoice::On) {
+				wantIt = settings.enabled(effect);
+				fit = {true, {}};
+			}
+			if (wantIt && fit.suits) {
+				// Walls of the mod's maps (and every material the decision file shapes): the relief
+				// from the texture's pattern (bricks up, joints down), where one is found clearly;
+				// else deploy.bat makes it (from the normal map or the brightness).
+				const bool ours = (options.mapMaterials && options.mapMaterials->count(toLower(material))) || reliefOptions.any();
+				std::string tooFine;
+				if (ours) {
 					if (isPattern(own)) {
-						const std::string hash = patternReliefHash(fs, material, *original);
+						const std::string hash = patternReliefHash(fs, material, *original, reliefOptions);
 						if (!hash.empty() && own->find(" hash " + hash + " ") != std::string::npos && std::filesystem::exists(heightFileOf(material))) {
 							++plan.active[effect];
 							++plan.patternRelief;
 							return;   // made from this texture and these rules already
 						}
 					}
-					if (auto pattern = makePatternRelief(fs, material, *original)) {
+					if (auto pattern = makePatternRelief(fs, material, *original, reliefOptions, &tooFine)) {
 						++plan.active[effect];
 						++plan.patternRelief;
 						write(std::move(pattern->text), std::move(pattern->heightVtf));
 						return;
 					}
 				}
-				if (deployMakes) ++plan.active[effect];
-				// The copy that kept it off (or an old pattern relief) goes: deploy.bat makes the relief again.
-				if (own && std::string_view(*own).starts_with(MAPSMITH_MARKER)) removeOwn();
-				return;
+				if (tooFine.empty()) {
+					if (deployMakes) ++plan.active[effect];
+					// The copy that kept it off (or an old pattern relief) goes: deploy.bat makes the relief again.
+					if (own && std::string_view(*own).starts_with(MAPSMITH_MARKER)) removeOwn();
+					return;
+				}
+				// A pattern too fine for relief (small bricks swim): kept off, also against deploy.bat.
+				fit = {false, tooFine};
 			}
 			if (!deployMakes) {
 				if (isPattern(own)) removeOwn();   // switched off: the wall is as in the game again
@@ -863,7 +941,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			}
 			text = std::string(MAPSMITH_MARKER) + " off (relief) from " + path +
 			       (fit.suits ? std::string(" (Mapsmith > Project > Game enhancements switches it on again)")
-			                  : " - no depth for a " + fit.reason + " (Mapsmith decides; the material editor can still give it relief)") +
+			                  : " - no depth for a " + fit.reason + " (Mapsmith decides; Parallax: On in the material's menu gives it relief)") +
 			       CRLF + *original;
 		} else if (want) {
 			ContainerKind kind = containerKind(path);
@@ -905,6 +983,50 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 				const auto original = fs.readOriginal(vmtPath(material), modDir);
 				if (!original || patternWallTexture(material, *original).empty()) continue;
 				plan1(GameEffect::Relief, material, false);
+			}
+		}
+	}
+	// Materials the decision file switches on by name (not wildcards: those only shape the ones
+	// above) get Mapsmith's relief too, wherever they are used.
+	if (options.decisions && std::any_of(all.begin(), all.end(), [](const auto& entry) { return entry.first == GameEffect::Relief; })) {
+		std::set<std::string> done;
+		if (const auto it = all.find(GameEffect::Relief); it != all.end()) {
+			for (const auto& material : it->second) done.insert(toLower(material));
+		}
+		if (options.mapMaterials) done.insert(options.mapMaterials->begin(), options.mapMaterials->end());
+		for (const auto& line : options.decisions->lines()) {
+			if (line.pattern.empty() || line.pattern.find_first_of("*?") != std::string::npos || done.count(line.pattern)) continue;
+			const MaterialDecision decided = options.decisions->lookup(line.pattern);
+			if (decided.parallax != ParallaxChoice::On) continue;
+			done.insert(line.pattern);
+			const auto original = fs.readOriginal(vmtPath(line.pattern), modDir);
+			if (!original || patternWallTexture(line.pattern, *original, true).empty()) continue;
+			plan1(GameEffect::Relief, line.pattern, false);
+		}
+	}
+	// Mapsmith's relief of a material nothing asks for any more (the decision file switched it on
+	// and no longer does, no map uses it): the wall is as in the game again.
+	if (options.mapMaterials && options.shaderDll) {
+		std::set<std::filesystem::path> planned;
+		for (const auto& change : plan.changes) planned.insert(change.file);
+		const auto root = modDir / "materials";
+		std::error_code ec;
+		if (std::filesystem::is_directory(root, ec)) {
+			for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec), end;
+			     !ec && it != end; it.increment(ec)) {
+				if (!it->is_regular_file(ec) || !iequals(it->path().extension().string(), ".vmt") || planned.count(it->path())) continue;
+				auto name = toLower(it->path().lexically_relative(root).generic_string());
+				name = name.substr(0, name.size() - 4);
+				if (reliefVisited.count(name)) continue;
+				const auto text = readFile(it->path());
+				if (!text || !std::string_view(*text).starts_with(PATTERN_RELIEF_MARKER)) continue;
+				EffectChange change;
+				change.effect = GameEffect::Relief;
+				change.material = name;
+				change.file = it->path();
+				change.remove = true;
+				change.heightFile = heightFileOf(name);
+				plan.changes.push_back(std::move(change));
 			}
 		}
 	}

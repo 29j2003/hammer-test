@@ -470,7 +470,10 @@ The dialog opens on a short page - that is all most buildings need:
   tiny windows, a garish colour, a decal). That decides everything else: where the texture goes, its
   scale (whole floors and whole windows) and whether windows are built. If it read a texture
   wrong, **Read as** sets what it is (remembered for that material); *Automatic* reads the picture
-  again. The Materials section shows the same line for the walls, ground floor, cornices and roof.
+  again. A line in the mod's decision file (`role=facade windows=2x1 floors=1`, see
+  [The decision file](mapbase-fidelity.html#the-decision-file)) wins over the picture and the line
+  ends with *set by the decision file*; that is how decisions from a chat review reach the builder.
+  The Materials section shows the same line for the walls, ground floor, cornices and roof.
 - **Windows**: *From the facade texture* - Half-Life 2's building textures already show the
   windows, so none are built: the texture is scaled so that one repeat is a whole number of floors
   (a 512 texture is one 128-unit floor), each side starts with a whole tile at its left corner and

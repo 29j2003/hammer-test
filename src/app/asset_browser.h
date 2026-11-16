@@ -200,6 +200,9 @@ signals:
 	void editMaterialRequested(const QString& name);
 	/// A material was clicked in the list (lowercase name as listed, "concrete/wall01").
 	void materialPicked(const QString& name);
+	/// The "..." menu: export the materials for review / load the decisions from the chat.
+	void reviewExportRequested();
+	void decisionsLoadRequested();
 
 protected:
 	void resizeEvent(QResizeEvent* event) override;

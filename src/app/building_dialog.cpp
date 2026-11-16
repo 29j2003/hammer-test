@@ -5,6 +5,7 @@
 #include "asset_browser.h"
 #include "dialog_fit.h"
 #include "editor.h"
+#include "material_decision_store.h"
 #include "material_field.h"
 #include "model_cache.h"
 #include "ui_helpers.h"
@@ -164,6 +165,12 @@ BuildingDialog::BuildingDialog(Editor* editor, std::function<QString()> browserM
 	setObjectName("buildingDialog");
 	setWindowTitle(tr("Build buildings"));
 	setModal(false);
+	// The mod's decision file (role, windows, floors, scale) wins over the picture: follow it.
+	connect(editor->materialDecisions(), &MaterialDecisionStore::changed, this, [this] {
+		if (!m_materials[0]) return;
+		if (!m_materials[0]->text().trimmed().isEmpty()) facadeChanged(false);
+		else showDecisions();
+	});
 	auto* outer = new QVBoxLayout(this);
 	auto* intro = new QLabel(tr("Each selected brush becomes a building (no interiors). Brushes that touch form a row: the sides they share get no facade."), this);
 	intro->setWordWrap(true);
@@ -984,6 +991,9 @@ std::optional<MaterialFacts> BuildingDialog::inspectMaterial(const std::string& 
 	}
 	std::optional<MaterialFacts> result = it->second;
 	if (result) {
+		// The mod's decision file first (role, windows, floors, scale) ...
+		applyMaterialDecision(result->analysis, m_editor->materialDecisions()->lookup(QString::fromStdString(key)));
+		// ... then what was picked here with Read as.
 		const QVariantMap roles = QSettings().value(ROLE_SETTINGS).toMap();
 		const TextureRole own = textureRoleFromKey(roles.value(QString::fromStdString(key)).toString().toStdString());
 		if (own != TextureRole::Unknown && own != result->analysis.role) {
