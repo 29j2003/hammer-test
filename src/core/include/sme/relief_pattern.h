@@ -64,6 +64,22 @@ struct ReliefLayout {
 	[[nodiscard]] std::string describe() const;
 };
 
+/// How deep the relief of a found layout may be, so fine patterns (small bricks, tiles) do not swim
+/// or shimmer: the parallax shift at a grazing angle (about 3 x the depth) stays below a quarter of
+/// a course, so depth <= RELIEF_DEPTH_PER_COURSE x the course height as a part of the texture, at
+/// most `baseDepth`. Off when a course is less than MIN_RELIEF_COURSE_TEXELS texels high in the full
+/// texture or the depth would drop below MIN_RELIEF_DEPTH (more than about 50 courses per texture).
+/// `faceScale` only gives the size in the world for the reason text.
+inline constexpr double RELIEF_DEPTH_PER_COURSE = 0.08;
+inline constexpr double MIN_RELIEF_COURSE_TEXELS = 6;
+inline constexpr double MIN_RELIEF_DEPTH = 0.0015;
+struct ReliefDepth {
+	bool on = true;
+	double depth = 0;
+	std::string reason;   ///< "40 courses, about 3 units high: depth 0.0020 (shallower ...)" / "... too fine for relief"
+};
+[[nodiscard]] ReliefDepth reliefDepthForLayout(const ReliefLayout& layout, double baseDepth = 0.006, int textureHeight = 0, double faceScale = 0.25);
+
 /// Finds the layout of a base texture; `found()` is false when there is no clear one.
 [[nodiscard]] ReliefLayout detectReliefLayout(const ImageRgba& baseTexture);
 

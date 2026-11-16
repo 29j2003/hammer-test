@@ -7,6 +7,7 @@
 #include "startup_trace.h"
 
 #include "enhancements.h"
+#include "material_decision_store.h"
 #include "model_cache.h"
 #include "scene_poser.h"
 
@@ -91,6 +92,7 @@ Editor::Editor(QObject* parent) : QObject(parent), m_models(std::make_unique<Mod
 	m_shapeOptions.fit = settings.value("shape/fit", m_shapeOptions.fit).toBool();
 	m_rotationSnap = settings.value("editor/rotationSnap", 15.0).toDouble();
 	m_randomYaw = settings.value("entities/randomYaw", false).toBool();
+	m_materialDecisions = std::make_unique<MaterialDecisionStore>(this);
 	m_enhancements = std::make_unique<GameEnhancements>(this);
 }
 

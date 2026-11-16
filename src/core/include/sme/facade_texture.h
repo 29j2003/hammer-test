@@ -57,6 +57,8 @@ struct TextureAnalysis {
 	double banded = 0;                      ///< Share of rows that are even across (strips: most of them)
 	int width = 0, height = 0;              ///< Of the full texture (for the scale)
 	std::string reason;                     ///< Why this role (one short sentence, English)
+	double scaleOverride = 0;               ///< > 0: the scale the mod's decision file sets (scaleFor returns it)
+	bool decided = false;                   ///< A line of the mod's decision file set something
 	/// Floors one tile spans (window rows; at least 1).
 	[[nodiscard]] int floorsPerTile() const { return rows > 0 ? rows : 1; }
 	/// The scale (units per texel) at which one tile is a whole number of floors of `floorHeight`

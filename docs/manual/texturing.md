@@ -23,7 +23,11 @@ The **Asset Browser** at the bottom has two tabs, **Materials** and **Models**.
 - **Click** a material to make it the **current material**. New blocks get it, and Shift+T applies it.
 - **Drag** a material onto a face in the 3D view to put it there.
 - **Double-click** applies it to the selection.
-- **Right-click** a material: **Edit material ...** opens it in the Material Editor, **Copy name** copies its name.
+- **Right-click** a material: **Edit material ...** opens it in the Material Editor, **Copy name** copies its name,
+  **Parallax** sets the relief of Game enhancements for every selected material (see
+  [Parallax per material](mapbase-fidelity.html#parallax-per-material-auto-on-off)).
+- The **...** button above the list: **Export materials for review ...**, **Load material decisions ...** and **Open
+  decisions file** (see [Materials reviewed in the chat](mapbase-fidelity.html#materials-reviewed-in-the-chat)).
 - **Ctrl+C** on a material copies its name; Ctrl+V pastes it into any field.
 
 ## Applying materials
@@ -191,7 +195,9 @@ In the map views, the lighting preview shows the relief on walls automatically w
 (view menu), using the same rules as the add-on's `deploy.bat` - except where depth makes no sense: **windows and
 glass, signs and posters, grates and fences, doors, metal sheets, plaster, paint, cloth and lights** get none (by the
 material's name, and by its look: a large flat pane, a smooth surface without any structure, see-through texels).
-**Game enhancements** keeps the relief off for these materials in the game too.
+**Game enhancements** keeps the relief off for these materials in the game too. To overrule Mapsmith for one
+material, use **Parallax in Game enhancements** in the Material Editor (Auto / On / Off, Depth) - see
+[Parallax per material](mapbase-fidelity.html#parallax-per-material-auto-on-off).
 
 ### Water
 

@@ -4,6 +4,7 @@
 
 #include "editor.h"
 #include "enhancements.h"
+#include "material_review_dialog.h"
 #include "new_mod_dialog.h"
 #include "ui_helpers.h"
 
@@ -106,6 +107,16 @@ ModPage::ModPage(Editor* editor, QWidget* parent) : QWidget(parent), m_editor(ed
 	button(fb, tr("New mod ..."), [this] { emit newModRequested(); });
 	fb->addStretch(1);
 	v->addWidget(folderButtons);
+	// Materials: out for review (pictures + index for a chat), the decisions back in, the file by hand.
+	auto* materialButtons = new QWidget;
+	auto* matb = new QHBoxLayout(materialButtons);
+	matb->setContentsMargins(0, 0, 0, 0);
+	matb->addWidget(new QLabel(tr("Materials:")));
+	button(matb, tr("Export materials for review ..."), [this] { emit reviewExportRequested(); })->setObjectName("projectExportReview");
+	button(matb, tr("Load material decisions ..."), [this] { emit decisionsLoadRequested(); })->setObjectName("projectLoadDecisions");
+	button(matb, tr("Open decisions file"), [this] { openMaterialDecisionsFile(m_editor, this); })->setObjectName("projectOpenDecisions");
+	matb->addStretch(1);
+	v->addWidget(materialButtons);
 
 	auto* grid = new QGridLayout;
 	grid->setSpacing(10);

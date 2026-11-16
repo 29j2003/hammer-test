@@ -156,6 +156,79 @@ cloth, lights, and textures that look like a big flat pane or a smooth surface: 
 would leave out, or to change a height map by hand, turn it on in the Material Editor and save. The bottle models
 `deploy.bat` copies for dark glass are also left to `deploy.bat`.
 
+### Parallax per material: Auto, On, Off
+
+Mapsmith decides on its own where relief goes, but you can always overrule it for a material:
+
+- **Materials** list: select one or more materials (Ctrl/Shift-click), right-click › **Parallax** › *Auto* / *On* /
+  *Off*, and **Depth ...** (or *Depth: Mapsmith decides*).
+- **3D view**: right-click a face › **Parallax for this material** (or *for these N materials* with several faces
+  selected) - the same choices.
+- **Material Editor**: the group **Parallax in Game enhancements** (choice and depth). The preview shows the depth at
+  once.
+
+*On* gives relief also where Mapsmith would not (a wall it reads as plaster gets relief from its brightness),
+*Off* keeps the material flat in the game, *Auto* gives the decision back to Mapsmith. The choice is written into the
+decision file (below) and Game enhancements writes the game's materials again in the background.
+
+**Small bricks and tiles**: relief that is as deep on small bricks as on big ones makes them swim and blur. So in
+*Auto* the depth follows the size of the pattern: about 0.08 of one brick course (as part of the texture height),
+never more than the usual 0.006. Brick courses smaller than 6 pixels, or patterns so fine that the depth would be
+below 0.0015, get no relief at all (the material's first line says *too fine for relief*). A depth you set yourself
+always wins.
+
+### Materials reviewed in the chat
+
+Sometimes the picture is the only way to tell what a texture is. Mapsmith can put all materials on contact sheets
+that you send into a chat (or look at yourself), and read the answer back:
+
+1. **Project › Overview › Materials: Export for review ...** (or the **...** button above the Materials list).
+   Choose *Materials of my maps* (the open map and every `.vmf` of the mod), *a folder* (for example `brick/`) or
+   *all world materials*; tools, skybox and decals only when you tick them. Models are never listed. The export runs
+   in the background and can be cancelled.
+2. You get a folder with `sheet_001.jpg`, `sheet_002.jpg` ... (12 materials on each, 4 × 3, numbered; under each
+   picture its name, size, shader, flags like *bump*, *envmap*, *alphatest*, and what Mapsmith reads: role, windows,
+   pattern; the bump map small in the corner), `index.csv` and `index.json` (everything per number, with Mapsmith's
+   own decision and why), and a `README.txt` that explains the answer format. The same in ZIP parts of at most
+   20 MB (`mapsmith_materials_part1of2.zip` ...) - each part has the README and the index, so any part can be sent
+   on its own.
+3. Send the ZIP parts (or the pictures and `index.csv`) into the chat and ask what each material is.
+4. **Load material decisions ...**: paste the answer or open a `.txt`. The preview lists what changes per material
+   (*before → after*) and the lines that could not be read. **Merge** keeps the lines the file already has,
+   **Replace** writes only the new ones. **Apply** saves.
+
+**Open decisions file** opens the file in your text editor. Mapsmith notices when you save it there.
+
+### The decision file
+
+`<mod>/cfg/mapsmith_materials.txt` - one line per material or wildcard, it travels with the mod:
+
+```
+// What a line says wins over Mapsmith's own reading of the texture.
+building_template/building_template007a  role=facade windows=2x1 floors=1
+brick/brickwall031d  role=wall parallax=on depth=0.008 pattern=brick
+brick/*  parallax=off            // every brick material, unless a more specific line says otherwise
+concrete/concretefloor001a  role=ground parallax=off note="street"
+```
+
+| Key | Values | Used by |
+|---|---|---|
+| `role` | `facade` `wall` `trim` `roof` `shop` `ground` `interior` `unsuitable` | building builder (what the texture is for) |
+| `windows` | `CxR`, e.g. `2x1`: windows across and down one tile | building builder (a regular grid) |
+| `floors` | number: floors one tile spans | building builder (texture scale) |
+| `windowrects` | `u0,v0,u1,v1;...` (0..1 in the tile) | building builder (exact windows) |
+| `scale` | number | building builder (texture scale) |
+| `parallax` | `auto` `on` `off` | Game enhancements, Material Editor |
+| `depth` | 0 to 0.1 (`$parallaxdepth`) | Game enhancements, Material Editor |
+| `pattern` | `brick` `tile` `plank` `stone` `none` | relief (`none`: from the brightness) |
+| `note` | text in quotes | only for you |
+
+- Names as in the Materials list, any case, with or without `materials/` and `.vmt`.
+- `*` matches any run of characters (also `/`), `?` one character. Per key the most specific line wins: an exact
+  name before any wildcard, a longer wildcard before a shorter one, a later line before an earlier one.
+- `//` starts a comment. Unknown keys are kept; lines Mapsmith does not change stay exactly as you wrote them.
+- A bad value is reported with its line number (in the log and in the preview) and ignored.
+
 ### The mod's shaders must be installed
 
 Relief, liquid and the new water use **shaders of the mod** (`bin/game_shader_dx6.dll`, installed with

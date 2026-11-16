@@ -314,6 +314,7 @@ std::string number(double v) {
 } // namespace
 
 double TextureAnalysis::scaleFor(double floorHeight) const {
+	if (scaleOverride > 0) return scaleOverride;
 	if ((role == TextureRole::FacadeWindows || role == TextureRole::ShopFront) && height > 0 && floorHeight > 1) {
 		double s = floorsPerTile() * floorHeight / height;
 		for (const double nice : {0.125, 0.25, 0.5, 1.0, 2.0}) {
@@ -337,6 +338,7 @@ std::string TextureAnalysis::describe(double floorHeight) const {
 		text += " · scale 0.25";
 	}
 	if (!reason.empty() && (role == TextureRole::Unsuitable || role == TextureRole::Unknown)) text += " (" + reason + ")";
+	if (decided) text += " · set by the decision file";
 	return text;
 }
 

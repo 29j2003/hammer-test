@@ -57,6 +57,8 @@ add_library(smecore STATIC
 	src/heightmap.cpp
 	src/relief_pattern.cpp
 	src/facade_texture.cpp
+	src/material_decisions.cpp
+	src/material_review.cpp
 	src/road_texture.cpp
 	src/road_builder.cpp
 	src/building_builder.cpp

@@ -27,7 +27,9 @@
 #include "autosaver.h"
 #include "icons.h"
 #include "import_dialog.h"
+#include "material_decision_store.h"
 #include "material_editor.h"
+#include "material_review_dialog.h"
 #include "material_cache.h"
 #include "panels.h"
 #include "particle_browser.h"
@@ -564,6 +566,8 @@ void MainWindow::createDocks() {
 	};
 	connect(m_modPage, &ModPage::openMapRequested, this, openFromProject);
 	connect(m_modPage, &ModPage::newModRequested, this, [this] { runNewModDialog(m_editor, this); });
+	connect(m_modPage, &ModPage::reviewExportRequested, this, &MainWindow::materialReviewDialog);
+	connect(m_modPage, &ModPage::decisionsLoadRequested, this, &MainWindow::materialDecisionsDialog);
 	m_mapsPanel = new MapsPanel(m_editor, &m_compiler, projectTabs);
 	connect(m_mapsPanel, &MapsPanel::openMapRequested, this, openFromProject);
 	m_projectPage->addTab(m_modPage, tr("Overview"));
@@ -741,6 +745,11 @@ void MainWindow::createDocks() {
 			m_pickedMaterial = name;
 			m_editorAtPick = m_materialEditor->materialName();
 		}
+	});
+	connect(m_assets, &AssetBrowser::reviewExportRequested, this, &MainWindow::materialReviewDialog);
+	connect(m_assets, &AssetBrowser::decisionsLoadRequested, this, &MainWindow::materialDecisionsDialog);
+	connect(m_editor->materialDecisions(), &MaterialDecisionStore::problemsFound, this, [this](const QStringList& problems) {
+		m_editor->message(tr("mapsmith_materials.txt: %1").arg(problems.join(QStringLiteral("; "))));
 	});
 	connect(m_assets, &AssetBrowser::editMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
@@ -2551,6 +2560,21 @@ QMenu* MainWindow::buildContextMenu() {
 				m_editor->overlayOnSelectedFaces(QSettings().value("strip/tile", 128.0).toDouble());
 			})->setObjectName("contextOverlayFaces");
 			menu.addAction(tr("Overlay strip ..."), this, [this] { overlayStripDialog(); })->setObjectName("contextOverlayStrip");
+			// Parallax of the faces' materials (the decision file): on, off or how deep.
+			QStringList materials;
+			for (const auto& face : selection.faces) {
+				const Solid* solid = m_editor->doc().findSolid(face.solid);
+				if (!solid) continue;
+				for (const auto& side : solid->sides) {
+					const QString material = QString::fromStdString(side.material).toLower();
+					if (side.id == face.sideId && !material.isEmpty() && !materials.contains(material)) materials << material;
+				}
+			}
+			if (!materials.isEmpty()) {
+				auto* parallax = menu.addMenu(materials.size() == 1 ? tr("Parallax for this material") : tr("Parallax for these %1 materials").arg(materials.size()));
+				parallax->menuAction()->setObjectName("contextParallax");
+				fillParallaxMenu(parallax, m_editor, materials);
+			}
 		}
 		if (selection.entities.size() == 1 && selection.solids.empty() && selection.entities.front() != 0) {
 			menu.addSeparator();
@@ -2872,6 +2896,34 @@ void MainWindow::roadBuilderDialog() {
 	m_roadBuilderDialog->setAttribute(Qt::WA_DeleteOnClose);
 	m_roadBuilderDialog->show();
 	if (m_active) m_roadBuilderDialog->move(m_active->mapToGlobal(QPoint(16, 16)));
+}
+
+void MainWindow::materialReviewDialog() {
+	if (!m_editor->game()) {
+		QMessageBox::information(this, tr("Export materials for review"), tr("Choose a game first."));
+		return;
+	}
+	if (!m_reviewDialog) {
+		m_reviewDialog = new MaterialReviewDialog(m_editor, this);
+		m_reviewDialog->setAttribute(Qt::WA_DeleteOnClose);
+	}
+	m_reviewDialog->show();
+	m_reviewDialog->raise();
+	m_reviewDialog->activateWindow();
+}
+
+void MainWindow::materialDecisionsDialog() {
+	if (!m_editor->game()) {
+		QMessageBox::information(this, tr("Load material decisions"), tr("Choose a game first."));
+		return;
+	}
+	if (!m_decisionsDialog) {
+		m_decisionsDialog = new MaterialDecisionsDialog(m_editor, this);
+		m_decisionsDialog->setAttribute(Qt::WA_DeleteOnClose);
+	}
+	m_decisionsDialog->show();
+	m_decisionsDialog->raise();
+	m_decisionsDialog->activateWindow();
 }
 
 void MainWindow::buildingDialog() {

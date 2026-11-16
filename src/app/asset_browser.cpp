@@ -2,6 +2,9 @@
 
 #include "asset_browser.h"
 
+#include "material_decision_store.h"
+#include "material_review_dialog.h"
+
 #include "copy_paste.h"
 
 #include "editor.h"
@@ -482,6 +485,18 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		row->addWidget(m_recentButton);
 		row->addWidget(m_materialSearch, 1);
 		row->addWidget(m_materialCategory);
+		// The round trip with a chat: the textures out for review, the decisions back in.
+		auto* more = new QToolButton;
+		more->setObjectName("materialsMore");
+		more->setText(QStringLiteral("..."));
+		more->setToolTip(tr("Export the materials for review, load the decisions, the decision file"));
+		more->setPopupMode(QToolButton::InstantPopup);
+		auto* moreMenu = new QMenu(more);
+		moreMenu->addAction(tr("Export materials for review ..."), this, [this] { emit reviewExportRequested(); })->setObjectName("materialsExportReview");
+		moreMenu->addAction(tr("Load material decisions ..."), this, [this] { emit decisionsLoadRequested(); })->setObjectName("materialsLoadDecisions");
+		moreMenu->addAction(tr("Open decisions file"), this, [this] { openMaterialDecisionsFile(m_editor, this); })->setObjectName("materialsOpenDecisions");
+		more->setMenu(moreMenu);
+		row->addWidget(more);
 		v->addLayout(row);
 		m_recentPopup = new QFrame(m_recentButton, Qt::Popup);
 		m_recentPopup->setObjectName("recentPopup");
@@ -520,6 +535,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		m_materialFilter->setSourceModel(m_materialModel);
 		m_materialView = makeIconView(page);
 		m_materialView->setObjectName("materialList");
+		m_materialView->setSelectionMode(QAbstractItemView::ExtendedSelection);   // Ctrl/Shift+click: parallax for several at once
 		addCopyShortcut(m_materialView, Qt::UserRole);   // Ctrl+C: the material's name
 		m_materialView->setModel(m_materialFilter);
 		m_materialView->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -527,9 +543,16 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 			const QModelIndex index = m_materialView->indexAt(pos);
 			if (!index.isValid()) return;
 			const QString name = index.data(Qt::UserRole).toString();
+			// The clicked material, or every selected one when it is among them.
+			QStringList names{name};
+			if (m_materialView->selectionModel()->isSelected(index)) {
+				names.clear();
+				for (const QModelIndex& selected : m_materialView->selectionModel()->selectedIndexes()) names << selected.data(Qt::UserRole).toString();
+			}
 			QMenu menu;
 			menu.addAction(tr("Edit material ..."), this, [this, name] { emit editMaterialRequested(name); });
 			menu.addAction(tr("Copy name"), this, [name] { QApplication::clipboard()->setText(name); });
+			fillParallaxMenu(menu.addMenu(names.size() == 1 ? tr("Parallax") : tr("Parallax for %1 materials").arg(names.size())), m_editor, names);
 			if (m_menuFiller) {
 				menu.addSeparator();
 				m_menuFiller(&menu, {AssetKind::Material, name.toStdString()}, m_pageMode ? AssetPlace::MaterialsPage : AssetPlace::AssetBrowser);

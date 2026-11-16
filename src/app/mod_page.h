@@ -33,6 +33,9 @@ signals:
 	void openMapRequested(const QString& path);
 	void newModRequested();
 	void compileSettingsRequested();
+	/// The materials for review (a chat answers with decisions) and loading those decisions.
+	void reviewExportRequested();
+	void decisionsLoadRequested();
 
 private:
 	Editor* m_editor;

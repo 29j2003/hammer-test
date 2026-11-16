@@ -14,6 +14,8 @@ add_library(smeapp STATIC
 	copy_paste.cpp
 	editor.cpp
 	enhancements.cpp
+	material_decision_store.cpp
+	material_review_dialog.cpp
 	find_dialog.cpp
 	history_panel.cpp
 	main_window.cpp

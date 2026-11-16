@@ -3,6 +3,7 @@
 #include "material_editor.h"
 
 #include "editor.h"
+#include "material_decision_store.h"
 #include "enhancements.h"
 #include "material_preview.h"
 #include "ui_helpers.h"
@@ -15,6 +16,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QSignalBlocker>
 #include <QEvent>
 #include <QFile>
 #include <QFileInfo>
@@ -785,6 +787,43 @@ void MaterialEditor::buildFields() {
 	m_ssbump = check("$ssbump", tr("Self-shadowed ($ssbump)"), tr("A self-shadowed bump map, made with height2ssbump"));
 	bump->addRow(QString(), m_ssbump);
 
+	// Parallax in Game enhancements: the mod's decision file (mapsmith_materials.txt) - whether this
+	// material gets relief at all and how deep, without writing a material of its own.
+	{
+		auto* form = section(m_decisionBox, tr("Parallax in Game enhancements"));
+		form->addRow(hint(tr("Whether Game enhancements give this material relief, and how deep - kept in the mod's "
+		                     "cfg/mapsmith_materials.txt. Auto: Mapsmith decides by name, look and pattern (fine bricks get less depth).")));
+		m_decisionParallax = new QComboBox;
+		m_decisionParallax->setObjectName("decisionParallax");
+		m_decisionParallax->addItem(tr("Auto (Mapsmith decides)"), int(ParallaxChoice::Auto));
+		m_decisionParallax->addItem(tr("On"), int(ParallaxChoice::On));
+		m_decisionParallax->addItem(tr("Off"), int(ParallaxChoice::Off));
+		form->addRow(tr("Parallax"), m_decisionParallax);
+		m_decisionDepth = new QDoubleSpinBox;
+		m_decisionDepth->setObjectName("decisionDepth");
+		m_decisionDepth->setDecimals(4);
+		m_decisionDepth->setRange(0, 0.1);
+		m_decisionDepth->setSingleStep(0.0005);
+		m_decisionDepth->setSpecialValueText(tr("Mapsmith decides"));
+		m_decisionDepth->setToolTip(tr("0.006 is shallow (bricks), 0.01 the usual; small bricks swim with deep relief. Shown in the preview when the material has relief."));
+		form->addRow(tr("Depth"), m_decisionDepth);
+		m_decisionNote = hint(QString());
+		form->addRow(m_decisionNote);
+		connect(m_decisionParallax, &QComboBox::activated, this, [this] {
+			if (m_name.isEmpty()) return;
+			m_editor->materialDecisions()->setParallax({m_name}, static_cast<ParallaxChoice>(m_decisionParallax->currentData().toInt()),
+			                                          m_decisionDepth->value() > 0 ? std::optional<double>(m_decisionDepth->value()) : std::nullopt);
+		});
+		connect(m_decisionDepth, &QDoubleSpinBox::valueChanged, this, [this] {
+			if (!m_loading) refreshPreview(false);   // live: the preview shows the depth at once
+		});
+		connect(m_decisionDepth, &QDoubleSpinBox::editingFinished, this, [this] {
+			if (m_name.isEmpty()) return;
+			m_editor->materialDecisions()->setParallax({m_name}, std::nullopt, m_decisionDepth->value());
+		});
+		connect(m_editor->materialDecisions(), &MaterialDecisionStore::changed, this, &MaterialEditor::showDecision);
+	}
+
 	// Relief: mapbase-fidelity's Fidelity_Parallax.
 	m_relief = new QCheckBox;
 	m_relief->setObjectName("relief");
@@ -1295,6 +1334,23 @@ void MaterialEditor::paintZones() {
 	}
 }
 
+void MaterialEditor::showDecision() {
+	if (!m_decisionParallax) return;
+	const bool loading = m_loading;
+	m_loading = true;
+	const MaterialDecision d = m_editor->materialDecisions()->lookup(m_name);
+	const QSignalBlocker blockChoice(m_decisionParallax), blockDepth(m_decisionDepth);
+	m_decisionParallax->setCurrentIndex(m_decisionParallax->findData(int(d.parallax.value_or(ParallaxChoice::Auto))));
+	m_decisionDepth->setValue(d.depth.value_or(0));
+	const std::string keys = d.keysText();
+	m_decisionNote->setText(keys.empty() ? tr("Nothing set for this material in the decision file.")
+	                                     : tr("Set by the decision file: %1").arg(QString::fromStdString(keys)));
+	m_decisionParallax->setEnabled(!m_name.isEmpty() && m_editor->gameEntry());
+	m_decisionDepth->setEnabled(!m_name.isEmpty() && m_editor->gameEntry());
+	m_loading = loading;
+	refreshPreview(false);
+}
+
 void MaterialEditor::openMaterial(const QString& rawName) {
 	auto* game = m_editor->game();
 	if (!game) return;
@@ -1367,6 +1423,7 @@ void MaterialEditor::openMaterial(const QString& rawName) {
 	m_baseImage = QImage();
 	loadValuesIntoFields();
 	loadHeightSource();
+	showDecision();
 	refreshPreview(true);
 }
 
@@ -1525,6 +1582,7 @@ void MaterialEditor::refreshPreview(bool reloadTextures) {
 	if (!value("$alphatestreference").isEmpty()) s.alphaRef = value("$alphatestreference").toFloat();
 	const bool relief = m_shader.compare("Fidelity_Parallax", Qt::CaseInsensitive) == 0 || m_shader.compare("Fidelity_WorldVertexTransition", Qt::CaseInsensitive) == 0;
 	s.parallaxDepth = relief ? (value("$parallaxdepth").isEmpty() ? 0.01f : value("$parallaxdepth").toFloat()) : 0.f;
+	if (relief && m_decisionDepth && m_decisionDepth->value() > 0) s.parallaxDepth = float(m_decisionDepth->value());   // the decision file's depth, live
 	if (!value("$parallaxao").isEmpty()) s.parallaxAO = value("$parallaxao").toFloat();
 	s.waterGlint = m_shader.compare("Water_Fidelity", Qt::CaseInsensitive) == 0 ? (value("$fidelityglint").isEmpty() ? 1.f : value("$fidelityglint").toFloat()) : 0.f;
 	if (!value("$reflecttint").isEmpty()) s.reflectTint = parseColor(value("$reflecttint"));

@@ -24,6 +24,7 @@
 namespace sme {
 
 class GameFileSystem;
+class MaterialDecisions;
 
 /// The switchable effects.
 enum class GameEffect {
@@ -85,12 +86,24 @@ struct PatternRelief {
 	std::string heightName;   ///< "brick/wall01_mapsmith_relief" (without materials/ and .vtf)
 	std::string hash;
 };
+/// What the mod's decision file (sme/material_decisions.h) says about a wall's relief.
+struct PatternReliefOptions {
+	bool force = false;              ///< parallax=on: relief also where name and look would not give it, from the brightness when no pattern is found
+	std::optional<double> depth;     ///< depth=...: instead of the depth from the pattern (reliefDepthForLayout)
+	bool noPattern = false;          ///< pattern=none: from the brightness, not from a layout
+	double faceScale = 0.25;         ///< Texture scale on the walls (how big a course is in the world)
+	[[nodiscard]] bool any() const { return force || depth || noPattern; }
+};
 /// The hash a pattern relief of this material would carry (empty: it gets none - not a plain wall,
 /// texture missing). Cheap: reads the texture's bytes, decodes nothing.
-[[nodiscard]] std::string patternReliefHash(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt);
+[[nodiscard]] std::string patternReliefHash(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt,
+                                            const PatternReliefOptions& options = {});
 /// The pattern relief (nullopt: no clear pattern, or not a plain wall: blends, scaled or moved
-/// textures and other shaders keep deploy's relief).
-[[nodiscard]] std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt);
+/// textures and other shaders keep deploy's relief). Its depth follows the pattern: fine patterns
+/// get a shallower one, too fine ones none - then `tooFine` gets the reason (the plan keeps the
+/// relief off there instead of leaving it to deploy.bat).
+[[nodiscard]] std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt,
+                                                            const PatternReliefOptions& options = {}, std::string* tooFine = nullptr);
 
 /// Whether the effect can be used on this material ("materials/models/x/y.vmt", its text).
 [[nodiscard]] bool effectApplies(GameEffect effect, std::string_view path, std::string_view vmt);
@@ -194,6 +207,9 @@ struct EnhancementOptions {
 	/// Brush materials used in the mod's maps: those that fit get Mapsmith's pattern relief
 	/// (makePatternRelief) instead of deploy's. Null: none.
 	const std::set<std::string>* mapMaterials = nullptr;
+	/// The mod's decisions (<mod>/cfg/mapsmith_materials.txt): parallax=off keeps a material's
+	/// relief off, parallax=on gives it relief (also outside the maps), depth and pattern shape it.
+	const MaterialDecisions* decisions = nullptr;
 };
 /// `excludedMaterials`: materials of the excluded models (modelMaterialNames), per effect - a
 /// material shared with a model that is not excluded is left out too (exclusion wins).

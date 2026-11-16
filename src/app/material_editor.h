@@ -216,6 +216,12 @@ private:
 	FeatureGroup* m_texturesBox;
 	FeatureGroup* m_bumpBox;
 	FeatureGroup* m_reliefBox;
+	FeatureGroup* m_decisionBox;              ///< Parallax in Game enhancements (the mod's decision file)
+	QComboBox* m_decisionParallax = nullptr;  ///< Auto / On / Off
+	QDoubleSpinBox* m_decisionDepth = nullptr;///< 0 = Mapsmith decides
+	QLabel* m_decisionNote = nullptr;
+	/// Shows what the decision file says about the open material.
+	void showDecision();
 	FeatureGroup* m_envBox;
 	FeatureGroup* m_alphaBox;
 	FeatureGroup* m_detailBox;

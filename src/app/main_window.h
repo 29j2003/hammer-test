@@ -39,6 +39,8 @@ class RoundEdgeDialog;
 class RoadDialog;
 class RoadBuilderDialog;
 class BuildingDialog;
+class MaterialReviewDialog;
+class MaterialDecisionsDialog;
 class GapFillDialog;
 class PropPlacementDialog;
 class TextureFlowDialog;
@@ -199,6 +201,9 @@ private:
 	/// "Build road ...": along the selected floor brushes, or clicked points without a selection.
 	void roadBuilderDialog();
 	void buildingDialog();
+	/// Export the materials for review / load the decisions (one window each, kept while open).
+	void materialReviewDialog();
+	void materialDecisionsDialog();
 	/// "Fill gap ...": the space between the selected brushes, with a live preview.
 	void gapFillDialog();
 	/// "Place props ...": many props along a path or scattered over faces, with a live preview.
@@ -259,6 +264,8 @@ private:
 	QPointer<RoadDialog> m_roadDialog;          ///< The open "Road" dialog
 	QPointer<RoadBuilderDialog> m_roadBuilderDialog;   ///< The open "Build road" dialog
 	QPointer<BuildingDialog> m_buildingDialog;   ///< The open "Build buildings" dialog
+	QPointer<MaterialReviewDialog> m_reviewDialog;        ///< "Export materials for review"
+	QPointer<MaterialDecisionsDialog> m_decisionsDialog;  ///< "Load material decisions"
 	QPointer<GapFillDialog> m_gapFillDialog;    ///< The open "Fill gap" dialog
 	QPointer<PropPlacementDialog> m_propsDialog;   ///< The open "Place props" dialog
 	QPointer<TextureFlowDialog> m_flowDialog;   ///< The open "Texture flow" dialog
