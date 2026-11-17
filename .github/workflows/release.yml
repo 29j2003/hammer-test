@@ -28,9 +28,13 @@ jobs:
           persist-credentials: false
       - name: Tag matches VERSION
         shell: pwsh
+        # The tag comes through the environment, never pasted into the script: a tag name may hold
+        # $( ) or quotes, which PowerShell would run.
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           $version = (Get-Content VERSION).Trim()
-          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match VERSION $version" }
+          if ("v$version" -cne $env:TAG) { throw "Tag $env:TAG does not match VERSION $version" }
       - name: Qt 6.8
         uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
         with:
@@ -83,9 +87,10 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
           $version = (Get-Content VERSION).Trim()
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:TAG   # equals "v$version" (checked above)
           $files = "dist/Mapsmith-Setup-$version.exe", "dist/Mapsmith-Setup-$version.exe.sha256",
                    "dist/Mapsmith-$version-windows.zip", "dist/Mapsmith-$version-windows.zip.sha256",
                    "dist/Mapsmith-$version-windows-pdb.zip"

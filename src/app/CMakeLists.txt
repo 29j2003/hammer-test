@@ -57,6 +57,7 @@ add_library(smeapp STATIC
 	soundscape_editor.cpp
 	source_control_panel.cpp
 	style.cpp
+	system_paths.cpp
 	tool_panel.cpp
 	toggle_switch.cpp
 	updater.cpp

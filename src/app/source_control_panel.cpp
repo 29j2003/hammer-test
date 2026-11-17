@@ -431,6 +431,25 @@ void SourceControlPanel::startNext() {
 	}
 	Job job = std::move(m_jobs.front());
 	m_jobs.pop();
+	// A repository whose own settings start programs (core.fsmonitor, filters, hooks path ...)
+	// would run them on a plain `git status`: no git there (rev-parse, which finds the top folder,
+	// runs none of them).
+	if (job.args.value(0) != QLatin1String("rev-parse")) {
+		const auto risks = gitRepositoryRisks(toPath(m_root.isEmpty() ? m_folder : m_root));
+		if (!risks.empty()) {
+			QStringList found;
+			for (const auto& risk : risks) found << QString::fromStdString(risk);
+			const QString note = tr("Mapsmith runs no git in this folder: its settings (.git/config) would start programs - %1. "
+			                        "If the repository is yours, remove those lines.").arg(found.join(QStringLiteral("; ")));
+			if (note != m_riskNote) log(note, true);
+			m_riskNote = note;
+			std::queue<Job>().swap(m_jobs);
+			m_refreshing = false;
+			setBusy(false);
+			return;
+		}
+		m_riskNote.clear();
+	}
 	auto* process = new QProcess(this);
 	m_process = process;
 	setBusy(true);
@@ -440,7 +459,7 @@ void SourceControlPanel::startNext() {
 	env.insert("LC_ALL", "C");
 	process->setProcessEnvironment(env);
 	process->setWorkingDirectory(m_root.isEmpty() ? m_folder : m_root);
-	QStringList args{"-c", "core.quotepath=false", "-c", "color.ui=false"};
+	QStringList args{"-c", "core.quotepath=false", "-c", "color.ui=false", "-c", "core.fsmonitor=false"};
 	args << job.args;
 	if (job.logged) log(QStringLiteral("> git %1").arg(job.args.join(' ')));
 	const bool logged = job.logged;

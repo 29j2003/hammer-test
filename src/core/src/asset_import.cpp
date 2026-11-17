@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -487,6 +488,26 @@ const std::vector<std::string>& commonSurfaceProps() {
 }
 
 std::optional<ImageRgba> decodeImageFile(std::span<const std::byte> data, std::string* error) {
+	// Only the formats the importers offer go to the decoder (stb_image inside vtfpp): its GIF,
+	// PSD, HDR, PIC and PNM readers had the most memory bugs (CVE-2023-45661 ff.), and no mapper
+	// needs them here.
+	const auto startsWith = [&data](std::string_view magic) {
+		return data.size() >= magic.size() && std::memcmp(data.data(), magic.data(), magic.size()) == 0;
+	};
+	if (startsWith("GIF8") || startsWith("8BPS") || startsWith("#?RADIANCE") || startsWith("#?RGBE") || startsWith("\x53\x80\xF6\x34") ||
+	    (data.size() >= 2 && char(data[0]) == 'P' && char(data[1]) >= '1' && char(data[1]) <= '7')) {
+		if (error) *error = "not a picture Mapsmith can read (PNG, JPG, TGA, BMP)";
+		return std::nullopt;
+	}
+	// Interlaced PNG (Adam7): vtfpp's PNG reader moves the pointer to the unpacked data while it
+	// de-interlaces and frees the moved pointer afterwards - heap corruption with every such file,
+	// valid or not (found by fuzzing, 17.11.2026). They are rare for textures; ask for a plain one.
+	// IHDR must come first (as the standard says; Apple's CgBI chunk before it would hide the flag).
+	if (startsWith("\x89PNG\r\n\x1a\n") &&
+	    (data.size() <= 28 || std::memcmp(data.data() + 12, "IHDR", 4) != 0 || data[28] != std::byte(0))) {
+		if (error) *error = "interlaced PNG - save it again without interlacing (\"Adam7\" / \"interlaced\" off)";
+		return std::nullopt;
+	}
 	try {
 		vtfpp::ImageFormat format{};
 		int width = 0, height = 0, frames = 0;

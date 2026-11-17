@@ -5,6 +5,7 @@
 // so a failure repeats.
 
 #include "fixture.h"
+#include "fuzz/fuzz_targets.h"
 
 #include <sme/animation_import.h>
 #include <sme/asset_import.h>
@@ -31,7 +32,10 @@
 
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <random>
 #include <string>
 #include <vector>
@@ -261,6 +265,59 @@ TEST_CASE("fuzz: sounds, particles and compiled maps") {
 	const auto bsp = cubemapBsp();
 	REQUIRE(readBspCubemaps(bsp, "test"));
 	fuzzBytes(bsp, [](const Bytes& data) { (void)readBspCubemaps(data, "test"); }, 9);
+}
+
+TEST_CASE("fuzz: saved findings of the libFuzzer targets (tests/fuzz/regressions)") {
+	// Each file once crashed, hung or ran out of memory in a target of tests/fuzz (libFuzzer with
+	// AddressSanitizer + UBSan, docs/ENTWICKLUNG.md "Sicherheit"); fed to the same readers here,
+	// none may any more. A sanitizer build of the tests shows a returning memory error.
+	int files = 0;
+	const std::filesystem::path root = SME_FUZZ_REGRESSIONS_DIR;
+	for (const auto& [name, read] : fuzz::targets()) {
+		const auto dir = root / std::string(name);
+		if (!std::filesystem::is_directory(dir)) continue;
+		for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+			std::ifstream in(entry.path(), std::ios::binary);
+			const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			CAPTURE(entry.path().filename().string());
+			read(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+			++files;
+		}
+	}
+	CHECK(files >= 4);
+}
+
+TEST_CASE("fuzz: Ogg Vorbis comment header with an overflowing count (stb_vorbis before v1.24, CVE-2023-47212 family)") {
+	// Two Ogg pages: a valid identification header, then a comment header that claims 0x20000001
+	// comments. stb_vorbis v1.22 multiplied that by sizeof(char*) into an int (8 bytes allocated)
+	// and wrote the comment pointers past it - a heap overflow from a sound file in a mod or VPK.
+	// v1.24 rejects the count; a sanitizer build of the tests catches a regression here.
+	const auto page = [](Bytes& out, std::uint8_t type, std::uint32_t sequence, const Bytes& packet) {
+		const auto add = [&out](const void* p, std::size_t n) { out.insert(out.end(), static_cast<const std::byte*>(p), static_cast<const std::byte*>(p) + n); };
+		const std::uint64_t granule = 0;
+		const std::uint32_t serial = 1, crc = 0;   // stb_vorbis checks the CRC only when streaming
+		add("OggS", 4);
+		out.push_back(std::byte(0));
+		out.push_back(std::byte(type));
+		add(&granule, 8);
+		add(&serial, 4);
+		add(&sequence, 4);
+		add(&crc, 4);
+		out.push_back(std::byte(1));
+		out.push_back(std::byte(packet.size()));   // one segment, < 255 bytes: the packet ends here
+		out.insert(out.end(), packet.begin(), packet.end());
+	};
+	const auto bytesOf = [](std::initializer_list<int> values) {
+		Bytes out;
+		for (const int v : values) out.push_back(std::byte(v));
+		return out;
+	};
+	const Bytes identification = bytesOf({1, 'v', 'o', 'r', 'b', 'i', 's', 0, 0, 0, 0, 1, 0x44, 0xAC, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xB8, 1});
+	const Bytes comments = bytesOf({3, 'v', 'o', 'r', 'b', 'i', 's', 0, 0, 0, 0, 0x01, 0, 0, 0x20, 4, 0, 0, 0, 'a', 'b', 'c', 'd', 1});
+	Bytes ogg;
+	page(ogg, 2, 0, identification);
+	page(ogg, 0, 1, comments);
+	CHECK_FALSE(decodeAudio(ogg, "evil.ogg"));
 }
 
 TEST_CASE("fuzz: text formats - .smd, .obj, .vmt, .vmf, KeyValues") {

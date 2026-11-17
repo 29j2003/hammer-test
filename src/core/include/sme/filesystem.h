@@ -30,6 +30,11 @@ struct Mount {
 	std::string problem;                ///< Why it is not present
 };
 
+/// Whether a game path ("materials/brick/wall01.vmt", from a map, a VPK, a material ...) stays
+/// inside the folder it is joined to: relative, no "..", no drive or stream (no ':'). Paths from
+/// files are untrusted; check before building a file name to write from one.
+[[nodiscard]] bool isSafeGamePath(std::string_view path);
+
 /// The game's files as the engine sees them: folders and VPKs in search path order, first one wins.
 /// Reads are safe from several threads (the background loaders share one instance).
 class GameFileSystem {

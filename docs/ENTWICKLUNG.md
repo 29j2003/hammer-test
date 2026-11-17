@@ -739,6 +739,81 @@ stimmen beide und Julius meint einen anderen Brush, zeigt `picks.log`, ob er auf
   frame, tab)` hält ein Exemplar pro Fenster. `replace_materials_dialog.{h,cpp}`: `ReplaceMaterialsDialog`,
   `showReplaceMaterialsDialog(editor, parent, bekannteMaterialien)`.
 
+## Sicherheit (fremde Dateien, Programme, Updates)
+
+Stand des Checks vom 17.11.2026 (Fuzzing, Durchsicht aller Prozessstarts, Schreibziele, Updater, CI, Abhängigkeiten).
+
+**Bedrohungsmodell.** Mapsmith läuft mit den Rechten des Mappers und vertraut ihm, seiner Mod und dem eigenen
+Installationsordner (`%LOCALAPPDATA%\Programs\Mapsmith`, gehört dem Benutzer). Nicht vertrauenswürdig sind alle Dateien,
+die andere gemacht haben: Workshop-Karten und -Addons, fremde Mods, VPKs, Downloads, Beispiel- und Import-Dateien,
+Editor-Berichte anderer, Ausgaben fremder Programme. Ein Angreifer schickt so eine Datei und will, dass Mapsmith beim
+**Öffnen/Ansehen** Speicher kaputt schreibt (Code ausführen), Dateien **außerhalb** der Mod schreibt oder Programme startet.
+
+- **Eingänge (Leser):** VMF (`map`), KeyValues/VMT/gameinfo/Hammer-Configs/Soundscripts/Soundscapes/Menü/Kapitel
+  (`keyvalues`, `material`, `gameinfo`, `hammer_config`, `soundscape`, `mod_menu`), VPK (`filesystem` → vpkpp), VTF
+  (`texture` → vtfpp), MDL/VVD/VTX/ANI/PHY (`studio_model`, `studio_anim`, `model_export`, `container_models`), PCF
+  (`particles` → kvpp-DMX), WAV/ADPCM/MP3/OGG/FLAC (`audio` → minimp3, stb_vorbis), SMD/OBJ/MTL (`model_import`,
+  `animation_import`), VCD (`choreography`), Captions/Lokalisierung inkl. UTF-16 (`localization`, `mod_menu`), FGD
+  (`entity_catalog` → toolpp), BSP (`compile_log`), Bilder (`asset_import::decodeImageFile` → stb_image in vtfpp; Qt
+  `QImage` nur für Bilder, die der Mapper selbst wählt), ZIP (`shipping::readZipEntry`, Editor-Berichte für `sme-probe`),
+  `mapsmith_materials.txt`, Kompilier-Logs und git-Ausgaben (`compile_log`, `git_status`), GitHub-Release-JSON (`updater`).
+- **Senken:** Prozessstarts (VBSP/VVIS/VRAD/Spiel aus den Spiel-Einstellungen, studiomdl, bspzip, steamcmd, git über
+  `QStandardPaths::findExecutable`, PowerShell für update/deploy/report und den Updater, taskkill), Dateischreiben in
+  die Mod (Game enhancements, Behälter-Modelle, Importe, Texte, Menü, Soundscapes, Features), Exporte/Berichte in
+  gewählte Ordner, Netzwerk nur Updater (api.github.com + Release-Dateien) und git auf Knopfdruck.
+
+**Regeln (gelten für neuen Code):**
+- Jede Zahl aus einer Datei ist feindlich: Offsets/Längen gegen die Datei prüfen (`long long`/`uint64_t` rechnen, nie
+  `int + int`), Zähler deckeln, bevor etwas reserviert wird. Fremde Bibliotheken reservieren oft so viel, wie die Datei
+  behauptet – davor plausibel prüfen (`texture.cpp: plausibleVtfHeader`, `filesystem.cpp`: VPK-Eintrag ≤ 512 MB) oder
+  wenigstens `try`/`catch` (`std::bad_alloc` wird gefangen).
+- Pfade aus Dateien (Material-, Modell-, Sound-Namen, VPK-Einträge, Manifeste, Entscheidungsdatei) nie ungeprüft an einen
+  Ordner hängen: `isSafeGamePath()` (`filesystem.h`: relativ, kein `..`, kein `:`). `GameFileSystem::list` liefert
+  VPK-Einträge mit solchen Namen gar nicht erst.
+- Programme nur mit Argumentliste (`QProcess`), nie über eine Shell oder einen zusammengesetzten Befehl. Windows-Programme
+  mit vollem Pfad (`systemProgram()` in `system_paths.h`: PowerShell, taskkill), andere über `findExecutable` (nur PATH).
+  `hardenSearchPaths()` (erste Zeile von `main`) nimmt den aktuellen Ordner aus der DLL- und Programmsuche (Start aus
+  einem Download-Ordner mit untergeschobener `powershell.exe`/DLL).
+- Skripte der Mod (update/deploy/report.ps1) laufen nur auf Knopfdruck oder in einem Ordner, den der Mapper bestätigt
+  hat (selbst gewählt oder dort einmal von Hand gestartet, `ModCodePanel::folderConfirmed`); ein nur durch Suchen
+  gefundener Ordner startet nie von selbst ein Skript (es könnte die Kopie einer fremden Mod gleichen Namens sein).
+- Updater: nur `https://github.com/29j2003/hammer-test/releases/download/…` (`releaseFileUrl`), Dateiname ohne Ordner,
+  Release-Seite nur `https`, SHA-256 aus dem Release Pflicht. **Offen:** die Prüfsumme kommt aus demselben Release – wer
+  das GitHub-Konto übernimmt, kann beides tauschen. Abhilfe (braucht Julius): Schlüsselpaar (Ed25519, z. B. minisign oder
+  `signify`), privater Schlüssel als GitHub-Secret für `release.yml`, das `…windows.zip.minisig` mit hochlädt; der
+  öffentliche Schlüssel fest im Updater, der die Signatur vor dem Entpacken prüft (libtomcrypt ist über sourcepp schon
+  da). Dazu ein Code-Signing-Zertifikat für Setup und exe (SmartScreen).
+- GitHub Actions: jede `uses:` auf Commit-SHA; Werte von außen (`github.ref_name`, `github.head_ref`, `github.event.*`,
+  `inputs.*`) nur über `env:` in Skripte, nie als `${{ }}` mitten im Skript (ein Tag-Name darf `$( )` enthalten).
+  `tools/check_privacy.py` (CI-Job `checks`) prüft beides.
+- Abhängigkeiten: neue/aktualisierte Einzeldateien nur mit Commit-SHA + SHA-256; bei jeder Aktualisierung die
+  CVE-Lage prüfen (Stand 17.11.2026: stb_vorbis auf v1.24 gehoben – v1.22 hatte Heap-Überläufe bei präparierten
+  `.ogg`, CVE-2023-45675 … -45682 und CVE-2023-47212, im Fuzzing in 3 Sekunden gefunden; minimp3 betrifft
+  CVE-2026-88365 nicht, das steckt in `minimp3_ex.h`, das Mapsmith nicht nutzt).
+
+**Fuzzing ausführen** (Linux, clang mit `libclang-rt-18-dev`; Qt nicht nötig):
+
+```
+cmake -S . -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+      -DSME_FUZZ=ON -DSME_BUILD_APP=OFF -DXZ_SANDBOX=no
+cmake --build build-fuzz
+build-fuzz/tests/fuzz/sme-fuzz-seeds corpus --media tests/samples_media     # Startdateien aus Fixture + Demo
+ASAN_OPTIONS=detect_leaks=0 build-fuzz/tests/fuzz/fuzz_vtf corpus/vtf -max_total_time=300 -rss_limit_mb=2560 -timeout=15
+```
+
+Ziele (`tests/fuzz/fuzz_targets.h`): `vtf`, `vpk`, `studio` (MDL+VVD+VTX+ANI in einer Eingabe, `fuzz_common.h`), `phy`,
+`pcf`, `audio` (erstes Byte wählt WAV/MP3/OGG/FLAC), `image`, `bsp`, `vmf`, `text` (erstes Byte wählt einen von 20
+Text-Lesern), `fgd`, `zip`. Jeder Fund: Ursache beheben, Eingabe nach `tests/fuzz/regressions/<ziel>/<was>` – der
+Unit-Test „fuzz: saved findings“ spielt alle nach. Neuer Leser → in `fuzz_targets.h` eintragen (und in `test_fuzz.cpp`).
+Mehrere Funde in einem Lauf: `-fork=1 -ignore_crashes=1 -ignore_ooms=1 -ignore_timeouts=1`.
+
+**Offen (bewusst, mit Begründung):** kvpp-DMX (`.pcf`) und Teile von vtfpp reservieren noch so viel, wie die Datei
+behauptet – im normalen Build eine kurze Speicherspitze, dann `std::bad_alloc` (gefangen); Abhilfe gehört nach sourcepp
+(Reserve durch die Restgröße der Datei deckeln). stb_image in sourcepp ist v2.30 (CVE-2023-45661 ff.); Mapsmith reicht
+nur PNG/JPEG/TGA/BMP weiter (GIF/PSD/HDR/PIC/PNM werden vorher abgewiesen) – sobald sourcepp stb_image ≥ 2.32 mitbringt,
+sourcepp heben. Qt 6.8.3 (Windows-CI) hat CVE-2025-5992 (ICC-Profile, Absturz) – nur für Bilder, die der Mapper selbst
+öffnet; beim nächsten Qt-Wechsel ≥ 6.8.4 bzw. eine aktuelle Open-Source-Version nehmen.
+
 ## Wichtige Formeln (aus dem Quellcode von VBSP/VRAD, Source SDK 2013 / Mapbase)
 
 - **plane**: `normal = normalize((p0 - p1) × (p2 - p1))`, zeigt nach außen; `dist = dot(p0, normal)`.

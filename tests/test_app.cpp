@@ -3172,19 +3172,31 @@ TEST_CASE("ux: whole tiles in a low dock, recent popup, the Materials page follo
 TEST_CASE("update check: release information and the version button") {
 	const QByteArray json = R"({"tag_name": "v9.1.0", "html_url": "https://github.com/29j2003/hammer-test/releases/tag/v9.1.0",
 		"body": "New: things", "draft": false, "prerelease": false, "assets": [
-		{"name": "Mapsmith-9.1.0-windows.zip", "browser_download_url": "https://example.invalid/a.zip"},
-		{"name": "Mapsmith-9.1.0-windows.zip.sha256", "browser_download_url": "https://example.invalid/a.zip.sha256"},
-		{"name": "Mapsmith-Setup-9.1.0.exe", "browser_download_url": "https://example.invalid/setup.exe"},
-		{"name": "Mapsmith-Setup-9.1.0.exe.sha256", "browser_download_url": "https://example.invalid/setup.exe.sha256"}]})";
+		{"name": "Mapsmith-9.1.0-windows.zip", "browser_download_url": "https://github.com/29j2003/hammer-test/releases/download/v9.1.0/a.zip"},
+		{"name": "Mapsmith-9.1.0-windows.zip.sha256", "browser_download_url": "https://github.com/29j2003/hammer-test/releases/download/v9.1.0/a.zip.sha256"},
+		{"name": "Mapsmith-Setup-9.1.0.exe", "browser_download_url": "https://github.com/29j2003/hammer-test/releases/download/v9.1.0/setup.exe"},
+		{"name": "Mapsmith-Setup-9.1.0.exe.sha256", "browser_download_url": "https://github.com/29j2003/hammer-test/releases/download/v9.1.0/setup.exe.sha256"}]})";
 	const auto release = parseRelease(json);
 	REQUIRE(release);
 	CHECK(release->version == "9.1.0");
 	CHECK(release->zipName == "Mapsmith-9.1.0-windows.zip");
 	// The ZIP's checksum, not the installer's that the release lists after it (assets come in upload order).
-	CHECK(release->checksumUrl.toString() == "https://example.invalid/a.zip.sha256");
+	CHECK(release->checksumUrl.toString() == "https://github.com/29j2003/hammer-test/releases/download/v9.1.0/a.zip.sha256");
 	CHECK(release->notes == "New: things");
+	CHECK(release->page.toString() == "https://github.com/29j2003/hammer-test/releases/tag/v9.1.0");
 	CHECK_FALSE(parseRelease(R"({"tag_name": "v9.2.0", "prerelease": true})"));
 	CHECK_FALSE(parseRelease("not json"));
+	// Files from anywhere else, over http, with folder parts in the name, or a page that is a local file: ignored.
+	const auto foreign = parseRelease(R"({"tag_name": "v9.3.0", "html_url": "file:///C:/Windows/System32/calc.exe", "assets": [
+		{"name": "Mapsmith-9.3.0-windows.zip", "browser_download_url": "https://example.invalid/29j2003/hammer-test/releases/download/a.zip"},
+		{"name": "Mapsmith-9.3.0-windows.zip.sha256", "browser_download_url": "http://github.com/29j2003/hammer-test/releases/download/v9.3.0/a.sha256"},
+		{"name": "..\\..\\Startup\\x-windows.zip", "browser_download_url": "https://github.com/29j2003/hammer-test/releases/download/v9.3.0/x.zip"},
+		{"name": "SHA256SUMS", "browser_download_url": "https://github.com/someone/else/releases/download/v9.3.0/SHA256SUMS"}]})");
+	REQUIRE(foreign);
+	CHECK(foreign->zipUrl.isEmpty());
+	CHECK(foreign->zipName.isEmpty());
+	CHECK(foreign->checksumUrl.isEmpty());
+	CHECK(foreign->page.isEmpty());
 
 	QTemporaryDir home;
 	QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -5283,7 +5295,11 @@ TEST_CASE("mod code: update the mod from the editor - steps, failure advice, can
 	QSignalSpy finished(panel, &ModCodePanel::finished);
 	QSignalSpy updated(panel, &ModCodePanel::modUpdated);
 	QSignalSpy reloaded(&editor, &Editor::gameChanged);
+	// A folder set without the mapper's click is not confirmed (automatic updates never run its
+	// scripts); pressing Update confirms it.
+	CHECK(QSettings().value("games/sourcemods_mymod/modCode/confirmedFolder").toString().isEmpty());
 	QTest::mouseClick(update, Qt::LeftButton);
+	CHECK(QSettings().value("games/sourcemods_mymod/modCode/confirmedFolder").toString() == QDir::cleanPath(repo.path()));
 	CHECK(panel->running());
 	CHECK_FALSE(update->isEnabled());
 	REQUIRE(waitDone());

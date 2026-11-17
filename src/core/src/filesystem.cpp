@@ -21,11 +21,15 @@ namespace {
 /// Files larger than this are never read into memory (no Source asset comes close).
 constexpr std::uintmax_t MAX_FILE_SIZE = 512ull * 1024 * 1024;
 
-/// Normalized path, or empty if it tries to leave its mount ("..") or is empty.
+/// Normalized path, or empty if it tries to leave its mount ("..", a drive "c:", a stream "a:b")
+/// or is empty. Game paths never hold a colon.
 std::string safeRelativePath(std::string_view path) {
 	auto normalized = normalizePath(path);
 	while (normalized.starts_with('/')) {
 		normalized.erase(0, 1);
+	}
+	if (normalized.find(':') != std::string::npos || normalized.find('\0') != std::string::npos) {
+		return {};
 	}
 	for (const auto& segment : splitTrimmed(normalized, '/')) {
 		if (segment == "..") {
@@ -78,6 +82,11 @@ bool isVpkArchivePart(std::string_view name) {
 }
 
 } // namespace
+
+bool isSafeGamePath(std::string_view path) {
+	if (path.empty() || path.front() == '/' || path.front() == '\\') return false;
+	return !safeRelativePath(path).empty();
+}
 
 struct GameFileSystem::MountData {
 	std::mutex mutex;
@@ -324,6 +333,10 @@ std::optional<std::vector<std::byte>> GameFileSystem::readMount(std::size_t moun
 	if (m_mounts[mountIndex].kind == Mount::Kind::Vpk) {
 		const std::lock_guard lock(data.mutex);
 		try {
+			// The size comes from the archive's directory: a damaged one claims gigabytes, which
+			// vpkpp would allocate before reading (MAX_FILE_SIZE as for folders).
+			const auto entry = data.vpk->findEntry(relative);
+			if (!entry || entry->length > MAX_FILE_SIZE) return std::nullopt;
 			return data.vpk->readEntry(relative);
 		} catch (const std::exception&) {
 			return std::nullopt;   // a damaged archive part: the file is missing, the editor goes on
@@ -383,7 +396,10 @@ std::vector<std::string> GameFileSystem::list(std::string_view dir, std::string_
 		if (m_mounts[i].kind == Mount::Kind::Vpk) {
 			const std::lock_guard lock(data.mutex);
 			data.vpk->runForAllEntries([&](const std::string& entryPath, const vpkpp::Entry&) {
-				consider(normalizePath(entryPath));
+				// A name inside a VPK that would leave the game's folders ("../../x", "c:/x")
+				// is never listed: callers build file names in the mod from these paths.
+				auto path = normalizePath(entryPath);
+				if (safeRelativePath(path) == path) consider(std::move(path));
 			});
 		} else {
 			data.buildIndex(m_mounts[i].path);

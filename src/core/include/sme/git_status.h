@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -57,5 +58,17 @@ struct GitCommit {
 /// and "https://user:token@host/owner/repo.git" all become "https://host/owner/repo" (log-ins are
 /// dropped). Empty for local paths and anything else.
 [[nodiscard]] std::string remoteWebUrl(std::string_view remote);
+
+/// Settings in a repository's own config (.git/config) that make git start programs on everyday
+/// commands - `git status` runs core.fsmonitor and clean filters, pull/fetch run ssh and credential
+/// helpers. A folder from someone else (a downloaded mod with its .git) could carry them; Mapsmith
+/// then runs no git there (the Source control and Mod code tabs say why). Returns "key = value" per
+/// finding (lowercase keys); empty when the config is harmless. Allowed: core.fsmonitor true/false,
+/// Git LFS filters ("git-lfs ..."), credential helpers that are plain names ("manager", "store").
+[[nodiscard]] std::vector<std::string> gitConfigRisks(std::string_view configText);
+
+/// Reads the config of the repository whose top folder is `root` (a .git folder, or a .git file
+/// that points to one) and returns gitConfigRisks() of it and of config.worktree.
+[[nodiscard]] std::vector<std::string> gitRepositoryRisks(const std::filesystem::path& root);
 
 } // namespace sme

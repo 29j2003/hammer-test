@@ -83,6 +83,7 @@ private:
 	std::queue<Job> m_jobs;
 	QPointer<QProcess> m_process;
 	bool m_refreshing = false;
+	QString m_riskNote;        ///< Why git does not run in this repository (logged once), see gitRepositoryRisks
 
 	QLabel* m_folderLabel;
 	QLabel* m_branchLabel;
