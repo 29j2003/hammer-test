@@ -795,7 +795,12 @@ void MaterialEditor::buildFields() {
 		                     "cfg/mapsmith_materials.txt. Auto: Mapsmith decides by name, look and pattern (fine bricks get less depth).")));
 		m_decisionParallax = new QComboBox;
 		m_decisionParallax->setObjectName("decisionParallax");
-		m_decisionParallax->addItem(tr("Auto (Mapsmith decides)"), int(ParallaxChoice::Auto));
+		// Short items and a combo that may shrink: the column is as wide as its widest field
+		// (the Materials page must fit a 1366 screen).
+		m_decisionParallax->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		m_decisionParallax->setMinimumContentsLength(6);
+		m_decisionParallax->setToolTip(tr("Auto: Mapsmith decides by name, look and pattern."));
+		m_decisionParallax->addItem(tr("Auto"), int(ParallaxChoice::Auto));
 		m_decisionParallax->addItem(tr("On"), int(ParallaxChoice::On));
 		m_decisionParallax->addItem(tr("Off"), int(ParallaxChoice::Off));
 		form->addRow(tr("Parallax"), m_decisionParallax);
@@ -804,7 +809,7 @@ void MaterialEditor::buildFields() {
 		m_decisionDepth->setDecimals(4);
 		m_decisionDepth->setRange(0, 0.1);
 		m_decisionDepth->setSingleStep(0.0005);
-		m_decisionDepth->setSpecialValueText(tr("Mapsmith decides"));
+		m_decisionDepth->setSpecialValueText(tr("Auto"));
 		m_decisionDepth->setToolTip(tr("0.006 is shallow (bricks), 0.01 the usual; small bricks swim with deep relief. Shown in the preview when the material has relief."));
 		form->addRow(tr("Depth"), m_decisionDepth);
 		m_decisionNote = hint(QString());

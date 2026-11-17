@@ -497,6 +497,11 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		moreMenu->addAction(tr("Open decisions file"), this, [this] { openMaterialDecisionsFile(m_editor, this); })->setObjectName("materialsOpenDecisions");
 		more->setMenu(moreMenu);
 		row->addWidget(more);
+		// The row may get narrow (Materials page on a 1366 screen): the search field and the
+		// category give way, the buttons stay.
+		m_materialSearch->setMinimumWidth(60);
+		m_materialCategory->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		m_materialCategory->setMinimumContentsLength(6);
 		v->addLayout(row);
 		m_recentPopup = new QFrame(m_recentButton, Qt::Popup);
 		m_recentPopup->setObjectName("recentPopup");
