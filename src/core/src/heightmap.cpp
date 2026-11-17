@@ -277,6 +277,57 @@ ImageRgba heightImage(const HeightMap& map) {
 	return image;
 }
 
+ImageRgba normalMapFromHeight(const HeightMap& map, double strength, unsigned width, unsigned height) {
+	ImageRgba image;
+	if (map.width == 0 || map.height == 0 || map.values.size() != std::size_t(map.width) * map.height) return image;
+	const unsigned w = std::min(width ? width : map.width, 65535u), h = std::min(height ? height : map.height, 65535u);
+	// The heights at the output size (bilinear, wrapping), then Sobel there.
+	std::vector<float> heights(std::size_t(w) * h);
+	for (unsigned y = 0; y < h; ++y) {
+		const double fy = (y + 0.5) * map.height / h - 0.5;
+		const int y0 = int(std::floor(fy));
+		const double ty = fy - y0;
+		const unsigned ya = unsigned((y0 % int(map.height) + int(map.height)) % int(map.height)), yb = (ya + 1) % map.height;
+		for (unsigned x = 0; x < w; ++x) {
+			const double fx = (x + 0.5) * map.width / w - 0.5;
+			const int x0 = int(std::floor(fx));
+			const double tx = fx - x0;
+			const unsigned xa = unsigned((x0 % int(map.width) + int(map.width)) % int(map.width)), xb = (xa + 1) % map.width;
+			const double top = map.at(xa, ya) * (1 - tx) + map.at(xb, ya) * tx;
+			const double bottom = map.at(xa, yb) * (1 - tx) + map.at(xb, yb) * tx;
+			heights[std::size_t(y) * w + x] = float(top * (1 - ty) + bottom * ty);
+		}
+	}
+	// Slopes per texel of the height map (the output's texels are smaller when it is bigger).
+	const double sx = strength * double(w) / map.width / 8.0, sy = strength * double(h) / map.height / 8.0;
+	image.width = static_cast<std::uint16_t>(w);
+	image.height = static_cast<std::uint16_t>(h);
+	image.pixels.resize(std::size_t(w) * h * 4);
+	const auto at = [&heights, w, h](int x, int y) {
+		return double(heights[std::size_t((y + int(h)) % int(h)) * w + std::size_t((x + int(w)) % int(w))]);
+	};
+	for (unsigned y = 0; y < h; ++y) {
+		for (unsigned x = 0; x < w; ++x) {
+			const int ix = int(x), iy = int(y);
+			const double gx = (at(ix + 1, iy - 1) + 2 * at(ix + 1, iy) + at(ix + 1, iy + 1)) - (at(ix - 1, iy - 1) + 2 * at(ix - 1, iy) + at(ix - 1, iy + 1));
+			const double gy = (at(ix - 1, iy + 1) + 2 * at(ix, iy + 1) + at(ix + 1, iy + 1)) - (at(ix - 1, iy - 1) + 2 * at(ix, iy - 1) + at(ix + 1, iy - 1));
+			// The surface z = h(u, v) has the normal (-dh/du, -dh/dv, 1).
+			double nx = -gx * sx, ny = -gy * sy, nz = 1.0;
+			const double length = std::sqrt(nx * nx + ny * ny + nz * nz);
+			nx /= length;
+			ny /= length;
+			nz /= length;
+			const std::size_t i = (std::size_t(y) * w + x) * 4;
+			const auto byte = [](double v) { return std::byte(static_cast<unsigned char>(std::clamp((v + 1.0) * 127.5 + 0.5, 0.0, 255.0))); };
+			image.pixels[i] = byte(nx);
+			image.pixels[i + 1] = byte(ny);
+			image.pixels[i + 2] = byte(nz);
+			image.pixels[i + 3] = std::byte(255);
+		}
+	}
+	return image;
+}
+
 std::vector<std::byte> encodeHeightVtf(const HeightMap& map) {
 	if (map.width == 0 || map.height == 0 || map.width > 65535 || map.height > 65535 || !powerOfTwo(map.width) || !powerOfTwo(map.height) ||
 	    map.values.size() != std::size_t(map.width) * map.height) {

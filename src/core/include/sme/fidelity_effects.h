@@ -21,10 +21,12 @@
 #include <string_view>
 #include <vector>
 
+#include <sme/heightmap.h>
+#include <sme/material_decisions.h>
+
 namespace sme {
 
 class GameFileSystem;
-class MaterialDecisions;
 
 /// The switchable effects.
 enum class GameEffect {
@@ -76,6 +78,11 @@ inline constexpr std::string_view MOD_SHADER_DLL = "bin/game_shader_dx6.dll";
 inline constexpr std::string_view PATTERN_RELIEF_MARKER = "// mapsmith: game enhancement pattern relief";
 /// Suffix of its height map ("<material>_mapsmith_relief.vtf", next to the material in the mod).
 inline constexpr std::string_view PATTERN_RELIEF_SUFFIX = "_mapsmith_relief";
+/// Suffix of the bump map Mapsmith generates from the same heights ("<material>_mapsmith_normal.vtf",
+/// also next to the material; see BumpChoice in sme/material_decisions.h).
+inline constexpr std::string_view GENERATED_NORMAL_SUFFIX = "_mapsmith_normal";
+/// The largest generated bump map (longer side; the base texture's size up to this).
+inline constexpr unsigned GENERATED_NORMAL_MAX = 1024;
 /// The relief of a wall from its texture's pattern (bricks, tiles, boards found with
 /// detectReliefLayout, confidence at least 0.5): the material text in deploy's form (Fidelity_Parallax,
 /// $parallaxmap, the course depth 0.01, the wet-only cubemap when it has no reflection) and the
@@ -85,6 +92,10 @@ struct PatternRelief {
 	std::vector<std::byte> heightVtf;
 	std::string heightName;   ///< "brick/wall01_mapsmith_relief" (without materials/ and .vtf)
 	std::string hash;
+	/// The generated bump map (empty: none - the material keeps its own or has none; then the text
+	/// has no $bumpmap of Mapsmith's) and its name ("brick/wall01_mapsmith_normal").
+	std::vector<std::byte> normalVtf;
+	std::string normalName;
 };
 /// What the mod's decision file (sme/material_decisions.h) says about a wall's relief.
 struct PatternReliefOptions {
@@ -92,8 +103,41 @@ struct PatternReliefOptions {
 	std::optional<double> depth;     ///< depth=...: instead of the depth from the pattern (reliefDepthForLayout)
 	bool noPattern = false;          ///< pattern=none: from the brightness, not from a layout
 	double faceScale = 0.25;         ///< Texture scale on the walls (how big a course is in the world)
-	[[nodiscard]] bool any() const { return force || depth || noPattern; }
+	BumpChoice bump = BumpChoice::Auto;   ///< bump=...: generate a bump map from the heights
+	double bumpStrength = 1.0;       ///< bumpstrength=...
+	[[nodiscard]] bool any() const { return force || depth || noPattern || bump == BumpChoice::Generate; }
 };
+/// The options a decision gives (parallax=on forces, depth, pattern=none, scale, bump, bumpstrength).
+[[nodiscard]] PatternReliefOptions reliefOptionsFor(const MaterialDecision& decision);
+/// Whether a relief Mapsmith makes for this material carries a generated bump map: Generate always,
+/// Off never, Auto when the game's material has no $bumpmap of its own.
+[[nodiscard]] bool generatesBumpMap(const PatternReliefOptions& options, std::string_view originalVmt);
+/// The generated bump map of these heights as a .vtf (uncompressed BGRA8888 with mipmaps, marked as
+/// a normal map): the base texture's size up to GENERATED_NORMAL_MAX (`width`/`height` 0: the
+/// heights' size). Empty when it cannot be made.
+[[nodiscard]] std::vector<std::byte> encodeGeneratedNormalVtf(const HeightMap& heights, double strength, unsigned width = 0, unsigned height = 0);
+/// The material text with `$bumpmap` set to `normalName` (the material's own $bumpmap, $ssbump and
+/// $bumpframe go: a generated one is a plain normal map), right after the opening brace.
+[[nodiscard]] std::string withGeneratedBumpMap(std::string_view vmt, std::string_view normalName);
+
+/// The heights the game's relief of a material comes from - exactly what Game enhancements would
+/// use now (for the review pictures and the material editor).
+struct ReliefHeights {
+	HeightMap heights;     ///< Empty when there are none to show
+	/// pattern (Mapsmith's pattern relief) | material (its own $parallaxmap) | normal (deploy.bat
+	/// from its normal map) | brightness (from the base texture's brightness) | none (no relief:
+	/// `heights` then shows what parallax=on would use)
+	std::string source;
+	std::string depth;     ///< The $parallaxdepth used ("" for none)
+	std::string note;      ///< Why (the pattern, "too fine", "the decision file keeps it flat" ...)
+	unsigned textureWidth = 0, textureHeight = 0;   ///< The base texture's full size (0: unknown)
+	bool bump = false;     ///< Mapsmith would generate a bump map from these heights
+	double bumpStrength = 1.0;
+};
+/// `mapMaterial`: used in the mod's maps (those get the pattern relief, as in planEnhancements).
+/// `maxSize`: the longest side of the heights (the game's relief is made at 512).
+[[nodiscard]] ReliefHeights reliefHeights(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt,
+                                          const MaterialDecision& decision, bool mapMaterial, unsigned maxSize = 512);
 /// The hash a pattern relief of this material would carry (empty: it gets none - not a plain wall,
 /// texture missing). Cheap: reads the texture's bytes, decodes nothing.
 [[nodiscard]] std::string patternReliefHash(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt,
@@ -175,6 +219,10 @@ struct EffectChange {
 	/// with it (`heightVtf` empty).
 	std::filesystem::path heightFile;
 	std::vector<std::byte> heightVtf;
+	/// A generated bump map (<material>_mapsmith_normal.vtf), the same way: written with the
+	/// material (`normalVtf` not empty) or removed (empty).
+	std::filesystem::path normalFile;
+	std::vector<std::byte> normalVtf;
 };
 /// A model copy to write or remove (containers with their own liquid material, sme/container_models.h).
 struct ModelFileChange {

@@ -177,6 +177,24 @@ never more than the usual 0.006. Brick courses smaller than 6 pixels, or pattern
 below 0.0015, get no relief at all (the material's first line says *too fine for relief*). A depth you set yourself
 always wins.
 
+### Bump map per material: Auto, Generate, Off
+
+Game enhancements can also give a wall a **bump map** made from the same heights as its relief: light then catches
+the edges of every brick and joint, also where the relief is shallow or the wall is seen straight on. The file is
+`<material>_mapsmith_normal.vtf` next to the mod's copy of the material (the base texture's own size, at most 1024).
+
+- **Materials** list: right-click › **Bump map** › *Auto* / *Generate* / *Off*, and **Strength ...** (or *Usual
+  strength*).
+- **3D view**: right-click a face › **Bump map for this material**.
+- **Material Editor**: the group **Bump map in Game enhancements** (choice and strength). The preview shows the
+  generated bump map at once, also while you turn the strength.
+
+*Auto* (the default) generates one where the material has no bump map of its own and Mapsmith makes its relief (the
+pattern relief of your maps' walls, or *Parallax: On*). *Generate* always makes one - it replaces the material's own
+and Mapsmith then makes the relief itself; with *Parallax: Off* the wall stays flat but still gets the bump map.
+*Off* never. **Strength** 1 is as steep as the relief, less is softer, more is stronger (0.1 to 4). A material you
+wrote yourself in the mod is never changed; removing the choice removes the generated files again.
+
 ### Materials reviewed in the chat
 
 Sometimes the picture is the only way to tell what a texture is. Mapsmith can put all materials on contact sheets
@@ -184,14 +202,32 @@ that you send into a chat (or look at yourself), and read the answer back:
 
 1. **Project › Overview › Materials: Export for review ...** (or the **...** button above the Materials list).
    Choose *Materials of my maps* (the open map and every `.vmf` of the mod), *a folder* (for example `brick/`) or
-   *all world materials*; tools, skybox and decals only when you tick them. Models are never listed. The export runs
-   in the background and can be cancelled.
+   *all world materials*; tools, skybox and decals only when you tick them. Models are never listed. **Only materials
+   that can get relief: walls, ground, roof, facades** leaves out everything else (the role from the decision file,
+   else what Mapsmith reads from the picture). **Pictures for the 3D check** (on by default) adds big pictures per
+   material, see below. The export runs in the background and can be cancelled.
 2. You get a folder with `sheet_001.jpg`, `sheet_002.jpg` ... (12 materials on each, 4 × 3, numbered; under each
    picture its name, size, shader, flags like *bump*, *envmap*, *alphatest*, and what Mapsmith reads: role, windows,
    pattern; the bump map small in the corner), `index.csv` and `index.json` (everything per number, with Mapsmith's
    own decision and why), and a `README.txt` that explains the answer format. The same in ZIP parts of at most
    20 MB (`mapsmith_materials_part1of2.zip` ...) - each part has the README and the index, so any part can be sent
    on its own.
+
+   With **Pictures for the 3D check** there is also a folder `pictures/` (NNN is the number on the sheets and in the
+   index), and every part carries the pictures of its sheets:
+
+   | File | What it shows |
+   |---|---|
+   | `NNN_base.jpg` | the base texture at its own resolution, up to 1024 pixels on the longer side |
+   | `NNN_height.jpg` | exactly the heights the game's relief uses, up to 512 (white is out, black is in) |
+   | `NNN_normal.jpg` | the material's own normal map, up to 512 (only when it has one) |
+
+   The index says where the heights come from (`height_source`: *pattern* - Mapsmith's relief from the bricks,
+   tiles or boards it found; *material* - the material's own height map; *normal* - from its normal map, as
+   `deploy.bat` makes it; *brightness* - from the texture's brightness; *none* - no relief, the picture then shows
+   what *Parallax: On* would use), the depth it uses now (`relief_depth`) and whether a bump map is generated. With
+   the height picture you can see on a flat screen whether the relief will be right: the joints dark, the faces
+   light and even.
 3. Send the ZIP parts (or the pictures and `index.csv`) into the chat and ask what each material is.
 4. **Load material decisions ...**: paste the answer or open a `.txt`. The preview lists what changes per material
    (*before → after*) and the lines that could not be read. **Merge** keeps the lines the file already has,
@@ -209,6 +245,7 @@ building_template/building_template007a  role=facade windows=2x1 floors=1
 brick/brickwall031d  role=wall parallax=on depth=0.008 pattern=brick
 brick/*  parallax=off            // every brick material, unless a more specific line says otherwise
 concrete/concretefloor001a  role=ground parallax=off note="street"
+concrete/concretewall004a  bump=generate bumpstrength=1.5
 ```
 
 | Key | Values | Used by |
@@ -221,6 +258,8 @@ concrete/concretefloor001a  role=ground parallax=off note="street"
 | `parallax` | `auto` `on` `off` | Game enhancements, Material Editor |
 | `depth` | 0 to 0.1 (`$parallaxdepth`) | Game enhancements, Material Editor |
 | `pattern` | `brick` `tile` `plank` `stone` `none` | relief (`none`: from the brightness) |
+| `bump` | `auto` `generate` `off` | Game enhancements (generated bump map), Material Editor |
+| `bumpstrength` | 0.1 to 4 (1 = as steep as the relief) | Game enhancements, Material Editor |
 | `note` | text in quotes | only for you |
 
 - Names as in the Materials list, any case, with or without `materials/` and `.vmt`.

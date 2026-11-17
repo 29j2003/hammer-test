@@ -182,6 +182,20 @@ void GameEnhancements::sync() {
 					if (ok) fs->noteRemovedFile(change.heightFile);
 				}
 			}
+			// And its generated bump map.
+			if (ok && !change.normalFile.empty()) {
+				const QString normal = fromPath(change.normalFile);
+				if (!change.normalVtf.empty() && !change.remove) {
+					QSaveFile file(normal);
+					ok = file.open(QIODevice::WriteOnly) &&
+					     file.write(reinterpret_cast<const char*>(change.normalVtf.data()), qint64(change.normalVtf.size())) == qint64(change.normalVtf.size()) &&
+					     file.commit();
+					if (ok) fs->noteWrittenFile(change.normalFile);
+				} else if (QFileInfo::exists(normal)) {
+					ok = QFile::remove(normal);
+					if (ok) fs->noteRemovedFile(change.normalFile);
+				}
+			}
 			(ok ? result.written : result.failed) << name;
 		}
 		// Container model copies (their own materials are written above): the list first, so a run

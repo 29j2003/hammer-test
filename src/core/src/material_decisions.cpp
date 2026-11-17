@@ -184,6 +184,14 @@ std::string setKey(MaterialDecision& d, const std::string& keyIn, const std::str
 		const auto& patterns = decisionPatterns();
 		if (std::find(patterns.begin(), patterns.end(), v) == patterns.end()) return "unknown pattern \"" + value + "\" (brick, tile, plank, stone, none)";
 		d.pattern = v;
+	} else if (key == "bump") {
+		const auto choice = bumpChoiceFromKey(toLower(value));
+		if (!choice) return "bump needs auto, generate or off";
+		d.bump = *choice;
+	} else if (key == "bumpstrength") {
+		const auto n = parseNumber(value);
+		if (!n || *n < BUMP_STRENGTH_MIN || *n > BUMP_STRENGTH_MAX) return "bumpstrength needs a number from 0.1 to 4 (1 is as steep as the relief)";
+		d.bumpStrength = *n;
 	} else if (key == "note") {
 		d.note = value;
 	} else {
@@ -212,6 +220,22 @@ std::optional<ParallaxChoice> parallaxChoiceFromKey(std::string_view key) {
 	return std::nullopt;
 }
 
+const char* bumpChoiceKey(BumpChoice choice) {
+	switch (choice) {
+	case BumpChoice::Generate: return "generate";
+	case BumpChoice::Off: return "off";
+	case BumpChoice::Auto: break;
+	}
+	return "auto";
+}
+
+std::optional<BumpChoice> bumpChoiceFromKey(std::string_view key) {
+	if (iequals(key, "auto")) return BumpChoice::Auto;
+	if (iequals(key, "generate") || iequals(key, "on") || iequals(key, "yes") || iequals(key, "1")) return BumpChoice::Generate;
+	if (iequals(key, "off") || iequals(key, "no") || iequals(key, "0")) return BumpChoice::Off;
+	return std::nullopt;
+}
+
 const std::vector<std::string>& decisionRoles() {
 	static const std::vector<std::string> roles = {"facade", "wall", "trim", "roof", "shop", "ground", "interior", "unsuitable"};
 	return roles;
@@ -223,7 +247,7 @@ const std::vector<std::string>& decisionPatterns() {
 }
 
 bool MaterialDecision::empty() const {
-	return !role && !windowColumns && !windowRows && !floors && !windowRects && !scale && !parallax && !depth && !pattern && !note && extra.empty();
+	return !role && !windowColumns && !windowRows && !floors && !windowRects && !scale && !parallax && !depth && !pattern && !bump && !bumpStrength && !note && extra.empty();
 }
 
 void MaterialDecision::mergeFrom(const MaterialDecision& o) {
@@ -236,6 +260,8 @@ void MaterialDecision::mergeFrom(const MaterialDecision& o) {
 	if (o.parallax) parallax = o.parallax;
 	if (o.depth) depth = o.depth;
 	if (o.pattern) pattern = o.pattern;
+	if (o.bump) bump = o.bump;
+	if (o.bumpStrength) bumpStrength = o.bumpStrength;
 	if (o.note) note = o.note;
 	for (const auto& [key, value] : o.extra) {
 		const auto it = std::find_if(extra.begin(), extra.end(), [&key](const auto& kv) { return kv.first == key; });
@@ -254,6 +280,8 @@ std::string MaterialDecision::keysText() const {
 	if (parallax) parts.push_back(std::string("parallax=") + parallaxChoiceKey(*parallax));
 	if (depth) parts.push_back("depth=" + shortNumber(*depth));
 	if (pattern) parts.push_back("pattern=" + *pattern);
+	if (bump) parts.push_back(std::string("bump=") + bumpChoiceKey(*bump));
+	if (bumpStrength) parts.push_back("bumpstrength=" + shortNumber(*bumpStrength));
 	if (note) parts.push_back("note=" + quoteValue(*note));
 	for (const auto& [key, value] : extra) parts.push_back(key + "=" + quoteValue(value));
 	std::string out;

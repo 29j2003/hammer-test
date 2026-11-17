@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include <sme/fidelity_effects.h>
 #include <sme/heightmap.h>
 #include <sme/material.h>
 #include <sme/relief_pattern.h>
@@ -162,6 +163,9 @@ private:
 	void setShader(const QString& shader);
 	void refreshPreview(bool reloadTextures);
 	void refreshHeights();
+	/// The generated bump map of Game enhancements for the preview: `reread` reads the heights again
+	/// (another material or decision), else only the strength changed.
+	void refreshGeneratedBump(bool reread);
 	void loadHeightSource();
 	void fillOtherTable();
 	void paintZones();
@@ -220,6 +224,14 @@ private:
 	QComboBox* m_decisionParallax = nullptr;  ///< Auto / On / Off
 	QDoubleSpinBox* m_decisionDepth = nullptr;///< 0 = Mapsmith decides
 	QLabel* m_decisionNote = nullptr;
+	FeatureGroup* m_bumpDecisionBox = nullptr;   ///< Bump map in Game enhancements (generated from the relief's heights)
+	QComboBox* m_decisionBump = nullptr;      ///< Auto / Generate / Off
+	QDoubleSpinBox* m_decisionBumpStrength = nullptr;   ///< 1 = as steep as the relief
+	QLabel* m_bumpNote = nullptr;
+	/// The heights Game enhancements use for this material (reliefHeights), read in the background.
+	QFutureWatcher<ReliefHeights> m_bumpWatcher;
+	std::optional<ReliefHeights> m_bumpHeights;
+	QImage m_generatedBump;                   ///< What the preview shows as $bumpmap when Mapsmith generates one (null: none)
 	/// Shows what the decision file says about the open material.
 	void showDecision();
 	FeatureGroup* m_envBox;

@@ -25,7 +25,8 @@ The **Asset Browser** at the bottom has two tabs, **Materials** and **Models**.
 - **Double-click** applies it to the selection.
 - **Right-click** a material: **Edit material ...** opens it in the Material Editor, **Copy name** copies its name,
   **Parallax** sets the relief of Game enhancements for every selected material (see
-  [Parallax per material](mapbase-fidelity.html#parallax-per-material-auto-on-off)).
+  [Parallax per material](mapbase-fidelity.html#parallax-per-material-auto-on-off)), **Bump map** the bump map it
+  generates from the same heights (see [Bump map per material](mapbase-fidelity.html#bump-map-per-material-auto-generate-off)).
 - The **...** button above the list: **Export materials for review ...**, **Load material decisions ...** and **Open
   decisions file** (see [Materials reviewed in the chat](mapbase-fidelity.html#materials-reviewed-in-the-chat)).
 - **Ctrl+C** on a material copies its name; Ctrl+V pastes it into any field.

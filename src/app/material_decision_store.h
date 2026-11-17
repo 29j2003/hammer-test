@@ -1,7 +1,7 @@
 // material_decision_store.h - The open mod's material decisions (<mod>/cfg/mapsmith_materials.txt,
 // sme/material_decisions.h) for the whole editor: read when a game opens and again when the file
 // changes on disk (edited by hand), changed through Mapsmith's controls (Parallax: Auto / On / Off,
-// Depth; Load material decisions ...), and announced so Game enhancements, the building builder
+// Depth; Bump map: Auto / Generate / Off, Strength; Load material decisions ...), and announced so Game enhancements, the building builder
 // and the material editor follow.
 
 #pragma once
@@ -37,6 +37,9 @@ public:
 	/// Parallax for these materials: a choice (nullopt: keep) and a depth (nullopt: keep; 0: remove the
 	/// line's depth). Auto without depth removes the parallax keys.
 	bool setParallax(const QStringList& materials, std::optional<ParallaxChoice> choice, std::optional<double> depth = std::nullopt);
+	/// Bump map for these materials: a choice (nullopt: keep; Auto removes the key) and a strength
+	/// (nullopt: keep; 1 or less than 0.1: remove the line's strength).
+	bool setBump(const QStringList& materials, std::optional<BumpChoice> choice, std::optional<double> strength = std::nullopt);
 	/// Reads the file again (after it was edited outside).
 	void reload();
 
@@ -57,5 +60,7 @@ private:
 /// Fills a menu with the parallax choice for these materials: Auto / On / Off (the first
 /// material's choice checked), "Depth ..." and "Usual depth" - each written to the decision file.
 void fillParallaxMenu(QMenu* menu, Editor* editor, const QStringList& materials);
+/// The same for the generated bump map: Auto / Generate / Off and "Strength ..." / "Usual strength".
+void fillBumpMenu(QMenu* menu, Editor* editor, const QStringList& materials);
 
 } // namespace sme::app

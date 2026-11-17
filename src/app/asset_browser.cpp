@@ -558,6 +558,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 			menu.addAction(tr("Edit material ..."), this, [this, name] { emit editMaterialRequested(name); });
 			menu.addAction(tr("Copy name"), this, [name] { QApplication::clipboard()->setText(name); });
 			fillParallaxMenu(menu.addMenu(names.size() == 1 ? tr("Parallax") : tr("Parallax for %1 materials").arg(names.size())), m_editor, names);
+			fillBumpMenu(menu.addMenu(names.size() == 1 ? tr("Bump map") : tr("Bump map for %1 materials").arg(names.size())), m_editor, names);
 			if (m_menuFiller) {
 				menu.addSeparator();
 				m_menuFiller(&menu, {AssetKind::Material, name.toStdString()}, m_pageMode ? AssetPlace::MaterialsPage : AssetPlace::AssetBrowser);

@@ -6,6 +6,7 @@
 #include "material_decision_store.h"
 #include "enhancements.h"
 #include "material_preview.h"
+#include "material_review_dialog.h"
 #include "ui_helpers.h"
 
 #include <QButtonGroup>
@@ -469,6 +470,8 @@ MaterialEditor::MaterialEditor(Editor* editor, QWidget* parent) : QWidget(parent
 		if (const auto it = images.find("$normalmap"); it != images.end()) {
 			m_preview->setTexture(MaterialPreview::Bump, it->second);
 		}
+		// Game enhancements' generated bump map wins (what the game will show).
+		if (!m_generatedBump.isNull()) m_preview->setTexture(MaterialPreview::Bump, m_generatedBump);
 		for (auto& [key, thumb] : m_thumbs) {
 			const auto it = images.find(key);
 			thumb->setPixmap(it == images.end() ? QPixmap()
@@ -827,6 +830,47 @@ void MaterialEditor::buildFields() {
 			m_editor->materialDecisions()->setParallax({m_name}, std::nullopt, m_decisionDepth->value());
 		});
 		connect(m_editor->materialDecisions(), &MaterialDecisionStore::changed, this, &MaterialEditor::showDecision);
+	}
+	// Bump map in Game enhancements: generated from the same heights as the relief (decision file).
+	{
+		auto* form = section(m_bumpDecisionBox, tr("Bump map in Game enhancements"));
+		form->addRow(hint(tr("A bump map Game enhancements make from the relief's heights, kept in the mod's cfg/mapsmith_materials.txt. "
+		                     "Auto: where the material has none of its own and Mapsmith makes its relief. The preview shows it at once.")));
+		m_decisionBump = new QComboBox;
+		m_decisionBump->setObjectName("decisionBump");
+		m_decisionBump->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		m_decisionBump->setMinimumContentsLength(6);
+		m_decisionBump->setToolTip(tr("Generate: always (replaces the material's own). Off: never."));
+		m_decisionBump->addItem(tr("Auto"), int(BumpChoice::Auto));
+		m_decisionBump->addItem(tr("Generate"), int(BumpChoice::Generate));
+		m_decisionBump->addItem(tr("Off"), int(BumpChoice::Off));
+		form->addRow(tr("Bump map"), m_decisionBump);
+		m_decisionBumpStrength = new QDoubleSpinBox;
+		m_decisionBumpStrength->setObjectName("decisionBumpStrength");
+		m_decisionBumpStrength->setDecimals(2);
+		m_decisionBumpStrength->setRange(BUMP_STRENGTH_MIN, BUMP_STRENGTH_MAX);
+		m_decisionBumpStrength->setSingleStep(0.1);
+		m_decisionBumpStrength->setValue(1.0);
+		m_decisionBumpStrength->setToolTip(tr("1 is as steep as the relief; less is softer, more is stronger."));
+		form->addRow(tr("Strength"), m_decisionBumpStrength);
+		m_bumpNote = hint(QString());
+		form->addRow(m_bumpNote);
+		connect(m_decisionBump, &QComboBox::activated, this, [this] {
+			if (m_name.isEmpty()) return;
+			m_editor->materialDecisions()->setBump({m_name}, static_cast<BumpChoice>(m_decisionBump->currentData().toInt()));
+		});
+		connect(m_decisionBumpStrength, &QDoubleSpinBox::valueChanged, this, [this] {
+			if (!m_loading) refreshGeneratedBump(false);   // live: the preview's bump at once
+		});
+		connect(m_decisionBumpStrength, &QDoubleSpinBox::editingFinished, this, [this] {
+			if (m_name.isEmpty()) return;
+			m_editor->materialDecisions()->setBump({m_name}, std::nullopt, m_decisionBumpStrength->value());
+		});
+		connect(&m_bumpWatcher, &QFutureWatcherBase::finished, this, [this] {
+			if (m_bumpWatcher.future().resultCount() == 0) return;
+			m_bumpHeights = m_bumpWatcher.result();
+			refreshGeneratedBump(false);
+		});
 	}
 
 	// Relief: mapbase-fidelity's Fidelity_Parallax.
@@ -1352,8 +1396,70 @@ void MaterialEditor::showDecision() {
 	                                     : tr("Set by the decision file: %1").arg(QString::fromStdString(keys)));
 	m_decisionParallax->setEnabled(!m_name.isEmpty() && m_editor->gameEntry());
 	m_decisionDepth->setEnabled(!m_name.isEmpty() && m_editor->gameEntry());
+	if (m_decisionBump) {
+		const QSignalBlocker blockBump(m_decisionBump), blockStrength(m_decisionBumpStrength);
+		m_decisionBump->setCurrentIndex(m_decisionBump->findData(int(d.bump.value_or(BumpChoice::Auto))));
+		m_decisionBumpStrength->setValue(d.bumpStrength.value_or(1.0));
+		m_decisionBump->setEnabled(!m_name.isEmpty() && m_editor->gameEntry());
+		m_decisionBumpStrength->setEnabled(!m_name.isEmpty() && m_editor->gameEntry() && d.bump != BumpChoice::Off);
+	}
 	m_loading = loading;
 	refreshPreview(false);
+	refreshGeneratedBump(true);
+}
+
+void MaterialEditor::refreshGeneratedBump(bool reread) {
+	if (!m_decisionBump) return;
+	auto* game = m_editor->game();
+	const auto* entry = m_editor->gameEntry();
+	if (reread) {
+		m_bumpHeights.reset();
+		if (!game || m_name.isEmpty()) {
+			m_generatedBump = QImage();
+			m_bumpNote->setText(QString());
+			return;
+		}
+		// As Game enhancements read it: the game's original past the mod's generated copy.
+		const std::string name = normalizeMaterialName(m_name.toStdString());
+		const std::filesystem::path modDir = entry ? entry->gameDir : std::filesystem::path();
+		const MaterialDecision decided = m_editor->materialDecisions()->lookup(m_name);
+		const bool mapMaterial = openMapMaterialNames(m_editor).count(toLower(name)) > 0;
+		const GameFileSystem* fs = &game->files;
+		m_bumpWatcher.setFuture(track(QtConcurrent::run([fs, name, modDir, decided, mapMaterial] {
+			const std::string path = "materials/" + name + ".vmt";
+			std::optional<std::string> original;
+			if (!modDir.empty()) original = fs->readOriginal(path, modDir);
+			if (!original) original = fs->readText(path);
+			if (!original) return ReliefHeights{};
+			return reliefHeights(*fs, name, *original, decided, mapMaterial);
+		})));
+		return;   // the watcher calls again with the heights
+	}
+	const bool had = !m_generatedBump.isNull();
+	const bool generated = m_bumpHeights && m_bumpHeights->bump && m_bumpHeights->heights.width > 0;
+	if (generated) {
+		const HeightMap& heights = m_bumpHeights->heights;
+		m_generatedBump = toQImage(normalMapFromHeight(heights, m_decisionBumpStrength->value()));
+		const unsigned w = m_bumpHeights->textureWidth ? m_bumpHeights->textureWidth : heights.width;
+		const unsigned h = m_bumpHeights->textureHeight ? m_bumpHeights->textureHeight : heights.height;
+		const double shrink = std::max(1.0, double(std::max(w, h)) / GENERATED_NORMAL_MAX);
+		m_bumpNote->setText(tr("Generated from the relief's heights (%1), %2x%3 in the game.")
+		                        .arg(QString::fromStdString(m_bumpHeights->source))
+		                        .arg(int(w / shrink))
+		                        .arg(int(h / shrink)));
+	} else {
+		m_generatedBump = QImage();
+		if (!m_bumpHeights) m_bumpNote->setText(QString());
+		else if (m_bumpHeights->heights.width == 0) m_bumpNote->setText(tr("No heights to make one from."));
+		else if (m_decisionBump->currentData().toInt() == int(BumpChoice::Off)) m_bumpNote->setText(tr("Off: no generated bump map."));
+		else m_bumpNote->setText(tr("None: the material keeps its own bump map, or Mapsmith makes no relief for it."));
+	}
+	if (!m_generatedBump.isNull()) {
+		m_preview->setTexture(MaterialPreview::Bump, m_generatedBump);
+	} else if (had) {
+		refreshPreview(true);   // back to the material's own $bumpmap
+	}
+	emit previewUpdated();
 }
 
 void MaterialEditor::openMaterial(const QString& rawName) {
@@ -1442,6 +1548,7 @@ void MaterialEditor::updateSections() {
 	m_liquidBox->setVisible(open && k == Kind::Model);
 	m_bumpBox->setVisible(open && k != Kind::Water && k != Kind::Unlit);
 	m_reliefBox->setVisible(open && (k == Kind::Wall || k == Kind::Blend));
+	if (m_bumpDecisionBox) m_bumpDecisionBox->setVisible(open && (k == Kind::Wall || k == Kind::Blend));
 	m_envBox->setVisible(open && surface);
 	m_alphaBox->setVisible(open && k != Kind::Water);
 	m_detailBox->setVisible(open && k != Kind::Water);
