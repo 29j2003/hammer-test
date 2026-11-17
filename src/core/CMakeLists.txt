@@ -35,6 +35,7 @@ add_library(smecore STATIC
 	src/samples.cpp
 	src/sound_edit.cpp
 	src/editor_report.cpp
+	src/claude_scope.cpp
 	src/shipping.cpp
 	src/visgroups.cpp
 	src/instances.cpp

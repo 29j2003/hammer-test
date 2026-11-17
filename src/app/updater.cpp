@@ -33,6 +33,10 @@ try {
 	Wait-Process -Id $ProcessId -Timeout 120 -ErrorAction SilentlyContinue
 	$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('sme-update-' + [guid]::NewGuid())
 	Expand-Archive -LiteralPath $Zip -DestinationPath $tmp -Force
+	# Claude Desktop keeps Mapsmith's Claude bridge running: stop it (only the one from this folder), else its
+	# .exe and the Qt DLLs it uses cannot be replaced. Claude Desktop starts it again.
+	Get-Process -Name 'mapsmith-mcp' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Target, [System.StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+	Start-Sleep -Milliseconds 500
 	Copy-Item -Path (Join-Path $tmp '*') -Destination $Target -Recurse -Force
 	Remove-Item -LiteralPath $tmp -Recurse -Force
 	Remove-Item -LiteralPath $Zip -Force

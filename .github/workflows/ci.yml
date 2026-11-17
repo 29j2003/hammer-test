@@ -112,6 +112,7 @@ jobs:
           $out = "dist/Mapsmith-$version-windows"
           New-Item -ItemType Directory -Force $out | Out-Null
           Copy-Item build/src/app/Release/Mapsmith.exe $out
+          Copy-Item build/src/app/Release/mapsmith-mcp.exe $out   # the Claude bridge (Project > Claude)
           Copy-Item build/src/probe/Release/sme-probe.exe $out
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.txt $out
           # The mod's features Mapsmith installs into a mod (Project > Features).

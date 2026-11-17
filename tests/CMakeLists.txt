@@ -10,7 +10,7 @@ add_library(sme_fixture STATIC demo.cpp fixture.cpp)
 target_include_directories(sme_fixture PUBLIC .)
 target_link_libraries(sme_fixture PUBLIC smecore PRIVATE sourcepp::vpkpp sourcepp::vtfpp)
 
-add_executable(sme_tests main.cpp test_assets.cpp test_samples.cpp test_fuzz.cpp test_performance.cpp test_studio_anim.cpp test_edge_round.cpp test_animation_import.cpp test_model_export.cpp test_npc_scripts.cpp test_choreography.cpp test_choreo_logic.cpp test_relief_pattern.cpp test_core.cpp test_editing.cpp
+add_executable(sme_tests main.cpp test_assets.cpp test_claude_scope.cpp test_samples.cpp test_fuzz.cpp test_performance.cpp test_studio_anim.cpp test_edge_round.cpp test_animation_import.cpp test_model_export.cpp test_npc_scripts.cpp test_choreography.cpp test_choreo_logic.cpp test_relief_pattern.cpp test_core.cpp test_editing.cpp
 	test_csg.cpp test_asset_refs.cpp test_cubemaps.cpp test_fidelity_effects.cpp test_container_models.cpp test_snapping.cpp test_shape_fit.cpp test_road_texture.cpp test_road_builder.cpp test_building_builder.cpp test_facade_texture.cpp test_material_decisions.cpp test_grid_snap.cpp test_overlay_tools.cpp test_gap_fill.cpp test_prop_placement.cpp test_command_search.cpp test_texture_flow.cpp test_decals.cpp test_displacement.cpp test_crash_log.cpp test_map.cpp test_vmf_roundtrip.cpp test_shipping.cpp test_editor_report.cpp test_mod_template.cpp ../src/probe/report.cpp test_probe.cpp test_git.cpp test_workflow.cpp test_groups.cpp test_mod_menu.cpp test_sound_edit.cpp test_localization.cpp test_doors.cpp test_map_tools.cpp test_mod_code.cpp test_asset_import.cpp test_mod_features.cpp test_mod_install.cpp test_layout.cpp)
 target_include_directories(sme_tests PRIVATE ../src/probe)
 target_link_libraries(sme_tests PRIVATE sme_fixture smecore doctest::doctest)
@@ -38,8 +38,15 @@ if(SME_BUILD_APP)
 	add_executable(sme_app_tests test_app.cpp)
 	set_target_properties(sme_app_tests PROPERTIES AUTOMOC ON)   # ExternalOpenTrap
 	target_link_libraries(sme_app_tests PRIVATE smeapp sme_fixture doctest::doctest Qt6::Test)
+	target_compile_definitions(sme_app_tests PRIVATE SME_CLAUDE_BRIDGE="$<TARGET_FILE:mapsmith-mcp>")
+	add_dependencies(sme_app_tests mapsmith-mcp)
 	add_test(NAME sme_app_tests COMMAND sme_app_tests)
 	set_tests_properties(sme_app_tests PROPERTIES LABELS "ui")
+
+	# The Claude integration's protocol (MCP, pipe handshake, Claude Desktop settings): Qt Core only.
+	add_executable(sme_claude_tests main.cpp test_claude_protocol.cpp)
+	target_link_libraries(sme_claude_tests PRIVATE smeclaude doctest::doctest)
+	add_test(NAME sme_claude_tests COMMAND sme_claude_tests)
 endif()
 
 # Exports the demo map for the interactive browser preview (development tool, not shipped).

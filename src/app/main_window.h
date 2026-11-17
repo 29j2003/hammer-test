@@ -85,6 +85,8 @@ public:
 	[[nodiscard]] Viewport* view3D() const { return m_views[0]; }
 	[[nodiscard]] Viewport* view(int index) const { return m_views[static_cast<std::size_t>(index)]; }
 	[[nodiscard]] ProblemsPanel* problems() const { return m_problems; }
+	/// The Claude integration (Project › Claude).
+	[[nodiscard]] class ClaudeService* claude() const { return m_claude; }
 	[[nodiscard]] BudgetPanel* budget() const { return m_budget; }
 	[[nodiscard]] AssetBrowser* assets() const { return m_assets; }
 	[[nodiscard]] QMenu* gameMenu() const { return m_gameMenu; }
@@ -247,6 +249,7 @@ private:
 	QTabWidget* m_projectPage = nullptr;     ///< Overview, Features, Maps, Menu, Texts, Source control, Mod code, Ship
 	class ModCodePanel* m_modCode = nullptr;
 	class FeaturesPanel* m_features = nullptr;
+	class ClaudeService* m_claude = nullptr;   ///< Project › Claude: the local bridge for Claude
 	class TextsPanel* m_textsPanel = nullptr;
 	MapsPanel* m_mapsPanel = nullptr;
 	QWidget* m_soundsPage = nullptr;         ///< Holds the Sounds browser while its page is shown

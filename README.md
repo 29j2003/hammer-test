@@ -370,6 +370,26 @@ report ...** right away (also a button above the Log). It saves one `.zip` – t
 settings, your last clicks and edits and a picture of each view, with your user name and home folder masked – and
 **Open folder** shows it. Send that file. Mapsmith itself sends nothing.
 
+### Claude in Mapsmith (optional)
+
+**Project > Claude** lets Claude (Claude Desktop or Claude Code on the same PC, with your own Claude account) work
+with your materials – only through Mapsmith:
+
+1. Switch on **Let Claude use Mapsmith** (off by default) and choose **Read only** or **Read and change materials**.
+2. Click **Connect Claude Desktop** once (or **Copy setup for Claude Code** and paste the line in a terminal), then
+   restart Claude Desktop.
+3. Ask Claude about your materials, e.g. "look at the brick materials and switch parallax off where the bricks are too
+   small".
+
+What Claude can do: read the materials of the open game (VMT, pictures, what Mapsmith reads from them, the 3D-check
+pictures), the map's problems, the log and a picture of the 3D view. With **Read and change materials** also: change
+lines of the mod's decision file (`cfg/mapsmith_materials.txt`), change `$parameters` in the mod's own `.vmt` files and
+write text files in one fixed folder, `Documents/Mapsmith/Claude` (the exchange folder). Nothing else: no other folders,
+no programs, no compiling, no internet through Mapsmith. Every call shows under **Claude activity**; every change keeps
+a backup and **Undo Claude's last change** puts it back. **Ask me before each change** shows each change first.
+Switching it off disconnects Claude at once. Mapsmith talks to Claude only through a local connection on your PC
+(`mapsmith-mcp.exe`, next to Mapsmith.exe) – no network port, no key.
+
 ### Help us test: the setup report
 
 `sme-probe.exe report --out report.json` writes what the editor finds on your PC (games, mods, search paths, FGDs,
