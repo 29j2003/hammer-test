@@ -120,6 +120,14 @@ static std::optional<ImageRgba> decodeTextureUnchecked(std::span<const std::byte
 		}
 		return std::nullopt;
 	}
+	// getDataPosition walks every frame, face, slice and mip the header claims: a damaged one
+	// (65280 frames x 65535 slices) kept a loader thread busy for minutes (found by fuzzing).
+	// Real textures stay far below these limits.
+	if (vtf.getMipCount() > 16 || vtf.getFrameCount() > 4096 || vtf.getDepth() > 2048 ||
+	    std::uint64_t(vtf.getFrameCount()) * vtf.getFaceCount() * std::max<std::uint16_t>(vtf.getDepth(), 1) > 65536) {
+		if (error) *error = "damaged VTF header (frames, slices or mip levels)";
+		return std::nullopt;
+	}
 	std::uint8_t mip = 0;
 	if (maxSize > 0) {
 		// Mip 0 is the largest; walk down while the next one is still big enough.

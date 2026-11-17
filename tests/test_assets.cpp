@@ -478,7 +478,8 @@ TEST_CASE("checks: shiny materials without env_cubemap, compiled map whose cubem
 		MapDocument plain;
 		auto [block, ref] = edit::createBlock(plain, Bounds{{0, 0, 0}, {256, 128, 64}}, "DEMO/SHINY");
 		(void)block;
-		const auto* p = find(checkMap(plain, context), Problem::Kind::NoCubemap);
+		const auto plainProblems = checkMap(plain, context);   // kept: `p` points into it (AddressSanitizer)
+		const auto* p = find(plainProblems, Problem::Kind::NoCubemap);
 		REQUIRE(p);
 		REQUIRE_FALSE(applyFix(plain, *p, nullptr).empty());
 		REQUIRE(plain.entities.size() == 1);

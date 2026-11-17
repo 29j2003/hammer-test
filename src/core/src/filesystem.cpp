@@ -81,6 +81,27 @@ bool isVpkArchivePart(std::string_view name) {
 	});
 }
 
+/// A VPK directory file's header must describe sections that fit the file: vpkpp reads the MD5
+/// section entry by entry for as long as the header claims (gigabytes for a damaged one).
+bool plausibleVpkHeader(const std::filesystem::path& file) {
+	std::ifstream in(file, std::ios::binary);
+	std::uint32_t header[7] = {};
+	in.read(reinterpret_cast<char*>(header), sizeof(header));
+	const auto got = static_cast<std::size_t>(in.gcount());
+	if (got < 12 || header[0] != 0x55aa1234u) return true;   // not a Valve VPK header: vpkpp decides
+	std::error_code ec;
+	const std::uint64_t size = std::filesystem::file_size(file, ec);
+	if (ec) return false;
+	if (header[1] == 1) return 12 + std::uint64_t(header[2]) <= size;
+	if (header[1] == 2) {
+		if (got < 28) return false;
+		std::uint64_t total = 28;
+		for (int i = 2; i < 7; ++i) total += header[i];
+		return total <= size;
+	}
+	return true;
+}
+
 } // namespace
 
 bool isSafeGamePath(std::string_view path) {
@@ -232,6 +253,8 @@ void GameFileSystem::addVpk(const std::filesystem::path& vpk, std::vector<std::s
 	std::error_code ec;
 	if (!std::filesystem::is_regular_file(file, ec)) {
 		mount.problem = "VPK not found";
+	} else if (!plausibleVpkHeader(file)) {
+		mount.problem = "VPK header is damaged (its sections are larger than the file)";
 	} else {
 		try {
 			data->vpk = vpkpp::VPK::open(displayPath(file));

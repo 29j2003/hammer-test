@@ -79,4 +79,21 @@ TEST_CASE("security: the picture importer only decodes PNG, JPEG, TGA and BMP") 
 	auto hidden = png;
 	std::memcpy(hidden.data() + 12, "CgBI", 4);
 	CHECK_FALSE(decodeImageFile(hidden));
+	// Sizes from the header are checked before the decoder allocates them: a PNG claiming
+	// 20000 x 20000, a short run-length TGA claiming 65535 x 65535.
+	auto huge = png;
+	for (const int at : {16, 20}) {
+		huge[std::size_t(at)] = std::byte(0);
+		huge[std::size_t(at) + 1] = std::byte(0);
+		huge[std::size_t(at) + 2] = std::byte(0x4e);
+		huge[std::size_t(at) + 3] = std::byte(0x20);
+	}
+	error.clear();
+	CHECK_FALSE(decodeImageFile(huge, &error));
+	CHECK(error.find("too large") != std::string::npos);
+	std::vector<std::byte> tga(40, std::byte(0));
+	tga[2] = std::byte(10);   // run-length true colour
+	tga[12] = tga[13] = tga[14] = tga[15] = std::byte(0xff);
+	tga[16] = std::byte(32);
+	CHECK_FALSE(decodeImageFile(tga));
 }

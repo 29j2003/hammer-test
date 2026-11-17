@@ -1091,7 +1091,8 @@ Change deleteChoreoScene(MapDocument& doc, int sceneId) {
 		if (!entity.get("targetname").empty()) helperNames.insert(toLower(entity.get("targetname")));
 	}
 	std::set<std::string> linked;
-	for (const auto part : splitBars(found->get("mapsmith_links"))) {
+	const std::string links = found->get("mapsmith_links");   // kept: the parts below point into it
+	for (const auto part : splitBars(links)) {
 		if (!trim(part).empty()) linked.insert(toLower(trim(part)));
 	}
 	for (const int id : gone) t.touchEntity(id);

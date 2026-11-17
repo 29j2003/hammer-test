@@ -133,6 +133,55 @@ std::string slashes(std::string text) {
 	return text;
 }
 
+/// The width and height a picture's header claims are sane: at most 8192 x 8192 pixels, and a
+/// TGA's pixels can come from the file (uncompressed: all bytes there; run-length: at most 128
+/// pixels per 2 bytes). PNG: IHDR; BMP: its info header; JPEG: the frame header (SOFn).
+bool plausiblePictureSize(std::span<const std::byte> data) {
+	constexpr std::uint64_t MAX_PIXELS = 8192ull * 8192ull;
+	const auto u8 = [&data](std::size_t at) { return at < data.size() ? std::uint32_t(data[at]) : 0u; };
+	const auto be16 = [&](std::size_t at) { return (u8(at) << 8) | u8(at + 1); };
+	const auto be32 = [&](std::size_t at) { return (be16(at) << 16) | be16(at + 2); };
+	const auto le16 = [&](std::size_t at) { return u8(at) | (u8(at + 1) << 8); };
+	const auto le32 = [&](std::size_t at) { return le16(at) | (le16(at + 2) << 16); };
+	const auto fits = [&](std::uint64_t w, std::uint64_t h) { return w <= 16384 && h <= 16384 && w * h <= MAX_PIXELS; };
+	if (data.size() >= 24 && u8(0) == 0x89 && u8(1) == 'P') return fits(be32(16), be32(20));
+	if (data.size() >= 26 && u8(0) == 'B' && u8(1) == 'M') {
+		const auto h = std::int32_t(le32(22));
+		return fits(le32(18), std::uint64_t(h < 0 ? -std::int64_t(h) : h));
+	}
+	if (data.size() >= 4 && u8(0) == 0xFF && u8(1) == 0xD8) {
+		// Walk the markers to the first frame header.
+		std::size_t at = 2;
+		while (at + 9 < data.size()) {
+			if (u8(at) != 0xFF) return false;
+			const auto marker = u8(at + 1);
+			if (marker == 0xFF) {
+				++at;
+				continue;
+			}
+			if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+				return fits(be16(at + 7), be16(at + 5));
+			}
+			if (marker == 0xD8 || (marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) {
+				at += 2;
+				continue;
+			}
+			at += 2 + be16(at + 2);
+		}
+		return false;   // no frame header: nothing to decode
+	}
+	if (data.size() < 18) return false;   // no picture is smaller than a TGA header
+	{
+		// TGA (no magic): image type 1-3 raw, 9-11 run-length.
+		const auto type = u8(2);
+		const std::uint64_t w = le16(12), h = le16(14), bits = u8(16);
+		if (!fits(w, h)) return false;
+		if (type >= 1 && type <= 3) return w * h * std::max<std::uint64_t>(bits / 8, 1) <= data.size();
+		if (type >= 9 && type <= 11) return w * h <= std::uint64_t(data.size()) * 64;
+	}
+	return true;
+}
+
 } // namespace
 
 std::string importName(std::string_view text) {
@@ -506,6 +555,12 @@ std::optional<ImageRgba> decodeImageFile(std::span<const std::byte> data, std::s
 	if (startsWith("\x89PNG\r\n\x1a\n") &&
 	    (data.size() <= 28 || std::memcmp(data.data() + 12, "IHDR", 4) != 0 || data[28] != std::byte(0))) {
 		if (error) *error = "interlaced PNG - save it again without interlacing (\"Adam7\" / \"interlaced\" off)";
+		return std::nullopt;
+	}
+	// The decoder allocates what the header claims before it reads a pixel (a 600-byte TGA
+	// claiming 65535 x 65535 asked for 16 GB, found by fuzzing): the size first.
+	if (!plausiblePictureSize(data)) {
+		if (error) *error = "the picture is too large (or its header is damaged) - at most 8192 x 8192 pixels";
 		return std::nullopt;
 	}
 	try {

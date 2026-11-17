@@ -765,8 +765,16 @@ Editor-Berichte anderer, Ausgaben fremder Programme. Ein Angreifer schickt so ei
 **Regeln (gelten für neuen Code):**
 - Jede Zahl aus einer Datei ist feindlich: Offsets/Längen gegen die Datei prüfen (`long long`/`uint64_t` rechnen, nie
   `int + int`), Zähler deckeln, bevor etwas reserviert wird. Fremde Bibliotheken reservieren oft so viel, wie die Datei
-  behauptet – davor plausibel prüfen (`texture.cpp: plausibleVtfHeader`, `filesystem.cpp`: VPK-Eintrag ≤ 512 MB) oder
-  wenigstens `try`/`catch` (`std::bad_alloc` wird gefangen).
+  behauptet oder läuft so viele Schleifen – davor plausibel prüfen (`texture.cpp`: `plausibleVtfHeader`, höchstens 16
+  Mips/4096 Frames/2048 Scheiben; `filesystem.cpp`: `plausibleVpkHeader`, VPK-Eintrag ≤ 512 MB) oder wenigstens
+  `try`/`catch` (`std::bad_alloc` wird gefangen).
+- `string_view`s nie auf ein temporäres `std::string` halten (`for (auto part : splitBars(entity.get("x")))` liest
+  freigegebenen Speicher – so in `edit::deleteChoreoScene` gefunden); die ganze Test-Suite läuft mit dem Fuzz-Build
+  auch unter ASan/UBSan (`build-fuzz/tests/sme_tests`, nur Zeitgrenzen dürfen dort scheitern).
+- git nur in Repositories, deren eigene Einstellungen keine Programme starten (`gitRepositoryRisks`: `core.fsmonitor`
+  mit Programm, `core.hooksPath`, `include.path`, eigene Filter außer Git LFS, `ext::`-Remotes, Credential-Programme …);
+  immer mit `-c core.fsmonitor=false`. Ein heruntergeladener Mod-Ordner mit `.git` könnte sonst schon beim
+  `git status` des Source-control-Tabs ein Programm starten.
 - Pfade aus Dateien (Material-, Modell-, Sound-Namen, VPK-Einträge, Manifeste, Entscheidungsdatei) nie ungeprüft an einen
   Ordner hängen: `isSafeGamePath()` (`filesystem.h`: relativ, kein `..`, kein `:`). `GameFileSystem::list` liefert
   VPK-Einträge mit solchen Namen gar nicht erst.
@@ -806,6 +814,14 @@ Ziele (`tests/fuzz/fuzz_targets.h`): `vtf`, `vpk`, `studio` (MDL+VVD+VTX+ANI in 
 Text-Lesern), `fgd`, `zip`. Jeder Fund: Ursache beheben, Eingabe nach `tests/fuzz/regressions/<ziel>/<was>` – der
 Unit-Test „fuzz: saved findings“ spielt alle nach. Neuer Leser → in `fuzz_targets.h` eintragen (und in `test_fuzz.cpp`).
 Mehrere Funde in einem Lauf: `-fork=1 -ignore_crashes=1 -ignore_ooms=1 -ignore_timeouts=1`.
+
+**Gefunden und behoben (17.11.2026):** stb_vorbis v1.22 (Heap, CVEs, s. o.); vtfpp gibt beim De-Interlacing von PNGs
+einen verschobenen Zeiger frei (jedes interlaced PNG → Heap-Fehler; Mapsmith gibt solche PNGs nicht mehr weiter –
+gehört als Fehler an sourcepp gemeldet: `stbi__create_png_image` erhöht `*data->image_data`, `stbi__parse_png_file`
+gibt danach `z->expanded` frei); VTF-Ressourcenzahl und Frames×Scheiben×Mips (Gigabytes bzw. Minuten), VPK-Kopf und
+-Eintragslänge (Gigabytes), Bildgröße aus dem Kopf vor dem Dekodieren (`plausiblePictureSize`: höchstens 8192 × 8192,
+TGA nur so groß, wie die Datei hergeben kann – ein 600-Byte-TGA verlangte 16 GB), int-Überlauf in der VTX-Prüfung, hängender `string_view` in `deleteChoreoScene`; dazu zwei
+Testfehler, die nur ASan sah (Zeiger in ein temporäres `checkMap`-Ergebnis; Guard `__SANITIZE_ADDRESS__` gilt nur für GCC).
 
 **Offen (bewusst, mit Begründung):** kvpp-DMX (`.pcf`) und Teile von vtfpp reservieren noch so viel, wie die Datei
 behauptet – im normalen Build eine kurze Speicherspitze, dann `std::bad_alloc` (gefangen); Abhilfe gehört nach sourcepp

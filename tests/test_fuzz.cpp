@@ -42,6 +42,14 @@
 
 using namespace sme;
 
+#if defined(__SANITIZE_ADDRESS__)
+#define SME_TEST_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define SME_TEST_ASAN 1
+#endif
+#endif
+
 namespace {
 
 using Bytes = std::vector<std::byte>;
@@ -253,8 +261,9 @@ TEST_CASE("fuzz: sounds, particles and compiled maps") {
 	}
 	// sourcepp's DMX reader reserves as many entries as the file claims: a broken count asks for
 	// gigabytes, which throws std::bad_alloc (caught by the readers) - but AddressSanitizer aborts
-	// on such a request instead of throwing, so a sanitizer build leaves the particle files out.
-#ifndef __SANITIZE_ADDRESS__
+	// on such a request instead of throwing, so a sanitizer build leaves the particle files out
+	// (SME_TEST_ASAN: GCC's and clang's way of saying so).
+#ifndef SME_TEST_ASAN
 	for (const auto& pcf : {test::makeDemoFirePcf(), test::makeDemoSparksPcf()}) {
 		fuzzBytes(pcf, [](const Bytes& data) {
 			(void)readParticleDefinitions(data);
