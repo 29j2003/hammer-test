@@ -931,6 +931,27 @@ const Solid* MapDocument::findSolid(const SolidRef& ref) const {
 	return const_cast<MapDocument*>(this)->findSolid(ref);
 }
 
+SolidIndex::SolidIndex(const MapDocument& doc) : m_doc(doc) {
+	m_solids.reserve(doc.solidCount());
+	m_entities.reserve(doc.entities.size());
+	for (const auto& solid : doc.world.solids) m_solids.try_emplace(key(0, solid.id), &solid);
+	for (const auto& entity : doc.entities) {
+		if (entity.id == 0 || !m_entities.try_emplace(entity.id, &entity).second) continue;   // findEntity: the world, the first of an id
+		for (const auto& solid : entity.solids) m_solids.try_emplace(key(entity.id, solid.id), &solid);
+	}
+}
+
+const Solid* SolidIndex::findSolid(const SolidRef& ref) const {
+	const auto it = m_solids.find(key(ref.entityId, ref.solidId));
+	return it != m_solids.end() ? it->second : nullptr;
+}
+
+const Entity* SolidIndex::findEntity(int entityId) const {
+	if (entityId == 0) return &m_doc.world;
+	const auto it = m_entities.find(entityId);
+	return it != m_entities.end() ? it->second : nullptr;
+}
+
 std::size_t MapDocument::solidCount() const {
 	std::size_t count = world.solids.size();
 	for (const auto& entity : entities) {

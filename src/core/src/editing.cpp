@@ -53,10 +53,23 @@ void Selection::toggle(const FaceRef& ref) {
 }
 
 void Selection::prune(const MapDocument& doc) {
-	std::erase_if(solids, [&](const SolidRef& ref) { return !doc.findSolid(ref); });
-	std::erase_if(entities, [&](int id) { return id == 0 || !doc.findEntity(id); });
+	if (solids.size() + entities.size() + faces.size() <= 16) {
+		std::erase_if(solids, [&](const SolidRef& ref) { return !doc.findSolid(ref); });
+		std::erase_if(entities, [&](int id) { return id == 0 || !doc.findEntity(id); });
+		std::erase_if(faces, [&](const FaceRef& face) {
+			const auto* solid = doc.findSolid(face.solid);
+			return !solid || std::none_of(solid->sides.begin(), solid->sides.end(), [&](const Side& s) { return s.id == face.sideId; });
+		});
+		return;
+	}
+	// A big selection (Select all in a big map): one pass over the map instead of a search per
+	// object (that was seconds for 20 000 brushes).
+	const SolidIndex index(doc);
+	const auto find = [&](const SolidRef& ref) { return index.findSolid(ref); };
+	std::erase_if(solids, [&](const SolidRef& ref) { return !find(ref); });
+	std::erase_if(entities, [&](int id) { return id == 0 || !index.findEntity(id); });
 	std::erase_if(faces, [&](const FaceRef& face) {
-		const auto* solid = doc.findSolid(face.solid);
+		const auto* solid = find(face.solid);
 		return !solid || std::none_of(solid->sides.begin(), solid->sides.end(), [&](const Side& s) { return s.id == face.sideId; });
 	});
 }
@@ -215,9 +228,14 @@ bool isSeeThroughHelper(const Entity& entity) {
 
 Bounds selectionBounds(const MapDocument& doc, const Selection& selection, const EntityCatalog* catalog) {
 	Bounds box;
+	// Drawn every frame (gizmo, status bar): a big selection is looked up in one pass over the map,
+	// and each brush's box is remembered (brushExtent).
+	std::optional<SolidIndex> index;
+	if (selection.solids.size() > 16) index.emplace(doc);
 	for (const auto& ref : selection.solids) {
-		if (const auto* solid = doc.findSolid(ref)) {
-			box.add(buildBrushGeometry(*solid).bounds);
+		const Solid* solid = index ? index->findSolid(ref) : doc.findSolid(ref);
+		if (solid) {
+			box.add(brushExtent(*solid).bounds);
 		}
 	}
 	for (const int id : selection.entities) {

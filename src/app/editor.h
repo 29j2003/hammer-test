@@ -108,6 +108,10 @@ public:
 	void guardDisplacements(Change& change);
 	/// Like commit(), but folds into the previous change of the same name (paint strokes).
 	void commitMerged(Change change);
+	/// The brushes the latest documentChanged changed in place (moved, resized, retextured) when
+	/// that was all it did: no brush or entity added or removed, no keys, no other blocks. Null for
+	/// any other change. Lets the views update those brushes instead of rebuilding the whole map.
+	[[nodiscard]] const std::vector<SolidRef>* lastBrushEdit() const { return m_brushEditSerial == m_docSerial ? &m_brushEdit : nullptr; }
 	void undo();
 	void redo();
 	/// Undoes or redoes until exactly `index` changes are applied (undo history panel).
@@ -617,6 +621,11 @@ private:
 	/// share, a click takes the one changed last.
 	std::unordered_map<long long, std::uint64_t> m_editStamps;
 	unsigned m_docSerial = 0;   ///< Counts documentChanged (a road plan made before is stale)
+	/// lastBrushEdit: the brushes, and the documentChanged they belong to (see noteBrushEdit).
+	std::vector<SolidRef> m_brushEdit;
+	unsigned m_brushEditSerial = ~0u;
+	/// Before emitting documentChanged for `change`: remembers its brushes when it only changed brushes in place.
+	void noteBrushEdit(const Change* change);
 	mutable std::shared_ptr<const MapDocument> m_docSnapshot;   ///< The map shared with plans on other threads
 	mutable unsigned m_docSnapshotSerial = ~0u;
 	std::uint64_t m_editCounter = 0;

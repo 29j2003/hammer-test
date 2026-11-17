@@ -32,6 +32,15 @@ struct BrushGeometry {
 /// Builds the faces of a brush from its side planes. `valid` is false for broken brushes.
 [[nodiscard]] BrushGeometry buildBrushGeometry(const Solid& solid);
 
+/// The bounds and validity buildBrushGeometry gives the brush, remembered per thread by the side
+/// planes (only they decide the shape): tools that look for brushes near something, and the
+/// selection's box drawn every frame, ask for many brushes again and again.
+struct BrushExtent {
+	Bounds bounds;
+	bool valid = false;
+};
+[[nodiscard]] BrushExtent brushExtent(const Solid& solid);
+
 /// Texture coordinates in texels (divide by texture size for 0..1), like the engine computes them.
 struct TexCoord {
 	double u = 0, v = 0;

@@ -3980,21 +3980,25 @@ std::vector<BuildingRecord> buildingsInMap(const MapDocument& doc) {
 
 std::set<int> buildingIdsOf(const MapDocument& doc, const Selection& selection) {
 	std::set<int> ids;
+	// Runs on every selection change: Select all in a big map looked up each brush on its own.
+	std::optional<SolidIndex> index;
+	if (selection.solids.size() + selection.faces.size() + selection.entities.size() > 16) index.emplace(doc);
+	const auto findEntity = [&](int id) { return index ? index->findEntity(id) : doc.findEntity(id); };
 	const auto ofSolid = [&](const SolidRef& ref) {
 		if (ref.entityId != 0) {
-			if (const Entity* e = doc.findEntity(ref.entityId)) {
+			if (const Entity* e = findEntity(ref.entityId)) {
 				if (const int id = toInt(e->get(KEY_ID), 0)) ids.insert(id);
 			}
 			return;
 		}
-		if (const Solid* s = doc.findSolid(ref)) {
+		if (const Solid* s = index ? index->findSolid(ref) : doc.findSolid(ref)) {
 			if (const int id = solidBuildingId(*s)) ids.insert(id);
 		}
 	};
 	for (const auto& ref : selection.solids) ofSolid(ref);
 	for (const auto& face : selection.faces) ofSolid(face.solid);
 	for (const int id : selection.entities) {
-		if (const Entity* e = doc.findEntity(id)) {
+		if (const Entity* e = findEntity(id)) {
 			if (const int b = toInt(e->get(KEY_ID), 0)) ids.insert(b);
 		}
 	}

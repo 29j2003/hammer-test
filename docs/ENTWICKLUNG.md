@@ -797,6 +797,25 @@ stimmen beide und Julius meint einen anderen Brush, zeigt `picks.log`, ob er auf
   jedes Widget, das mit Inhalt in ein anderes wandert (Dock, Tab, Seite, Splitter, Scroll-Fläche), wird samt Inhalt
   neu poliert und neu vermessen (Textumbruch!). Siehe Rezept „Neues Panel“. Messen: `valgrind --tool=callgrind
   --toggle-collect='sme::app::MainWindow::MainWindow*'` mit `SME_STARTUP_TRACE=quit`.
+- **`sme-bench`** (`tests/bench.cpp`, nicht im Testlauf): misst den Editor an einer großen erzeugten Karte (20 000
+  Brushes, 2000 Entities, 500 Displacements, 300 Overlays) in einer Mod mit 3000 Materialien (256er DXT1). Die Daten
+  entstehen einmal in `--data DIR` (Standard: Temp-Ordner, etwa 1 Minute). `xvfb-run -a build/tests/sme-bench
+  [--only NAME] [--repeat N]` gibt je Schritt die Rechenzeit des UI-Threads aus (Median, verzögerte Arbeit nach
+  Timern eingerechnet; „wall“ = Uhrzeit). Profil genau eines Schritts: `mkfifo ctl; SME_PERF_FIFO=ctl perf record
+  --control=fifo:ctl -D -1 -g --call-graph dwarf -- build/tests/sme-bench --only NAME` (oder callgrind mit
+  `--instr-atstart=no`). Unter xvfb zeichnet Mesa in Software: Bildzeiten sagen über echte Grafikkarten wenig.
+  Ergebnisse November 2026 (vorher → nachher): Karte öffnen bis zum ersten Bild 13,2 → 3,7 s (Uhrzeit), danach
+  verzögerte Arbeit 542 → 11 ms (Prüfungen laufen im Hintergrund, `ProblemsPanel::runChecksInBackground`),
+  Autosave im UI-Thread 371 → 30 ms (Kopie statt Text, Text im Pool), Auswahl aller Brushes beschneiden 81 → 2 ms
+  (`SolidIndex`), Vorschau-Job Gebäude 1109 → 451 ms (`brushExtent` merkt sich Boxen, `solidsNear`), einen Brush
+  verschieben 1025 → 450 ms (Rest ist das eine Software-Bild mit Schatten), Relief-Höhen aus der Farbe
+  (`heightFromColor`, im Hintergrund) etwa 25 % schneller bei gleichen Bits.
+- **Brushes ändern ohne Neuaufbau:** `Editor::lastBrushEdit()` nennt die Brushes einer Änderung, die nur Brushes an
+  Ort und Stelle geändert hat (verschieben, Größe, Textur-Achsen; auch Undo/Redo). Die Ansicht schreibt dann mit
+  `SceneRenderer::updateSolids` nur deren Ecken und Kanten neu (auch Displacements gleicher Stufe). Alles andere
+  (eine Fläche mehr/weniger, anderes Material, Overlay/Infodecal auf der Fläche, Entities, Keys) baut wie bisher
+  alles neu – `updateSolids` ändert nichts, wenn es `false` gibt. Neue Daten pro Fläche, die `rebuild` anlegt,
+  müssen auch dort nachgeführt werden.
 - Testdaten erzeugt `tests/fixture.cpp` (HL2 in zwei Bibliotheken, SDK Base 2013, Mapbase-artige Mod, VPKs, Hammer++)
   und `tests/demo.cpp` (prozedurale Texturen, Modell mit Animationen, Sounds, Demo-Karte mit absichtlichen Fehlern).
 

@@ -45,3 +45,10 @@ endif()
 # Exports the demo map for the interactive browser preview (development tool, not shipped).
 add_executable(sme-export-web export_web.cpp)
 target_link_libraries(sme-export-web PRIVATE sme_fixture)
+
+# sme-bench: times the editor on a big generated map and mod (docs/ENTWICKLUNG.md, "Leistung");
+# a development tool, not part of the test run.
+if(SME_BUILD_APP)
+	add_executable(sme-bench bench.cpp)
+	target_link_libraries(sme-bench PRIVATE smeapp sme_fixture Qt6::Test)
+endif()

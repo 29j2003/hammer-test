@@ -182,6 +182,22 @@ private:
 	std::shared_ptr<const Layout> m_layout;
 };
 
+/// findSolid and findEntity for many lookups in a row (a big selection): one pass over the map,
+/// then each lookup by hash. Finds what findSolid / findEntity find (the first of an id). Valid
+/// while the document's lists are unchanged.
+class SolidIndex {
+public:
+	explicit SolidIndex(const MapDocument& doc);
+	[[nodiscard]] const Solid* findSolid(const SolidRef& ref) const;
+	[[nodiscard]] const Entity* findEntity(int entityId) const;   ///< 0 = world
+
+private:
+	static std::uint64_t key(int entityId, int solidId) { return (std::uint64_t(std::uint32_t(entityId)) << 32) | std::uint32_t(solidId); }
+	const MapDocument& m_doc;
+	std::unordered_map<std::uint64_t, const Solid*> m_solids;
+	std::unordered_map<int, const Entity*> m_entities;
+};
+
 /// Differences between two VMF (or other KeyValues) texts: keys, values and block structure in
 /// order, as readable lines ("world > solid #2 (id 5) > side #1 (id 7) > uaxis: \"…\" -> \"…\"").
 /// Layout (line endings, indentation, quoting) is not compared. At most `limit` lines.

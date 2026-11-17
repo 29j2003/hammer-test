@@ -442,6 +442,17 @@ void Editor::guardDisplacements(Change& change) {
 	}
 }
 
+void Editor::noteBrushEdit(const Change* change) {
+	m_brushEdit.clear();
+	m_brushEditSerial = ~0u;
+	if (!change || !change->entities.empty() || change->worldBefore || change->worldAfter || change->headerBefore || change->headerAfter) return;
+	for (const auto& state : change->solids) {
+		if (!state.before || !state.after) return;   // a brush added or removed
+		m_brushEdit.push_back(state.ref);
+	}
+	m_brushEditSerial = m_docSerial + 1;   // documentChanged's first listener counts it up
+}
+
 void Editor::commit(Change change) {
 	if (change.empty()) {
 		return;
@@ -449,6 +460,7 @@ void Editor::commit(Change change) {
 	guardDisplacements(change);
 	stampEdits(change);
 	noteEdit(describeChange(change));
+	noteBrushEdit(&change);
 	m_history.push(std::move(change));
 	m_selection.prune(m_doc);
 	emit documentChanged();
@@ -462,6 +474,7 @@ void Editor::commitMerged(Change change) {
 	guardDisplacements(change);
 	stampEdits(change);
 	noteEdit(describeChange(change), true);
+	noteBrushEdit(&change);
 	m_history.push(std::move(change), true);
 	m_selection.prune(m_doc);
 	emit documentChanged();
@@ -470,6 +483,7 @@ void Editor::commitMerged(Change change) {
 
 void Editor::undo() {
 	const auto name = m_history.undoName();
+	noteBrushEdit(m_history.index() > 0 ? m_history.changeAt(m_history.index() - 1) : nullptr);
 	if (m_history.undo(m_doc)) {
 		noteEdit("undo \"" + name + "\"\n");
 		m_selection.prune(m_doc);
@@ -495,6 +509,7 @@ void Editor::undoTo(std::size_t index) {
 
 void Editor::redo() {
 	const auto name = m_history.redoName();
+	noteBrushEdit(m_history.changeAt(m_history.index()));
 	if (m_history.redo(m_doc)) {
 		noteEdit("redo \"" + name + "\"\n");
 		m_selection.prune(m_doc);

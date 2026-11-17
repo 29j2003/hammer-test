@@ -775,9 +775,9 @@ std::vector<NearbySolid> solidsNear(const MapDocument& doc, const Bounds& around
 		for (const auto& solid : entity.solids) {
 			const SolidRef ref{entityId, solid.id};
 			if (std::find(skip.begin(), skip.end(), ref) != skip.end()) continue;
-			const auto geometry = buildBrushGeometry(solid);
-			if (!geometry.valid) continue;
-			const Bounds& box = geometry.bounds;
+			const auto extent = brushExtent(solid);   // remembered: this runs over every brush of the map
+			if (!extent.valid) continue;
+			const Bounds& box = extent.bounds;
 			if (box.max.x < around.min.x - margin || box.min.x > around.max.x + margin || box.max.y < around.min.y - margin ||
 			    box.min.y > around.max.y + margin || box.max.z < around.min.z - margin || box.min.z > around.max.z + margin) {
 				continue;
