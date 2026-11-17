@@ -1,6 +1,7 @@
 // updater.cpp - Release check, download and install (see updater.h).
 
 #include "updater.h"
+#include "system_paths.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -25,6 +26,7 @@ namespace sme::app {
 namespace {
 
 constexpr int TIMEOUT_MS = 20000;
+constexpr const char* RELEASE_FILES = "/29j2003/hammer-test/releases/download/";
 
 // Waits for the editor to close, unpacks the new version over the old one and starts it.
 constexpr const char* INSTALL_SCRIPT = R"PS(param([string]$Zip, [string]$Target, [int]$ProcessId, [string]$Exe)
@@ -47,6 +49,18 @@ try {
 Start-Process -FilePath $Exe
 )PS";
 
+/// Files of this project's releases only: https://github.com/<repo>/releases/download/... (GitHub
+/// redirects from there to its file servers; the redirect may not leave https).
+bool releaseFileUrl(const QUrl& url) {
+	return url.scheme() == QLatin1String("https") && url.host().compare(QLatin1String("github.com"), Qt::CaseInsensitive) == 0 &&
+	       url.path().startsWith(QLatin1String(RELEASE_FILES)) && !url.path().contains(QLatin1String(".."));
+}
+
+/// A plain file name for the download folder (no folder parts, nothing hidden).
+bool plainFileName(const QString& name) {
+	return !name.isEmpty() && !name.startsWith('.') && !name.contains('/') && !name.contains('\\') && !name.contains(':');
+}
+
 } // namespace
 
 std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
@@ -58,7 +72,9 @@ std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
 	ReleaseInfo release;
 	release.version = tag.startsWith('v', Qt::CaseInsensitive) ? tag.mid(1) : tag;
 	release.notes = object.value("body").toString();
-	release.page = QUrl(object.value("html_url").toString());
+	// Opened in the browser: only a web page (a file:// link would start a program).
+	const QUrl page(object.value("html_url").toString());
+	if (page.scheme() == QLatin1String("https")) release.page = page;
 	// A release has a checksum file per package (the installer's and the ZIP's, in any order):
 	// the ZIP's own one, else a list of all (SHA256SUMS).
 	QHash<QString, QUrl> checksums;
@@ -67,6 +83,7 @@ std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
 		const auto asset = value.toObject();
 		const QString name = asset.value("name").toString();
 		const QUrl url(asset.value("browser_download_url").toString());
+		if (!plainFileName(name) || !releaseFileUrl(url)) continue;   // not one of this project's release files
 		if (name.endsWith("-windows.zip", Qt::CaseInsensitive)) {
 			release.zipName = name;
 			release.zipUrl = url;
@@ -213,7 +230,7 @@ bool Updater::install(const QString& zipPath, QString* error) {
 	                            "-Zip", QDir::toNativeSeparators(zipPath), "-Target", QDir::toNativeSeparators(QCoreApplication::applicationDirPath()),
 	                            "-ProcessId", QString::number(QCoreApplication::applicationPid()),
 	                            "-Exe", QDir::toNativeSeparators(QCoreApplication::applicationFilePath())};
-	if (!QProcess::startDetached(QStringLiteral("powershell"), arguments)) {
+	if (!QProcess::startDetached(systemProgram(QStringLiteral("powershell.exe")), arguments)) {
 		if (error) *error = QObject::tr("PowerShell could not be started");
 		return false;
 	}

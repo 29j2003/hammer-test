@@ -23,10 +23,25 @@ endif()
 
 option(SME_BUILD_APP   "Build the Qt editor application" ON)
 option(SME_BUILD_TESTS "Build the unit tests"            ON)
+option(SME_FUZZ        "Build the libFuzzer targets in tests/fuzz (clang; AddressSanitizer + UBSan everywhere)" OFF)
+
+if(SME_FUZZ)
+	if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+		message(FATAL_ERROR "SME_FUZZ needs clang (libFuzzer): -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++")
+	endif()
+	# Coverage and AddressSanitizer for everything (the readers of sourcepp too); UBSan stops at the
+	# first finding in Mapsmith's own code and the fuzz targets (third-party code only reports it).
+	add_compile_options(-fsanitize=fuzzer-no-link,address -fno-omit-frame-pointer -g)
+	add_link_options(-fsanitize=address,undefined)
+	set(SME_FUZZ_UB_FLAGS -fsanitize=undefined -fno-sanitize-recover=undefined -fno-sanitize=vptr)
+endif()
 
 include(cmake/Dependencies.cmake)
 
 add_subdirectory(src/core)
+if(SME_FUZZ)
+	target_compile_options(smecore PRIVATE ${SME_FUZZ_UB_FLAGS})
+endif()
 add_subdirectory(src/probe)
 if(SME_BUILD_APP)
 	add_subdirectory(src/claude)
@@ -36,4 +51,7 @@ endif()
 if(SME_BUILD_TESTS)
 	enable_testing()
 	add_subdirectory(tests)
+endif()
+if(SME_FUZZ)
+	add_subdirectory(tests/fuzz)
 endif()

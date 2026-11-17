@@ -5,6 +5,7 @@
 
 #include "editor.h"
 #include "source_control_panel.h"
+#include "system_paths.h"
 #include "ui_helpers.h"
 
 #include <QCheckBox>
@@ -36,6 +37,7 @@
 #include <iterator>
 
 #include <sme/game.h>
+#include <sme/git_status.h>
 
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -277,19 +279,23 @@ ModCodePanel::ModCodePanel(Editor* editor, QWidget* parent) : QWidget(parent), m
 	});
 	connect(choose, &QPushButton::clicked, this, [this] {
 		const QString folder = QFileDialog::getExistingDirectory(this, tr("Source code of the mod"), m_root);
-		if (!folder.isEmpty()) setRepository(folder);
+		if (!folder.isEmpty()) {
+			setRepository(folder);
+			confirmFolder();
+		}
 	});
 	connect(openFolder, &QPushButton::clicked, this, [this] {
 		if (!m_root.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(m_root));
 	});
-	connect(m_update, &QPushButton::clicked, this, [this] { start(ModCodeAction::Update); });
-	connect(m_deploy, &QPushButton::clicked, this, [this] { start(ModCodeAction::Deploy); });
-	connect(m_report, &QPushButton::clicked, this, [this] { start(ModCodeAction::Report); });
+	// A script the mapper starts by hand: this folder is the mod's code (confirmFolder).
+	connect(m_update, &QPushButton::clicked, this, [this] { confirmFolder(); start(ModCodeAction::Update); });
+	connect(m_deploy, &QPushButton::clicked, this, [this] { confirmFolder(); start(ModCodeAction::Deploy); });
+	connect(m_report, &QPushButton::clicked, this, [this] { confirmFolder(); start(ModCodeAction::Report); });
 	connect(m_cancel, &QPushButton::clicked, this, &ModCodePanel::cancel);
 	connect(m_check, &QPushButton::clicked, this, &ModCodePanel::checkForChanges);
-	connect(m_pullUpdate, &QPushButton::clicked, this, &ModCodePanel::pullAndUpdate);
-	connect(m_bannerPull, &QPushButton::clicked, this, &ModCodePanel::pullAndUpdate);
-	connect(m_bannerUpdate, &QPushButton::clicked, this, [this] { start(ModCodeAction::Update); });
+	connect(m_pullUpdate, &QPushButton::clicked, this, [this] { confirmFolder(); pullAndUpdate(); });
+	connect(m_bannerPull, &QPushButton::clicked, this, [this] { confirmFolder(); pullAndUpdate(); });
+	connect(m_bannerUpdate, &QPushButton::clicked, this, [this] { confirmFolder(); start(ModCodeAction::Update); });
 	connect(show, &QPushButton::clicked, this, &ModCodePanel::showRequested);
 	const auto saveOption = [this](QCheckBox* box, const QString& name) {
 		connect(box, &QCheckBox::toggled, this, [this, name](bool on) { setOption(name, on); });
@@ -341,6 +347,15 @@ void ModCodePanel::setOption(const QString& name, bool on) {
 	if (!m_gameKey.isEmpty()) QSettings().setValue(settingsKey(name), on);
 }
 
+void ModCodePanel::confirmFolder() {
+	if (!m_gameKey.isEmpty() && !m_root.isEmpty()) QSettings().setValue(settingsKey("confirmedFolder"), QDir::cleanPath(m_root));
+}
+
+bool ModCodePanel::folderConfirmed() const {
+	return !m_gameKey.isEmpty() && !m_root.isEmpty() &&
+	       QSettings().value(settingsKey("confirmedFolder")).toString() == QDir::cleanPath(m_root);
+}
+
 void ModCodePanel::loadForGame() {
 	const QString key = m_editor->gameKey();
 	if (key == m_gameKey) {   // the same mod opened again (e.g. after an update): keep the run
@@ -372,9 +387,12 @@ void ModCodePanel::loadForGame() {
 
 void ModCodePanel::runStartupCheck() {
 	if (m_gameKey.isEmpty() || m_root.isEmpty() || !m_startChecked.insert(m_gameKey).second) return;
-	if (option("pullOnStart")) {
+	if (option("pullOnStart") && folderConfirmed()) {
 		pullAndUpdate();
-	} else if (option("checkOnStart")) {
+	} else if (option("pullOnStart") || option("checkOnStart")) {
+		// A folder only found by searching never runs its scripts by itself: a copy of someone
+		// else's mod with the same name could be what the search found.
+		if (option("pullOnStart")) log(tr("Automatic update waits until you run Update once in this folder (it was found by searching)."));
 		checkForChanges();
 	} else {
 		// No network: only whether the checkout moved on since the last update (a pull elsewhere).
@@ -581,7 +599,7 @@ bool ModCodePanel::start(ModCodeAction action) {
 
 	auto* process = new QProcess(this);
 	m_process = process;
-	process->setProgram(QString::fromStdString(command->program));
+	process->setProgram(systemProgram(QString::fromStdString(command->program)));   // Windows: from System32, never the current folder
 	process->setArguments(args);
 	process->setWorkingDirectory(fromPath(command->workingDir));
 #ifdef Q_OS_WIN
@@ -615,7 +633,7 @@ void ModCodePanel::cancel() {
 	log(tr("Stopping ..."), QStringLiteral("#ffc070"));
 #ifdef Q_OS_WIN
 	// The whole tree: PowerShell, MSBuild and the compilers it started.
-	QProcess::startDetached(QStringLiteral("taskkill"), {"/PID", QString::number(m_process->processId()), "/T", "/F"});
+	QProcess::startDetached(systemProgram(QStringLiteral("taskkill.exe")), {"/PID", QString::number(m_process->processId()), "/T", "/F"});
 #endif
 	m_process->kill();
 }
@@ -807,6 +825,14 @@ void ModCodePanel::git(const QStringList& args, std::function<void(int, const QS
 		if (done) done(-1, {});
 		return;
 	}
+	// No git in a repository whose own settings start programs (see gitRepositoryRisks).
+	if (const auto risks = gitRepositoryRisks(toPath(m_root)); !risks.empty()) {
+		log(tr("Mapsmith runs no git in this folder: its settings (.git/config) would start programs - %1.")
+		        .arg(QString::fromStdString(risks.front())),
+		    QStringLiteral("#ff8a7a"));
+		if (done) done(-1, {});
+		return;
+	}
 	auto* process = new QProcess(this);
 	m_gitProcess = process;
 	auto env = QProcessEnvironment::systemEnvironment();
@@ -837,7 +863,7 @@ void ModCodePanel::git(const QStringList& args, std::function<void(int, const QS
 		m_gitProcess = nullptr;
 		updateButtons();
 	});
-	process->start(program, QStringList{"-c", "color.ui=false"} + args);
+	process->start(program, QStringList{"-c", "color.ui=false", "-c", "core.fsmonitor=false"} + args);
 	updateButtons();
 }
 

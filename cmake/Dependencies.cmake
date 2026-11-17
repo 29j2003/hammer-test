@@ -28,9 +28,11 @@ FetchContent_MakeAvailable(sourcepp)
 
 # Sound decoders for the sound preview: single files, pinned to a commit and checked by hash.
 # stb_vorbis (Ogg Vorbis): public domain / MIT. minimp3 (MP3): CC0.
+# stb_vorbis v1.24 (2026-11-12): v1.22 had heap overflows on crafted .ogg files
+# (CVE-2023-45675 ... -45682, CVE-2023-47212); keep it at a release with those fixes.
 FetchContent_Declare(stb_vorbis
-	URL      https://raw.githubusercontent.com/nothings/stb/003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5/stb_vorbis.c
-	URL_HASH SHA256=4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636
+	URL      https://raw.githubusercontent.com/nothings/stb/9f755b604db3492df2cbeb39bf84b81e3e3932e3/stb_vorbis.c
+	URL_HASH SHA256=b52cf518355f7b2d181f18b97b812f361ffeb26299d935c8cf29e842401d60a6
 	DOWNLOAD_NO_EXTRACT TRUE)
 FetchContent_Declare(minimp3
 	URL      https://raw.githubusercontent.com/lieff/minimp3/ea99364f61c14656440e8d77e9c233ccf3124633/minimp3.h

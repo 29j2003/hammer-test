@@ -38,7 +38,10 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
 - Kern ohne Qt und testbar halten: neue Logik (Bearbeiten, Prüfen, Formate) nach `src/core/` mit Tests, UI nur dünn darüber.
 - Jede Kartenänderung als `Transaction`/`edit::…` → `Editor::commit()` (Undo!). Nie `doc()` direkt ändern ohne Transaction.
 - Daten nie verlieren: Unbekanntes aus der VMF bleibt in `extra` erhalten; `sme-probe vmf` muss „stable“ melden.
-- Fremde Dateien (VPK, VTF, MDL, VMF) sind nicht vertrauenswürdig: Grenzen prüfen, keine Pfade aus Mounts heraus (`..`).
+- Fremde Dateien (VPK, VTF, MDL, VMF) sind nicht vertrauenswürdig: Grenzen prüfen, keine Pfade aus Mounts heraus (`..`);
+  Pfade aus Dateien vor dem Schreiben mit `isSafeGamePath()`; neue Leser in `tests/fuzz/fuzz_targets.h` (libFuzzer,
+  `-DSME_FUZZ=ON`), jeder Fund als Datei in `tests/fuzz/regressions/`; Windows-Programme mit vollem Pfad (`systemProgram()`).
+  Abschnitt „Sicherheit“ in docs/ENTWICKLUNG.md.
 - Keine Telemetrie. Netzwerk nur für Updates (`updater`: GitHub Releases dieses Repos, abschaltbar, Prüfsumme Pflicht)
   und über das System-`git` der Quellcode-Verwaltung – nur wenn der Nutzer Fetch/Pull/Push drückt oder in Project › Mod code
   eine Automatik (Fetch/Pull beim Start) selbst eingeschaltet hat (Standard: aus).

@@ -117,6 +117,10 @@ private:
 	[[nodiscard]] QString settingsKey(const QString& name) const;
 	[[nodiscard]] bool option(const QString& name) const;
 	void setOption(const QString& name, bool on);
+	/// The mapper chose this folder or ran a script in it by hand: automatic updates may run its
+	/// scripts. A folder only found by searching never runs a script by itself.
+	void confirmFolder();
+	[[nodiscard]] bool folderConfirmed() const;
 	/// Runs the system's git in the checkout (in the background, one after another).
 	void git(const QStringList& args, std::function<void(int exitCode, const QString& out)> done);
 	void compareWithLastUpdate(std::function<void(bool changed)> done);

@@ -6,6 +6,8 @@
 #include <sme/material.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 
 #include <vtfpp/ImageConversion.h>
 #include <vtfpp/VTF.h>
@@ -41,6 +43,23 @@ std::string formatName(vtfpp::ImageFormat format) {
 	}
 }
 
+/// The engine allows at most 32 resources (MAX_RSRC_DICTIONARY_ENTRIES); vtfpp reserves room for
+/// as many as the header claims, so a damaged count asked for gigabytes before failing.
+constexpr std::uint32_t MAX_VTF_RESOURCES = 32;
+
+/// What vtfpp may read: a VTF 7.3+ header's resource count must be plausible (and fit the file).
+bool plausibleVtfHeader(std::span<const std::byte> data) {
+	if (data.size() < 16 || std::memcmp(data.data(), "VTF\0", 4) != 0) return true;   // not ours to judge (other signatures)
+	std::uint32_t major = 0, minor = 0;
+	std::memcpy(&major, data.data() + 4, 4);
+	std::memcpy(&minor, data.data() + 8, 4);
+	if (major != 7 || minor < 3) return true;
+	if (data.size() < 72) return false;
+	std::uint32_t resources = 0;
+	std::memcpy(&resources, data.data() + 68, 4);
+	return resources <= MAX_VTF_RESOURCES && 80 + std::uint64_t(resources) * 8 <= data.size();
+}
+
 } // namespace
 
 static std::optional<TextureInfo> readTextureInfoUnchecked(std::span<const std::byte> vtfData, std::string* error);
@@ -58,6 +77,10 @@ std::optional<TextureInfo> readTextureInfo(std::span<const std::byte> vtfData, s
 }
 
 static std::optional<TextureInfo> readTextureInfoUnchecked(std::span<const std::byte> vtfData, std::string* error) {
+	if (!plausibleVtfHeader(vtfData)) {
+		if (error) *error = "damaged VTF header";
+		return std::nullopt;
+	}
 	const vtfpp::VTF vtf(vtfData, true);
 	if (!vtf) {
 		if (error) {
@@ -86,11 +109,23 @@ std::optional<ImageRgba> decodeTexture(std::span<const std::byte> vtfData, unsig
 }
 
 static std::optional<ImageRgba> decodeTextureUnchecked(std::span<const std::byte> vtfData, unsigned maxSize, std::string* error) {
+	if (!plausibleVtfHeader(vtfData)) {
+		if (error) *error = "damaged VTF header";
+		return std::nullopt;
+	}
 	const vtfpp::VTF vtf(vtfData);
 	if (!vtf || vtf.getMipCount() == 0) {
 		if (error) {
 			*error = "not a valid VTF";
 		}
+		return std::nullopt;
+	}
+	// getDataPosition walks every frame, face, slice and mip the header claims: a damaged one
+	// (65280 frames x 65535 slices) kept a loader thread busy for minutes (found by fuzzing).
+	// Real textures stay far below these limits.
+	if (vtf.getMipCount() > 16 || vtf.getFrameCount() > 4096 || vtf.getDepth() > 2048 ||
+	    std::uint64_t(vtf.getFrameCount()) * vtf.getFaceCount() * std::max<std::uint16_t>(vtf.getDepth(), 1) > 65536) {
+		if (error) *error = "damaged VTF header (frames, slices or mip levels)";
 		return std::nullopt;
 	}
 	std::uint8_t mip = 0;

@@ -51,6 +51,7 @@
 #include "start_page.h"
 #include "startup_trace.h"
 #include "style.h"
+#include "system_paths.h"
 #include "viewport.h"
 
 #include <sme/csg.h>
@@ -109,6 +110,7 @@ void migrateOldSettings() {
 } // namespace
 
 int main(int argc, char** argv) {
+	hardenSearchPaths();   // before anything loads a DLL or starts a program (system_paths.h)
 	startupBegin();
 	QSurfaceFormat format;
 	format.setVersion(3, 3);

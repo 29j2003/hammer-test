@@ -4,7 +4,9 @@
 Checks every file tracked by git (text files only) for e-mail addresses and
 typical secret formats, and every commit for author/committer addresses.
 Only noreply addresses are allowed (GitHub user noreply, GitHub web commits,
-Anthropic). Exit code 1 on findings.
+Anthropic). Also checks the GitHub Actions workflows: every action pinned to a
+commit SHA, and no value from outside (tag, branch, pull request, inputs)
+pasted into a script. Exit code 1 on findings.
 
     python tools/check_privacy.py
 """
@@ -73,9 +75,35 @@ def check_commits():
     return findings
 
 
+PINNED_USES = re.compile(rb"^\s*-?\s*uses:\s*(?:\./|[^@\s]+@[0-9a-f]{40}(?:\s|$))")
+# Values someone outside the repository (a pull request, a tag or branch name, an input) can choose:
+# pasted into a script they run as code. They may only reach a script through env:.
+UNTRUSTED_EXPRESSION = re.compile(
+    rb"\$\{\{\s*(?:github\.event\.|github\.head_ref|github\.ref_name|github\.ref\b|inputs\.)"
+)
+ENV_LINE = re.compile(rb"^\s*[A-Za-z_][A-Za-z0-9_]*:\s*\$\{\{[^}]*\}\}\s*$")
+
+
+def check_workflows():
+    """Findings in GitHub Actions workflows: actions not pinned to a commit, untrusted expressions in scripts."""
+    findings = []
+    for path in git("ls-files", "-z", ".github/workflows").split(b"\0"):
+        if not path:
+            continue
+        name = path.decode("utf-8", "replace")
+        with open(path, "rb") as f:
+            lines = f.read().splitlines()
+        for number, line in enumerate(lines, 1):
+            if re.match(rb"^\s*-?\s*uses:", line) and not PINNED_USES.match(line):
+                findings.append((name, number, "action not pinned to a commit SHA"))
+            if UNTRUSTED_EXPRESSION.search(line) and not ENV_LINE.match(line) and b"ref:" not in line:
+                findings.append((name, number, "untrusted ${{ }} outside env: (pass it through env:)"))
+    return findings
+
+
 def main():
     """Run all checks and report."""
-    findings = check_files() + check_commits()
+    findings = check_files() + check_commits() + check_workflows()
     for where, line, message in findings:
         print("%s:%d: %s" % (where, line, message) if line else "%s: %s" % (where, message))
     if findings:

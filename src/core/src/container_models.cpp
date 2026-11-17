@@ -225,6 +225,10 @@ void planContainerModels(const GameFileSystem& fs, const std::filesystem::path& 
 			}
 			ownDone[own] = false;
 			const std::string material = normalizeMaterialName(own);
+			if (!isSafeGamePath(material) || !isSafeGamePath(model.model)) {   // names from a .mdl: never a file outside the mod
+				materialsReady = false;
+				continue;
+			}
 			const auto file = modDir / "materials" / std::filesystem::path(material + ".vmt");
 			const auto existing = readFile(file);
 			if (existing && !isGeneratedMaterial(*existing)) {

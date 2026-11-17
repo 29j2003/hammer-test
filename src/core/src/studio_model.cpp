@@ -114,7 +114,7 @@ bool readVtxMesh(const Reader& vtx, long long mesh, const StripLayout& layout, s
 			return vtx.get<std::uint16_t>(verts + static_cast<long long>(local) * VTX_VERTEX_SIZE + 4);
 		};
 		const auto addTriangles = [&](int first, int n, bool strip) {
-			if (first < 0 || n < 0 || first + n > numIndices) {
+			if (first < 0 || n < 0 || static_cast<long long>(first) + n > numIndices) {   // no int overflow from file values
 				return false;
 			}
 			if (!strip) {

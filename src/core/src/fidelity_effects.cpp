@@ -1029,6 +1029,9 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 	// gives it the effect by itself (a candidate); a wall only of the maps gets nothing but the
 	// pattern relief.
 	const auto plan1 = [&](GameEffect effect, const std::string& material, bool deployMakes) {
+		// Names come from maps, VPKs and the decision file: one that would leave the mod's
+		// materials folder ("../../x", "c:/x") never becomes a file name.
+		if (!isSafeGamePath(material)) return;
 		const std::string path = vmtPath(material);
 		const auto file = modDir / "materials" / std::filesystem::path(material + ".vmt");
 		std::optional<std::string> own;
