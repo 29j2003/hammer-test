@@ -162,23 +162,50 @@ QImage drawReviewSheet(const std::vector<ReviewEntry>& entries, int sheet, int s
 	return image;
 }
 
+/// One picture as JPEG (PNG when this Qt has no JPEG writer); the name follows the format.
+static QByteArray encodePicture(const QImage& image, QString& name, int quality) {
+	QByteArray bytes;
+	QBuffer buffer(&bytes);
+	buffer.open(QIODevice::WriteOnly);
+	if (!image.save(&buffer, "JPG", quality)) {
+		bytes.clear();
+		buffer.seek(0);
+		image.save(&buffer, "PNG");
+		name.replace(QStringLiteral(".jpg"), QStringLiteral(".png"));
+	}
+	return bytes;
+}
+
 ReviewExportResult exportMaterialReview(const GameFileSystem& fs, const std::vector<std::string>& materials, const MaterialDecisions& decisions,
-                                        const QString& folder, const QString& game, const std::function<bool(int, int)>& progress, qint64 partLimit) {
+                                        const QString& folder, const QString& game, const std::function<bool(int, int)>& progress,
+                                        const ReviewExportOptions& options) {
 	ReviewExportResult result;
 	result.folder = folder;
 	result.materials = int(materials.size());
-	if (!QDir().mkpath(folder)) {
+	const QDir dir(folder);
+	if (!QDir().mkpath(folder) || (options.pictures && !QDir().mkpath(dir.filePath(QStringLiteral("pictures"))))) {
 		result.error = QObject::tr("Could not make the folder %1").arg(QDir::toNativeSeparators(folder));
 		return result;
 	}
 	const auto sheets = reviewSheets(materials.size(), COLUMNS * ROWS);
 	result.sheets = int(sheets.size());
 	std::vector<ReviewEntry> index;
-	std::vector<std::uint64_t> sizes;
-	QStringList sheetFiles;
+	// Per sheet: its file and the pictures of its materials (they travel together in one part).
+	std::vector<QStringList> groups;
+	std::vector<std::vector<std::uint64_t>> groupSizes;
 	int done = 0;
+	const auto save = [&](const QImage& image, QString name, int quality, QStringList& files, std::vector<std::uint64_t>& sizes) -> QString {
+		const QByteArray bytes = encodePicture(image, name, quality);
+		if (bytes.isEmpty() || !writeBytes(dir.filePath(name), bytes)) return {};
+		files << name;
+		sizes.push_back(std::uint64_t(bytes.size()));
+		return name;
+	};
 	for (std::size_t s = 0; s < sheets.size(); ++s) {
 		std::vector<ReviewEntry> entries;
+		QStringList files;
+		std::vector<std::uint64_t> sizes;
+		std::vector<ReviewPictures> pictures;
 		for (const std::size_t i : sheets[s]) {
 			if (progress && !progress(done, int(materials.size()))) {
 				result.cancelled = true;
@@ -186,27 +213,36 @@ ReviewExportResult exportMaterialReview(const GameFileSystem& fs, const std::vec
 			}
 			ReviewEntry e = reviewEntry(fs, materials[i], &decisions, TILE);
 			e.number = int(i) + 1;
+			ReviewPictures picture;
+			reviewRelief(fs, options.modDir, e, &decisions, options.mapMaterials.count(e.name) > 0, options.pictures ? &picture : nullptr);
 			entries.push_back(std::move(e));
+			pictures.push_back(std::move(picture));
 			++done;
 		}
 		const QImage image = drawReviewSheet(entries, int(s) + 1, int(sheets.size()));
-		QByteArray bytes;
-		QBuffer buffer(&bytes);
-		buffer.open(QIODevice::WriteOnly);
-		QString name = QString::fromStdString(reviewSheetName(s));
-		if (!image.save(&buffer, "JPG", 82)) {
-			// No JPEG writer in this Qt: PNG (bigger, the parts just get more).
-			bytes.clear();
-			buffer.seek(0);
-			image.save(&buffer, "PNG");
-			name.replace(QStringLiteral(".jpg"), QStringLiteral(".png"));
-		}
-		if (!writeBytes(QDir(folder).filePath(name), bytes)) {
-			result.error = QObject::tr("Could not write %1").arg(name);
+		if (save(image, QString::fromStdString(reviewSheetName(s)), 82, files, sizes).isEmpty()) {
+			result.error = QObject::tr("Could not write %1").arg(QString::fromStdString(reviewSheetName(s)));
 			return result;
 		}
-		sheetFiles << name;
-		sizes.push_back(std::uint64_t(bytes.size()));
+		for (std::size_t k = 0; k < entries.size() && options.pictures; ++k) {
+			auto& e = entries[k];
+			const auto& picture = pictures[k];
+			const auto one = [&](const ImageRgba& rgba, const char* kind, QImage::Format format) {
+				QImage q = toQImage(rgba);
+				if (q.isNull()) return true;
+				const QString name = save(q.convertToFormat(format), QString::fromStdString(reviewPictureName(e.number, kind)), 85, files, sizes);
+				if (name.isEmpty()) return false;
+				e.pictureFiles.push_back(name.toStdString());
+				return true;
+			};
+			if (!one(picture.base, "base", QImage::Format_RGB888) || !one(picture.height, "height", QImage::Format_Grayscale8) ||
+			    !one(picture.normal, "normal", QImage::Format_RGB888)) {
+				result.error = QObject::tr("Could not write the pictures of %1").arg(QString::fromStdString(e.name));
+				return result;
+			}
+		}
+		groups.push_back(files);
+		groupSizes.push_back(sizes);
 		for (auto& e : entries) {
 			e.base = {};
 			e.bump = {};
@@ -218,9 +254,25 @@ ReviewExportResult exportMaterialReview(const GameFileSystem& fs, const std::vec
 	const std::string csv = reviewIndexCsv(index);
 	const std::string json = reviewIndexJson(index);
 	const qint64 fixedBytes = qint64(csv.size() + json.size()) + 8192;
-	const auto parts = reviewParts(sizes, std::uint64_t(std::max<qint64>(partLimit - fixedBytes, 1024)), 0);
-	const std::string readme = reviewReadme(int(materials.size()), int(sheets.size()), int(parts.size()), game.toStdString());
-	const QDir dir(folder);
+	const std::uint64_t room = std::uint64_t(std::max<qint64>(options.partLimit - fixedBytes, 1024));
+	// A sheet with its pictures is one unit; one too big for a part is split into its files.
+	std::vector<QStringList> units;
+	std::vector<std::uint64_t> unitSizes;
+	for (std::size_t g = 0; g < groups.size(); ++g) {
+		std::uint64_t total = 0;
+		for (const auto size : groupSizes[g]) total += size;
+		if (total <= room) {
+			units.push_back(groups[g]);
+			unitSizes.push_back(total);
+		} else {
+			for (int k = 0; k < groups[g].size(); ++k) {
+				units.push_back({groups[g][k]});
+				unitSizes.push_back(groupSizes[g][std::size_t(k)]);
+			}
+		}
+	}
+	const auto parts = reviewParts(unitSizes, room, 0);
+	const std::string readme = reviewReadme(int(materials.size()), int(sheets.size()), int(parts.size()), game.toStdString(), options.pictures);
 	if (!writeBytes(dir.filePath("index.csv"), QByteArray::fromStdString(csv)) || !writeBytes(dir.filePath("index.json"), QByteArray::fromStdString(json)) ||
 	    !writeBytes(dir.filePath("README.txt"), QByteArray::fromStdString(readme))) {
 		result.error = QObject::tr("Could not write the index in %1").arg(QDir::toNativeSeparators(folder));
@@ -229,7 +281,9 @@ ReviewExportResult exportMaterialReview(const GameFileSystem& fs, const std::vec
 	for (std::size_t part = 0; part < parts.size(); ++part) {
 		std::vector<PackageEntry> files;
 		for (const char* fixed : {"README.txt", "index.csv", "index.json"}) files.push_back({fixed, toPath(dir.filePath(fixed)), {}});
-		for (const std::size_t i : parts[part]) files.push_back({sheetFiles[int(i)].toStdString(), toPath(dir.filePath(sheetFiles[int(i)])), {}});
+		for (const std::size_t i : parts[part]) {
+			for (const QString& file : units[i]) files.push_back({file.toStdString(), toPath(dir.filePath(file)), {}});
+		}
 		const QString zip = dir.filePath(QStringLiteral("mapsmith_materials_part%1of%2.zip").arg(part + 1).arg(parts.size()));
 		std::string error;
 		if (!writeZip(toPath(zip), files, &error)) {
@@ -248,8 +302,8 @@ MaterialReviewDialog::MaterialReviewDialog(Editor* editor, QWidget* parent) : QD
 	setWindowTitle(tr("Export materials for review"));
 	auto* v = new QVBoxLayout(this);
 	auto* intro = new QLabel(tr("Contact sheets of the mod's materials (12 per picture, with name, size, shader and flags), an index with what "
-	                            "Mapsmith decided by itself, and a README - packed in ZIP parts of at most 20 MB. Send the parts into the chat; "
-	                            "paste the answer with Load material decisions."));
+	                            "Mapsmith decided by itself, the pictures for the 3D check, and a README - packed in ZIP parts of at most 20 MB. Send "
+	                            "the parts into the chat; paste the answer with Load material decisions."));
 	intro->setWordWrap(true);
 	v->addWidget(intro);
 	auto* form = new QFormLayout;
@@ -280,6 +334,16 @@ MaterialReviewDialog::MaterialReviewDialog(Editor* editor, QWidget* parent) : QD
 	also->addWidget(m_decals);
 	also->addStretch(1);
 	form->addRow(tr("Also"), also);
+	m_reliefOnly = new QCheckBox(tr("Only materials that can get relief: walls, ground, roof, facades"));
+	m_reliefOnly->setObjectName("reviewReliefOnly");
+	m_reliefOnly->setToolTip(tr("The role from the decision file, else what Mapsmith reads from the picture. See-through materials and decals never get relief."));
+	form->addRow(QString(), m_reliefOnly);
+	m_pictures = new QCheckBox(tr("Pictures for the 3D check"));
+	m_pictures->setObjectName("reviewPictures");
+	m_pictures->setChecked(QSettings().value("review/pictures", true).toBool());
+	m_pictures->setToolTip(tr("Each material also as pictures/NNN_base.jpg (its own resolution up to 1024), NNN_height.jpg (exactly the heights the "
+	                          "game's relief uses) and NNN_normal.jpg (its normal map): enough to judge depth and bump, which the contact sheets cannot show."));
+	form->addRow(tr("Pictures"), m_pictures);
 	m_output = new QLineEdit;
 	m_output->setObjectName("reviewOutput");
 	const QString base = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
@@ -322,7 +386,7 @@ MaterialReviewDialog::MaterialReviewDialog(Editor* editor, QWidget* parent) : QD
 		}
 	});
 	for (auto* radio : {m_maps, m_folderScope, m_all}) connect(radio, &QRadioButton::toggled, this, [this] { updateCount(); });
-	for (auto* box : {m_tools, m_skybox, m_decals}) connect(box, &QCheckBox::toggled, this, [this] { updateCount(); });
+	for (auto* box : {m_tools, m_skybox, m_decals, m_reliefOnly}) connect(box, &QCheckBox::toggled, this, [this] { updateCount(); });
 	connect(m_folderFilter, &QLineEdit::textChanged, this, [this] {
 		if (!m_folderFilter->text().isEmpty()) m_folderScope->setChecked(true);
 		updateCount();
@@ -332,10 +396,11 @@ MaterialReviewDialog::MaterialReviewDialog(Editor* editor, QWidget* parent) : QD
 		const int total = m_total->load(), done = m_done->load();
 		m_progress->setMaximum(std::max(total, 1));
 		m_progress->setValue(done);
-		m_status->setText(tr("Reading and drawing %1 of %2 materials ...").arg(done).arg(total));
+		m_status->setText(total == 0 ? tr("Listing the materials ...") : tr("Reading and drawing %1 of %2 materials ...").arg(done).arg(total));
 	});
 	connect(&m_watcher, &QFutureWatcher<ReviewExportResult>::finished, this, [this] {
 		m_tick.stop();
+		m_busy = false;
 		m_result = m_watcher.result();
 		m_progress->setVisible(false);
 		m_start->setEnabled(true);
@@ -364,28 +429,37 @@ MaterialReviewDialog::~MaterialReviewDialog() {
 	m_watcher.waitForFinished();
 }
 
-std::vector<std::string> MaterialReviewDialog::chosenMaterials() const {
-	const LoadedGame* game = m_editor->game();
-	if (!game) return {};
+ReviewScope MaterialReviewDialog::chosenScope() const {
 	ReviewScope scope;
 	scope.kind = m_all->isChecked() ? ReviewScope::Kind::AllWorld : m_folderScope->isChecked() ? ReviewScope::Kind::Folder : ReviewScope::Kind::MapMaterials;
 	scope.folder = m_folderFilter->text().trimmed().toStdString();
 	scope.tools = m_tools->isChecked();
 	scope.skybox = m_skybox->isChecked();
 	scope.decals = m_decals->isChecked();
-	std::set<std::string> maps;
-	if (scope.kind == ReviewScope::Kind::MapMaterials) {
-		const QString mapDir = m_editor->gameSettings().mapDir;
-		maps = vmfMaterialNames(mapSourceFiles(mapDir.isEmpty() ? std::filesystem::path() : toPath(mapDir)));
-		const auto open = openMapMaterialNames(m_editor);
-		maps.insert(open.begin(), open.end());
-	}
-	return reviewMaterialList(game->files, scope, maps);
+	scope.reliefOnly = m_reliefOnly->isChecked();
+	return scope;
+}
+
+std::set<std::string> MaterialReviewDialog::mapMaterials() const {
+	const QString mapDir = m_editor->gameSettings().mapDir;
+	auto maps = vmfMaterialNames(mapSourceFiles(mapDir.isEmpty() ? std::filesystem::path() : toPath(mapDir)));
+	const auto open = openMapMaterialNames(m_editor);
+	maps.insert(open.begin(), open.end());
+	return maps;
+}
+
+std::vector<std::string> MaterialReviewDialog::chosenMaterials() const {
+	const LoadedGame* game = m_editor->game();
+	if (!game) return {};
+	const ReviewScope scope = chosenScope();
+	const auto decisions = m_editor->materialDecisions()->decisions();
+	return reviewMaterialList(game->files, scope, scope.kind == ReviewScope::Kind::MapMaterials ? mapMaterials() : std::set<std::string>{}, &decisions);
 }
 
 void MaterialReviewDialog::updateCount() {
 	if (m_all->isChecked()) {
 		m_count->setText(tr("Every brush material: counted when the export starts."));
+		m_start->setEnabled(!running());
 		return;
 	}
 	const auto count = chosenMaterials().size();
@@ -396,14 +470,17 @@ void MaterialReviewDialog::updateCount() {
 void MaterialReviewDialog::start() {
 	const LoadedGame* game = m_editor->game();
 	if (!game || running()) return;
-	const auto materials = chosenMaterials();
-	if (materials.empty()) {
-		m_status->setText(tr("No materials to export."));
-		return;
-	}
+	// The list is made in the background too: every brush material (and the relief filter, which
+	// reads each picture) takes a while.
+	const ReviewScope scope = chosenScope();
+	ReviewExportOptions options;
+	options.pictures = m_pictures->isChecked();
+	options.mapMaterials = mapMaterials();
+	if (const auto* entry = m_editor->gameEntry()) options.modDir = entry->gameDir;
+	m_busy = true;
 	m_stop->store(false);
 	m_done->store(0);
-	m_total->store(int(materials.size()));
+	m_total->store(0);
 	m_progress->setVisible(true);
 	m_start->setEnabled(false);
 	m_openFolder->setEnabled(false);
@@ -412,13 +489,21 @@ void MaterialReviewDialog::start() {
 	const QString folder = m_output->text().trimmed();
 	const QString title = QString::fromStdString(game->entry.title);
 	QSettings().setValue("review/folder", folder);
-	m_watcher.setFuture(QtConcurrent::run([fs, materials, decisions = m_editor->materialDecisions()->decisions(), folder, title, done = m_done,
+	QSettings().setValue("review/pictures", options.pictures);
+	m_watcher.setFuture(QtConcurrent::run([fs, scope, options, decisions = m_editor->materialDecisions()->decisions(), folder, title, done = m_done,
 	                                       total = m_total, stop = m_stop] {
+		const auto materials = reviewMaterialList(*fs, scope, scope.kind == ReviewScope::Kind::MapMaterials ? options.mapMaterials : std::set<std::string>{},
+		                                          &decisions);
+		if (materials.empty()) {
+			ReviewExportResult empty;
+			empty.error = QObject::tr("No materials to export.");
+			return empty;
+		}
 		return exportMaterialReview(*fs, materials, decisions, folder, title, [done, total, stop](int d, int t) {
 			done->store(d);
 			total->store(t);
 			return !stop->load();
-		});
+		}, options);
 	}));
 }
 

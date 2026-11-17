@@ -4,6 +4,7 @@
 
 #include <sme/fidelity_effects.h>
 
+#include <sme/asset_import.h>
 #include <sme/assets.h>
 #include <sme/container_models.h>
 #include <sme/autosave.h>
@@ -399,8 +400,9 @@ namespace {
 /// Bumped when the pattern relief changes (the hash makes the walls new).
 /// (pattern2: shallow joints, rounded edges, depth 0.006 - Julius, 29.10.2026; pattern3: flat faces
 /// again with a short bevel, windows divided by bars stay flat; pattern4: the depth follows the
-/// pattern - fine bricks shallower, too fine ones none, 16.11.2026)
-constexpr std::string_view PATTERN_RULES = "pattern4";
+/// pattern - fine bricks shallower, too fine ones none, 16.11.2026; pattern5: a bump map generated from
+/// the same heights where the material has none, 17.11.2026)
+constexpr std::string_view PATTERN_RULES = "pattern5";
 /// deploy.ps1: -ParallaxDepth 0.01 x $CourseDepth 0.6 for walls laid in courses.
 constexpr const char* PATTERN_DEPTH = "0.006";
 /// The shader's default for the darkening of deep parts, written out: a bundle older than this
@@ -463,15 +465,131 @@ std::string patternReliefHash(const GameFileSystem& fs, std::string_view materia
 	if (!bytes) return {};
 	std::uint64_t h = 1469598103934665603ull;
 	fnv(h, PATTERN_RULES.data(), PATTERN_RULES.size());
-	if (options.any() || options.faceScale != 0.25) {
+	if (options.any() || options.faceScale != 0.25 || options.bump != BumpChoice::Auto || options.bumpStrength != 1.0) {
 		// What the decision file says changes the relief, so it changes the hash (old files go).
-		const std::string said = std::string(options.force ? "force;" : "") + (options.noPattern ? "nopattern;" : "") +
-		                         (options.depth ? "depth=" + std::to_string(*options.depth) + ";" : "") + "scale=" + std::to_string(options.faceScale);
+		std::string said = std::string(options.force ? "force;" : "") + (options.noPattern ? "nopattern;" : "") +
+		                   (options.depth ? "depth=" + std::to_string(*options.depth) + ";" : "") + "scale=" + std::to_string(options.faceScale);
+		if (options.bump != BumpChoice::Auto || options.bumpStrength != 1.0) {
+			said += std::string(";bump=") + bumpChoiceKey(options.bump) + ";strength=" + std::to_string(options.bumpStrength);
+		}
 		fnv(h, said.data(), said.size());
 	}
 	fnv(h, originalVmt.data(), originalVmt.size());
 	fnv(h, bytes->data(), bytes->size());
 	return hexHash(h);
+}
+
+namespace {
+
+/// The heights and depth of a pattern relief, without the cache of makePatternRelief.
+struct PatternHeights {
+	std::string textureName;
+	HeightMap heights;
+	ReliefLayout layout;
+	bool patternFound = false;
+	std::string depthText = PATTERN_DEPTH;
+	std::string depthNote;
+	unsigned fullWidth = 0, fullHeight = 0;   ///< The base texture's own size
+};
+
+/// Nullopt: no pattern relief (`why`: a pattern too fine for one, "" for none at all).
+std::optional<PatternHeights> patternHeights(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt,
+                                             const PatternReliefOptions& options, std::string* why, unsigned size = 512) {
+	if (why) why->clear();
+	PatternHeights out;
+	out.textureName = patternWallTexture(material, originalVmt, options.force);
+	if (out.textureName.empty()) return std::nullopt;
+	const auto bytes = fs.read("materials/" + toLower(out.textureName) + ".vtf");
+	if (!bytes) return std::nullopt;
+	if (const auto info = readTextureInfo(*bytes)) {
+		out.fullWidth = info->width;
+		out.fullHeight = info->height;
+	}
+	const auto image = decodeTexture(*bytes, size);
+	if (!image) return std::nullopt;
+	std::optional<HeightMap> heights;
+	if (options.noPattern) {
+		heights = heightFromColor(*image);
+	} else {
+		heights = heightFromTexture(*image, &out.layout);
+	}
+	out.patternFound = out.layout.found() && out.layout.confidence >= 0.5;
+	if (!heights || (!out.patternFound && !options.force)) return std::nullopt;   // deploy's relief stays
+	out.heights = std::move(*heights);
+	// The depth: the decision file's, else from the pattern (fine bricks shallower, too fine none).
+	if (options.depth) {
+		std::ostringstream d;
+		d << *options.depth;
+		out.depthText = d.str();
+		out.depthNote = ", depth " + out.depthText + " from the decision file";
+	} else if (out.patternFound) {
+		const int fullHeight = int(out.layout.transposed ? out.fullWidth : out.fullHeight);
+		const ReliefDepth rule = reliefDepthForLayout(out.layout, std::atof(PATTERN_DEPTH), fullHeight, options.faceScale);
+		if (!rule.on) {
+			if (!options.force) {
+				if (why) *why = rule.reason;
+				return std::nullopt;
+			}
+		} else {
+			std::ostringstream d;
+			d << std::round(rule.depth * 10000.0) / 10000.0;
+			out.depthText = d.str();
+			if (rule.depth < std::atof(PATTERN_DEPTH)) out.depthNote = ", " + rule.reason;
+		}
+	}
+	return out;
+}
+
+/// The material's own bump keys out of a cleaned material text (whole lines).
+std::string withoutBumpKeys(std::string text) {
+	static const std::regex keys(R"re(\r?\n[ \t]*"?\$(bumpmap|ssbump|bumpframe)"?[ \t]+[^\r\n]*)re", ICASE);
+	return std::regex_replace(text, keys, "");
+}
+
+const std::regex OWN_BUMPMAP(R"re("?\$bumpmap"?\s)re", ICASE);
+
+std::string shortNumberText(double v) {
+	std::ostringstream d;
+	d << std::round(v * 10000.0) / 10000.0;
+	return d.str();
+}
+
+} // namespace
+
+PatternReliefOptions reliefOptionsFor(const MaterialDecision& decided) {
+	PatternReliefOptions options;
+	options.force = decided.parallax == ParallaxChoice::On;
+	options.depth = decided.depth;
+	options.noPattern = decided.pattern && *decided.pattern == "none";
+	if (decided.scale && *decided.scale > 0) options.faceScale = *decided.scale;
+	options.bump = decided.bump.value_or(BumpChoice::Auto);
+	if (decided.bumpStrength) options.bumpStrength = std::clamp(*decided.bumpStrength, BUMP_STRENGTH_MIN, BUMP_STRENGTH_MAX);
+	return options;
+}
+
+bool generatesBumpMap(const PatternReliefOptions& options, std::string_view originalVmt) {
+	if (options.bump == BumpChoice::Generate) return true;
+	if (options.bump == BumpChoice::Off) return false;
+	return !std::regex_search(clean(originalVmt), OWN_BUMPMAP);
+}
+
+std::vector<std::byte> encodeGeneratedNormalVtf(const HeightMap& heights, double strength, unsigned width, unsigned height) {
+	if (heights.width == 0 || heights.height == 0) return {};
+	unsigned w = width ? width : heights.width, h = height ? height : heights.height;
+	while (std::max(w, h) > GENERATED_NORMAL_MAX) {
+		w = std::max(1u, w / 2);
+		h = std::max(1u, h / 2);
+	}
+	const ImageRgba normal = normalMapFromHeight(heights, strength, w, h);
+	auto vtf = encodeVtf(normal, false, true, GENERATED_NORMAL_MAX);
+	return vtf ? std::move(*vtf) : std::vector<std::byte>{};
+}
+
+std::string withGeneratedBumpMap(std::string_view vmt, std::string_view normalName) {
+	const std::string c = withoutBumpKeys(clean(vmt));
+	const auto brace = c.find('{');
+	if (brace == std::string::npos) return c;
+	return c.substr(0, brace + 1) + CRLF + param("$bumpmap", std::string(normalName)) + c.substr(brace + 1);
 }
 
 std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt,
@@ -491,59 +609,33 @@ std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::st
 			return std::nullopt;
 		}
 	}
-	const auto noPattern = [&hash, tooFine](std::string why = {}) {
+	std::string why;
+	const auto found = patternHeights(fs, material, originalVmt, options, &why);
+	if (!found) {
 		std::lock_guard lock(mutex);
 		without[hash] = why;
 		if (tooFine) *tooFine = why;
 		return std::nullopt;
-	};
-	const std::string textureName = patternWallTexture(material, originalVmt, options.force);
-	const auto image = loadTexture(fs, textureName, 512);
-	if (!image) return noPattern();
-	ReliefLayout layout;
-	std::optional<HeightMap> heights;
-	if (options.noPattern) {
-		heights = heightFromColor(*image);
-	} else {
-		heights = heightFromTexture(*image, &layout);
-	}
-	const bool patternFound = layout.found() && layout.confidence >= 0.5;
-	if (!heights || (!patternFound && !options.force)) return noPattern();   // deploy's relief stays
-	// The depth: the decision file's, else from the pattern (fine bricks shallower, too fine none).
-	std::string depthText = PATTERN_DEPTH;
-	std::string depthNote;
-	if (options.depth) {
-		std::ostringstream d;
-		d << *options.depth;
-		depthText = d.str();
-		depthNote = ", depth " + depthText + " from the decision file";
-	} else if (patternFound) {
-		int fullHeight = 0;
-		if (const auto bytes = fs.read("materials/" + toLower(textureName) + ".vtf")) {
-			if (const auto info = readTextureInfo(*bytes)) fullHeight = layout.transposed ? info->width : info->height;
-		}
-		const ReliefDepth rule = reliefDepthForLayout(layout, std::atof(PATTERN_DEPTH), fullHeight, options.faceScale);
-		if (!rule.on) {
-			if (!options.force) return noPattern(rule.reason);
-		} else {
-			std::ostringstream d;
-			d << std::round(rule.depth * 10000.0) / 10000.0;
-			depthText = d.str();
-			if (rule.depth < std::atof(PATTERN_DEPTH)) depthNote = ", " + rule.reason;
-		}
 	}
 	PatternRelief out;
 	out.hash = hash;
 	out.heightName = toLower(material) + std::string(PATTERN_RELIEF_SUFFIX);
-	out.heightVtf = encodeHeightVtf(*heights);
+	out.heightVtf = encodeHeightVtf(found->heights);
 	if (out.heightVtf.empty()) return std::nullopt;
+	// The bump map from the same heights, at the base texture's own size (up to 1024).
+	if (generatesBumpMap(options, originalVmt)) {
+		out.normalVtf = encodeGeneratedNormalVtf(found->heights, options.bumpStrength, found->fullWidth, found->fullHeight);
+		if (!out.normalVtf.empty()) out.normalName = toLower(material) + std::string(GENERATED_NORMAL_SUFFIX);
+	}
 	// deploy.ps1's New-ParallaxMaterial: the shader's name swapped, the relief keys first in the
 	// block, the rest of the material as it was (without comments).
-	const std::string c = clean(originalVmt);
+	std::string c = clean(originalVmt);
+	if (!out.normalName.empty()) c = withoutBumpKeys(std::move(c));
 	static const std::regex head(R"re(^\s*"?[A-Za-z0-9_]+"?(\s*\{))re");
 	std::smatch m;
 	if (!std::regex_search(c, m, head)) return std::nullopt;
-	std::vector<std::string> lines{param("$parallaxmap", out.heightName), param("$parallaxdepth", depthText), param("$parallaxao", PATTERN_AO)};
+	std::vector<std::string> lines{param("$parallaxmap", out.heightName), param("$parallaxdepth", found->depthText), param("$parallaxao", PATTERN_AO)};
+	if (!out.normalName.empty()) lines.push_back(param("$bumpmap", out.normalName));
 	static const std::regex envmap(R"re("?\$envmap"?\s)re", ICASE);
 	if (!std::regex_search(c, envmap)) {
 		// As deploy.bat: the map's cubemap, shown only where the wall is wet from rain.
@@ -555,9 +647,103 @@ std::optional<PatternRelief> makePatternRelief(const GameFileSystem& fs, std::st
 	std::string body = m[1].str() + CRLF;
 	for (std::size_t i = 0; i < lines.size(); ++i) body += lines[i] + (i + 1 < lines.size() ? CRLF : "");
 	out.text = std::string(PATTERN_RELIEF_MARKER) + " (relief) from " + vmtPath(toLower(std::string(material))) + " hash " + hash + " " +
-	           (patternFound ? layout.describe() : std::string("from the brightness (decision file: parallax=on)")) + depthNote +
+	           (found->patternFound ? found->layout.describe() : std::string("from the brightness (decision file: parallax=on)")) + found->depthNote +
+	           (out.normalName.empty() ? std::string() : ", bump map generated (strength " + shortNumberText(options.bumpStrength) + ")") +
 	           " (Mapsmith > Project > Game enhancements)" + CRLF + "\"Fidelity_Parallax\"" + body +
 	           c.substr(std::size_t(m.position(0) + m.length(0)));
+	return out;
+}
+
+ReliefHeights reliefHeights(const GameFileSystem& fs, std::string_view material, std::string_view originalVmt, const MaterialDecision& decision,
+                            bool mapMaterial, unsigned maxSize) {
+	ReliefHeights out;
+	out.source = "none";
+	const PatternReliefOptions options = reliefOptionsFor(decision);
+	out.bumpStrength = options.bumpStrength;
+	const ParallaxChoice choice = decision.parallax.value_or(ParallaxChoice::Auto);
+	const auto parsed = parseMaterial(originalVmt, material);
+	if (!parsed) {
+		out.note = "the material could not be read";
+		return out;
+	}
+	const std::string base = baseTexture(clean(originalVmt));
+	if (!base.empty()) {
+		if (const auto bytes = fs.read("materials/" + toLower(base) + ".vtf")) {
+			if (const auto info = readTextureInfo(*bytes)) {
+				out.textureWidth = info->width;
+				out.textureHeight = info->height;
+			}
+		}
+	}
+	// As planEnhancements decides (Relief): the decision file, then name, flags and look.
+	ReliefFit fit = choice == ParallaxChoice::On    ? ReliefFit{true, {}}
+	                : choice == ParallaxChoice::Off ? ReliefFit{false, "material the decision file keeps flat (parallax=off)"}
+	                                                : reliefFitInGame(fs, material, *parsed);
+	PatternReliefOptions effective = options;
+	if (fit.suits && options.bump == BumpChoice::Generate) effective.force = true;   // Mapsmith makes the relief to carry the bump map
+	if (fit.suits) {
+		const bool ours = mapMaterial || effective.any();
+		std::string why;
+		if (ours) {
+			if (auto found = patternHeights(fs, material, originalVmt, effective, &why, maxSize)) {
+				out.heights = std::move(found->heights);
+				out.source = found->patternFound && !effective.noPattern ? "pattern" : "brightness";
+				out.depth = found->depthText;
+				out.note = (found->patternFound ? found->layout.describe() : std::string("from the brightness (decision file)")) + found->depthNote;
+				out.bump = generatesBumpMap(effective, originalVmt);
+				return out;
+			}
+		}
+		if (!why.empty()) {
+			fit = {false, why};
+		} else if (const auto source = fidelityReliefSource(material, *parsed)) {
+			// deploy.bat makes it: from the material's own height map, its normal map or the brightness.
+			if (const auto image = loadTexture(fs, source->texture, maxSize)) {
+				std::optional<HeightMap> heights;
+				switch (source->kind) {
+				case ReliefSource::Kind::HeightMap:
+					heights = heightFromImage(*image);
+					out.source = "material";
+					out.note = "the material's own height map " + toLower(source->texture);
+					break;
+				case ReliefSource::Kind::NormalMap:
+				case ReliefSource::Kind::SSBump:
+					heights = heightFromNormalMap(*image, source->kind == ReliefSource::Kind::SSBump);
+					out.source = "normal";
+					out.note = "deploy.bat makes it from the normal map " + toLower(source->texture);
+					break;
+				case ReliefSource::Kind::Color:
+					heights = heightFromColor(*image);
+					out.source = "brightness";
+					out.note = "deploy.bat makes it from the brightness of " + toLower(source->texture);
+					break;
+				}
+				if (heights) {
+					out.heights = std::move(*heights);
+					out.depth = shortNumberText(source->depth);
+					return out;
+				}
+			}
+			fit = {false, "no heights from " + toLower(source->texture)};
+		} else {
+			fit = {false, "neither Mapsmith's relief nor deploy.bat's rules give it one"};
+		}
+	}
+	// No relief: the heights parallax=on would use, to look at.
+	out.source = "none";
+	out.depth.clear();
+	out.note = fit.reason;
+	PatternReliefOptions forced = options;
+	forced.force = true;
+	if (auto found = patternHeights(fs, material, originalVmt, forced, nullptr, maxSize)) {
+		out.heights = std::move(found->heights);
+	} else if (!base.empty()) {
+		if (const auto image = loadTexture(fs, base, maxSize)) {
+			if (auto heights = heightFromColor(*image)) out.heights = std::move(*heights);
+		}
+	}
+	// A flat material with bump=generate still gets its bump map (a copy without relief).
+	out.bump = options.bump == BumpChoice::Generate && out.heights.width > 0;
 	return out;
 }
 
@@ -832,6 +1018,13 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 		return modDir / "materials" / std::filesystem::path(toLower(material) + std::string(PATTERN_RELIEF_SUFFIX) + ".vtf");
 	};
 	const auto isPattern = [](const std::optional<std::string>& own) { return own && std::string_view(*own).starts_with(PATTERN_RELIEF_MARKER); };
+	const auto normalFileOf = [&modDir](const std::string& material) {
+		return modDir / "materials" / std::filesystem::path(toLower(material) + std::string(GENERATED_NORMAL_SUFFIX) + ".vtf");
+	};
+	// A material of Mapsmith's with a generated bump map (pattern relief or a flat copy).
+	const auto hasNormal = [](const std::optional<std::string>& own) {
+		return own && std::string_view(*own).starts_with(MAPSMITH_MARKER) && own->find(GENERATED_NORMAL_SUFFIX) != std::string::npos;
+	};
 	// One material of one effect: what its file in the mod should be. `deployMakes`: deploy.bat
 	// gives it the effect by itself (a candidate); a wall only of the maps gets nothing but the
 	// pattern relief.
@@ -861,10 +1054,14 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			change.file = file;
 			change.remove = true;
 			if (isPattern(own)) change.heightFile = heightFileOf(material);
+			if (hasNormal(own)) change.normalFile = normalFileOf(material);
 			plan.changes.push_back(std::move(change));
 		};
-		const auto write = [&](std::string text, std::vector<std::byte> heightVtf = {}) {
-			if (own && *own == text && (heightVtf.empty() || std::filesystem::exists(heightFileOf(material)))) return;   // already so
+		const auto write = [&](std::string text, std::vector<std::byte> heightVtf = {}, std::vector<std::byte> normalVtf = {}) {
+			if (own && *own == text && (heightVtf.empty() || std::filesystem::exists(heightFileOf(material))) &&
+			    (normalVtf.empty() || std::filesystem::exists(normalFileOf(material)))) {
+				return;   // already so
+			}
 			EffectChange change;
 			change.effect = effect;
 			change.material = material;
@@ -872,6 +1069,8 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			change.text = std::move(text);
 			if (!heightVtf.empty() || isPattern(own)) change.heightFile = heightFileOf(material);
 			change.heightVtf = std::move(heightVtf);
+			if (!normalVtf.empty() || hasNormal(own)) change.normalFile = normalFileOf(material);
+			change.normalVtf = std::move(normalVtf);
 			plan.changes.push_back(std::move(change));
 		};
 		std::string text;
@@ -888,11 +1087,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			// (also where name and look would not), depth and pattern shape Mapsmith's relief.
 			const MaterialDecision decided = options.decisions ? options.decisions->lookup(material) : MaterialDecision{};
 			const ParallaxChoice choice = decided.parallax.value_or(ParallaxChoice::Auto);
-			PatternReliefOptions reliefOptions;
-			reliefOptions.force = choice == ParallaxChoice::On;
-			reliefOptions.depth = decided.depth;
-			reliefOptions.noPattern = decided.pattern && *decided.pattern == "none";
-			if (decided.scale && *decided.scale > 0) reliefOptions.faceScale = *decided.scale;
+			PatternReliefOptions reliefOptions = reliefOptionsFor(decided);
 			// By name, flags and the texture's look - as the viewport decides (relief_pattern).
 			const auto parsed = parseMaterial(*original, material);
 			ReliefFit fit = parsed ? reliefFitInGame(fs, material, *parsed) : reliefFitByName(material, baseTexture(clean(*original)));
@@ -904,6 +1099,8 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 				wantIt = settings.enabled(effect);
 				fit = {true, {}};
 			}
+			// bump=generate: Mapsmith makes the relief itself (deploy.bat's has no bump map of ours).
+			if (fit.suits && reliefOptions.bump == BumpChoice::Generate) reliefOptions.force = true;
 			if (wantIt && fit.suits) {
 				// Walls of the mod's maps (and every material the decision file shapes): the relief
 				// from the texture's pattern (bricks up, joints down), where one is found clearly;
@@ -913,7 +1110,9 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 				if (ours) {
 					if (isPattern(own)) {
 						const std::string hash = patternReliefHash(fs, material, *original, reliefOptions);
-						if (!hash.empty() && own->find(" hash " + hash + " ") != std::string::npos && std::filesystem::exists(heightFileOf(material))) {
+						const bool normalThere = !generatesBumpMap(reliefOptions, *original) || std::filesystem::exists(normalFileOf(material));
+						if (!hash.empty() && own->find(" hash " + hash + " ") != std::string::npos && std::filesystem::exists(heightFileOf(material)) &&
+						    normalThere) {
 							++plan.active[effect];
 							++plan.patternRelief;
 							return;   // made from this texture and these rules already
@@ -922,7 +1121,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 					if (auto pattern = makePatternRelief(fs, material, *original, reliefOptions, &tooFine)) {
 						++plan.active[effect];
 						++plan.patternRelief;
-						write(std::move(pattern->text), std::move(pattern->heightVtf));
+						write(std::move(pattern->text), std::move(pattern->heightVtf), std::move(pattern->normalVtf));
 						return;
 					}
 				}
@@ -935,8 +1134,30 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 				// A pattern too fine for relief (small bricks swim): kept off, also against deploy.bat.
 				fit = {false, tooFine};
 			}
+			if (reliefOptions.bump == BumpChoice::Generate && want) {
+				// No relief, but bump=generate: a copy of the original with the generated bump map
+				// (from the heights parallax=on would use), kept until the line goes.
+				PatternReliefOptions forced = reliefOptions;
+				forced.force = true;
+				const std::string hash = patternReliefHash(fs, material, *original, forced);
+				if (!hash.empty()) {
+					const std::string tag = " bump " + hash + " ";
+					if (own && own->find(tag) != std::string::npos && std::filesystem::exists(normalFileOf(material))) return;   // already so
+					std::string why;
+					if (const auto found = patternHeights(fs, material, *original, forced, &why)) {
+						auto normal = encodeGeneratedNormalVtf(found->heights, reliefOptions.bumpStrength, found->fullWidth, found->fullHeight);
+						if (!normal.empty()) {
+							write(std::string(MAPSMITH_MARKER) + " off (relief) from " + path + tag + "- flat, with a generated bump map (" + fit.reason +
+							          "; Mapsmith > Project > Game enhancements)" + CRLF +
+							          withGeneratedBumpMap(*original, toLower(material) + std::string(GENERATED_NORMAL_SUFFIX)),
+							      {}, std::move(normal));
+							return;
+						}
+					}
+				}
+			}
 			if (!deployMakes) {
-				if (isPattern(own)) removeOwn();   // switched off: the wall is as in the game again
+				if (isPattern(own) || hasNormal(own)) removeOwn();   // switched off: the wall is as in the game again
 				return;
 			}
 			text = std::string(MAPSMITH_MARKER) + " off (relief) from " + path +
@@ -997,7 +1218,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 		for (const auto& line : options.decisions->lines()) {
 			if (line.pattern.empty() || line.pattern.find_first_of("*?") != std::string::npos || done.count(line.pattern)) continue;
 			const MaterialDecision decided = options.decisions->lookup(line.pattern);
-			if (decided.parallax != ParallaxChoice::On) continue;
+			if (decided.parallax != ParallaxChoice::On && decided.bump != BumpChoice::Generate) continue;
 			done.insert(line.pattern);
 			const auto original = fs.readOriginal(vmtPath(line.pattern), modDir);
 			if (!original || patternWallTexture(line.pattern, *original, true).empty()) continue;
@@ -1019,13 +1240,14 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 				name = name.substr(0, name.size() - 4);
 				if (reliefVisited.count(name)) continue;
 				const auto text = readFile(it->path());
-				if (!text || !std::string_view(*text).starts_with(PATTERN_RELIEF_MARKER)) continue;
+				if (!text || !(std::string_view(*text).starts_with(PATTERN_RELIEF_MARKER) || hasNormal(text))) continue;
 				EffectChange change;
 				change.effect = GameEffect::Relief;
 				change.material = name;
 				change.file = it->path();
 				change.remove = true;
-				change.heightFile = heightFileOf(name);
+				if (std::string_view(*text).starts_with(PATTERN_RELIEF_MARKER)) change.heightFile = heightFileOf(name);
+				if (hasNormal(text)) change.normalFile = normalFileOf(name);
 				plan.changes.push_back(std::move(change));
 			}
 		}
@@ -1053,6 +1275,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 				change.file = it->path();
 				change.remove = true;
 				if (std::string_view(*text).starts_with(PATTERN_RELIEF_MARKER)) change.heightFile = heightFileOf(name);
+				if (hasNormal(text)) change.normalFile = normalFileOf(name);
 				plan.changes.push_back(std::move(change));
 			}
 		}

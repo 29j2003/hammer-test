@@ -10,6 +10,9 @@
 #include <QFileInfo>
 #include <QInputDialog>
 
+#include <algorithm>
+#include <cmath>
+
 #include <sme/text.h>
 
 namespace sme::app {
@@ -103,6 +106,25 @@ bool MaterialDecisionStore::setParallax(const QStringList& materials, std::optio
 	});
 }
 
+bool MaterialDecisionStore::setBump(const QStringList& materials, std::optional<BumpChoice> choice, std::optional<double> strength) {
+	if (materials.isEmpty()) return false;
+	return change([&](MaterialDecisions& d) {
+		for (const QString& material : materials) {
+			d.edit(material.toStdString(), [&](MaterialDecision& m) {
+				if (choice) {
+					if (*choice == BumpChoice::Auto) m.bump.reset();
+					else m.bump = *choice;
+				}
+				if (strength) {
+					if (*strength < BUMP_STRENGTH_MIN || std::abs(*strength - 1.0) < 1e-9) m.bumpStrength.reset();
+					else m.bumpStrength = std::min(*strength, BUMP_STRENGTH_MAX);
+				}
+				if (choice == BumpChoice::Off) m.bumpStrength.reset();
+			});
+		}
+	});
+}
+
 void fillParallaxMenu(QMenu* menu, Editor* editor, const QStringList& materials) {
 	if (!menu || materials.isEmpty()) return;
 	auto* store = editor->materialDecisions();
@@ -149,6 +171,55 @@ void fillParallaxMenu(QMenu* menu, Editor* editor, const QStringList& materials)
 		auto* reset = menu->addAction(QCoreApplication::translate("Parallax", "Usual depth (Mapsmith decides)"));
 		reset->setObjectName("parallaxDepthAuto");
 		QObject::connect(reset, &QAction::triggered, store, [store, materials] { store->setParallax(materials, std::nullopt, 0.0); });
+	}
+}
+
+void fillBumpMenu(QMenu* menu, Editor* editor, const QStringList& materials) {
+	if (!menu || materials.isEmpty()) return;
+	auto* store = editor->materialDecisions();
+	menu->setObjectName("bumpMenu");
+	const MaterialDecision current = store->lookup(materials.front());
+	const BumpChoice choice = current.bump.value_or(BumpChoice::Auto);
+	const bool game = editor->gameEntry() != nullptr;
+	auto* group = new QActionGroup(menu);
+	const struct {
+		BumpChoice choice;
+		QString text, tip, name;
+	} items[] = {
+		{BumpChoice::Auto, QCoreApplication::translate("BumpMap", "Auto (Mapsmith decides)"),
+		 QCoreApplication::translate("BumpMap", "Where the material has no bump map of its own and Mapsmith makes its relief (pattern or Parallax: On)"), "bumpAuto"},
+		{BumpChoice::Generate, QCoreApplication::translate("BumpMap", "Generate"),
+		 QCoreApplication::translate("BumpMap", "Always a bump map from the relief's heights (replaces the material's own)"), "bumpGenerate"},
+		{BumpChoice::Off, QCoreApplication::translate("BumpMap", "Off"), QCoreApplication::translate("BumpMap", "Never a generated bump map"), "bumpOff"},
+	};
+	for (const auto& item : items) {
+		auto* action = menu->addAction(item.text);
+		action->setObjectName(item.name);
+		action->setToolTip(item.tip);
+		action->setCheckable(true);
+		action->setChecked(item.choice == choice);
+		action->setEnabled(game);
+		group->addAction(action);
+		QObject::connect(action, &QAction::triggered, store, [store, materials, c = item.choice] { store->setBump(materials, c); });
+	}
+	menu->setToolTipsVisible(true);
+	menu->addSeparator();
+	auto* strength = menu->addAction(current.bumpStrength ? QCoreApplication::translate("BumpMap", "Strength %1 ...").arg(*current.bumpStrength)
+	                                                      : QCoreApplication::translate("BumpMap", "Strength ..."));
+	strength->setObjectName("bumpStrength");
+	strength->setEnabled(game && choice != BumpChoice::Off);
+	strength->setToolTip(QCoreApplication::translate("BumpMap", "1 is as steep as the relief; less is softer, more is stronger (0.1 to 4)"));
+	QObject::connect(strength, &QAction::triggered, store, [store, materials, now = current.bumpStrength.value_or(1.0)] {
+		bool ok = false;
+		const double value = QInputDialog::getDouble(QApplication::activeWindow(), QCoreApplication::translate("BumpMap", "Bump map strength"),
+		                                             QCoreApplication::translate("BumpMap", "How steep the generated bump map is (1 as the relief):"), now,
+		                                             BUMP_STRENGTH_MIN, BUMP_STRENGTH_MAX, 2, &ok, Qt::WindowFlags(), 0.1);
+		if (ok) store->setBump(materials, std::nullopt, value);
+	});
+	if (current.bumpStrength) {
+		auto* reset = menu->addAction(QCoreApplication::translate("BumpMap", "Usual strength"));
+		reset->setObjectName("bumpStrengthAuto");
+		QObject::connect(reset, &QAction::triggered, store, [store, materials] { store->setBump(materials, std::nullopt, 1.0); });
 	}
 }
 

@@ -2560,7 +2560,7 @@ QMenu* MainWindow::buildContextMenu() {
 				m_editor->overlayOnSelectedFaces(QSettings().value("strip/tile", 128.0).toDouble());
 			})->setObjectName("contextOverlayFaces");
 			menu.addAction(tr("Overlay strip ..."), this, [this] { overlayStripDialog(); })->setObjectName("contextOverlayStrip");
-			// Parallax of the faces' materials (the decision file): on, off or how deep.
+			// Parallax and bump map of the faces' materials (the decision file): on, off or how deep.
 			QStringList materials;
 			for (const auto& face : selection.faces) {
 				const Solid* solid = m_editor->doc().findSolid(face.solid);
@@ -2574,6 +2574,9 @@ QMenu* MainWindow::buildContextMenu() {
 				auto* parallax = menu.addMenu(materials.size() == 1 ? tr("Parallax for this material") : tr("Parallax for these %1 materials").arg(materials.size()));
 				parallax->menuAction()->setObjectName("contextParallax");
 				fillParallaxMenu(parallax, m_editor, materials);
+				auto* bump = menu.addMenu(materials.size() == 1 ? tr("Bump map for this material") : tr("Bump map for these %1 materials").arg(materials.size()));
+				bump->menuAction()->setObjectName("contextBump");
+				fillBumpMenu(bump, m_editor, materials);
 			}
 		}
 		if (selection.entities.size() == 1 && selection.solids.empty() && selection.entities.front() != 0) {

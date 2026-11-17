@@ -556,6 +556,15 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 					fs.noteRemovedFile(change.heightFile);
 				}
 			}
+			if (!change.normalFile.empty()) {
+				if (!change.normalVtf.empty() && !change.remove) {
+					writeBytes(change.normalFile, change.normalVtf);
+					fs.noteWrittenFile(change.normalFile);
+				} else {
+					std::filesystem::remove(change.normalFile);
+					fs.noteRemovedFile(change.normalFile);
+				}
+			}
 		}
 	};
 	EffectCandidates only{{GameEffect::Relief, effectCandidates(fs, mod, GameEffect::Relief)}};
@@ -571,12 +580,15 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 	CHECK(isGeneratedMaterial(text));   // and so not deploy.bat's to overwrite: it leaves the mod's own alone
 	CHECK(effectIsOn(GameEffect::Relief, text));
 	// deploy's form (New-ParallaxMaterial): the shader, the relief keys first, the course depth and darkening,
-	// the wet-only cubemap of a wall without its own reflection, the rest as it was.
+	// the bump map generated from the same heights (the wall has none), the wet-only cubemap of a wall without
+	// its own reflection, the rest as it was.
 	CHECK(text.find("\r\n\"Fidelity_Parallax\"\n{\r\n\t\"$parallaxmap\" \"brick/brickwall001a_mapsmith_relief\"\r\n\t\"$parallaxdepth\" \"0.006\"\r\n\t\"$parallaxao\" \"0.25\"\r\n"
+	                "\t\"$bumpmap\" \"brick/brickwall001a_mapsmith_normal\"\r\n"
 	                "\t\"$envmap\" \"env_cubemap\"\r\n\t\"$envmapwetonly\" \"1\"\n\t\"$basetexture\" \"brick/brickwall001a\"") != std::string::npos);
+	CHECK(std::filesystem::exists(mod / "materials/brick/brickwall001a_mapsmith_normal.vtf"));
 	const auto shiny = readAll(mod / "materials/brick/shiny.vmt");
 	CHECK(shiny.find("$envmapwetonly") == std::string::npos);   // its own reflection stays as it is
-	CHECK(std::count(shiny.begin(), shiny.end(), '$') == 5);   // parallaxmap, parallaxdepth, parallaxao, basetexture, envmap
+	CHECK(std::count(shiny.begin(), shiny.end(), '$') == 6);   // parallaxmap, parallaxdepth, parallaxao, bumpmap, basetexture, envmap
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/plain.vmt"));
 	// The height map: bricks up, joints down, readable by the game (I8) and by Mapsmith.
 	const auto height = loadTexture(fs, "brick/brickwall001a_mapsmith_relief");
@@ -606,6 +618,7 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 	apply(plan);
 	CHECK(readAll(mod / "materials/brick/brickwall001a.vmt").starts_with(std::string(MAPSMITH_MARKER) + " off (relief)"));
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a_mapsmith_relief.vtf"));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a_mapsmith_normal.vtf"));
 	CHECK(readAll(mod / "materials/brick/shiny.vmt").starts_with(std::string(MAPSMITH_MARKER) + " off (relief)"));
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/shiny_mapsmith_relief.vtf"));
 	// Without the shader DLL nothing of it stays (the game would draw wireframes).
@@ -618,6 +631,7 @@ TEST_CASE("game enhancements: walls of the mod's maps get their relief from the 
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a.vmt"));
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a_mapsmith_relief.vtf"));
 	CHECK_FALSE(std::filesystem::exists(mod / "materials/brick/brickwall001a_mapsmith_relief.vtf"));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/concrete/concretefloor001a_mapsmith_normal.vtf"));
 }
 
 TEST_CASE("game enhancements: a wall texture with a window reflecting in its mask stays without relief") {

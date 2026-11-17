@@ -54,6 +54,14 @@ void applyHeightZones(HeightMap& map, const std::vector<std::uint8_t>& zones, un
 /// Gray RGBA image of the heights (previews).
 [[nodiscard]] ImageRgba heightImage(const HeightMap& map);
 
+/// A tangent-space normal map of the heights (Sobel, wrapping at the edges as the texture tiles),
+/// `width` x `height` texels (0: the map's size; the heights are resampled smoothly). Source's
+/// convention, the one heightFromNormalMap reads without flipping: red along +u (right in the
+/// image), green along +v (down in the image), blue out of the surface; alpha 255. `strength` 1:
+/// the slopes as they are, measured in texels of the height map (a joint that drops by the full
+/// height over two texels tilts by about 27 degrees).
+[[nodiscard]] ImageRgba normalMapFromHeight(const HeightMap& map, double strength = 1.0, unsigned width = 0, unsigned height = 0);
+
 /// How far mapbase-fidelity's Fidelity_Parallax moves the texture for the full relief, seen along
 /// `view` (texture space: x along u, y along v, z out of the surface, unit length) - the walk of the
 /// game's shader (fidelity_parallax_common.h) that the material preview and the 3D view repeat:

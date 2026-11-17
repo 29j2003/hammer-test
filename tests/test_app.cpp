@@ -12234,6 +12234,33 @@ TEST_CASE("material decisions: Parallax Off for two selected materials from the 
 	CHECK(written.entryCount() == 2);
 	CHECK((written.lookup(first.toStdString()).parallax == ParallaxChoice::Off));
 
+	// The same two materials: Bump map for 2 materials > Generate writes bump=generate for both.
+	bool generated = false;
+	QTimer::singleShot(150, [&] {
+		auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+		if (!menu) return;
+		for (auto* sub : menu->findChildren<QMenu*>("bumpMenu")) {
+			CHECK(sub->title().contains("2 materials"));
+			if (auto* generate = sub->findChild<QAction*>("bumpGenerate")) {
+				generated = true;
+				generate->trigger();
+			}
+		}
+		menu->close();
+	});
+	emit list->customContextMenuRequested(rect.center());
+	settle();
+	REQUIRE(generated);
+	CHECK((store->lookup(first).bump == BumpChoice::Generate));
+	CHECK((store->lookup(second).bump == BumpChoice::Generate));
+	{
+		const auto withBump = MaterialDecisions::parse(*readFileText(file));
+		CHECK(withBump.entryCount() == 2);
+		CHECK((withBump.lookup(first.toStdString()).bump == BumpChoice::Generate));
+		CHECK((withBump.lookup(second.toStdString()).parallax == ParallaxChoice::Off));   // the parallax key stays
+		CHECK(readFileText(file)->find("parallax=off bump=generate") != std::string::npos);
+	}
+
 	// The material editor shows what the file says and sets a depth.
 	window.showPage(MainWindow::Page::Materials);
 	settle();
@@ -12252,6 +12279,16 @@ TEST_CASE("material decisions: Parallax Off for two selected materials from the 
 	emit choice->activated(choice->currentIndex());
 	settle();
 	CHECK_FALSE(store->lookup(first).parallax);
+	// Its bump map: what the file says, and the strength written back.
+	auto* bumpChoice = window.materialEditor()->findChild<QComboBox*>("decisionBump");
+	auto* bumpStrength = window.materialEditor()->findChild<QDoubleSpinBox*>("decisionBumpStrength");
+	REQUIRE(bumpChoice);
+	REQUIRE(bumpStrength);
+	CHECK((static_cast<BumpChoice>(bumpChoice->currentData().toInt()) == BumpChoice::Generate));
+	bumpStrength->setValue(1.5);
+	emit bumpStrength->editingFinished();
+	settle();
+	CHECK((store->lookup(first).bumpStrength == doctest::Approx(1.5)));
 	window.showPage(MainWindow::Page::Map);
 	settle();
 
@@ -12261,7 +12298,7 @@ TEST_CASE("material decisions: Parallax Off for two selected materials from the 
 		dialog.setText(QString("%1  parallax=on\nbuilding_template/*  role=facade windows=2x1\nrole=wall\n").arg(second));
 		const QStringList preview = dialog.previewLines();
 		REQUIRE(preview.size() == 2);
-		CHECK(preview[0].startsWith(second.toLower() + ": parallax=off -> parallax=on"));
+		CHECK(preview[0].startsWith(second.toLower() + ": parallax=off bump=generate -> parallax=on bump=generate"));
 		CHECK(dialog.findChild<QLabel*>("decisionsProblems")->text().contains("Line 3"));
 		REQUIRE(dialog.apply());
 	}
@@ -12296,6 +12333,13 @@ TEST_CASE("material decisions: Parallax Off for two selected materials from the 
 		REQUIRE(parallax);
 		REQUIRE(parallax->menu());
 		CHECK(parallax->menu()->findChild<QAction*>("parallaxOn"));
+		QAction* bump = nullptr;
+		for (auto* action : menu->actions()) {
+			if (action->objectName() == "contextBump") bump = action;
+		}
+		REQUIRE(bump);
+		REQUIRE(bump->menu());
+		CHECK(bump->menu()->findChild<QAction*>("bumpGenerate"));
 	}
 
 	// Export for review: the demo's maps (the open map's material) - sheets, index, README and a part.
@@ -12305,7 +12349,7 @@ TEST_CASE("material decisions: Parallax Off for two selected materials from the 
 		REQUIRE_FALSE(materials.empty());
 		dialog.findChild<QLineEdit*>("reviewOutput")->setText(QDir(home.path()).filePath("review"));
 		dialog.start();
-		for (int i = 0; i < 400 && dialog.running(); ++i) QTest::qWait(25);
+		for (int i = 0; i < 2400 && dialog.running(); ++i) QTest::qWait(25);   // pictures and heights take a while on a busy machine
 		const auto& result = dialog.result();
 		CHECK(result.error.isEmpty());
 		CHECK(result.materials == int(materials.size()));
@@ -12316,6 +12360,21 @@ TEST_CASE("material decisions: Parallax Off for two selected materials from the 
 		CHECK(std::find(names.begin(), names.end(), "sheet_001.jpg") != names.end());
 		QImage sheet(QDir(result.folder).filePath("sheet_001.jpg"));
 		CHECK(sheet.width() > 1500);
+		// The pictures for the 3D check (on by default): base and height of the first material, in the same part.
+		const auto has = [&names](const std::string& ending) {
+			return std::any_of(names.begin(), names.end(), [&ending](const std::string& n) { return n.starts_with("pictures/") && n.ends_with(ending); });
+		};
+		CHECK(has("_base.jpg"));
+		CHECK(has("_height.jpg"));
+		const auto first = std::find_if(names.begin(), names.end(), [](const std::string& n) { return n.ends_with("_base.jpg"); });
+		REQUIRE(first != names.end());
+		QImage base(QDir(result.folder).filePath(QString::fromStdString(*first)));
+		CHECK(base.width() > 0);
+		CHECK(std::max(base.width(), base.height()) <= 1024);
+		const auto csv = readFileText(toPath(QDir(result.folder).filePath("index.csv")));
+		REQUIRE(csv);
+		CHECK(csv->find("height_source") != std::string::npos);
+		CHECK(csv->find(*first) != std::string::npos);
 	}
 }
 
@@ -12335,8 +12394,13 @@ TEST_CASE("material review: sample export of the demo materials" * doctest::skip
 	scope.kind = ReviewScope::Kind::AllWorld;
 	const auto materials = reviewMaterialList(editor.game()->files, scope, {});
 	REQUIRE_FALSE(materials.empty());
-	const auto decisions = MaterialDecisions::parse("demo/brickwall001  role=wall parallax=on depth=0.006 pattern=brick\n");
-	const auto result = exportMaterialReview(editor.game()->files, materials, decisions, QString::fromLocal8Bit(out), "Demo mod");
+	const auto decisions = MaterialDecisions::parse("demo/brickwall001  role=wall parallax=on depth=0.006 pattern=brick bump=generate\n"
+	                                                "demo/plasterwall001  parallax=off\n");
+	// The demo's materials stand in for the game's (in a real mod they are the game's, read past the
+	// mod's generated copies) and for the walls of the maps: so the sample shows every height source.
+	ReviewExportOptions options;
+	options.mapMaterials = std::set<std::string>(materials.begin(), materials.end());
+	const auto result = exportMaterialReview(editor.game()->files, materials, decisions, QString::fromLocal8Bit(out), "Demo mod", {}, options);
 	CHECK(result.error.isEmpty());
 	MESSAGE(result.materials << " materials, " << result.sheets << " sheets, " << result.zips.size() << " part(s)");
 }

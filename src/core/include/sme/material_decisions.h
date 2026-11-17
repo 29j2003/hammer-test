@@ -5,8 +5,10 @@
 //     brick/brickwall031d  role=wall parallax=on depth=0.008 pattern=brick
 //     brick/*  parallax=off            // every brick material, unless a more specific line says otherwise
 //     concrete/concretefloor001a  role=ground parallax=off note="street"
+//     concrete/concretewall004a  bump=generate bumpstrength=1.5
 //
-// Written by hand, by Mapsmith's per-material controls (Parallax: Auto / On / Off, Depth) or from
+// Written by hand, by Mapsmith's per-material controls (Parallax: Auto / On / Off, Depth; Bump map:
+// Auto / Generate / Off, strength) or from
 // the chat: the mapper exports the materials for review (sme/material_review.h), sends the pictures,
 // and pastes the answer back (Load material decisions). What a line says wins over Mapsmith's own
 // reading of the texture everywhere: the building builder (role, windows, floors, scale), the relief
@@ -41,6 +43,18 @@ enum class ParallaxChoice {
 [[nodiscard]] const char* parallaxChoiceKey(ParallaxChoice choice);   ///< "auto", "on", "off"
 [[nodiscard]] std::optional<ParallaxChoice> parallaxChoiceFromKey(std::string_view key);
 
+/// A bump map ($bumpmap) Mapsmith generates from the relief's heights (`<material>_mapsmith_normal`).
+enum class BumpChoice {
+	Auto,       ///< Where the material has none and Mapsmith makes the relief (pattern or parallax=on)
+	Generate,   ///< Always (replaces the material's own)
+	Off,        ///< Never
+};
+[[nodiscard]] const char* bumpChoiceKey(BumpChoice choice);   ///< "auto", "generate", "off"
+[[nodiscard]] std::optional<BumpChoice> bumpChoiceFromKey(std::string_view key);
+/// bumpstrength=...: how steep the generated bump map is (1 = as the relief; 0.1 .. 4).
+inline constexpr double BUMP_STRENGTH_MIN = 0.1;
+inline constexpr double BUMP_STRENGTH_MAX = 4.0;
+
 /// What the lines say about one material (each key only when a line sets it).
 struct MaterialDecision {
 	std::optional<std::string> role;          ///< facade | wall | trim | roof | shop | ground | interior | unsuitable
@@ -52,6 +66,8 @@ struct MaterialDecision {
 	std::optional<ParallaxChoice> parallax;
 	std::optional<double> depth;              ///< $parallaxdepth
 	std::optional<std::string> pattern;       ///< brick | tile | plank | stone | none
+	std::optional<BumpChoice> bump;           ///< bump=auto|generate|off
+	std::optional<double> bumpStrength;       ///< bumpstrength=0.1 .. 4
 	std::optional<std::string> note;
 	std::vector<std::pair<std::string, std::string>> extra;   ///< Keys Mapsmith does not know (kept)
 

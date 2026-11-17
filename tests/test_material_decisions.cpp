@@ -1,7 +1,8 @@
 // test_material_decisions.cpp - The mod's decision file (mapsmith_materials.txt): reading, writing
 // back without losing anything, wildcards and which line wins, merging an answer from the chat,
 // the decisions reaching the building builder and Game enhancements' relief, the depth rule for
-// fine bricks, and the export of the materials for review.
+// fine bricks, and the export of the materials for review (with the pictures for the 3D check);
+// the generated bump maps (bump=..., bumpstrength=...).
 
 #include <doctest/doctest.h>
 
@@ -10,6 +11,7 @@
 #include <sme/building_builder.h>
 #include <sme/facade_texture.h>
 #include <sme/fidelity_effects.h>
+#include <sme/heightmap.h>
 #include <sme/filesystem.h>
 #include <sme/material_decisions.h>
 #include <sme/material_review.h>
@@ -313,6 +315,15 @@ TEST_CASE("game enhancements: the decision file switches relief off, on (outside
 					fs.noteRemovedFile(change.heightFile);
 				}
 			}
+			if (!change.normalFile.empty()) {
+				if (!change.normalVtf.empty() && !change.remove) {
+					writeBytes(change.normalFile, change.normalVtf);
+					fs.noteWrittenFile(change.normalFile);
+				} else {
+					std::filesystem::remove(change.normalFile);
+					fs.noteRemovedFile(change.normalFile);
+				}
+			}
 		}
 	};
 	const auto fileOf = [&](const std::string& material) { return readAll(mod / "materials" / (material + ".vmt")); };
@@ -447,4 +458,366 @@ TEST_CASE("material review: the list, the facts per material, the index, the she
 	CHECK(parts[2] == std::vector<std::size_t>{3});   // too big for a part: on its own
 	CHECK(parts[3] == std::vector<std::size_t>{4});
 	CHECK(reviewParts({}, 100).empty());
+}
+
+// --- Generated bump maps and the pictures for the 3D check -------------------------------------
+
+namespace {
+
+/// An uncompressed RGB888 .vtf of `width` x `height`: one grey, with `noise` a grainy one.
+std::vector<std::byte> plainVtf(unsigned width, unsigned height, unsigned char grey = 128, bool noise = false) {
+	std::vector<std::byte> out(80 + std::size_t(width) * height * 3, std::byte(grey));
+	std::fill(out.begin(), out.begin() + 80, std::byte(0));
+	std::uint32_t seed = 5;
+	for (std::size_t i = 80; noise && i < out.size(); i += 3) {
+		seed = seed * 1664525u + 1013904223u;
+		const auto v = std::byte(static_cast<unsigned char>(std::clamp(int(grey) + int(seed >> 26) - 32, 0, 255)));
+		out[i] = out[i + 1] = out[i + 2] = v;
+	}
+	std::memcpy(out.data(), "VTF", 4);
+	put<std::int32_t>(out, 4, 7);
+	put<std::int32_t>(out, 8, 2);
+	put<std::int32_t>(out, 12, 80);
+	put<std::uint16_t>(out, 16, std::uint16_t(width));
+	put<std::uint16_t>(out, 18, std::uint16_t(height));
+	put<std::uint16_t>(out, 24, 1);
+	put<float>(out, 48, 1.f);
+	put<std::int32_t>(out, 52, 2);   // IMAGE_FORMAT_RGB888
+	out[56] = std::byte(1);
+	put<std::int32_t>(out, 57, -1);
+	put<std::uint16_t>(out, 63, 1);
+	return out;
+}
+
+int channel(const ImageRgba& image, unsigned x, unsigned y, int c) {
+	return int(std::to_integer<unsigned char>(image.pixels[(std::size_t(y) * image.width + x) * 4 + std::size_t(c)]));
+}
+
+} // namespace
+
+TEST_CASE("bump decisions: bump and bumpstrength are read, written, merged from wildcards and checked") {
+	auto d = MaterialDecisions::parse("brick/*  bump=generate\nbrick/wall01  bumpstrength=1.5\nconcrete/a  bump=off\nbad/one  bump=maybe bumpstrength=9\n");
+	CHECK(d.problems().size() == 2);
+	const auto wall = d.lookup("BRICK/WALL01");
+	CHECK((wall.bump == BumpChoice::Generate));   // from the wildcard
+	CHECK((wall.bumpStrength == doctest::Approx(1.5)));
+	CHECK((d.lookup("brick/other").bump == BumpChoice::Generate));
+	CHECK_FALSE(d.lookup("brick/other").bumpStrength);
+	CHECK((d.lookup("concrete/a").bump == BumpChoice::Off));
+	CHECK_FALSE(d.lookup("stone/x").bump);
+	CHECK(wall.keysText() == "bump=generate bumpstrength=1.5");
+	d.edit("stone/x", [](MaterialDecision& m) {
+		m.bump = BumpChoice::Generate;
+		m.bumpStrength = 0.5;
+	});
+	const auto again = MaterialDecisions::parse(d.serialize());
+	CHECK((again.lookup("stone/x").bump == BumpChoice::Generate));
+	CHECK((again.lookup("stone/x").bumpStrength == doctest::Approx(0.5)));
+	CHECK(again.serialize().find("stone/x  bump=generate bumpstrength=0.5") != std::string::npos);
+	CHECK((bumpChoiceFromKey("GENERATE") == BumpChoice::Generate));
+	CHECK(std::string(bumpChoiceKey(BumpChoice::Off)) == "off");
+	const auto options = reliefOptionsFor(wall);
+	CHECK((options.bump == BumpChoice::Generate));
+	CHECK(options.bumpStrength == doctest::Approx(1.5));
+	CHECK(options.any());   // Generate: Mapsmith makes the relief
+	CHECK(generatesBumpMap(options, "\"LightmappedGeneric\" { \"$bumpmap\" \"x\" }"));
+	CHECK(generatesBumpMap(PatternReliefOptions{}, "\"LightmappedGeneric\" { \"$basetexture\" \"x\" }"));
+	CHECK_FALSE(generatesBumpMap(PatternReliefOptions{}, "\"LightmappedGeneric\" { \"$bumpmap\" \"x\" }"));
+	PatternReliefOptions off;
+	off.bump = BumpChoice::Off;
+	CHECK_FALSE(generatesBumpMap(off, "\"LightmappedGeneric\" { \"$basetexture\" \"x\" }"));
+}
+
+TEST_CASE("generated bump map: Source's directions on a ramp, round trip through heightFromNormalMap, the size cap") {
+	// Heights rising to the right (+u): the surface leans left, red below the middle; green stays.
+	HeightMap right{64, 64, std::vector<float>(64 * 64)};
+	HeightMap down = right;
+	for (unsigned y = 0; y < 64; ++y) {
+		for (unsigned x = 0; x < 64; ++x) {
+			right.values[y * 64 + x] = float(x) / 64.f;
+			down.values[y * 64 + x] = float(y) / 64.f;
+		}
+	}
+	const ImageRgba r = normalMapFromHeight(right, 4.0);
+	REQUIRE(r.width == 64);
+	CHECK(channel(r, 30, 30, 0) <= 121);
+	CHECK(std::abs(channel(r, 30, 30, 1) - 128) <= 1);
+	CHECK(channel(r, 30, 30, 2) > 200);
+	CHECK(channel(r, 30, 30, 3) == 255);
+	// Rising down the picture (+v): green below the middle, red stays.
+	const ImageRgba d = normalMapFromHeight(down, 4.0);
+	CHECK(channel(d, 30, 30, 1) <= 121);
+	CHECK(std::abs(channel(d, 30, 30, 0) - 128) <= 1);
+	// Stronger is steeper; the output size resamples without changing the slope per height texel.
+	CHECK(channel(normalMapFromHeight(right, 8.0), 30, 30, 0) < channel(r, 30, 30, 0));
+	const ImageRgba big = normalMapFromHeight(right, 4.0, 128, 128);
+	CHECK(big.width == 128);
+	CHECK(std::abs(channel(big, 60, 60, 0) - channel(r, 30, 30, 0)) <= 2);
+
+	// Round trip: bumps -> normal map -> heights again, the same way up (Source's convention is
+	// the one heightFromNormalMap reads without flipping green).
+	HeightMap bumps{128, 128, std::vector<float>(128 * 128)};
+	for (unsigned y = 0; y < 128; ++y) {
+		for (unsigned x = 0; x < 128; ++x) {
+			bumps.values[y * 128 + x] = float(0.5 + 0.25 * std::sin(x * 2 * 3.14159265 / 64) + 0.2 * std::sin(y * 2 * 3.14159265 / 32 + 0.7));
+		}
+	}
+	const auto back = heightFromNormalMap(normalMapFromHeight(bumps, 6.0), false);
+	REQUIRE(back);
+	REQUIRE(back->values.size() == bumps.values.size());
+	double ma = 0, mb = 0;
+	for (std::size_t i = 0; i < bumps.values.size(); ++i) {
+		ma += bumps.values[i];
+		mb += back->values[i];
+	}
+	ma /= double(bumps.values.size());
+	mb /= double(bumps.values.size());
+	double sab = 0, saa = 0, sbb = 0;
+	for (std::size_t i = 0; i < bumps.values.size(); ++i) {
+		const double a = bumps.values[i] - ma, b = back->values[i] - mb;
+		sab += a * b;
+		saa += a * a;
+		sbb += b * b;
+	}
+	CHECK(sab / std::sqrt(saa * sbb) > 0.9);
+
+	// The VTF: uncompressed, a normal map, the base texture's size up to 1024 (2048x1024 -> 1024x512).
+	const auto vtf = encodeGeneratedNormalVtf(bumps, 1.0, 2048, 1024);
+	REQUIRE_FALSE(vtf.empty());
+	const auto info = readTextureInfo(vtf);
+	REQUIRE(info);
+	CHECK(info->width == 1024);
+	CHECK(info->height == 512);
+	CHECK(info->mipCount > 1);
+	const auto small = encodeGeneratedNormalVtf(bumps, 1.0);
+	REQUIRE(readTextureInfo(small));
+	CHECK(readTextureInfo(small)->width == 128);
+	// The material text: $bumpmap set, the material's own bump keys gone.
+	const std::string vmt = withGeneratedBumpMap("\"LightmappedGeneric\"\r\n{\r\n\t\"$basetexture\" \"a/b\"\r\n\t\"$bumpmap\" \"a/b_ssbump\"\r\n\t\"$ssbump\" \"1\"\r\n}\r\n",
+	                                             "a/b_mapsmith_normal");
+	CHECK(vmt.find("\"$bumpmap\" \"a/b_mapsmith_normal\"") != std::string::npos);
+	CHECK(vmt.find("ssbump") == std::string::npos);
+	CHECK(vmt.find("$basetexture") != std::string::npos);
+}
+
+TEST_CASE("relief heights and review pictures: pattern, material, normal, brightness, none - and the sizes of the pictures") {
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "heights/hl2";
+	const auto mod = f.root / "heights/mymod";
+	const auto material = [&](const std::string& name, const std::string& body) { test::writeText(game / "materials" / (name + ".vmt"), body); };
+	material("brick/brickwall001a", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"brick/brickwall001a\"\n}\n");
+	material("stone/wall01", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"stone/wall01\"\n\t\"$bumpmap\" \"stone/wall01_normal\"\n}\n");
+	material("stone/wall02", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"stone/wall02\"\n}\n");
+	material("custom/relief", "\"Fidelity_Parallax\"\n{\n\t\"$basetexture\" \"stone/wall02\"\n\t\"$parallaxmap\" \"custom/relief_height\"\n\t\"$parallaxdepth\" \"0.02\"\n}\n");
+	material("concrete/big", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"concrete/big\"\n}\n");
+	writeBytes(game / "materials/brick/brickwall001a.vtf", brickVtf(256, 8));
+	writeBytes(game / "materials/stone/wall01.vtf", brickVtf(128, 8, false));
+	{
+		HeightMap bumps{64, 64, std::vector<float>(64 * 64)};
+		for (unsigned i = 0; i < bumps.values.size(); ++i) bumps.values[i] = float(0.5 + 0.4 * std::sin((i % 64) * 0.3) * std::cos((i / 64) * 0.2));
+		writeBytes(game / "materials/stone/wall01_normal.vtf", encodeGeneratedNormalVtf(bumps, 2.0));
+	}
+	writeBytes(game / "materials/stone/wall02.vtf", brickVtf(128, 8, false));
+	writeBytes(game / "materials/custom/relief_height.vtf", plainVtf(32, 32, 200));
+	writeBytes(game / "materials/concrete/big.vtf", plainVtf(2048, 1024, 90, true));
+	std::filesystem::create_directories(mod / "materials");
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+	const auto original = [&](const std::string& name) { return *fs.readOriginal("materials/" + name + ".vmt", mod); };
+
+	// A wall of the maps with bricks: the pattern relief, a bump map generated (it has none).
+	const auto brick = reliefHeights(fs, "brick/brickwall001a", original("brick/brickwall001a"), {}, true);
+	CHECK(brick.source == "pattern");
+	CHECK(brick.depth == "0.006");
+	CHECK(brick.bump);
+	CHECK(brick.heights.width > 0);
+	CHECK(brick.heights.width <= 512);
+	// The same wall outside the maps: deploy.bat's relief from the brightness, no bump map of ours.
+	const auto brickOutside = reliefHeights(fs, "brick/brickwall001a", original("brick/brickwall001a"), {}, false);
+	CHECK(brickOutside.source == "brightness");
+	CHECK_FALSE(brickOutside.bump);
+	// A stone wall with its own normal map: deploy.bat's relief from the normal map.
+	const auto stoneHeights = reliefHeights(fs, "stone/wall01", original("stone/wall01"), {}, false);
+	CHECK_MESSAGE(stoneHeights.source == "normal", stoneHeights.note);
+	// The material's own height map.
+	const auto own = reliefHeights(fs, "custom/relief", original("custom/relief"), {}, false);
+	CHECK(own.source == "material");
+	CHECK(own.depth == "0.02");
+	// parallax=off: none, but the heights parallax=on would use are there to look at.
+	MaterialDecision off;
+	off.parallax = ParallaxChoice::Off;
+	const auto flat = reliefHeights(fs, "stone/wall02", original("stone/wall02"), off, true);
+	CHECK(flat.source == "none");
+	CHECK(flat.depth.empty());
+	CHECK(flat.note.find("parallax=off") != std::string::npos);
+	CHECK(flat.heights.width > 0);
+	CHECK_FALSE(flat.bump);
+	// parallax=on on a plain picture: from the brightness (Mapsmith's relief), with its bump map.
+	MaterialDecision on;
+	on.parallax = ParallaxChoice::On;
+	const auto forced = reliefHeights(fs, "concrete/big", original("concrete/big"), on, false);
+	CHECK_MESSAGE(forced.source == "brightness", forced.note);
+	CHECK(forced.bump);
+	CHECK(forced.textureWidth == 2048);
+
+	// The review: facts in the index, pictures capped (base 1024, heights 512), the normal map when there is one.
+	auto decisions = MaterialDecisions::parse("concrete/big  parallax=on bump=generate bumpstrength=2\n");
+	ReviewEntry big = reviewEntry(fs, "concrete/big", &decisions, 128);
+	ReviewPictures pictures;
+	reviewRelief(fs, mod, big, &decisions, false, &pictures);
+	CHECK(big.heightSource == "brightness");
+	CHECK(big.bumpGenerated);
+	CHECK(big.bumpStrength == doctest::Approx(2));
+	CHECK(pictures.base.width == 1024);
+	CHECK(pictures.base.height == 512);
+	CHECK(pictures.height.width <= REVIEW_HEIGHT_MAX);
+	CHECK(pictures.height.height <= REVIEW_HEIGHT_MAX);
+	CHECK(pictures.height.width > 0);
+	CHECK(pictures.normal.width == 0);   // no $bumpmap of its own
+	ReviewEntry stone = reviewEntry(fs, "stone/wall01", nullptr, 128);
+	ReviewPictures stonePictures;
+	reviewRelief(fs, mod, stone, nullptr, false, &stonePictures);
+	CHECK(stone.heightSource == "normal");
+	CHECK(stonePictures.normal.width == 64);
+	CHECK(stonePictures.base.width == 128);
+	stone.number = 7;
+	stone.pictureFiles = {reviewPictureName(7, "base"), reviewPictureName(7, "height"), reviewPictureName(7, "normal")};
+	CHECK(stone.pictureFiles.front() == "pictures/007_base.jpg");
+	const std::string csv = reviewIndexCsv({stone});
+	CHECK(csv.find("height_source,relief_depth,relief_note,bump_generated") != std::string::npos);
+	CHECK(csv.find(",normal,") != std::string::npos);
+	CHECK(csv.find("pictures/007_base.jpg pictures/007_height.jpg pictures/007_normal.jpg") != std::string::npos);
+	const std::string json = reviewIndexJson({big});
+	CHECK(json.find("\"height_source\": \"brightness\"") != std::string::npos);
+	CHECK(json.find("\"bump_generated\": true") != std::string::npos);
+	CHECK(reviewReadme(1, 1, 1, "Mod", true).find("pictures/NNN_height.jpg") != std::string::npos);
+	CHECK(reviewReadme(1, 1, 1, "Mod", false).find("pictures/NNN_height.jpg") == std::string::npos);
+	CHECK(reviewReadme(1, 1, 1, "Mod").find("bumpstrength") != std::string::npos);
+
+	// Only materials that can get relief: the decision file's role first, then the picture; see-through never.
+	material("glass/window01", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"stone/wall02\"\n\t\"$translucent\" \"1\"\n}\n");
+	auto roles = MaterialDecisions::parse("stone/wall02  role=ground\nbrick/brickwall001a  role=trim\n");
+	CHECK(reviewCanGetRelief(fs, "stone/wall02", &roles));
+	CHECK_FALSE(reviewCanGetRelief(fs, "brick/brickwall001a", &roles));
+	CHECK_FALSE(reviewCanGetRelief(fs, "glass/window01", &roles));
+	ReviewScope reliefOnly;
+	reliefOnly.kind = ReviewScope::Kind::AllWorld;
+	reliefOnly.reliefOnly = true;
+	const auto listed = reviewMaterialList(fs, reliefOnly, {}, &roles);
+	CHECK(std::find(listed.begin(), listed.end(), "stone/wall02") != listed.end());
+	CHECK(std::find(listed.begin(), listed.end(), "brick/brickwall001a") == listed.end());
+	CHECK(std::find(listed.begin(), listed.end(), "glass/window01") == listed.end());
+}
+
+TEST_CASE("game enhancements: generated bump maps are written with the relief, follow the decision file and go with it") {
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "bump/hl2";
+	const auto mod = f.root / "bump/mymod";
+	const auto wall = [&](const std::string& name, const std::string& extra = {}) {
+		test::writeText(game / "materials" / (name + ".vmt"), "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"" + name + "\"\n" + extra + "}\n");
+		writeBytes(game / "materials" / (name + ".vtf"), brickVtf(256, 8));
+	};
+	wall("brick/brickwall001a");
+	wall("brick/brickwall002a", "\t\"$bumpmap\" \"brick/brickwall002a_ssbump\"\n\t\"$ssbump\" \"1\"\n");
+	wall("plaster/wall01");
+	writeBytes(game / "materials/brick/brickwall002a_ssbump.vtf", plainVtf(64, 64));
+	std::filesystem::create_directories(mod / "materials");
+	test::writeText(mod / "bin/game_shader_dx6.dll", "dll");
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+	const auto apply = [&](const EnhancementPlan& plan) {
+		for (const auto& change : plan.changes) {
+			if (change.remove) {
+				std::filesystem::remove(change.file);
+				fs.noteRemovedFile(change.file);
+			} else {
+				std::filesystem::create_directories(change.file.parent_path());
+				test::writeText(change.file, change.text);
+				fs.noteWrittenFile(change.file);
+			}
+			for (const auto& [path, bytes] : {std::pair{change.heightFile, change.heightVtf}, std::pair{change.normalFile, change.normalVtf}}) {
+				if (path.empty()) continue;
+				if (!bytes.empty() && !change.remove) {
+					writeBytes(path, bytes);
+					fs.noteWrittenFile(path);
+				} else {
+					std::filesystem::remove(path);
+					fs.noteRemovedFile(path);
+				}
+			}
+		}
+	};
+	const auto fileOf = [&](const std::string& material) { return readAll(mod / "materials" / (material + ".vmt")); };
+	const auto normalOf = [&](const std::string& material) { return mod / "materials" / (material + "_mapsmith_normal.vtf"); };
+	EffectCandidates only{{GameEffect::Relief, {"brick/brickwall001a", "brick/brickwall002a"}}};
+	const std::set<std::string> mapMaterials = {"brick/brickwall001a", "brick/brickwall002a"};
+	MaterialDecisions decisions;
+	EnhancementOptions options;
+	options.mapMaterials = &mapMaterials;
+	options.decisions = &decisions;
+
+	// Auto: the wall without a bump map gets one with its relief; the one with its own keeps that.
+	apply(planEnhancements(fs, mod, {}, {}, &only, options));
+	const std::string first = fileOf("brick/brickwall001a");
+	CHECK(first.starts_with(std::string(PATTERN_RELIEF_MARKER)));
+	CHECK(first.find("\"$bumpmap\" \"brick/brickwall001a_mapsmith_normal\"") != std::string::npos);
+	CHECK(first.find("bump map generated") != std::string::npos);
+	REQUIRE(std::filesystem::exists(normalOf("brick/brickwall001a")));
+	const auto normalBytes = [&](const std::string& material) {
+		const std::string text = readAll(normalOf(material));
+		return std::vector<std::byte>(reinterpret_cast<const std::byte*>(text.data()), reinterpret_cast<const std::byte*>(text.data() + text.size()));
+	};
+	const auto info = readTextureInfo(normalBytes("brick/brickwall001a"));
+	REQUIRE(info);
+	CHECK(info->width == 256);   // the base texture's own size
+	const std::string second = fileOf("brick/brickwall002a");
+	CHECK(second.find("brick/brickwall002a_ssbump") != std::string::npos);
+	CHECK_FALSE(std::filesystem::exists(normalOf("brick/brickwall002a")));
+	// Nothing to do again.
+	CHECK(planEnhancements(fs, mod, {}, {}, &only, options).changes.empty());
+
+	// Generate on the bump-mapped wall: ours instead of its own ssbump; Off on the other: the bump map goes, the relief stays.
+	decisions = MaterialDecisions::parse("brick/brickwall002a  bump=generate bumpstrength=2\nbrick/brickwall001a  bump=off\n");
+	apply(planEnhancements(fs, mod, {}, {}, &only, options));
+	const std::string generated = fileOf("brick/brickwall002a");
+	CHECK(generated.find("\"$bumpmap\" \"brick/brickwall002a_mapsmith_normal\"") != std::string::npos);
+	CHECK(generated.find("ssbump") == std::string::npos);
+	CHECK(std::filesystem::exists(normalOf("brick/brickwall002a")));
+	CHECK(fileOf("brick/brickwall001a").find("$bumpmap") == std::string::npos);
+	CHECK(fileOf("brick/brickwall001a").find("$parallaxmap") != std::string::npos);
+	CHECK_FALSE(std::filesystem::exists(normalOf("brick/brickwall001a")));
+	CHECK(planEnhancements(fs, mod, {}, {}, &only, options).changes.empty());
+
+	// parallax=off with bump=generate: a flat copy with the bump map. A name nothing else asks for
+	// (plaster, not a candidate, not in a map) gets it from its line alone.
+	decisions = MaterialDecisions::parse("brick/brickwall002a  parallax=off bump=generate\nplaster/wall01  bump=generate\n");
+	apply(planEnhancements(fs, mod, {}, {}, &only, options));
+	const std::string flat = fileOf("brick/brickwall002a");
+	CHECK(flat.starts_with(std::string(MAPSMITH_MARKER) + " off (relief)"));
+	CHECK(flat.find("Fidelity_Parallax") == std::string::npos);
+	CHECK(flat.find("\"$bumpmap\" \"brick/brickwall002a_mapsmith_normal\"") != std::string::npos);
+	CHECK(std::filesystem::exists(normalOf("brick/brickwall002a")));
+	CHECK(fileOf("plaster/wall01").find("\"$bumpmap\" \"plaster/wall01_mapsmith_normal\"") != std::string::npos);
+	CHECK(std::filesystem::exists(normalOf("plaster/wall01")));
+	CHECK(planEnhancements(fs, mod, {}, {}, &only, options).changes.empty());
+
+	// The decisions gone: the generated files go, Auto again.
+	decisions = MaterialDecisions{};
+	apply(planEnhancements(fs, mod, {}, {}, &only, options));
+	CHECK_FALSE(std::filesystem::exists(mod / "materials/plaster/wall01.vmt"));
+	CHECK_FALSE(std::filesystem::exists(normalOf("plaster/wall01")));
+	CHECK_FALSE(std::filesystem::exists(normalOf("brick/brickwall002a")));
+	CHECK(fileOf("brick/brickwall002a").find("brick/brickwall002a_ssbump") != std::string::npos);
+	CHECK(std::filesystem::exists(normalOf("brick/brickwall001a")));
+
+	// A hand-written material of the mod is never touched.
+	test::writeText(mod / "materials/brick/brickwall001a.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"brick/brickwall001a\"\n}\n");
+	std::filesystem::remove(normalOf("brick/brickwall001a"));
+	decisions = MaterialDecisions::parse("brick/brickwall001a  bump=generate\n");
+	const auto kept = planEnhancements(fs, mod, {}, {}, &only, options);
+	CHECK(std::none_of(kept.changes.begin(), kept.changes.end(), [](const EffectChange& c) { return c.material == "brick/brickwall001a"; }));
 }
