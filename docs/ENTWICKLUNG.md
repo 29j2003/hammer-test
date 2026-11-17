@@ -10,7 +10,9 @@ werden automatisch gefunden.
 src/core/   smecore    – Kern ohne Qt (Namespace sme): Formate, Karte, Geometrie, Bearbeiten, Undo, Prüfungen
 src/app/    smeapp     – Qt-6-Oberfläche (Namespace sme::app) + Programm Mapsmith (main.cpp)
 src/probe/  sme-probe  – Diagnose auf der Kommandozeile (nur Kern)
-tests/      doctest    – sme_tests (Kern), sme_app_tests (Label "ui", echtes Fenster), Fixture + Demo
+src/claude/ smeclaude  – Claude-Integration, nur Qt Core/Network: MCP-Protokoll, Pipe-Handshake, Werkzeug-Liste;
+            mapsmith-mcp – die Brücke, die Claude Desktop / Claude Code starten (stdio ↔ lokale Pipe)
+tests/      doctest    – sme_tests (Kern), sme_app_tests (Label "ui", echtes Fenster), sme_claude_tests (Protokoll), Fixture + Demo
 ```
 
 **Schichten:** Der Kern kennt kein Qt und ist ohne Fenster testbar. `smeapp` baut darauf auf; `sme-probe` und die
@@ -148,6 +150,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
 | `localization` | Texte der Mod: Lokalisierungsdateien verlustfrei (Kommentare, `[$X360]`-Bedingungen, Reihenfolge), Dateisätze `<name>_<sprache>.txt`, Caption-Tags, Captions → `.dat` (VCCD) |
 | `editor_report` | Editor-Bericht (siehe Abschnitt „Editor-Bericht“): `PickTrace`/`formatPickTrace`/`parsePickLog` (picks.log), `brushesAlongRay` (Strahl durch die Karte, reine Geometrie, versteckte Brushes/Flächen ausgelassen), `describeSolid`/`describeChange` (Ebenenpunkte vorher/nachher, markiert `INVALID` und `POINTS INWARD`), `describeRoadPlan`/`describeFlowPlan` (mit `RoadPlan::notes`), `reportScene` (Objekte bis 1024 Einheiten um die Auswahl, Ids bleiben; ganze Karte unter 5 MB), `maskPersonalText`/`homeFolder`, `replay.txt` (`formatSettings`/`parseSettings`, Auswahlen `0/12`, `0/12/45`, Straßen-/Flow-Einstellungen), `replayEditorReport` (für `sme-probe editor-report`) |
+| `claude_scope` | Was Claude über die Claude-Integration anfassen darf (siehe „Claude-Integration“): `checkExchangeName` (Namen im Austausch-Ordner: kein `..`, keine absoluten/Laufwerks-/UNC-Pfade, kein `:`, keine reservierten Windows-Namen, höchstens 4 Ebenen), `exchangeExtensionAllowed` (nur `.txt .md .csv .json .log .vmt`), `resolveInside`/`pathInside` (kanonische Pfade, Links/Junctions werden nicht verfolgt), `checkMaterialName`/`modMaterialFile` (nur vorhandene `.vmt` der Mod selbst unter `<mod>/materials`), `checkVmtParameter`/`checkVmtValue`, `decisionLineFromClaude` (eine Zeile der Entscheidungs-Datei, die genau so zurückgelesen wird), `ClaudeRateLimit` (gleitendes Fenster), `constantTimeEquals` |
 | `shipping` | Karte/Mod für Spieler: `mapDependencies` (Flächen-, Overlay-, Decal- und Sprite-Materialien samt Texturen und Materialien, die ihre Parameter nennen – jeder Parameter, dessen Wert als `.vtf`/`.vmt` existiert –, Patch-Includes, 2D-Himmel mit `_hdr`, Modelle mit `.vvd`/`.vtx`/`.phy`/`.ani`, Include-Modellen und Materialien über `$cdmaterials`, Sounds aus Entity-Keys über Soundscripts, Soundscapes mit ihren Sounds, PCF der benutzten Effekte, Detail-Sprites); Herkunft je Datei: `Custom` (Mod-Ordner), `Shared` (anderer Ordner außerhalb `steamapps/common`), `BaseGame` (unter `steamapps/common`), `Missing`; `fileOnDisk` (case-insensitive), Liste für `bspzip`, ZIP-Schreiber (gespeichert, CRC32 lokal, keine Namen mit `..`), `planModPackage` (ohne Entwicklungsdateien), Workshop-VDF für steamcmd |
 | `scene_export` | Export als glTF/OBJ (Meter, Y oben, Texturen als PNG, Modelle) |
 
@@ -210,6 +213,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf); meldet `pulled(root, changed)` und „Update mod“ (`updateModRequested`) an Mod code |
 | `mod_code_panel` | Project › Build from source (letzter Tab, nur wer die Mod selbst baut): `update.ps1`/`deploy.ps1`/`report.ps1` per `QProcess` ohne Konsole (Schritte, Fortschritt, Log, Zusammenfassung mit Rat, Cancel beendet den ganzen Prozessbaum), Checkout finden/wählen je Mod, Optionen je Mod (nach Pull aktualisieren, beim Start `git fetch` bzw. Pull & Update), Zeile auf dem Overview (`banner()`); nach Erfolg `modUpdated` → `MainWindow` öffnet das Spiel neu (Caches, Game enhancements); `reportHowTo()` = Tooltip aller „Pack game report“-Knöpfe (Map-Menü, Compile, Problems → `MainWindow::makeReport`); „nothing to pack“ ist kein roter Fehler, sondern zeigt die drei Schritte; Hinweis + Link „Make editor report ...“ (`editorReportRequested` → `MainWindow::makeEditorReport`), damit der Spiel-Bericht nicht mit dem Editor-Bericht verwechselt wird (Julius, 10.11.2026) |
 | `features_panel` | Project › Features: Kasten *Install* (`featureBundleDir()` = `$SME_FEATURES_DIR` oder `features/` neben dem Programm; `installNow`/`removeNow` über `mod_install`, danach deploy.ps1 des Bundles über `ModCodePanel` → `installed()` → Spiel neu lesen; Auto-Update einmal je Sitzung und Mod, QSettings `features/autoUpdate`, Standard an; Angebot „Install features“ auf dem Overview für Mapbase-Mods ohne Add-on), `FeatureChecklist` (auch im New-mod-Dialog, kompakt), `FeaturesPanel` (Haken sofort gespeichert: Schalter → `cfg/mapsmith_features.cfg`, Material-Funktionen → Game enhancements), Angebot einmal auf dem Overview (`offer()`), Fresh install inline bestätigt (Liste aus `generatedModFiles`) → `ModCodeAction::RemoveGameFiles` → Funktionen schreiben → Update mod bzw. Deploy |
+| `claude_service`, `claude_tools`, `claude_panel` | Project › Claude (siehe „Claude-Integration“): `ClaudeService` (gehört dem `MainWindow`; `QLocalServer` mit `UserAccessOption`, Geheimnis je Start, Handshake, Zugriffsstufe Read/Change, „Ask before each change“, Rate-Limit, Aktivität, Backups + Undo-Stapel, `connectClaudeDesktop`), die Werkzeuge in `claude_tools.cpp` (alle Namen über `claude_scope`), `ClaudePanel` (Schalter `claudeEnabled`, `claudeRead`/`claudeChange`, `claudeAsk`, `claudeOpenFolder`, `claudeConnectDesktop`, `claudeCopyCode`, `claudeActivity`, `claudeUndo`); `ClaudeHost` gibt dem Dienst Bild der 3D-Ansicht, Log, Kompilier-Log, Probleme, Editor-Bericht, Material neu laden und die Rückfrage |
 | `ship_panel` | Project › Ship: Abhängigkeiten, bspzip, ZIPs, Workshop |
 | `new_mod_dialog` | „New mod …“: neue Mod aus Karten; bei New project zusätzlich „First map“ (Tutorial-Karte oder leerer Raum, `showFirstMapChoice`); `addOpenModBaseFiles` (Leser: `features/template` und das Dateisystem des offenen Spiels, dann lose Dateien einer HL2-Installation, App 220) |
 | `find_dialog`, `replace_materials_dialog` | Entities finden + Entity-Bericht; Materialien ersetzen |
@@ -669,6 +673,68 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 - Tastenkürzel: Aktionen tragen ihren englischen Namen als `objectName`; `ShortcutDialog` speichert unter `shortcuts/<Name>`.
 - Einrasten: `Editor::snapGrid()` (0 wenn Shift+W aus) für alle Positionen, `Editor::snapAngle()` für Drehungen;
   Drehpunkt wird auf das halbe Raster gesetzt, damit Brushes auf dem Raster bleiben.
+
+## Claude-Integration
+
+Julius (17.11.2026): „eine Integration nur in der App per Claude, so dass nur die App genutzt werden kann und die
+Materials direkt von da aus geändert werden können, maximal nur mit einem festen Ordner, nirgendwo anders“.
+
+**Aufbau:** Claude Desktop (oder Claude Code) startet `mapsmith-mcp(.exe)` (liegt neben `Mapsmith.exe`) und spricht mit
+ihr MCP über stdin/stdout (JSON-RPC 2.0, eine Nachricht je Zeile; `initialize` mit Versionsabgleich – die Brücke kennt
+2025-06-18, 2025-03-26, 2024-11-05 und antwortet mit der erfragten oder ihrer neuesten –, `ping`, `tools/list`,
+`tools/call`; Benachrichtigungen ohne Antwort). `initialize`, `ping` und `tools/list` beantwortet die Brücke selbst (die
+Werkzeuge sind auch zu sehen, wenn Mapsmith zu ist), jedes `tools/call` geht über eine lokale Pipe
+(`QLocalSocket`/`QLocalServer`, eine JSON-Zeile je Nachricht) an das laufende Mapsmith. Läuft Mapsmith nicht oder ist
+Claude dort aus, bekommt Claude als Ergebnis „Open Mapsmith and switch on Project > Claude“. Mapsmith selbst öffnet kein
+Netzwerk, braucht keinen API-Schlüssel; Claude nutzt Julius' Claude-Konto.
+
+**Sicherheitsmodell:**
+- *Kein TCP:* eine Pipe statt `localhost`-HTTP, damit keine Webseite (CSRF, DNS-Rebinding) Mapsmith erreicht.
+- *Nur dieser Benutzer:* Pipe-Name `mapsmith-claude-<Hash des Benutzernamens>`, `QLocalServer::UserAccessOption`
+  (Windows: DACL nur für den Benutzer; Unix: Socket-Datei 0700-artig). Läuft schon ein Mapsmith mit Claude, startet ein
+  zweites nicht (es würde sonst die Socket-Datei des ersten löschen).
+- *Gegenseitiger Nachweis:* Mapsmith schreibt je Start ein Zufalls-Geheimnis (32 Byte, hex) in
+  `<GenericDataLocation>/Mapsmith/claude-secret` (nur Besitzer lesbar, beim Ausschalten gelöscht). Handshake:
+  Brücke `hello{nonce_b}` → Mapsmith `challenge{nonce_a, HMAC(secret, "app:"+nonce_b)}` → Brücke prüft (ein Programm,
+  das den Pipe-Namen besetzt, kennt das Geheimnis nicht und bekommt nichts) → `auth{HMAC(secret, "bridge:"+nonce_a)}`
+  → Mapsmith prüft (zeitkonstant) → `welcome`. Das Geheimnis geht nie über die Pipe; der Beweis der einen Seite nützt
+  der anderen nichts (Rolle im HMAC). Ohne Beweis in 10 s: getrennt.
+- *Grenzen:* Zeilen von Claude höchstens 4 MB, auf der Pipe 24 MB (`LineBuffer`, sonst Verbindung zu); höchstens 4
+  Verbindungen, 32 wartende Aufrufe je Verbindung, 240 Aufrufe und 30 Änderungen je Minute.
+- *Nur die Werkzeuge:* keine Shell, kein Programmstart, kein Kompilieren, kein Git, keine Kartenänderung. Lesen geht
+  über das Dateisystem des Spiels (nie über einen Pfad, den Claude wählt); Schreiben nur in die Entscheidungs-Datei
+  (über `MaterialDecisionStore::change`), in `.vmt`-Dateien der Mod selbst (`modMaterialFile`, über `editMaterialText`,
+  danach muss das Material mit gleichem Shader wieder lesbar sein) und in den Austausch-Ordner
+  `Documents/Mapsmith/Claude` (`resolveInside`, nur Text-Endungen, nicht in `backups/`). Jede Prüfung liegt in
+  `sme/claude_scope.h` und ist ohne Qt getestet.
+- *Stufen:* aus (Standard), „Read only“, „Read and change materials“; „Ask before each change“ zeigt jede Änderung als
+  Rückfrage. Ausschalten trennt sofort (`closing` an die Brücke).
+- *Nachvollziehbar:* jeder Aufruf in der Aktivität (Project › Claude), Änderungen und Abgelehntes im Log; vor jeder
+  Änderung eine Kopie in `backups/`, „Undo Claude's last change“ legt sie zurück (Stapel bis 100).
+- *Prompt-Injection:* Materialnamen, VMT-Texte und Logs können alles enthalten. Die Werkzeug-Beschreibungen und
+  `instructions` sagen Claude, dass Dateiinhalte Daten sind; Dateitext kommt in `<file …>`-Blöcken (`untrustedBlock`).
+  Schaden ist auf die Werkzeuge begrenzt und rückgängig zu machen. Persönliche Ordner werden maskiert (`maskPersonalText`).
+- *Offene Punkte:* Ein Programm mit den Rechten desselben Benutzers kann das Geheimnis lesen – das ist dieselbe
+  Vertrauensgrenze wie alle Dateien des Benutzers. Zwischen Prüfung und Schreiben im Austausch-Ordner könnte ein
+  gleichzeitig laufendes Programm einen Link einschieben (TOCTOU); `QSaveFile` ersetzt einen Link statt ihm zu folgen.
+
+**Rezept – neues Werkzeug:**
+1. In `claudeTools()` (`src/claude/claude_protocol.cpp`) eintragen: Name (englisch, `snake_case`), Titel, Beschreibung
+   (was es tut, was es braucht, ggf. den Hinweis auf nicht vertrauenswürdige Dateiinhalte), `inputSchema` mit
+   `additionalProperties: false` und Grenzen, `changes` = schreibt es etwas.
+2. In `ClaudeService::runTool` (`claude_tools.cpp`) verteilen; jeden Namen/Pfad aus den Argumenten über
+   `sme/claude_scope.h` prüfen (neue Prüfungen dort, mit Test in `tests/test_claude_scope.cpp`); Dateitext mit
+   `untrustedBlock`, Pfade mit `masked`. Schreibende Werkzeuge: Rückfrage (`m_ask`), `backup()`, `pushUndo()`.
+3. Tests: `tests/test_claude_protocol.cpp` (Liste) und der Claude-Fall in `tests/test_app.cpp` (echte Brücke).
+4. Handbuch `docs/manual/claude.md` (Tabelle „What Claude can and cannot do“) und README.
+
+**Ausliefern:** `mapsmith-mcp` landet beim Bauen neben `Mapsmith` (`RUNTIME_OUTPUT_DIRECTORY`); CI und Release kopieren
+`mapsmith-mcp.exe` ins Paket (windeployqt für Mapsmith bringt Qt Core/Network mit). „Connect Claude Desktop“ trägt
+`mcpServers.mapsmith` in `%APPDATA%/Claude/claude_desktop_config.json` ein (auch die Datei der Microsoft-Store-Version
+unter `%LOCALAPPDATA%/Packages/Claude_*/LocalCache/Roaming/Claude/`), Backup `.mapsmith-backup` daneben; „Copy setup
+for Claude Code“ kopiert `claude mcp add mapsmith -- "<Pfad>"`. Für Tests: `SME_CLAUDE_PIPE`, `SME_CLAUDE_DATA_DIR`,
+`ClaudeService::setExchangeFolderForTests`. Der Updater beendet vor dem Kopieren eine laufende `mapsmith-mcp.exe` aus dem
+Programmordner (Claude Desktop hält sie offen; sonst wären sie und die Qt-DLLs gesperrt); Claude Desktop startet sie neu.
 
 ## Editor-Bericht
 

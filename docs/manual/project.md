@@ -7,7 +7,7 @@ nav_order: 9
 {: .no_toc }
 
 The **Project** page in the side bar is about your mod as a whole: its maps, its main menu, its source code and how to
-share it. It has eight tabs: **Overview**, **Features**, **Maps**, **Menu**, **Texts**, **Source control**, **Ship**
+share it. It has nine tabs: **Overview**, **Features**, **Maps**, **Menu**, **Texts**, **Source control**, **Ship**, **Claude** (see [Claude in Mapsmith](claude.html))
 and **Build from source** (only for building the mod from its own code).
 
 ![The Project page](images/project.png)

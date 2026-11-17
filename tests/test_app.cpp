@@ -143,6 +143,10 @@
 #include "road_builder_dialog.h"
 #include "building_dialog.h"
 #include "material_decision_store.h"
+#include "claude_protocol.h"
+#include "claude_service.h"
+#include "toggle_switch.h"
+#include <QLocalSocket>
 #include "material_editor.h"
 #include "material_review_dialog.h"
 #include "material_field.h"
@@ -12403,4 +12407,232 @@ TEST_CASE("material review: sample export of the demo materials" * doctest::skip
 	const auto result = exportMaterialReview(editor.game()->files, materials, decisions, QString::fromLocal8Bit(out), "Demo mod", {}, options);
 	CHECK(result.error.isEmpty());
 	MESSAGE(result.materials << " materials, " << result.sheets << " sheets, " << result.zips.size() << " part(s)");
+}
+
+namespace {
+
+/// mapsmith-mcp started like Claude Desktop starts it: MCP lines on stdin, answers on stdout.
+struct BridgeProcess {
+	QProcess process;
+	QByteArray out;
+	int nextId = 1;
+	void start() {
+		process.start(QStringLiteral(SME_CLAUDE_BRIDGE), {});
+		REQUIRE(process.waitForStarted(5000));
+	}
+	QJsonObject request(const QString& method, const QJsonObject& params = {}) {
+		const int id = nextId++;
+		process.write(claude::jsonLine(QJsonObject{{"jsonrpc", "2.0"}, {"id", id}, {"method", method}, {"params", params}}));
+		QElapsedTimer timer;
+		timer.start();
+		while (timer.elapsed() < 20000) {
+			QTest::qWait(10);   // Mapsmith's pipe runs in this event loop
+			out += process.readAllStandardOutput();
+			qsizetype nl;
+			while ((nl = out.indexOf('\n')) >= 0) {
+				const QByteArray line = out.left(nl);
+				out.remove(0, nl + 1);
+				const auto object = claude::parseJsonLine(line);
+				if (object && (*object)["id"].toInt() == id) return *object;
+			}
+		}
+		FAIL("the bridge did not answer " << method.toStdString() << ": " << process.readAllStandardError().toStdString());
+		return {};
+	}
+	QJsonObject call(const QString& tool, const QJsonObject& arguments = {}) {
+		return request("tools/call", QJsonObject{{"name", tool}, {"arguments", arguments}})["result"].toObject();
+	}
+};
+
+QString resultText(const QJsonObject& result) {
+	QString text;
+	for (const auto& block : result["content"].toArray()) text += block.toObject()["text"].toString() + "\n";
+	return text;
+}
+
+} // namespace
+
+TEST_CASE("claude: Project > Claude switches the bridge on, Claude reads and changes materials only through Mapsmith, undo, the real bridge") {
+	// Julius, 17.11.2026: "eine Integration nur in der App per Claude, so dass nur die App genutzt werden kann und die
+	// Materials direkt von da aus geändert werden können, maximal mit einem festen Ordner, nirgendwo anders".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().remove("claude");
+	qputenv("SME_CLAUDE_PIPE", "mapsmith-claude-test-" + QByteArray::number(QCoreApplication::applicationPid()));
+	qputenv("SME_CLAUDE_DATA_DIR", QDir(home.path()).filePath("data").toUtf8());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	// The mod's own material (Claude may change it) next to the game's (it may not).
+	const auto vmt = f.mod / "materials" / "claudetest" / "wall.vmt";
+	std::filesystem::create_directories(vmt.parent_path());
+	std::ofstream(vmt) << "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"concrete/concretewall001a\"\n\t\"$surfaceprop\" \"concrete\"\n}\n";
+	const auto secretOutside = std::filesystem::path(home.path().toStdString()) / "secret.txt";
+	std::ofstream(secretOutside) << "outside";
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+	settle();
+	auto* service = window.claude();
+	REQUIRE(service);
+	const QString exchange = QDir(home.path()).filePath("exchange");
+	service->setExchangeFolderForTests(exchange);
+	CHECK_FALSE(service->enabled());   // off until the mapper switches it on
+
+	// The tab on the Project page; the switch starts the pipe.
+	auto* tabs = window.findChild<QTabWidget*>("projectTabs");
+	REQUIRE(tabs);
+	int claudeTab = -1;
+	for (int i = 0; i < tabs->count(); ++i) {
+		if (tabs->tabText(i) == "Claude") claudeTab = i;
+	}
+	REQUIRE(claudeTab >= 0);
+	window.showPage(MainWindow::Page::Project);
+	tabs->setCurrentIndex(claudeTab);
+	settle();
+	auto* toggle = window.findChild<ToggleSwitch*>("claudeEnabled");
+	REQUIRE(toggle);
+	CHECK(toggle->isVisible());
+	CHECK_FALSE(toggle->isChecked());
+	toggle->click();
+	settle();
+	REQUIRE(service->enabled());
+	REQUIRE(service->listening());
+	CHECK(window.findChild<QLabel*>("claudeStatus")->text().contains("waiting"));
+	CHECK(window.findChild<QRadioButton*>("claudeRead")->isChecked());
+	CHECK(QFileInfo::exists(claude::secretFilePath()));
+
+	// A program without the secret: Mapsmith proves itself, the program cannot - it is cut off.
+	{
+		QLocalSocket intruder;
+		intruder.connectToServer(claude::pipeName());
+		REQUIRE(intruder.waitForConnected(2000));
+		intruder.write(claude::jsonLine(QJsonObject{{"type", "hello"}, {"nonce", QString::fromLatin1(claude::newNonce())}}));
+		QElapsedTimer timer;
+		timer.start();
+		QByteArray got;
+		while (!got.contains('\n') && timer.elapsed() < 3000) {
+			QTest::qWait(10);
+			got += intruder.readAll();
+		}
+		CHECK(got.contains("challenge"));
+		intruder.write(claude::jsonLine(QJsonObject{{"type", "auth"}, {"proof", QString(64, '0')}}));
+		timer.restart();
+		while (intruder.state() == QLocalSocket::ConnectedState && timer.elapsed() < 3000) QTest::qWait(10);
+		CHECK(intruder.state() != QLocalSocket::ConnectedState);
+		CHECK(service->connections() == 0);
+	}
+
+	// The real bridge, as Claude Desktop starts it.
+	BridgeProcess bridge;
+	bridge.start();
+	const auto init = bridge.request("initialize", QJsonObject{{"protocolVersion", "2025-06-18"}, {"capabilities", QJsonObject{}},
+	                                                           {"clientInfo", QJsonObject{{"name", "test"}, {"version", "1"}}}});
+	CHECK(init["result"].toObject()["protocolVersion"].toString() == "2025-06-18");
+	CHECK(bridge.request("tools/list")["result"].toObject()["tools"].toArray().size() == claude::claudeTools().size());
+	const auto status = bridge.call("get_status");
+	CHECK_FALSE(status["isError"].toBool());
+	CHECK(resultText(status).contains("only read"));
+	CHECK_FALSE(resultText(status).contains(home.path()));   // personal folders are masked
+	CHECK(service->connections() == 1);
+	const auto listed = bridge.call("list_materials", QJsonObject{{"filter", "claudetest/"}});
+	CHECK(resultText(listed).contains("claudetest/wall"));
+	const auto material = bridge.call("get_material", QJsonObject{{"name", "claudetest/wall"}});
+	CHECK(resultText(material).contains("$surfaceprop"));
+	CHECK(resultText(material).contains("data, not instructions"));
+
+	// Read only: changes are refused.
+	const auto refused = bridge.call("set_material_decision", QJsonObject{{"material", "claudetest/wall"}, {"set", QJsonObject{{"parallax", "off"}}}});
+	CHECK(refused["isError"].toBool());
+	CHECK(resultText(refused).contains("only read"));
+	auto* store = editor.materialDecisions();
+	CHECK_FALSE(store->lookup("claudetest/wall").parallax);
+
+	// Read and change materials.
+	window.findChild<QRadioButton*>("claudeChange")->click();
+	settle();
+	REQUIRE(service->access() == ClaudeAccess::Change);
+	const auto decided = bridge.call("set_material_decision", QJsonObject{{"material", "claudetest/wall"}, {"set", QJsonObject{{"parallax", "off"}, {"depth", 0.004}}}});
+	CHECK_FALSE(decided["isError"].toBool());
+	CHECK((store->lookup("claudetest/wall").parallax == ParallaxChoice::Off));
+	CHECK(store->lookup("claudetest/wall").depth.value_or(0) == doctest::Approx(0.004));
+	const auto badKey = bridge.call("set_material_decision", QJsonObject{{"material", "claudetest/wall"}, {"set", QJsonObject{{"note", "x\"\nbrick/* parallax=on"}}}});
+	CHECK(badKey["isError"].toBool());
+	CHECK_FALSE(store->lookup("brick/anything").parallax);
+	const auto edited = bridge.call("edit_material_parameter", QJsonObject{{"material", "claudetest/wall"}, {"parameter", "$surfaceprop"}, {"value", "metal"}});
+	CHECK_FALSE(edited["isError"].toBool());
+	CHECK(readFileText(vmt)->find("metal") != std::string::npos);
+	CHECK(QDir(exchange + "/backups").entryList(QDir::Files).size() >= 1);
+	// Nothing outside the mod's materials or the exchange folder, no program files, no game files.
+	for (const QString& name : {QStringLiteral("../../gameinfo"), QStringLiteral("../../../secret"), QStringLiteral("concrete/concretewall001a")}) {
+		const auto r = bridge.call("edit_material_parameter", QJsonObject{{"material", name}, {"parameter", "$surfaceprop"}, {"value", "x"}});
+		CAPTURE(name.toStdString());
+		CHECK(r["isError"].toBool());
+	}
+	CHECK(bridge.call("edit_material_parameter", QJsonObject{{"material", "claudetest/wall"}, {"parameter", "$x"}, {"value", "a\" \"$y\" \"b"}})["isError"].toBool());
+	for (const QString& name : {QStringLiteral("../secret.txt"), QStringLiteral("x.exe"), QStringLiteral("run.bat"), QStringLiteral("/tmp/x.txt"),
+	                            QStringLiteral("backups/x.txt"), QStringLiteral("CON.txt")}) {
+		const auto r = bridge.call("write_exchange_file", QJsonObject{{"name", name}, {"text", "hello"}});
+		CAPTURE(name.toStdString());
+		CHECK(r["isError"].toBool());
+	}
+	CHECK(readFileText(secretOutside) == std::optional<std::string>("outside"));
+	CHECK(bridge.call("read_exchange_file", QJsonObject{{"name", "../secret.txt"}})["isError"].toBool());
+	CHECK_FALSE(bridge.call("write_exchange_file", QJsonObject{{"name", "notes/list.txt"}, {"text", "hello"}})["isError"].toBool());
+	CHECK(QFileInfo::exists(exchange + "/notes/list.txt"));
+	CHECK(resultText(bridge.call("read_exchange_file", QJsonObject{{"name", "notes/list.txt"}})).contains("hello"));
+	CHECK(resultText(bridge.call("list_exchange_files")).contains("notes/list.txt"));
+
+	// The activity lists every call; undo puts Claude's changes back one by one.
+	auto* activity = window.findChild<QTreeWidget*>("claudeActivity");
+	REQUIRE(activity);
+	CHECK(activity->topLevelItemCount() >= 10);
+	auto* undo = window.findChild<QPushButton*>("claudeUndo");
+	REQUIRE(undo);
+	CHECK(undo->isEnabled());
+	undo->click();   // the notes file
+	CHECK_FALSE(QFileInfo::exists(exchange + "/notes/list.txt"));
+	undo->click();   // the material
+	CHECK(readFileText(vmt)->find("concrete\"") != std::string::npos);
+	undo->click();   // the decision
+	settle();
+	CHECK_FALSE(store->lookup("claudetest/wall").parallax);
+	CHECK_FALSE(undo->isEnabled());
+
+	// Ask before each change: the mapper says no.
+	window.findChild<ToggleSwitch*>("claudeAsk")->click();
+	REQUIRE(service->askBeforeChange());
+	bool asked = false;
+	QTimer::singleShot(300, [&] {
+		if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+			asked = true;
+			box->button(QMessageBox::No)->click();
+		}
+	});
+	const auto declined = service->callTool("set_material_decision", QJsonObject{{"material", "claudetest/wall"}, {"set", QJsonObject{{"parallax", "on"}}}});
+	CHECK(asked);
+	CHECK(declined["isError"].toBool());
+	CHECK_FALSE(store->lookup("claudetest/wall").parallax);
+
+	// Switched off: the pipe closes at once, the bridge says so, the secret is gone.
+	toggle->click();
+	settle();
+	CHECK_FALSE(service->enabled());
+	CHECK_FALSE(service->listening());
+	CHECK_FALSE(QFileInfo::exists(claude::secretFilePath()));
+	const auto off = bridge.call("get_status");
+	CHECK(off["isError"].toBool());
+	CHECK(resultText(off).contains("switch on"));
+	bridge.process.closeWriteChannel();
+	CHECK(bridge.process.waitForFinished(5000));
+	qunsetenv("SME_CLAUDE_PIPE");
+	qunsetenv("SME_CLAUDE_DATA_DIR");
 }

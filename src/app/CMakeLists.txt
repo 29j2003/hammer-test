@@ -73,7 +73,10 @@ add_library(smeapp STATIC
 	command_palette.cpp
 	editor_helpers.cpp
 	viewport_displace.cpp
-	visgroups_panel.cpp)
+	visgroups_panel.cpp
+	claude_service.cpp
+	claude_tools.cpp
+	claude_panel.cpp)
 target_include_directories(smeapp PUBLIC .)
 target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)
 # The commit the build comes from, for the editor report (taken when CMake configures).
@@ -87,7 +90,7 @@ if(GIT_FOUND)
 	endif()
 endif()
 set_source_files_properties(main_window_report.cpp PROPERTIES COMPILE_DEFINITIONS SME_COMMIT="${SME_COMMIT}")
-target_link_libraries(smeapp PUBLIC smecore Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network)
+target_link_libraries(smeapp PUBLIC smecore smeclaude Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent Qt6::Network)
 if(TARGET Qt6::Multimedia)
 	target_link_libraries(smeapp PUBLIC Qt6::Multimedia)
 	target_compile_definitions(smeapp PUBLIC SME_HAVE_MULTIMEDIA)
@@ -105,6 +108,7 @@ qt_add_resources(smeapp "ui"
 	      resources/chevron-up.png resources/chevron-up-hover.png resources/chevron-up-disabled.png)
 
 qt_add_executable(Mapsmith main.cpp)
+add_dependencies(Mapsmith mapsmith-mcp)   # the Claude bridge ships next to it
 if(WIN32)
 	target_sources(Mapsmith PRIVATE resources/mapsmith.rc)   # program icon
 endif()

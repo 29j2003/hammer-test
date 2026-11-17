@@ -9,6 +9,8 @@
 #include "model_cache.h"
 #include "map_look_panel.h"
 #include "features_panel.h"
+#include "claude_panel.h"
+#include "claude_service.h"
 #include "mod_code_panel.h"
 #include "mod_page.h"
 #include "animations_page.h"
@@ -619,6 +621,32 @@ void MainWindow::createDocks() {
 	connect(m_features, &FeaturesPanel::installed, this, reloadGame);
 	m_modPage->addBanner(m_features->offer());
 	m_features->refreshOffer();
+	// Claude: the local bridge for Claude Desktop / Claude Code (off by default). Claude reaches only
+	// what these functions and the tools in claude_tools.cpp give it.
+	m_claude = new ClaudeService(m_editor, this);
+	{
+		ClaudeHost host;
+		host.screenshot = [this] {
+			Viewport* view = activeView();
+			return view ? view->grabFramebuffer() : QImage();
+		};
+		host.log = [this] { return m_log ? m_log->toPlainText() : QString(); };
+		host.compileLog = [this] { return m_compileWindow ? m_compileWindow->allText() : QString(); };
+		host.problems = [this] { return m_problems ? m_problems->problemsText() : QString(); };
+		host.writeReport = [this](const QString& path, QString* error) { return writeEditorReport(path, error); };
+		host.materialChanged = [this](const QString& name) {
+			if (m_materials->isKnown(name)) m_materials->reload(name);
+			m_assets->materialChanged(name);
+		};
+		host.confirm = [this](const QString& title, const QString& what) {
+			return QMessageBox::question(this, tr("Claude: %1").arg(title), tr("Claude wants to make this change:\n\n%1\n\nAllow it?").arg(what),
+			                             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+		};
+		m_claude->setHost(std::move(host));
+	}
+	connect(m_claude, &ClaudeService::logLine, this, [this](const QString& text) { m_log->append(text, QColor(170, 160, 230)); });
+	// Before "Build from source", which stays the last tab.
+	m_projectPage->insertTab(m_projectPage->indexOf(m_modCode), new ClaudePanel(m_claude, projectTabs), tr("Claude"));
 	// "Import ..." on the pages: the mapper's own sounds, pictures, models and particle files.
 	connect(m_sounds, &SoundBrowser::importRequested, this, [this] { openImport(ImportDialog::Kind::Sound); });
 	connect(m_materialEditor, &MaterialEditor::importRequested, this, [this] { openImport(ImportDialog::Kind::Material); });

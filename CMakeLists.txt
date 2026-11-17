@@ -29,6 +29,7 @@ include(cmake/Dependencies.cmake)
 add_subdirectory(src/core)
 add_subdirectory(src/probe)
 if(SME_BUILD_APP)
+	add_subdirectory(src/claude)
 	add_subdirectory(src/app)
 endif()
 
