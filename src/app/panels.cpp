@@ -21,6 +21,7 @@
 #include <QScrollBar>
 #include <QStyle>
 #include <QTimer>
+#include <QtConcurrent>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -157,15 +158,70 @@ ProblemsPanel::ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* pare
 	m_list->viewport()->installEventFilter(this);
 	layout->addWidget(m_list, 1);
 	connect(check, &QPushButton::clicked, this, [this] {
+		dropBackgroundCheck();   // it uses the cache
 		m_cache = {};   // read models and sounds again (they may have changed on disk)
 		m_bundleRead = false;
 		runChecks();
 	});
-	connect(editor, &Editor::gameChanged, this, [this] { m_cache = {}; });
+	connect(editor, &Editor::gameAboutToChange, this, &ProblemsPanel::dropBackgroundCheck);   // it reads the old game
+	connect(editor, &Editor::gameChanged, this, [this] {
+		dropBackgroundCheck();
+		m_cache = {};
+	});
 	connect(editor, &Editor::documentReplaced, this, [this] {
 		m_leaks.clear();
-		QTimer::singleShot(300, this, &ProblemsPanel::runChecks);
+		QTimer::singleShot(300, this, &ProblemsPanel::runChecksInBackground);
 	});
+	connect(&m_backgroundWatcher, &QFutureWatcherBase::finished, this, [this] {
+		if (!m_background) return;
+		m_background.reset();
+		if (m_backgroundDropped) {
+			m_backgroundDropped = false;
+		} else {
+			m_problems = m_backgroundWatcher.result();
+			showProblems();
+		}
+		if (m_backgroundAgain) {
+			m_backgroundAgain = false;
+			runChecksInBackground();
+		}
+	});
+}
+
+ProblemsPanel::~ProblemsPanel() {
+	m_backgroundWatcher.waitForFinished();
+}
+
+/// The map copy and what the check's context points at, alive while the other thread runs.
+struct ProblemsPanel::BackgroundCheck {
+	std::shared_ptr<const MapDocument> doc;
+	std::vector<std::string> names;
+	BudgetLimits limits;
+	CheckContext context;
+};
+
+void ProblemsPanel::dropBackgroundCheck() {
+	if (!m_background) return;
+	m_backgroundWatcher.waitForFinished();
+	m_backgroundDropped = true;
+	m_backgroundAgain = false;
+}
+
+void ProblemsPanel::runChecksInBackground() {
+	if (m_background) {
+		if (!m_backgroundDropped) {
+			m_backgroundAgain = true;
+			return;
+		}
+		m_backgroundWatcher.waitForFinished();   // dropped: its finished signal is still to come
+	}
+	auto job = std::make_shared<BackgroundCheck>();
+	job->doc = std::make_shared<const MapDocument>(m_editor->doc());
+	job->names = m_assets->materialNames();
+	job->context = checkContext(job->names, job->limits);
+	m_background = job;
+	m_backgroundDropped = false;
+	m_backgroundWatcher.setFuture(QtConcurrent::run([job] { return checkMap(*job->doc, job->context); }));
 }
 
 int ProblemsPanel::errorCount() const {
@@ -177,7 +233,15 @@ int ProblemsPanel::errorCount() const {
 }
 
 void ProblemsPanel::runChecks() {
+	dropBackgroundCheck();   // this one is newer (and the cache is ours again)
 	const auto names = m_assets->materialNames();
+	BudgetLimits limits;
+	const CheckContext context = checkContext(names, limits);
+	m_problems = checkMap(m_editor->doc(), context);
+	showProblems();
+}
+
+CheckContext ProblemsPanel::checkContext(const std::vector<std::string>& names, BudgetLimits& limits) {
 	CheckContext context;
 	context.entities = m_editor->entities();
 	context.files = m_editor->game() ? &m_editor->game()->files : nullptr;
@@ -200,10 +264,9 @@ void ProblemsPanel::runChecks() {
 	}
 	// The open game's engine limits (newer branches allow more entities).
 	const auto* game = m_editor->game();
-	const BudgetLimits limits = budgetLimitsForApp(game ? (game->entry.ownerAppId != 0 ? game->entry.ownerAppId : game->entry.baseAppId) : 0);
+	limits = budgetLimitsForApp(game ? (game->entry.ownerAppId != 0 ? game->entry.ownerAppId : game->entry.baseAppId) : 0);
 	context.limits = &limits;
-	m_problems = checkMap(m_editor->doc(), context);
-	showProblems();
+	return context;
 }
 
 void ProblemsPanel::addLeak(const std::vector<Vec3>& line) {

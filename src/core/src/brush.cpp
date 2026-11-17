@@ -5,7 +5,10 @@
 
 #include <sme/text.h>
 
+#include <array>
 #include <cmath>
+#include <functional>
+#include <unordered_map>
 #include <sstream>
 
 namespace sme {
@@ -148,6 +151,36 @@ BrushGeometry buildBrushGeometry(const Solid& solid) {
 	geometry.valid = ok && geometry.faces.size() >= 4 && !geometry.bounds.empty() && size.x < 2 * WORLD_HALF - 1 &&
 	                 size.y < 2 * WORLD_HALF - 1 && size.z < 2 * WORLD_HALF - 1;
 	return geometry;
+}
+
+BrushExtent brushExtent(const Solid& solid) {
+	struct Entry {
+		std::vector<std::array<Vec3, 3>> planes;
+		BrushExtent extent;
+	};
+	thread_local std::unordered_multimap<std::size_t, Entry> cache;
+	std::size_t hash = solid.sides.size();
+	for (const auto& side : solid.sides) {
+		for (const auto& p : side.planePoints) {
+			for (const double c : {p.x, p.y, p.z}) hash = (hash * 1099511628211ull) ^ std::hash<double>{}(c);
+		}
+	}
+	const auto [first, last] = cache.equal_range(hash);
+	for (auto it = first; it != last; ++it) {
+		const auto& planes = it->second.planes;
+		bool same = planes.size() == solid.sides.size();
+		for (std::size_t i = 0; same && i < planes.size(); ++i) same = planes[i] == solid.sides[i].planePoints;
+		if (same) return it->second.extent;
+	}
+	const auto geometry = buildBrushGeometry(solid);
+	Entry entry;
+	entry.planes.reserve(solid.sides.size());
+	for (const auto& side : solid.sides) entry.planes.push_back(side.planePoints);
+	entry.extent = {geometry.bounds, geometry.valid};
+	if (cache.size() > 400000) cache.clear();   // bounded: a few maps' worth of brushes
+	const auto extent = entry.extent;
+	cache.emplace(hash, std::move(entry));
+	return extent;
 }
 
 TexCoord textureCoordinate(const Side& side, const Vec3& point) {

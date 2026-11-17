@@ -24,6 +24,7 @@
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <optional>
 #include <vector>
 
 #include <sme/brush.h>
@@ -85,6 +86,11 @@ public:
 	/// runs, without rebuilding the scene (the vertex count stays the same). False if the face
 	/// is not drawn as a displacement of that size - then rebuild.
 	bool updateDisplacement(int sideId, const Side& side, const FaceGeometry& face, const DisplacementMesh& mesh);
+	/// Brushes changed in place (moved, resized, retextured): their vertices and edges are written
+	/// over the old ones, without rebuilding the scene. False when that is not possible (a face
+	/// more or less, another material, a displacement, an overlay or infodecal on them ...) - then
+	/// rebuild. Nothing is changed when it returns false.
+	bool updateSolids(const MapDocument& doc, const std::vector<SolidRef>& refs);
 	/// Updates selection flags (cheap).
 	void setSelection(const MapDocument& doc, const Selection& selection, const Selection& hidden = {}, int hoverSideId = 0);
 	/// Hides the selected objects (they are drawn by drawPreview while dragging).
@@ -384,6 +390,21 @@ private:
 		std::shared_ptr<const BrushGeometry> geometry;
 	};
 	std::unordered_multimap<std::size_t, CachedBrush> m_brushCache;
+	/// Sizes of the last build: the next one reserves them up front (an edit changes little, and
+	/// growing tens of megabytes of vertex data step by step cost a third of a rebuild).
+	struct BuildSizes {
+		std::size_t edgeFloats = 0, faces = 0, sides = 0, solids = 0;
+		std::unordered_map<QString, std::size_t> materialFloats;
+	};
+	BuildSizes m_lastSizes;
+	// For updateSolids: what the last build made of each face and brush.
+	std::vector<std::pair<int, int>> m_edgeRangesByFace;   ///< First edge vertex and count per face
+	std::vector<QString> m_faceMaterial;                   ///< Batch material per face (empty: not a brush face)
+	std::vector<std::pair<int, Vec3>> m_faceSides;         ///< Side id and center per face (cubemap of the face)
+	std::unordered_map<long long, std::size_t> m_pickOfSolid;   ///< Pick item of each brush of the document
+	std::unordered_set<int> m_overlaySides;                ///< Faces info_overlays lie on
+	bool m_anyDecal = false;                               ///< An infodecal: it may lie on any face
+	const EntityCatalog* m_catalog = nullptr;              ///< Of the last build (brush entity edge colours)
 	std::unordered_map<int, Bounds> m_instanceBounds;
 	Selection m_hidden;
 	std::unordered_set<int> m_hiddenSides;   ///< Side ids of m_hidden.faces: not drawn, so not picked either

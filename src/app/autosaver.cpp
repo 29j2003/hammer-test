@@ -243,13 +243,16 @@ QString Autosaver::autosaveNow(bool force) {
 	const QString folder = folderFor(mapPath);
 	const QString mapName = mapNameFor(mapPath);
 	const QString file = QDir(folder).filePath(QString::fromStdString(autosaveFileName(mapName.toStdString(), stampOf(QDateTime::currentDateTime()))));
-	// Text now (the document may change right after), disk later.
-	auto text = std::make_shared<const std::string>(m_editor->doc().serialize());
+	// A copy of the map now (the document may change right after); its text and the disk later, on
+	// the pool's thread: writing the text of a big map took the editor a third of a second, the
+	// copy a sixth of that.
+	auto doc = std::make_shared<const MapDocument>(m_editor->doc());
 	const int keep = keepCount();
-	m_pool.start([text, folder, file, mapName, keep] {
+	m_pool.start([doc, folder, file, mapName, keep] {
+		const std::string text = doc->serialize();
 		QDir().mkpath(folder);
 		QSaveFile out(file);
-		if (!out.open(QIODevice::WriteOnly) || out.write(text->data(), static_cast<qint64>(text->size())) != static_cast<qint64>(text->size()) ||
+		if (!out.open(QIODevice::WriteOnly) || out.write(text.data(), static_cast<qint64>(text.size())) != static_cast<qint64>(text.size()) ||
 		    !out.commit()) {
 			return;
 		}

@@ -7,6 +7,7 @@
 #include <sme/assets.h>
 #include <sme/brush.h>
 #include <sme/edge_round.h>
+#include <sme/editing.h>
 #include <sme/fidelity_effects.h>
 #include <sme/filesystem.h>
 #include <sme/map.h>
@@ -205,4 +206,62 @@ TEST_CASE("performance: snapping targets and edge rounding in a big map") {
 	CHECK(plan.ok());
 	CHECK(collect < 10.0);
 	CHECK(rounding < 10.0);
+}
+
+TEST_CASE("performance: a big selection is pruned and boxed in one pass, brush boxes are remembered") {
+	MapDocument doc = bigBlockMap();
+	Entity detail;
+	detail.id = doc.newEntityId();
+	detail.keyValues = {{"classname", "func_detail"}};
+	Bounds b;
+	b.add({0, 0, 100});
+	b.add({32, 32, 132});
+	detail.solids.push_back(makeBlock(doc, b, "brick/brickwall001a"));
+	doc.entities.push_back(detail);
+
+	// All brushes, some that are gone, faces of one of them: the same as looking each one up.
+	Selection all;
+	for (const auto& solid : doc.world.solids) all.solids.push_back({0, solid.id});
+	all.solids.push_back({detail.id, detail.solids[0].id});
+	all.solids.push_back({0, 999999});
+	all.solids.push_back({detail.id + 50, 1});
+	all.entities = {detail.id, detail.id + 50, 0};
+	all.faces.push_back({{0, doc.world.solids[3].id}, doc.world.solids[3].sides[0].id});
+	all.faces.push_back({{0, doc.world.solids[3].id}, 999999});
+	Selection expected = all;
+	std::erase_if(expected.solids, [&](const SolidRef& ref) { return !doc.findSolid(ref); });
+	std::erase_if(expected.entities, [&](int id) { return id == 0 || !doc.findEntity(id); });
+	expected.faces.pop_back();
+	const auto start = std::chrono::steady_clock::now();
+	all.prune(doc);
+	const double prune = secondsSince(start);
+	CHECK(all.solids == expected.solids);
+	CHECK(all.entities == expected.entities);
+	CHECK(all.faces == expected.faces);
+	const SolidIndex index(doc);
+	CHECK(index.findSolid({detail.id, detail.solids[0].id}) == doc.findSolid({detail.id, detail.solids[0].id}));
+	CHECK(index.findSolid({0, 999999}) == nullptr);
+	CHECK(index.findEntity(0) == &doc.world);
+
+	// The box of all brushes: the second time from remembered brush boxes.
+	Bounds slow;
+	for (const auto& ref : all.solids) slow.add(buildBrushGeometry(*doc.findSolid(ref)).bounds);
+	Selection brushes;
+	brushes.solids = all.solids;
+	const Bounds first = edit::selectionBounds(doc, brushes, nullptr);
+	const auto again = std::chrono::steady_clock::now();
+	const Bounds second = edit::selectionBounds(doc, brushes, nullptr);
+	const double boxed = secondsSince(again);
+	CHECK(first.min == slow.min);
+	CHECK(first.max == slow.max);
+	CHECK(second.min == slow.min);
+	CHECK(second.max == slow.max);
+	const auto extent = brushExtent(doc.world.solids[5]);
+	const auto geometry = buildBrushGeometry(doc.world.solids[5]);
+	CHECK(extent.valid == geometry.valid);
+	CHECK(extent.bounds.min == geometry.bounds.min);
+	CHECK(extent.bounds.max == geometry.bounds.max);
+	MESSAGE("20000 brushes selected: prune " << prune << " s, selection box (remembered) " << boxed << " s");
+	CHECK(prune < 2.0);
+	CHECK(boxed < 2.0);
 }

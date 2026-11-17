@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QPlainTextEdit>
+#include <QFutureWatcher>
 #include <QWidget>
 
 #include <functional>
@@ -56,9 +57,13 @@ class ProblemsPanel : public QWidget {
 
 public:
 	ProblemsPanel(Editor* editor, AssetBrowser* assets, QWidget* parent = nullptr);
+	~ProblemsPanel() override;
 
 	/// Runs all checks now (also called before compiling).
 	void runChecks();
+	/// Runs all checks on a copy of the map on another thread and shows them when done (after a
+	/// map was opened: a big map's checks took the editor a second).
+	void runChecksInBackground();
 	/// Adds a leak from a compile (VBSP pointfile).
 	void addLeak(const std::vector<Vec3>& line);
 	[[nodiscard]] int errorCount() const;
@@ -81,6 +86,10 @@ protected:
 
 private:
 	void showProblems();
+	/// What the checks get besides the map (`names` and `limits` must outlive the result).
+	CheckContext checkContext(const std::vector<std::string>& names, BudgetLimits& limits);
+	/// Waits for a check on the other thread; its result is dropped (a newer one comes).
+	void dropBackgroundCheck();
 	/// Gives every row the height its wrapped text and buttons need at the list's width.
 	void fitRows();
 
@@ -93,6 +102,12 @@ private:
 	std::optional<FeatureBundle> m_bundle;   ///< The features Mapsmith brings (read once, again with "Check map")
 	bool m_bundleRead = false;
 	CheckCache m_cache;            ///< Models and sounds read by the checks (cleared with the game or "Check map")
+	/// A check on another thread (runChecksInBackground): it uses m_cache while it runs.
+	struct BackgroundCheck;
+	std::shared_ptr<BackgroundCheck> m_background;
+	QFutureWatcher<std::vector<Problem>> m_backgroundWatcher;
+	bool m_backgroundAgain = false;   ///< Asked again while one ran
+	bool m_backgroundDropped = false; ///< Its result is not shown
 };
 
 /// The Map Budget dock: live counts of brushes, sides, planes, entities, edicts, ... against the

@@ -951,6 +951,39 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	m_modelInstances.clear();
 	m_shadowsDirty = true;
 	int faceIndex = 0;
+	edges.reserve(m_lastSizes.edgeFloats + m_lastSizes.edgeFloats / 16);
+	m_faceToSide.reserve(m_lastSizes.faces + 64);
+	m_faceLightmap.reserve(m_lastSizes.faces + 64);
+	m_sideFaces.reserve(m_lastSizes.sides + 64);
+	m_solidFaces.reserve(m_lastSizes.solids + 64);
+	m_pickItems.reserve(m_lastSizes.solids + doc.entities.size() + 64);
+	BuildSizes sizes;
+
+	// Infodecals and overlays lie on brush faces (drawn below): the faces they need are taken from
+	// the shapes built here instead of building every brush again. Overlays name their faces;
+	// infodecals land on whatever is near, so with any infodecal every face is kept.
+	bool anyDecal = false;
+	std::unordered_set<int> overlaySides;
+	for (const auto& entity : doc.entities) {
+		if (iequals(entity.classname(), "infodecal")) {
+			anyDecal = true;
+		} else if (iequals(entity.classname(), "info_overlay")) {
+			if (const auto overlay = readOverlay(entity)) overlaySides.insert(overlay->sides.begin(), overlay->sides.end());
+		}
+	}
+	std::vector<SurfaceFace> surfaces;
+	m_catalog = catalog;
+	m_overlaySides = overlaySides;
+	m_anyDecal = anyDecal;
+	m_edgeRangesByFace.clear();
+	m_edgeRangesByFace.reserve(m_lastSizes.faces + 64);
+	m_pickOfSolid.clear();
+	m_pickOfSolid.reserve(m_lastSizes.solids + 64);
+	const auto noteEdges = [this, &edges](int id, std::size_t firstFloat) {
+		if (m_edgeRangesByFace.size() <= static_cast<std::size_t>(id)) m_edgeRangesByFace.resize(static_cast<std::size_t>(id) + 1, {0, 0});
+		m_edgeRangesByFace[static_cast<std::size_t>(id)] = {static_cast<int>(firstFloat / FLOATS_PER_EDGE),
+		                                                    static_cast<int>((edges.size() - firstFloat) / FLOATS_PER_EDGE)};
+	};
 
 	// Brush shapes from the last build, and the material names in the form the batches use: both
 	// would otherwise be worked out again for every face of the map on every edit.
@@ -988,9 +1021,23 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 
 	std::vector<int> faceVertexOffset;   // per face: vertex offset within its material list
 	std::vector<QString> faceMaterial;
+	faceVertexOffset.reserve(m_lastSizes.faces + 64);
+	faceMaterial.reserve(m_lastSizes.faces + 64);
+	// By face id: models placed between brush entities take ids of their own (they kept the
+	// offsets of later brush entity faces and of all decals one place off, the decals' past the end).
+	const auto noteFaceOffset = [&faceVertexOffset, &faceMaterial](int id, int offset, const QString& material) {
+		const auto slot = static_cast<std::size_t>(id);
+		if (faceVertexOffset.size() <= slot) {
+			faceVertexOffset.resize(slot + 1, 0);
+			faceMaterial.resize(slot + 1);
+		}
+		faceVertexOffset[slot] = offset;
+		faceMaterial[slot] = material;
+	};
 	// Per face: its side id (0 for models and instance brushes) and center, for the cubemap it
 	// reflects; side id -1 = reflects nothing (entity boxes, decals).
 	std::vector<std::pair<int, Vec3>> faceSides;
+	faceSides.reserve(m_lastSizes.faces + 64);
 	const auto noteFace = [&faceSides](int id, int sideId, const Vec3& center) {
 		if (static_cast<std::size_t>(id) >= faceSides.size()) faceSides.resize(static_cast<std::size_t>(id) + 1, {-1, Vec3{}});
 		faceSides[static_cast<std::size_t>(id)] = {sideId, center};
@@ -1011,8 +1058,22 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		for (const auto& face : geometry.faces) {
 			const Side& side = solid.sides[static_cast<std::size_t>(face.sideIndex)];
 			const QString& material = materialOf(side.material);
-			auto& vertices = byMaterial[material];
+			auto [slot, inserted] = byMaterial.try_emplace(material);
+			auto& vertices = slot->second;
+			if (inserted) {
+				if (const auto last = m_lastSizes.materialFloats.find(material); last != m_lastSizes.materialFloats.end()) vertices.reserve(last->second);
+			}
 			const int id = faceIndex++;
+			// A face an overlay or infodecal may lie on (flat, as collectSurfaceFaces gives it).
+			if (!detached && face.vertices.size() >= 3 && (anyDecal || overlaySides.count(side.id))) {
+				SurfaceFace out;
+				out.sideId = side.id;
+				out.normal = normalize(face.normal);
+				out.dist = dot(out.normal, face.vertices.front());
+				out.polygon = face.vertices;
+				for (const auto& v : face.vertices) out.bounds.add(v);
+				surfaces.push_back(std::move(out));
+			}
 			{
 				Vec3 center;
 				for (const auto& v : face.vertices) center += v;
@@ -1029,8 +1090,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			if (!material.startsWith(QLatin1String("tools/"), Qt::CaseInsensitive)) {
 				m_faceLightmap[static_cast<std::size_t>(id)] = static_cast<std::uint8_t>(std::clamp(side.lightmapScale, 1, 255));
 			}
-			faceVertexOffset.push_back(static_cast<int>(vertices.size() / FLOATS_PER_VERTEX));
-			faceMaterial.push_back(material);
+			noteFaceOffset(id, static_cast<int>(vertices.size() / FLOATS_PER_VERTEX), material);
 			facesByMaterial[material].push_back(id);
 
 			if (auto disp = buildDisplacement(side, face)) {
@@ -1042,12 +1102,14 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 					m_sceneBounds.add(p);
 				}
 				// Outline of the displacement.
+				const std::size_t edgeStart = edges.size();
 				for (int k = 0; k + 1 < n; ++k) {
 					pushEdge(edges, disp->positions[k], disp->positions[k + 1], edgeColor, id);
 					pushEdge(edges, disp->positions[(n - 1) * n + k], disp->positions[(n - 1) * n + k + 1], edgeColor, id);
 					pushEdge(edges, disp->positions[k * n], disp->positions[(k + 1) * n], edgeColor, id);
 					pushEdge(edges, disp->positions[k * n + n - 1], disp->positions[(k + 1) * n + n - 1], edgeColor, id);
 				}
+				noteEdges(id, edgeStart);
 				continue;
 			}
 			for (std::size_t i = 1; i + 1 < face.vertices.size(); ++i) {
@@ -1057,10 +1119,13 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 				}
 				++m_triangleCount;
 			}
+			const std::size_t edgeStart = edges.size();
 			for (std::size_t i = 0; i < face.vertices.size(); ++i) {
 				pushEdge(edges, face.vertices[i], face.vertices[(i + 1) % face.vertices.size()], edgeColor, id);
 			}
+			noteEdges(id, edgeStart);
 		}
+		if (!detached) m_pickOfSolid[solidKey(ref)] = m_pickItems.size();
 		m_pickItems.push_back(std::move(pick));
 	};
 
@@ -1229,7 +1294,10 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		const bool any = std::any_of(doc.entities.begin(), doc.entities.end(), [](const Entity& e) {
 			return iequals(e.classname(), "infodecal") || iequals(e.classname(), "info_overlay");
 		});
-		const std::vector<SurfaceFace> surfaces = any ? collectSurfaceFaces(doc) : std::vector<SurfaceFace>{};
+		// Overlays look up their faces by side id (one map instead of a search through every face).
+		std::unordered_map<int, std::size_t> surfaceBySide;
+		surfaceBySide.reserve(surfaces.size());
+		for (std::size_t i = 0; i < surfaces.size(); ++i) surfaceBySide.try_emplace(surfaces[i].sideId, i);
 		for (const auto& entity : doc.entities) {
 			if (!any) break;
 			const bool decal = iequals(entity.classname(), "infodecal");
@@ -1250,7 +1318,11 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 				}
 				patches = decalPatches(surfaces, entity.origin(), width, height);				m_decalPolygons += static_cast<int>(patches.size());
 			} else if (const auto overlay = readOverlay(entity)) {
-				patches = overlayPatches(surfaces, *overlay);
+				std::vector<SurfaceFace> own;   // its faces only, in the order of its sides
+				for (const int sideId : overlay->sides) {
+					if (const auto it = surfaceBySide.find(sideId); it != surfaceBySide.end()) own.push_back(surfaces[it->second]);
+				}
+				patches = overlayPatches(own, *overlay);
 				m_overlayPolygons += static_cast<int>(patches.size());
 			}
 			if (patches.empty()) continue;
@@ -1258,8 +1330,7 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			const int id = faceIndex++;
 			m_entityFaces[entity.id].push_back(id);
 			m_faceToSide.emplace_back(SolidRef{entity.id, 0}, 0);
-			faceVertexOffset.push_back(static_cast<int>(vertices.size() / FLOATS_PER_VERTEX));
-			faceMaterial.push_back(material);
+			noteFaceOffset(id, static_cast<int>(vertices.size() / FLOATS_PER_VERTEX), material);
 			decalFacesByMaterial[material].push_back(id);
 			PickItem pick;
 			pick.entityId = entity.id;
@@ -1352,8 +1423,8 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		m_pickItems.push_back(std::move(pick));
 	}
 
-	// Upload: material batches first, entity boxes last.
-	std::vector<float> all;
+	// Upload: material batches first, entity boxes last - straight into the buffer (no copy of all
+	// vertices into one list first).
 	m_batches.clear();
 	std::vector<QString> materials;
 	materials.reserve(byMaterial.size());
@@ -1361,12 +1432,29 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 		materials.push_back(name);
 	}
 	std::sort(materials.begin(), materials.end());
+	std::vector<QString> decalMaterials;
+	for (const auto& [name, vertices] : decalsByMaterial) decalMaterials.push_back(name);
+	std::sort(decalMaterials.begin(), decalMaterials.end());
+	std::size_t totalFloats = entityVertices.size();
+	for (const auto& [name, vertices] : byMaterial) totalFloats += vertices.size();
+	for (const auto& [name, vertices] : decalsByMaterial) totalFloats += vertices.size();
+	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(totalFloats * sizeof(float)), nullptr, GL_STATIC_DRAW);
+	std::size_t uploaded = 0;   // floats
+	const auto upload = [this, &uploaded](const std::vector<float>& vertices) {
+		if (!vertices.empty()) {
+			glBufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(uploaded * sizeof(float)), static_cast<GLsizeiptr>(vertices.size() * sizeof(float)),
+			                vertices.data());
+		}
+		uploaded += vertices.size();
+	};
 	m_rangesByFace.assign(static_cast<std::size_t>(faceIndex), {0, 0});
 	for (const auto& name : materials) {
 		const auto& vertices = byMaterial[name];
+		sizes.materialFloats[name] = vertices.size();
 		Batch batch;
 		batch.material = name;
-		batch.first = static_cast<GLint>(all.size() / FLOATS_PER_VERTEX);
+		batch.first = static_cast<GLint>(uploaded / FLOATS_PER_VERTEX);
 		batch.count = static_cast<GLsizei>(vertices.size() / FLOATS_PER_VERTEX);
 		// Per-face ranges inside this batch (faces were appended in order).
 		const auto& faces = facesByMaterial[name];
@@ -1376,20 +1464,17 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			const int end = k + 1 < faces.size() ? faceVertexOffset[static_cast<std::size_t>(faces[k + 1])] : batch.count;
 			m_rangesByFace[static_cast<std::size_t>(face)] = {batch.first + start, end - start};
 		}
-		all.insert(all.end(), vertices.begin(), vertices.end());
+		upload(vertices);
 		m_batches.push_back(batch);
 		texture(name); // request loading early
 	}
 	// Decal and overlay batches after the brushes they lie on.
-	std::vector<QString> decalMaterials;
-	for (const auto& [name, vertices] : decalsByMaterial) decalMaterials.push_back(name);
-	std::sort(decalMaterials.begin(), decalMaterials.end());
 	for (const auto& name : decalMaterials) {
 		const auto& vertices = decalsByMaterial[name];
 		Batch batch;
 		batch.material = name;
 		batch.decal = true;
-		batch.first = static_cast<GLint>(all.size() / FLOATS_PER_VERTEX);
+		batch.first = static_cast<GLint>(uploaded / FLOATS_PER_VERTEX);
 		batch.count = static_cast<GLsizei>(vertices.size() / FLOATS_PER_VERTEX);
 		const auto& faces = decalFacesByMaterial[name];
 		for (std::size_t k = 0; k < faces.size(); ++k) {
@@ -1398,22 +1483,25 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 			const int end = k + 1 < faces.size() ? faceVertexOffset[static_cast<std::size_t>(faces[k + 1])] : batch.count;
 			m_rangesByFace[static_cast<std::size_t>(face)] = {batch.first + start, end - start};
 		}
-		all.insert(all.end(), vertices.begin(), vertices.end());
+		upload(vertices);
 		m_batches.push_back(batch);
 		texture(name);
 	}
-	m_entityFirst = static_cast<GLint>(all.size() / FLOATS_PER_VERTEX);
+	m_entityFirst = static_cast<GLint>(uploaded / FLOATS_PER_VERTEX);
 	m_entityCount = static_cast<GLsizei>(entityVertices.size() / FLOATS_PER_VERTEX);
 	for (std::size_t i = 0; i < boxes.size(); ++i) {
 		const int face = faceIndex - static_cast<int>(boxes.size()) + static_cast<int>(i);
 		m_rangesByFace[static_cast<std::size_t>(face)] = {m_entityFirst + static_cast<int>(i) * 36, 36};
 	}
-	all.insert(all.end(), entityVertices.begin(), entityVertices.end());
+	upload(entityVertices);
 
-	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(all.size() * sizeof(float)), all.data(), GL_STATIC_DRAW);
 	glBindBuffer(GL_ARRAY_BUFFER, m_edgeVbo);
 	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(edges.size() * sizeof(float)), edges.data(), GL_STATIC_DRAW);
+	sizes.edgeFloats = edges.size();
+	sizes.faces = static_cast<std::size_t>(faceIndex);
+	sizes.sides = m_sideFaces.size();
+	sizes.solids = m_solidFaces.size();
+	m_lastSizes = std::move(sizes);
 	m_edgeCount = static_cast<GLsizei>(edges.size() / FLOATS_PER_EDGE);
 	m_faceCount = faceIndex;
 	m_flags.assign(static_cast<std::size_t>(std::max(faceIndex, 1)), 0);
@@ -1422,6 +1510,142 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 	uploadLightmapScales();
 	faceSides.resize(static_cast<std::size_t>(faceIndex), {-1, Vec3{}});
 	updateProbes(doc, faceSides);
+	m_faceSides = std::move(faceSides);
+	m_faceMaterial = std::move(faceMaterial);
+	m_faceMaterial.resize(static_cast<std::size_t>(faceIndex));
+	m_edgeRangesByFace.resize(static_cast<std::size_t>(faceIndex), {0, 0});
+}
+
+bool SceneRenderer::updateSolids(const MapDocument& doc, const std::vector<SolidRef>& refs) {
+	if (!m_initialized || m_doc != &doc || m_anyDecal || refs.empty()) return false;
+	// Everything is worked out first; the buffers are only written when every brush fits.
+	struct FaceUpdate {
+		int id;
+		std::vector<float> vertices, edges;
+		Vec3 center;
+		std::uint8_t lightmap;
+	};
+	struct SolidUpdate {
+		std::size_t pick;
+		Bounds bounds;
+		std::vector<Vec3> triangles;   // displacement triangles for picking
+		std::vector<int> triangleSides;
+		std::shared_ptr<const BrushGeometry> geometry;
+		std::vector<std::array<Vec3, 3>> planes;
+	};
+	std::vector<FaceUpdate> faces;
+	std::vector<SolidUpdate> solids;
+	std::optional<SolidIndex> index;
+	if (refs.size() > 16) index.emplace(doc);
+	for (const auto& ref : refs) {
+		const Solid* solid = index ? index->findSolid(ref) : doc.findSolid(ref);
+		const auto faceIds = m_solidFaces.find(solidKey(ref));
+		const auto pick = m_pickOfSolid.find(solidKey(ref));
+		if (!solid || faceIds == m_solidFaces.end() || pick == m_pickOfSolid.end()) return false;
+		QVector3D edgeColor(0.85f, 0.85f, 0.85f);
+		if (ref.entityId != 0) {
+			const Entity* entity = index ? index->findEntity(ref.entityId) : doc.findEntity(ref.entityId);
+			if (!entity) return false;
+			edgeColor = QVector3D(0.86f, 0.12f, 0.86f);
+			if (m_catalog) {
+				if (const auto* definition = m_catalog->find(entity->classname())) {
+					if (const auto helper = definition->helper("color"); !helper.empty()) edgeColor = parseColor255(helper);
+				}
+			}
+		}
+		auto geometry = std::make_shared<const BrushGeometry>(buildBrushGeometry(*solid));
+		const auto& ids = faceIds->second;
+		if (geometry->faces.size() != ids.size()) return false;
+		SolidUpdate solidUpdate;
+		solidUpdate.bounds = geometry->bounds;
+		for (std::size_t k = 0; k < ids.size(); ++k) {
+			const auto& face = geometry->faces[k];
+			const int id = ids[k];
+			const auto slot = static_cast<std::size_t>(id);
+			const Side& side = solid->sides[static_cast<std::size_t>(face.sideIndex)];
+			if (slot >= m_faceMaterial.size() || m_faceToSide[slot].second != side.id || m_overlaySides.count(side.id)) return false;
+			const QString& material = m_faceMaterial[slot];
+			if (material != normalizedMaterialName(QString::fromStdString(side.material))) return false;
+			const std::size_t n = face.vertices.size();
+			FaceUpdate update;
+			update.id = id;
+			for (const auto& v : face.vertices) update.center += v;
+			update.center = n == 0 ? update.center : update.center / double(n);
+			// As the build sets it: tool faces (nodraw, sky, clips ...) have no lightmap.
+			update.lightmap = material.startsWith(QLatin1String("tools/"), Qt::CaseInsensitive) ? std::uint8_t(0)
+			                                                                                     : static_cast<std::uint8_t>(std::clamp(side.lightmapScale, 1, 255));
+			if (auto disp = buildDisplacement(side, face)) {
+				// The same grid as the build makes (same power: same number of vertices and edges).
+				const int g = disp->size;
+				displacementTriangles(side, face, *disp, id, update.vertices, &solidUpdate.triangles, &solidUpdate.triangleSides);
+				if (g < 2 || static_cast<int>(update.vertices.size() / FLOATS_PER_VERTEX) != m_rangesByFace[slot].second ||
+				    m_edgeRangesByFace[slot].second != 8 * (g - 1)) {
+					return false;
+				}
+				for (const auto& p : disp->positions) solidUpdate.bounds.add(p);
+				for (int i = 0; i + 1 < g; ++i) {
+					pushEdge(update.edges, disp->positions[i], disp->positions[i + 1], edgeColor, id);
+					pushEdge(update.edges, disp->positions[(g - 1) * g + i], disp->positions[(g - 1) * g + i + 1], edgeColor, id);
+					pushEdge(update.edges, disp->positions[i * g], disp->positions[(i + 1) * g], edgeColor, id);
+					pushEdge(update.edges, disp->positions[i * g + g - 1], disp->positions[(i + 1) * g + g - 1], edgeColor, id);
+				}
+				faces.push_back(std::move(update));
+				continue;
+			}
+			if (n < 3 || m_rangesByFace[slot].second != static_cast<int>((n - 2) * 3) || m_edgeRangesByFace[slot].second != static_cast<int>(n * 2)) return false;
+			update.vertices.reserve((n - 2) * 3 * FLOATS_PER_VERTEX);
+			for (std::size_t i = 1; i + 1 < n; ++i) {
+				for (const auto* v : {&face.vertices[0], &face.vertices[i], &face.vertices[i + 1]}) {
+					const auto tc = textureCoordinate(side, *v);
+					pushVertex(update.vertices, *v, face.normal, float(tc.u), float(tc.v), 0.f, id);
+				}
+			}
+			update.edges.reserve(n * 2 * FLOATS_PER_EDGE);
+			for (std::size_t i = 0; i < n; ++i) pushEdge(update.edges, face.vertices[i], face.vertices[(i + 1) % n], edgeColor, id);
+			faces.push_back(std::move(update));
+		}
+		solidUpdate.pick = pick->second;
+		solidUpdate.geometry = std::move(geometry);
+		solidUpdate.planes.reserve(solid->sides.size());
+		for (const auto& side : solid->sides) solidUpdate.planes.push_back(side.planePoints);
+		solids.push_back(std::move(solidUpdate));
+	}
+	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+	for (const auto& f : faces) {
+		glBufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(m_rangesByFace[static_cast<std::size_t>(f.id)].first) * FLOATS_PER_VERTEX * sizeof(float),
+		                static_cast<GLsizeiptr>(f.vertices.size() * sizeof(float)), f.vertices.data());
+	}
+	glBindBuffer(GL_ARRAY_BUFFER, m_edgeVbo);
+	bool lightmapsChanged = false;
+	for (const auto& f : faces) {
+		const auto slot = static_cast<std::size_t>(f.id);
+		glBufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(m_edgeRangesByFace[slot].first) * FLOATS_PER_EDGE * sizeof(float),
+		                static_cast<GLsizeiptr>(f.edges.size() * sizeof(float)), f.edges.data());
+		if (slot < m_faceSides.size()) m_faceSides[slot].second = f.center;
+		if (slot < m_faceLightmap.size() && m_faceLightmap[slot] != f.lightmap) {
+			m_faceLightmap[slot] = f.lightmap;
+			lightmapsChanged = true;
+		}
+	}
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	for (auto& s : solids) {
+		auto& pick = m_pickItems[s.pick];
+		pick.bounds = s.bounds;
+		pick.triangles = std::move(s.triangles);
+		pick.triangleSides = std::move(s.triangleSides);
+		m_sceneBounds.add(s.bounds);
+		std::size_t hash = s.planes.size();
+		for (const auto& points : s.planes) {
+			for (const auto& p : points) {
+				for (const double c : {p.x, p.y, p.z}) hash = hash * 1099511628211ull ^ std::hash<double>{}(c);
+			}
+		}
+		m_brushCache.emplace(hash, CachedBrush{std::move(s.planes), std::move(s.geometry)});
+	}
+	if (lightmapsChanged) uploadLightmapScales();
+	updateProbes(doc, m_faceSides);   // the faces' nearest cubemaps
+	m_shadowsDirty = true;
+	return true;
 }
 
 bool SceneRenderer::updateDisplacement(int sideId, const Side& side, const FaceGeometry& face, const DisplacementMesh& mesh) {

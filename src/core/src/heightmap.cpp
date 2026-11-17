@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <map>
 #include <numbers>
 
 #include <cstring>
@@ -81,12 +82,17 @@ void fft(Complex* data, std::size_t n, std::size_t stride, bool inverse) {
 		const double angle = 2 * std::numbers::pi / double(length) * (inverse ? 1 : -1);
 		const Complex step(std::cos(angle), std::sin(angle));
 		for (std::size_t i = 0; i < n; i += length) {
-			Complex w(1);
+			// Products written out: std::complex's operator* checks every product for infinities and
+			// NaNs (a library call), which made this the slow part of the relief preview.
+			double wr = 1, wi = 0;
 			for (std::size_t k = 0; k < length / 2; ++k) {
-				const Complex a = data[(i + k) * stride], b = data[(i + k + length / 2) * stride] * w;
+				const Complex a = data[(i + k) * stride], c = data[(i + k + length / 2) * stride];
+				const Complex b(c.real() * wr - c.imag() * wi, c.real() * wi + c.imag() * wr);
 				data[(i + k) * stride] = a + b;
 				data[(i + k + length / 2) * stride] = a - b;
-				w *= step;
+				const double nr = wr * step.real() - wi * step.imag(), ni = wr * step.imag() + wi * step.real();
+				wr = nr;
+				wi = ni;
 			}
 		}
 	}
@@ -107,11 +113,51 @@ double cycles(unsigned x, unsigned y, unsigned w, unsigned h) {
 	return std::sqrt(fx * fx + fy * fy);
 }
 
+/// The band pass of heightFromColor for a w x h texture (the same few sizes come again and again:
+/// worked out once per thread).
+const std::vector<double>& colorFilter(unsigned w, unsigned h) {
+	thread_local std::map<std::pair<unsigned, unsigned>, std::vector<double>> filters;
+	auto& filter = filters[{w, h}];
+	if (filter.empty()) {
+		filter.resize(std::size_t(w) * h);
+		const double fine = std::max(w, h) / 6.0;
+		for (unsigned y = 0; y < h; ++y) {
+			for (unsigned x = 0; x < w; ++x) {
+				const double cyc = cycles(x, y, w, h);
+				const double keepSlow = 1.0 - std::exp(-(cyc * cyc) / 9.0);
+				const double keepFine = std::exp(-(cyc * cyc) / (2 * fine * fine));
+				filter[std::size_t(y) * w + x] = keepSlow * keepFine;
+			}
+		}
+	}
+	return filter;
+}
+
+/// The slow waves taken out of heightFromNormalMap's heights, for a w x h map (once per thread and size).
+const std::vector<double>& slowFilter(unsigned w, unsigned h) {
+	thread_local std::map<std::pair<unsigned, unsigned>, std::vector<double>> filters;
+	auto& filter = filters[{w, h}];
+	if (filter.empty()) {
+		filter.resize(std::size_t(w) * h);
+		for (unsigned y = 0; y < h; ++y) {
+			for (unsigned x = 0; x < w; ++x) {
+				const double cyc = cycles(x, y, w, h);
+				filter[std::size_t(y) * w + x] = 1.0 - std::exp(-(cyc * cyc) / 9.0);
+			}
+		}
+	}
+	return filter;
+}
+
 /// Heights to 0..1 by the 1 % and 99 % heights; `plateau`: flatter tops and bottoms.
 std::optional<HeightMap> normalize(const std::vector<double>& heights, unsigned w, unsigned h, bool plateau, std::string* error) {
+	// The two percentiles (as a full sort gives them, without sorting everything).
 	std::vector<double> sorted = heights;
-	std::sort(sorted.begin(), sorted.end());
-	const double bottom = sorted[std::size_t(double(sorted.size()) * 0.01)], top = sorted[std::size_t(double(sorted.size()) * 0.99)];
+	const std::size_t low = std::size_t(double(sorted.size()) * 0.01), high = std::size_t(double(sorted.size()) * 0.99);
+	std::nth_element(sorted.begin(), sorted.begin() + std::ptrdiff_t(high), sorted.end());
+	const double top = sorted[high];
+	std::nth_element(sorted.begin(), sorted.begin() + std::ptrdiff_t(low), sorted.begin() + std::ptrdiff_t(high));
+	const double bottom = sorted[low];
 	if (top - bottom < 1e-9) {
 		if (error) *error = "the texture is flat";
 		return std::nullopt;
@@ -184,6 +230,7 @@ std::optional<HeightMap> heightFromNormalMap(const ImageRgba& normalMap, bool ss
 	}
 	fft2(P, w, h, false);
 	fft2(Q, w, h, false);
+	const auto& keepSlow = slowFilter(w, h);
 	for (unsigned y = 0; y < h; ++y) {
 		const double v = 2 * std::numbers::pi * (y <= h / 2 ? double(y) : double(y) - h) / h;
 		for (unsigned x = 0; x < w; ++x) {
@@ -191,8 +238,7 @@ std::optional<HeightMap> heightFromNormalMap(const ImageRgba& normalMap, bool ss
 			const double d = u * u + v * v;
 			const std::size_t i = std::size_t(y) * w + x;
 			if (d < 1e-12) continue;
-			const double cyc = cycles(x, y, w, h);
-			const double keep = 1.0 - std::exp(-(cyc * cyc) / 9.0);
+			const double keep = keepSlow[i];
 			const Complex a = u * P[i] + v * Q[i];
 			H[i] = Complex(a.imag() / d * keep, -a.real() / d * keep);
 		}
@@ -216,15 +262,8 @@ std::optional<HeightMap> heightFromColor(const ImageRgba& baseTexture, std::stri
 	std::vector<Complex> L(n);
 	for (std::size_t i = 0; i < n; ++i) L[i] = 0.299 * c.r[i] + 0.587 * c.g[i] + 0.114 * c.b[i];
 	fft2(L, w, h, false);
-	const double fine = std::max(w, h) / 6.0;
-	for (unsigned y = 0; y < h; ++y) {
-		for (unsigned x = 0; x < w; ++x) {
-			const double cyc = cycles(x, y, w, h);
-			const double keepSlow = 1.0 - std::exp(-(cyc * cyc) / 9.0);
-			const double keepFine = std::exp(-(cyc * cyc) / (2 * fine * fine));
-			L[std::size_t(y) * w + x] *= keepSlow * keepFine;
-		}
-	}
+	const auto& filter = colorFilter(w, h);
+	for (std::size_t i = 0; i < n; ++i) L[i] *= filter[i];
 	fft2(L, w, h, true);
 	std::vector<double> heights(n);
 	for (std::size_t i = 0; i < n; ++i) heights[i] = L[i].real();

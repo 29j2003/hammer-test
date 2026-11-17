@@ -88,6 +88,8 @@ public:
 	[[nodiscard]] std::size_t size() const { return m_changes.size(); }
 	/// How many changes are applied: changes [0, index) are in the document, [index, size) are undone.
 	[[nodiscard]] std::size_t index() const { return m_index; }
+	/// Change `i` (nullptr when out of range).
+	[[nodiscard]] const Change* changeAt(std::size_t i) const { return i < m_changes.size() ? &m_changes[i] : nullptr; }
 	/// Name of change `i` ("Move", "Paint", ...); empty when out of range.
 	[[nodiscard]] std::string nameAt(std::size_t i) const { return i < m_changes.size() ? m_changes[i].name : std::string{}; }
 	/// Increases with every push/undo/redo (for "modified" tracking and redraws).

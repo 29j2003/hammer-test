@@ -136,7 +136,11 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 	connect(editor, &Editor::settingsChanged, this, &Viewport::applyFrameLimit);
 	connect(editor, &Editor::displaceSettingsChanged, this, &Viewport::requestFrame);   // brush circle size
 	connect(editor, &Editor::documentChanged, this, [this] {
-		m_needsRebuild = true;
+		if (const auto* brushes = m_editor->lastBrushEdit(); brushes && !m_needsRebuild) {
+			m_changedSolids.insert(m_changedSolids.end(), brushes->begin(), brushes->end());
+		} else {
+			m_needsRebuild = true;
+		}
 		m_ropesDirty = true;
 		m_selectionDirty = true;
 		requestFrame();
@@ -146,10 +150,11 @@ Viewport::Viewport(Editor* editor, MaterialCache* materials, Camera::Kind kind, 
 		m_leak.clear();
 		m_ropesDirty = true;
 		QTimer::singleShot(0, this, [this] {
-			if (m_glReady) {
+			if (m_glReady && m_needsRebuild) {   // not when a frame has rebuilt it already
 				makeCurrent();
 				m_renderer.rebuild(m_editor->doc(), m_editor->entities());
 				m_needsRebuild = false;
+				m_changedSolids.clear();
 				doneCurrent();
 			}
 			frameSelection();
@@ -548,9 +553,23 @@ void Viewport::paintGL() {
 		p.drawText(rect(), Qt::AlignCenter, tr("OpenGL 3.3 is required.\n%1").arg(m_glError));
 		return;
 	}
+	if (!m_needsRebuild && !m_changedSolids.empty()) {
+		std::sort(m_changedSolids.begin(), m_changedSolids.end(),
+		          [](const SolidRef& a, const SolidRef& b) { return std::pair(a.entityId, a.solidId) < std::pair(b.entityId, b.solidId); });
+		m_changedSolids.erase(std::unique(m_changedSolids.begin(), m_changedSolids.end(),
+		                                  [](const SolidRef& a, const SolidRef& b) { return a.entityId == b.entityId && a.solidId == b.solidId; }),
+		                      m_changedSolids.end());
+		if (m_renderer.updateSolids(m_editor->doc(), m_changedSolids)) {
+			m_selectionDirty = true;
+		} else {
+			m_needsRebuild = true;
+		}
+		m_changedSolids.clear();
+	}
 	if (m_needsRebuild) {
 		m_renderer.rebuild(m_editor->doc(), m_editor->entities());
 		m_needsRebuild = false;
+		m_changedSolids.clear();
 		m_selectionDirty = true;
 	}
 	if (m_lookDirty) {

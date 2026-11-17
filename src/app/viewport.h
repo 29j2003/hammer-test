@@ -315,6 +315,9 @@ private:
 	QLabel* m_densityLegend = nullptr;     ///< Colour key of the lightmap density view (bottom left)
 	bool m_blockForEntity = false;   ///< The block drag belongs to the entity tool (brush entity)
 	bool m_needsRebuild = true;
+	/// Brushes changed in place since the last frame (Editor::lastBrushEdit): updated instead of a
+	/// rebuild of the whole map (a second per edit in a map of 20 000 brushes).
+	std::vector<SolidRef> m_changedSolids;
 	bool m_selectionDirty = true;
 	QString m_glError;
 	QString m_glInfo;

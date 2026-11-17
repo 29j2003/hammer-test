@@ -2,6 +2,8 @@
 
 #include "asset_browser.h"
 
+#include "lazy_refresh.h"
+
 #include "material_decision_store.h"
 #include "material_review_dialog.h"
 
@@ -697,7 +699,9 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 	m_usageUpdate = new QTimer(this);
 	m_usageUpdate->setSingleShot(true);
 	m_usageUpdate->setInterval(50);
-	connect(m_usageUpdate, &QTimer::timeout, this, &AssetBrowser::updateUsedMaterials);
+	// Hidden (another page, a closed dock): counted the next time the browser is shown.
+	auto* usage = new RefreshWhenShown(this, [this] { updateUsedMaterials(); });
+	connect(m_usageUpdate, &QTimer::timeout, usage, &RefreshWhenShown::request);
 	connect(editor, &Editor::documentChanged, m_usageUpdate, qOverload<>(&QTimer::start));
 	connect(&m_indexWatcher, &QFutureWatcherBase::finished, this, [this] {
 		if (m_indexWatcher.future().resultCount() == 0 || m_indexWatcher.isCanceled()) {
