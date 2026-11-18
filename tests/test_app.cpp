@@ -171,6 +171,9 @@
 #include "mod_code_panel.h"
 #include "mod_page.h"
 #include "model_viewer.h"
+#include "anim_edit_view.h"
+#include "anim_editor.h"
+#include "anim_timeline.h"
 #include "animations_page.h"
 #include "model_export_dialog.h"
 #include "plural_text.h"
@@ -12651,4 +12654,258 @@ TEST_CASE("claude: Project > Claude switches the bridge on, Claude reads and cha
 	CHECK(bridge.process.waitForFinished(5000));
 	qunsetenv("SME_CLAUDE_PIPE");
 	qunsetenv("SME_CLAUDE_DATA_DIR");
+}
+
+TEST_CASE("animation editor: improve an animation with keys, preview it and rebuild the model in the mod (studiomdl faked)") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	QString error;
+	REQUIRE(editor.openMap(fromPath(f.mod / "mapsrc/demo.vmf"), &error));
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const QString citizenModel = "models/humans/group01/male_07.mdl";
+	window.showPage(MainWindow::Page::Animations);
+	auto* page = window.animationsPage();
+	QSignalSpy pageLoaded(page, &AnimationsPage::modelLoaded);
+	page->selectModel(citizenModel);
+	REQUIRE((pageLoaded.count() > 0 || pageLoaded.wait(10000)));
+	REQUIRE(page->selectSequence("lineidle01"));
+	// The Models page has its way in too.
+	CHECK(window.modelsPage()->findChild<QPushButton*>("modelAnimate"));
+
+	// "Edit animation ..." opens the editor on the chosen animation.
+	auto* editButton = page->findChild<QPushButton*>("animationEdit");
+	REQUIRE(editButton);
+	CHECK(editButton->isVisible());
+	editButton->click();
+	auto* ed = window.animationEditor();
+	REQUIRE(ed);
+	QSignalSpy loaded(ed, &AnimationEditor::loaded);
+	REQUIRE((ed->ready() || loaded.wait(10000)));
+	REQUIRE(QTest::qWaitForWindowExposed(ed));
+	settle();
+	AnimEditor* clip = ed->clipEditor();
+	REQUIRE(clip);
+	CHECK(clip->clip().baseSequence == "lineidle01");
+	CHECK(clip->clip().mode == AnimClip::Mode::Tweak);
+	CHECK(clip->clip().name == "lineidle01_edit");
+	// Every bone in the list, grouped by name.
+	int items = 0;
+	for (QTreeWidgetItemIterator it(ed->boneTree()); *it; ++it) ++items;
+	CHECK(items == int(clip->bones().size()));
+	auto* groups = ed->findChild<QComboBox*>("animBoneGroup");
+	REQUIRE(groups);
+	CHECK(groups->findText("Right arm") >= 0);
+	auto* search = ed->findChild<QLineEdit*>("animBoneSearch");
+	search->setText("thigh");
+	int shown = 0, hidden = 0;
+	for (QTreeWidgetItemIterator it(ed->boneTree()); *it; ++it) {
+		if (!(*it)->isHidden() && (*it)->toolTip(0).contains("Thigh")) ++shown;
+		if ((*it)->isHidden()) ++hidden;
+	}
+	CHECK(shown == 2);
+	CHECK(hidden >= 3);   // the arms and the head (the pelvis stays: the way to the thighs)
+	search->clear();
+	// The window fits a 1366 x 768 screen.
+	CHECK(ed->minimumSizeHint().width() <= 1366);
+	CHECK(ed->minimumSizeHint().height() <= 740);
+
+	// Click a bone in the view: it is chosen (with the gizmo on it).
+	const int arm = clip->boneIndex("ValveBiped.Bip01_R_UpperArm");
+	REQUIRE(arm >= 0);
+	QPointF at;
+	REQUIRE(ed->view()->boneOnScreen(arm, at));
+	QTest::mouseClick(ed->view(), Qt::LeftButton, {}, at.toPoint());
+	settle();
+	REQUIRE_FALSE(ed->selectedBones().empty());
+	ed->selectBones({arm});
+	settle();
+	REQUIRE(ed->boneTree()->currentItem());
+	CHECK(ed->boneTree()->currentItem()->toolTip(0) == "ValveBiped.Bip01_R_UpperArm");
+
+	// Drag the Z ring along its direction: the arm turns, one key, one undo step.
+	QPointF ring;
+	REQUIRE(ed->view()->gizmoHandle(2, ring));
+	const QPointF radial = ring - at;
+	const double length = std::hypot(radial.x(), radial.y());
+	REQUIRE(length > 10);
+	const QPoint drag = (QPointF(-radial.y(), radial.x()) / length * 40.0).toPoint();
+	const auto send = [&](QEvent::Type type, const QPoint& pos, Qt::MouseButtons buttons) {
+		QMouseEvent event(type, QPointF(pos), ed->view()->mapToGlobal(QPointF(pos)), Qt::LeftButton, buttons, Qt::NoModifier);
+		QApplication::sendEvent(ed->view(), &event);
+	};
+	send(QEvent::MouseButtonPress, ring.toPoint(), Qt::LeftButton);
+	send(QEvent::MouseMove, ring.toPoint() + drag / 2, Qt::LeftButton);
+	send(QEvent::MouseMove, ring.toPoint() + drag, Qt::LeftButton);
+	send(QEvent::MouseButtonRelease, ring.toPoint() + drag, Qt::NoButton);
+	settle();
+	CHECK(clip->hasKey(arm, 0));
+	CHECK(clip->keyCount() == 1);
+	const float turned = 2.f * std::acos(std::clamp(std::fabs(clip->offset(arm, 0).first.w), 0.f, 1.f));
+	CHECK(turned > 0.2f);
+	auto* undo = ed->findChild<QPushButton*>("animUndo");
+	REQUIRE(undo);
+	CHECK(undo->isEnabled());
+	undo->click();
+	CHECK(clip->keyCount() == 0);
+	ed->findChild<QPushButton*>("animRedo")->click();
+	CHECK(clip->keyCount() == 1);
+
+	// A longer animation: the length stretches the original under it.
+	auto* frames = ed->findChild<QSpinBox*>("animLength");
+	REQUIRE(frames);
+	CHECK(frames->value() == 3);
+	frames->setValue(31);
+	CHECK(clip->clip().frames == 31);
+	CHECK(clip->hasKey(arm, 0));
+	// Typed values key the bone at the frame; the timeline shows and moves the key.
+	ed->setFrame(10);
+	auto* moveZ = ed->findChild<QDoubleSpinBox*>("animPos2");
+	REQUIRE(moveZ);
+	moveZ->setValue(5);
+	CHECK(clip->hasKey(arm, 10));
+	CHECK(clip->offset(arm, 10).second.z == doctest::Approx(5));
+	auto* timeline = ed->timeline();
+	REQUIRE(timeline->frameCount() == clip->clip().frames);
+	const QPoint from(int(timeline->frameX(10)), timeline->selectedRowY());
+	const QPoint to(int(timeline->frameX(15)), timeline->selectedRowY());
+	QTest::mousePress(timeline, Qt::LeftButton, {}, from);
+	{
+		QMouseEvent move(QEvent::MouseMove, QPointF(to), timeline->mapToGlobal(QPointF(to)), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+		QApplication::sendEvent(timeline, &move);
+	}
+	QTest::mouseRelease(timeline, Qt::LeftButton, {}, to);
+	settle();
+	CHECK(clip->hasKey(arm, 15));
+	CHECK_FALSE(clip->hasKey(arm, 10));
+	CHECK(ed->frame() == 15);
+	// Scrubbing the ruler moves the playhead.
+	QTest::mouseClick(timeline, Qt::LeftButton, {}, QPoint(int(timeline->frameX(3)), 4));
+	CHECK(ed->frame() == 3);
+	// K keys the chosen bones, Delete takes the key away again.
+	ed->activateWindow();
+	ed->view()->setFocus();
+	settle();
+	QTest::keyClick(ed->view(), Qt::Key_K);
+	CHECK(clip->hasKey(arm, 3));
+	QTest::keyClick(ed->view(), Qt::Key_Delete);
+	CHECK_FALSE(clip->hasKey(arm, 3));
+	// Mirror: the left arm takes the right one's pose.
+	const int leftArm = clip->boneIndex("ValveBiped.Bip01_L_UpperArm");
+	REQUIRE(leftArm >= 0);
+	ed->setFrame(0);
+	ed->selectBones({leftArm});
+	ed->mirrorSelection();
+	CHECK(clip->hasKey(leftArm, 0));
+	// The player's view is there for weapons.
+	auto* camera = ed->findChild<QComboBox*>("animCamera");
+	REQUIRE(camera);
+	camera->setCurrentIndex(1);
+	CHECK(ed->view()->cameraMode() == AnimEditView::CameraMode::Viewmodel);
+	camera->setCurrentIndex(0);
+	if (const auto shot = qEnvironmentVariable("SME_ANIM_EDITOR_SHOT"); !shot.isEmpty()) {
+		ed->selectBones({arm});
+		ed->setFrame(15);
+		settle();
+		ed->grab().save(shot);
+	}
+
+	// Save: the keys in the mod's modelsrc/, picked up again when the animation is opened.
+	const QString modDir = fromPath(f.mod);
+	const QString sourceDir = modDir + "/modelsrc/humans/group01/male_07";
+	REQUIRE(ed->save(&error));
+	CHECK(QFileInfo::exists(sourceDir + "/animations/lineidle01_edit.smanim"));
+	const int keys = clip->keyCount();
+	ed->openModel(citizenModel, "lineidle01");
+	REQUIRE((loaded.wait(10000)));
+	clip = ed->clipEditor();
+	REQUIRE(clip);
+	CHECK(clip->keyCount() == keys);
+
+	// Preview in Mapsmith: it plays on the Animations page, waiting to be built.
+	ed->findChild<QPushButton*>("animPreview")->click();
+	settle();
+	CHECK(page->pendingImports() == 1);
+	CHECK(page->currentSequence() == "lineidle01_edit");
+	CHECK(QFileInfo::exists(sourceDir + "/animations/lineidle01_edit.smd"));
+
+	// Replace in the model: taken apart, the sequence's .smd replaced, studiomdl builds it into the mod.
+	const auto script = [&](const QString& name, const QString& body) {
+		const QString path = home.filePath(name);
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(("#!/bin/sh\n" + body + "\n").toUtf8());
+		file.close();
+		file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+		return path;
+	};
+	const QString modelFiles = modDir + "/models/humans/group01/male_07";
+	QByteArray originalMdl;
+	{
+		QFile mdl(modelFiles + ".mdl");
+		REQUIRE(mdl.open(QIODevice::ReadOnly));
+		originalMdl = mdl.readAll();
+	}
+	QSignalSpy replaced(ed, &AnimationEditor::replaceFinished);
+	// A failing build: the mod's model stays as it was.
+	ed->setStudiomdlProgram(script("studiomdl_bad", "echo 'ERROR: something'; exit 1"));
+	REQUIRE(ed->replaceInModel("lineidle01"));
+	REQUIRE(replaced.wait(20000));
+	CHECK_FALSE(replaced.takeFirst().at(0).toBool());
+	CHECK(QFileInfo::exists(modelFiles + ".mdl"));
+	CHECK(QFileInfo::exists(modelFiles + ".vvd"));
+	CHECK_FALSE(ed->replaced());
+	CHECK(ed->log().contains("exit code 1"));
+	// The real run (faked: the model's own files are "built" again from where they were set aside).
+	const QString args = home.filePath("studiomdl_args.txt");
+	ed->setStudiomdlProgram(script("studiomdl_ok", "echo \"$@\" > '" + args + "'\n"
+	                                               "for e in mdl vvd dx90.vtx; do cp '" + sourceDir + "/original/mod/male_07.'$e '" + modelFiles + ".'$e; done"));
+	REQUIRE(ed->replaceInModel("lineidle01"));
+	REQUIRE(replaced.wait(20000));
+	CHECK(replaced.takeFirst().at(0).toBool());
+	CHECK(ed->replaced());
+	CHECK(QFileInfo::exists(sourceDir + "/original/base.mdl"));
+	{
+		QFile qc(sourceDir + "/compile/male_07.qc");
+		REQUIRE(qc.open(QIODevice::ReadOnly));
+		const QString text = QString::fromUtf8(qc.readAll());
+		INFO(text.toStdString());
+		CHECK(text.contains("$modelname \"humans/group01/male_07.mdl\""));
+		// The tweaked sequence's line keeps its activity; its animation is the edited one (31 frames now).
+		CHECK(text.contains("$sequence \"lineidle01\" \"anims/lineidle01.smd\" fps 15 loop activity \"ACT_IDLE\" 1\n"));
+		CHECK(text.contains("$sequence \"cower\" \"anims/cower.smd\" fps 10 activity \"ACT_COWER\" 1\n"));
+		QFile smd(sourceDir + "/compile/anims/lineidle01.smd");
+		REQUIRE(smd.open(QIODevice::ReadOnly));
+		const QString animation = QString::fromUtf8(smd.readAll());
+		CHECK(animation.contains("\ntime 30\n"));
+		CHECK_FALSE(animation.contains("\ntime 31\n"));
+		QFile argsFile(args);
+		REQUIRE(argsFile.open(QIODevice::ReadOnly));
+		const QString line = QString::fromUtf8(argsFile.readAll()).trimmed();
+		CHECK(line.startsWith("-game " + modDir));
+		CHECK(line.endsWith("male_07.qc"));
+	}
+	// Restore: the mod's own files come back.
+	REQUIRE(ed->restoreOriginal(&error));
+	CHECK_FALSE(ed->replaced());
+	{
+		QFile mdl(modelFiles + ".mdl");
+		REQUIRE(mdl.open(QIODevice::ReadOnly));
+		CHECK(mdl.readAll() == originalMdl);
+	}
+	ed->close();
 }
