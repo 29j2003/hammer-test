@@ -3,6 +3,8 @@
 #   linux   - build, unit tests, UI tests under Xvfb (Mesa), screenshots of the demo map
 #   mod     - the mod's features (mod/) built on Mapbase (mod.yml), cached until mod/ changes
 #   windows - build with MSVC + Qt 6.8, unit tests, package the editor (with the features) as a zip
+#   testing - on a push: that zip as the pre-release "testing" (a test build, replaced each time),
+#             which the editor offers with Help > Get test builds - no release needed
 # All actions are pinned to commit SHAs (Dependabot keeps them current).
 name: CI
 
@@ -95,7 +97,10 @@ jobs:
       - name: Configure
         # No fixed generator: CMake picks the newest Visual Studio on the runner
         # (the Qt msvc2022 build is binary compatible with newer MSVC versions).
-        run: cmake -S . -B build -A x64
+        # The run number makes this a numbered test build (updater.h, "Test builds").
+        env:
+          SME_BUILD: ${{ github.run_number }}
+        run: cmake -S . -B build -A x64 "-DSME_BUILD_NUMBER=$env:SME_BUILD"
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Unit tests
@@ -150,3 +155,47 @@ jobs:
             build/src/app/Release/Mapsmith.pdb
             build/src/probe/Release/sme-probe.pdb
           retention-days: 90
+
+  testing:
+    # Every push: the Windows package as the pre-release "testing" (one test build, replaced on each
+    # push), which the editor offers with Help > Get test builds (see src/app/updater.h). GitHub never
+    # counts a pre-release as the latest release, so the release channel stays as it is.
+    needs: windows
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write   # only this job may replace the test build
+    concurrency:
+      group: testing-build
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: Mapsmith-windows
+          path: package
+      - name: Publish the test build
+        # Everything from outside comes through the environment, never pasted into the script.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          zip=$(ls package/Mapsmith-*-windows.zip | head -n 1)
+          version=$(basename "$zip" | sed -nE 's/^Mapsmith-([0-9.]+)-windows\.zip$/\1/p')
+          if [ -z "$version" ]; then echo "unexpected package name: $zip"; exit 1; fi
+          name="Mapsmith-$version-test.$RUN-windows.zip"
+          mkdir out
+          cp "$zip" "out/$name"
+          (cd out && sha256sum "$name" > "$name.sha256")
+          # Runs can finish out of order: a newer test build that is already published stays.
+          current=$(gh release view testing --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null \
+            | sed -nE 's/^Mapsmith-[0-9.]+-test\.([0-9]+)-windows\.zip$/\1/p' | head -n 1 || true)
+          if [ -n "$current" ] && [ "$current" -gt "$RUN" ]; then echo "test build $current is newer - kept"; exit 0; fi
+          printf '%s\n\nTest build %s from commit %s.\n' "$MESSAGE" "$RUN" "$SHA" > notes.md
+          gh release delete testing --repo "$REPO" --cleanup-tag --yes 2>/dev/null || true
+          gh release create testing out/* --repo "$REPO" --prerelease --target "$SHA" \
+            --title "Mapsmith $version test build $RUN" --notes-file notes.md

@@ -220,7 +220,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `shortcut_dialog` | Tastenkürzel-Editor |
 | `autosaver` | Autosave, Wiederherstellen nach Absturz, Journal für den Editor-Bericht nach einem Absturz, Aktionen sofort in `session-actions.txt` (Event-Filter: Klicks, Menüs, Kürzel, Dialoge; `Editor::journalLine`) |
 | `crash_handler` | Letzte Rettung bei Abstürzen (Windows-Exception-Filter, terminate, Signale, CRT-Handler) → `crash.txt` mit Grund und Rahmen als `Modul+Offset` (`crash_log` im Kern), am nächsten Start im Absturz-Journal und in der Frage „What happened: …“ |
-| `updater` | Update-Prüfung, Download, Installation |
+| `updater` | Update-Prüfung, Download, Installation; Test-Builds: `Updater::ownBuild()` (= `SME_BUILD_NUMBER`, CMake-Cache, die CI setzt die Laufnummer, Releases/lokal 0), `ownLabel()` („0.2.0 (test build 140)“), Help › „Get test builds“ (`update/testBuilds`, Standard an nur in einem Test-Build), `check()` fragt erst `releases/latest`, dann – wenn an und kein neueres Release – `releases/tags/testing` (`checkTestBuild`, `parseRelease(json, true)`: nur die Vorabversion `testing`, Paket `Mapsmith-<version>-test.<lauf>-windows.zip` über `testPackage` im Kern), `newerThan` (Release nur bei höherer Version; Test-Build bei höherer Version oder gleicher Version und höherer Nummer bzw. über einem Release). CI-Job `testing` (ci.yml, nur bei Push, eigener `contents: write`) ersetzt die Vorabversion bei jedem Push; ein älterer Lauf überschreibt keinen neueren. Julius, 18.11.2026: „ein Release erst, wenn das Projekt fertig ist“ |
 | `copy_paste` | Strg+C/V-Helfer für Namen und Key/Values |
 | `icons`, `style`, `toggle_switch` | gezeichnete Icons, dunkles Theme, Ein/Aus-Schalter |
 
@@ -857,6 +857,9 @@ Editor-Berichte anderer, Ausgaben fremder Programme. Ein Angreifer schickt so ei
   `signify`), privater Schlüssel als GitHub-Secret für `release.yml`, das `…windows.zip.minisig` mit hochlädt; der
   öffentliche Schlüssel fest im Updater, der die Signatur vor dem Entpacken prüft (libtomcrypt ist über sourcepp schon
   da). Dazu ein Code-Signing-Zertifikat für Setup und exe (SmartScreen).
+- Test-Builds (Vorabversion `testing`): dieselben Regeln (nur `releases/download/` dieses Repos, Prüfsumme Pflicht).
+  Den Job `testing` darf nur ein Push auslösen (kein `pull_request` – fremde Forks bekommen nie `contents: write`);
+  die Commit-Nachricht kommt nur über `env:` in die Release-Notiz.
 - GitHub Actions: jede `uses:` auf Commit-SHA; Werte von außen (`github.ref_name`, `github.head_ref`, `github.event.*`,
   `inputs.*`) nur über `env:` in Skripte, nie als `${{ }}` mitten im Skript (ein Tag-Name darf `$( )` enthalten).
   `tools/check_privacy.py` (CI-Job `checks`) prüft beides.

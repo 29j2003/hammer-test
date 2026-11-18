@@ -363,6 +363,10 @@ is shown at the bottom right; when an update is out it turns into an **Update to
 checks by hand, *Help > Check for updates at start* turns the automatic check off. Nothing else is ever sent: no data
 about you or your maps.
 
+**Test builds:** every change to Mapsmith is built and published as a test build, without a release. With
+*Help > Get test builds* on (it is on in a test build), the update check also offers the newest test build, in the
+same way: download, checksum, restart. The version then reads like *v0.2.0 (test build 140)*.
+
 ### Something not working? The editor report
 
 When a brush cannot be clicked, a road is laid oddly or a tool does something strange, choose **Help > Make editor

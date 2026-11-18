@@ -17,6 +17,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QSettings>
 #include <QStandardPaths>
 
 #include <sme/version.h>
@@ -63,10 +64,18 @@ bool plainFileName(const QString& name) {
 
 } // namespace
 
-std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
+QString ReleaseInfo::label() const {
+	return build > 0 ? QObject::tr("%1 (test build %2)").arg(version).arg(build) : version;
+}
+
+std::optional<ReleaseInfo> parseRelease(const QByteArray& json, bool testBuild) {
 	const auto object = QJsonDocument::fromJson(json).object();
 	QString tag = object.value("tag_name").toString();
-	if (tag.isEmpty() || object.value("draft").toBool() || object.value("prerelease").toBool()) {
+	if (tag.isEmpty() || object.value("draft").toBool()) {
+		return std::nullopt;
+	}
+	// A release is never a pre-release; the test build is only the pre-release "testing".
+	if (testBuild ? (tag != QLatin1String("testing") || !object.value("prerelease").toBool()) : object.value("prerelease").toBool()) {
 		return std::nullopt;
 	}
 	ReleaseInfo release;
@@ -85,8 +94,14 @@ std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
 		const QUrl url(asset.value("browser_download_url").toString());
 		if (!plainFileName(name) || !releaseFileUrl(url)) continue;   // not one of this project's release files
 		if (name.endsWith("-windows.zip", Qt::CaseInsensitive)) {
+			const auto test = testPackage(name.toStdString());
+			if (testBuild != test.has_value()) continue;   // a release takes no test package, and the other way round
 			release.zipName = name;
 			release.zipUrl = url;
+			if (test) {
+				release.version = QString::fromStdString(test->version);
+				release.build = test->build;
+			}
 		} else if (name.endsWith(".sha256", Qt::CaseInsensitive)) {
 			checksums.insert(name.toLower(), url);
 		} else if (name.compare("SHA256SUMS", Qt::CaseInsensitive) == 0) {
@@ -94,7 +109,38 @@ std::optional<ReleaseInfo> parseRelease(const QByteArray& json) {
 		}
 	}
 	release.checksumUrl = checksums.value((release.zipName + ".sha256").toLower(), sumsList);
+	if (testBuild && release.build <= 0) {
+		return std::nullopt;   // a test build without its package says nothing
+	}
 	return release;
+}
+
+bool newerThan(const ReleaseInfo& release, const QString& version, long build) {
+	const int order = compareVersions(release.version.toStdString(), version.toStdString());
+	if (release.build <= 0) {
+		return order > 0;   // a release: only a higher version (a test build of it already has its code)
+	}
+	// A test build: not from an older version; newer than a release of the same version or an older test build.
+	return order > 0 || (order == 0 && (build <= 0 || release.build > build));
+}
+
+long Updater::ownBuild() {
+	return SME_BUILD_NUMBER;
+}
+
+QString Updater::ownLabel() {
+	ReleaseInfo own;
+	own.version = QCoreApplication::applicationVersion();
+	own.build = ownBuild();
+	return own.label();
+}
+
+bool Updater::testBuilds() {
+	return QSettings().value("update/testBuilds", ownBuild() > 0).toBool();
+}
+
+void Updater::setTestBuilds(bool on) {
+	QSettings().setValue("update/testBuilds", on);
 }
 
 Updater::Updater(QObject* parent) : QObject(parent), m_network(new QNetworkAccessManager(this)) {
@@ -116,6 +162,10 @@ void Updater::check() {
 		reply->deleteLater();
 		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		if (status == 404) {
+			if (testBuilds()) {
+				checkTestBuild();   // no release published yet
+				return;
+			}
 			m_available.reset();
 			emit upToDate();   // no release published yet
 			return;
@@ -129,7 +179,34 @@ void Updater::check() {
 			emit checkFailed(tr("The release information could not be read"));
 			return;
 		}
-		if (compareVersions(release->version.toStdString(), QCoreApplication::applicationVersion().toStdString()) > 0) {
+		if (newerThan(*release, QCoreApplication::applicationVersion(), ownBuild())) {
+			m_available = release;
+			emit updateAvailable(*release);
+		} else if (testBuilds()) {
+			checkTestBuild();
+		} else {
+			m_available.reset();
+			emit upToDate();
+		}
+	});
+}
+
+void Updater::checkTestBuild() {
+	auto* reply = get(QUrl(QString::fromLatin1(TEST_BUILD)));
+	connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		reply->deleteLater();
+		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		if (status == 404) {
+			m_available.reset();
+			emit upToDate();   // no test build right now (the CI replaces it for a moment on each push)
+			return;
+		}
+		if (reply->error() != QNetworkReply::NoError) {
+			emit checkFailed(reply->errorString());
+			return;
+		}
+		const auto release = parseRelease(reply->readAll(), true);
+		if (release && newerThan(*release, QCoreApplication::applicationVersion(), ownBuild())) {
 			m_available = release;
 			emit updateAvailable(*release);
 		} else {

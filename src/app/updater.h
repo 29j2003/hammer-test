@@ -3,7 +3,13 @@
 // installs it with a small PowerShell helper that waits for the editor to close, replaces
 // the files and starts the new version.
 //
-// The editor's own network access: one request to api.github.com per check (at start, can be
+// Test builds: every push the CI builds is also published as the pre-release "testing" (one
+// package "Mapsmith-<version>-test.<run>-windows.zip" with its checksum, replaced on each push).
+// With "Get test builds" on (the default in a test build itself, off in a release) the check also
+// looks there and offers a newer test build. Releases stay what "releases/latest" gives: GitHub
+// never counts a pre-release as the latest release.
+//
+// The editor's own network access: one or two requests to api.github.com per check (at start, can be
 // turned off) and the download when the mapper says yes. Nothing is sent about the user or the
 // maps. (The only other network use is the system's git, when the mapper presses Fetch, Pull
 // or Push on the Source control tab.)
@@ -29,10 +35,16 @@ struct ReleaseInfo {
 	QUrl zipUrl;           ///< Windows package
 	QString zipName;
 	QUrl checksumUrl;      ///< "<zip>.sha256" or a SHA256SUMS file
+	long build = 0;        ///< Number of a test build, 0 for a release
+	/// "0.3.0", or "0.2.0 (test build 133)".
+	[[nodiscard]] QString label() const;
 };
 
-/// Reads the GitHub API answer for a release (nullopt if it has no version).
-[[nodiscard]] std::optional<ReleaseInfo> parseRelease(const QByteArray& json);
+/// Reads the GitHub API answer for a release (nullopt if it has no version). With `testBuild` it reads
+/// the pre-release "testing" instead: its version and build come from its package's name.
+[[nodiscard]] std::optional<ReleaseInfo> parseRelease(const QByteArray& json, bool testBuild = false);
+/// Whether `release` is newer than the editor with this version and build number (0 = a release).
+[[nodiscard]] bool newerThan(const ReleaseInfo& release, const QString& version, long build);
 
 /// Checks for, downloads and installs updates (see the file comment).
 class Updater : public QObject {
@@ -40,10 +52,20 @@ class Updater : public QObject {
 
 public:
 	static constexpr const char* LATEST_RELEASE = "https://api.github.com/repos/29j2003/hammer-test/releases/latest";
+	static constexpr const char* TEST_BUILD = "https://api.github.com/repos/29j2003/hammer-test/releases/tags/testing";
+
+	/// This editor's test build number (0: a release or a local build).
+	[[nodiscard]] static long ownBuild();
+	/// "0.2.0" or "0.2.0 (test build 133)".
+	[[nodiscard]] static QString ownLabel();
+	/// Whether the check also offers test builds (Help > Get test builds).
+	[[nodiscard]] static bool testBuilds();
+	static void setTestBuilds(bool on);
 
 	explicit Updater(QObject* parent = nullptr);
 
-	/// Asks GitHub for the newest release; answers with updateAvailable, upToDate or checkFailed.
+	/// Asks GitHub for the newest release (and test build, if on); answers with updateAvailable,
+	/// upToDate or checkFailed.
 	void check();
 	/// Downloads and verifies the package; answers with downloaded or downloadFailed.
 	void download(const ReleaseInfo& release);
@@ -67,6 +89,8 @@ signals:
 
 private:
 	QNetworkReply* get(const QUrl& url);
+	/// Second step of check(): the test build, if it is newer.
+	void checkTestBuild();
 
 	QNetworkAccessManager* m_network;
 	std::optional<ReleaseInfo> m_available;

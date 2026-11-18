@@ -132,6 +132,9 @@ At every start Mapsmith asks GitHub whether a newer version is out. If there is 
 - The version is shown at the bottom right of the window. When an update is out, it turns into an **Update to …**
   button.
 - **Help > Check for updates** checks by hand. **Help > Check for updates at start** turns the automatic check off.
+- **Help > Get test builds**: every change to Mapsmith is built and published as a *test build* before there is a
+  release. With this on (it is on in a test build), the update check also offers the newest test build – the same
+  download with checksum and restart. Turn it off to get only releases.
 
 Nothing else is ever sent anywhere: no data about you, your PC or your maps.
 

@@ -163,6 +163,8 @@ on Windows in the registry of your user account. Game settings are kept per game
 - *The editor's folder is not writable*: the portable version is in a folder you cannot write to (such as
   `Program Files`). Move it, or use the installer.
 - *This release has no Windows package with a checksum*: download the new version from the release page by hand.
+- *No test build offered right after a change*: the test build is published when the build of that change has
+  finished (about 20 minutes); for a moment while it is replaced there is none.
 
 **I do not want update checks.**
 Turn off **Help > Check for updates at start**. Mapsmith then never connects to the internet by itself.

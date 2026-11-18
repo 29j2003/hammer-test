@@ -79,7 +79,13 @@ add_library(smeapp STATIC
 	claude_tools.cpp
 	claude_panel.cpp)
 target_include_directories(smeapp PUBLIC .)
-target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" _USE_MATH_DEFINES)
+# Test builds: the CI passes its run number (-DSME_BUILD_NUMBER=133); 0 for releases and local builds
+# (see updater.h, "Test builds").
+set(SME_BUILD_NUMBER 0 CACHE STRING "Number of a test build (CI run number), 0 for a release")
+if(NOT SME_BUILD_NUMBER MATCHES "^[0-9]+$")
+	message(FATAL_ERROR "SME_BUILD_NUMBER must be a number")
+endif()
+target_compile_definitions(smeapp PUBLIC SME_VERSION="${PROJECT_VERSION}" SME_BUILD_NUMBER=${SME_BUILD_NUMBER} _USE_MATH_DEFINES)
 # The commit the build comes from, for the editor report (taken when CMake configures).
 find_package(Git QUIET)
 set(SME_COMMIT "unknown")

@@ -346,7 +346,7 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 	m_updater = new Updater(this);
 	m_versionButton = new QToolButton;
 	m_versionButton->setAutoRaise(true);
-	m_versionButton->setText(QStringLiteral("v%1").arg(QApplication::applicationVersion()));
+	m_versionButton->setText(QStringLiteral("v%1").arg(Updater::ownLabel()));
 	m_versionButton->setToolTip(tr("Version of the editor - click to check for updates"));
 	statusBar()->addPermanentWidget(m_versionButton);
 	connect(m_versionButton, &QToolButton::clicked, this, [this] {
@@ -357,19 +357,19 @@ MainWindow::MainWindow(Editor* editor, QWidget* parent)
 		}
 	});
 	connect(m_updater, &Updater::updateAvailable, this, [this](const ReleaseInfo& release) {
-		m_versionButton->setText(tr("⬆ Update to v%1").arg(release.version));
-		m_versionButton->setToolTip(tr("Version %1 is out (you have %2) - click to update").arg(release.version, QApplication::applicationVersion()));
+		m_versionButton->setText(tr("⬆ Update to v%1").arg(release.label()));
+		m_versionButton->setToolTip(tr("Version %1 is out (you have %2) - click to update").arg(release.label(), Updater::ownLabel()));
 		m_versionButton->setStyleSheet("QToolButton { color: #1b1d22; background: #f0a030; border-radius: 3px; padding: 1px 6px; font-weight: bold; }");
 		const bool manual = m_manualCheck;
 		m_manualCheck = false;
 		// At start only once per version unless the mapper asked.
-		if (manual || QSettings().value("update/skipVersion").toString() != release.version) {
+		if (manual || QSettings().value("update/skipVersion").toString() != release.label()) {
 			offerUpdate(release, manual);
 		}
 	});
 	connect(m_updater, &Updater::upToDate, this, [this] {
 		if (m_manualCheck) {
-			QMessageBox::information(this, tr("Updates"), tr("You have the newest version (%1).").arg(QApplication::applicationVersion()));
+			QMessageBox::information(this, tr("Updates"), tr("You have the newest version (%1).").arg(Updater::ownLabel()));
 		}
 		m_manualCheck = false;
 	});
@@ -1868,11 +1868,19 @@ void MainWindow::createActions() {
 	autoCheck->setChecked(QSettings().value("update/checkOnStart", true).toBool());
 	connect(autoCheck, &QAction::toggled, this, [](bool on) { QSettings().setValue("update/checkOnStart", on); });
 	help->addAction(autoCheck);
+	// Test builds: every push the CI builds, without a release (see updater.h).
+	auto* testBuilds = action(tr("Get test builds"), QKeySequence(), [](bool) {});
+	testBuilds->setObjectName("getTestBuilds");
+	testBuilds->setCheckable(true);
+	testBuilds->setChecked(Updater::testBuilds());
+	testBuilds->setToolTip(tr("Also offer the newest test build: every change is built and published as a test build before there is a release"));
+	connect(testBuilds, &QAction::toggled, this, [](bool on) { Updater::setTestBuilds(on); });
+	help->addAction(testBuilds);
 	help->addAction(action(tr("About"), QKeySequence(), [this] {
 		QMessageBox::about(this, tr("About"),
 		                   tr("<b>Mapsmith</b> %1<br>A modern map editor for Source 1 games and mods.<br>"
 		                      "<a href=\"https://github.com/29j2003/hammer-test\">github.com/29j2003/hammer-test</a>")
-		                       .arg(QApplication::applicationVersion()));
+		                       .arg(Updater::ownLabel()));
 	}));
 	// Defaults remembered, then the mapper's own keys applied.
 	for (auto* a : findChildren<QAction*>()) {
@@ -3107,7 +3115,7 @@ void MainWindow::offerUpdate(const ReleaseInfo& release, bool manual) {
 	QMessageBox box(this);
 	box.setIcon(QMessageBox::Information);
 	box.setWindowTitle(tr("Update available"));
-	box.setText(tr("<b>Version %1 is available</b> (you have %2).<br>Update now?").arg(release.version, QApplication::applicationVersion()));
+	box.setText(tr("<b>Version %1 is available</b> (you have %2).<br>Update now?").arg(release.label(), Updater::ownLabel()));
 	QString reason;
 	const bool installable = Updater::canInstall(&reason);
 	box.setInformativeText(installable ? tr("The editor downloads it, checks it and restarts. Your map is saved first if you want.")
@@ -3124,7 +3132,7 @@ void MainWindow::offerUpdate(const ReleaseInfo& release, bool manual) {
 	box.exec();
 	QSettings().setValue("update/checkOnStart", autoCheck->isChecked());
 	if (box.clickedButton() == skip && skip) {
-		QSettings().setValue("update/skipVersion", release.version);
+		QSettings().setValue("update/skipVersion", release.label());
 		return;
 	}
 	if (box.clickedButton() != yes) {
@@ -3141,7 +3149,7 @@ void MainWindow::runUpdate(const ReleaseInfo& release) {
 	if (!maybeSave()) {
 		return;
 	}
-	auto* progress = new QProgressDialog(tr("Downloading version %1 ...").arg(release.version), tr("Cancel"), 0, 100, this);
+	auto* progress = new QProgressDialog(tr("Downloading version %1 ...").arg(release.label()), tr("Cancel"), 0, 100, this);
 	progress->setWindowTitle(tr("Update"));
 	progress->setWindowModality(Qt::WindowModal);
 	progress->setMinimumDuration(0);

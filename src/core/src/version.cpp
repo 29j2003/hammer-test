@@ -50,6 +50,29 @@ int compareVersions(std::string_view a, std::string_view b) {
 	return 0;
 }
 
+std::optional<TestPackage> testPackage(std::string_view name) {
+	constexpr std::string_view prefix = "Mapsmith-", marker = "-test.", suffix = "-windows.zip";
+	if (name.size() > 128 || name.size() <= prefix.size() + marker.size() + suffix.size() || name.substr(0, prefix.size()) != prefix ||
+	    name.substr(name.size() - suffix.size()) != suffix) {
+		return std::nullopt;
+	}
+	const auto middle = name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+	const auto at = middle.rfind(marker);
+	if (at == std::string_view::npos || at == 0) return std::nullopt;
+	const auto version = middle.substr(0, at), digits = middle.substr(at + marker.size());
+	for (const char c : version) {
+		if (!std::isdigit(static_cast<unsigned char>(c)) && c != '.') return std::nullopt;
+	}
+	if (digits.empty() || digits.size() > 9) return std::nullopt;
+	long number = 0;
+	for (const char c : digits) {
+		if (!std::isdigit(static_cast<unsigned char>(c))) return std::nullopt;
+		number = number * 10 + (c - '0');
+	}
+	if (number <= 0) return std::nullopt;
+	return TestPackage{std::string(version), number};
+}
+
 std::optional<std::string> checksumFor(std::string_view checksumFile, std::string_view fileName) {
 	for (const auto& line : splitTrimmed(checksumFile, '\n')) {
 		const auto space = line.find_first_of(" \t");

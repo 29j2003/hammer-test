@@ -428,6 +428,17 @@ TEST_CASE("versions and checksums for updates") {
 	CHECK(checksumFor(sums, "other.zip").has_value());
 	CHECK_FALSE(checksumFor(sums, "missing.zip"));
 	CHECK_FALSE(checksumFor("not a checksum file", "x"));
+	const auto test = testPackage("Mapsmith-0.2.0-test.133-windows.zip");
+	REQUIRE(test);
+	CHECK(test->version == "0.2.0");
+	CHECK(test->build == 133);
+	CHECK_FALSE(testPackage("Mapsmith-0.2.0-windows.zip"));
+	CHECK_FALSE(testPackage("Mapsmith-0.2.0-test.-windows.zip"));
+	CHECK_FALSE(testPackage("Mapsmith-0.2.0-test.0-windows.zip"));
+	CHECK_FALSE(testPackage("Mapsmith-0.2.0-test.1a-windows.zip"));
+	CHECK_FALSE(testPackage("Mapsmith--test.5-windows.zip"));
+	CHECK_FALSE(testPackage("Mapsmith-0.2.0/../x-test.5-windows.zip"));
+	CHECK_FALSE(testPackage("Mapsmith-0.2.0-test.99999999999-windows.zip"));
 }
 
 TEST_CASE("file system sees files the editor writes") {

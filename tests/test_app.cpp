@@ -3202,6 +3202,29 @@ TEST_CASE("update check: release information and the version button") {
 	CHECK(foreign->checksumUrl.isEmpty());
 	CHECK(foreign->page.isEmpty());
 
+	// Test builds: the pre-release "testing" with its one package; version and build from the package name.
+	const QByteArray testJson = R"({"tag_name": "testing", "prerelease": true, "body": "abc123 New tool", "assets": [
+		{"name": "Mapsmith-9.1.0-test.140-windows.zip", "browser_download_url": "https://github.com/29j2003/hammer-test/releases/download/testing/Mapsmith-9.1.0-test.140-windows.zip"},
+		{"name": "Mapsmith-9.1.0-test.140-windows.zip.sha256", "browser_download_url": "https://github.com/29j2003/hammer-test/releases/download/testing/Mapsmith-9.1.0-test.140-windows.zip.sha256"}]})";
+	const auto test = parseRelease(testJson, true);
+	REQUIRE(test);
+	CHECK(test->version == "9.1.0");
+	CHECK(test->build == 140);
+	CHECK(test->label() == "9.1.0 (test build 140)");
+	CHECK(test->checksumUrl.toString().endsWith("test.140-windows.zip.sha256"));
+	CHECK_FALSE(parseRelease(testJson));                                                    // never taken as a release
+	CHECK_FALSE(parseRelease(R"({"tag_name": "v9.1.0", "prerelease": true})", true));     // only the "testing" pre-release
+	CHECK_FALSE(parseRelease(R"({"tag_name": "testing", "prerelease": true, "assets": []})", true));   // no package
+	CHECK(release->build == 0);
+	// Newer: a release by version; a test build also over a release of the same version and an older test build.
+	CHECK(newerThan(*release, "9.0.0", 0));
+	CHECK_FALSE(newerThan(*release, "9.1.0", 140));
+	CHECK(newerThan(*test, "9.1.0", 0));
+	CHECK(newerThan(*test, "9.1.0", 139));
+	CHECK_FALSE(newerThan(*test, "9.1.0", 140));
+	CHECK_FALSE(newerThan(*test, "9.2.0", 0));
+	CHECK(newerThan(*test, "9.0.0", 500));
+
 	QTemporaryDir home;
 	QSettings::setDefaultFormat(QSettings::IniFormat);
 	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());

@@ -5,6 +5,7 @@
 // anywhere: the file is written where he chooses and he sends it himself. Paths are masked.
 
 #include "main_window.h"
+#include "updater.h"
 
 #include "editor.h"
 #include "panels.h"
@@ -85,6 +86,7 @@ bool MainWindow::writeEditorReport(const QString& path, QString* error) {
 	// The editor's state, for people.
 	QJsonObject info;
 	info["version"] = QApplication::applicationVersion();
+	info["build"] = static_cast<qint64>(Updater::ownBuild());   // test build number, 0 for a release
 	info["commit"] = QStringLiteral(SME_COMMIT);
 	info["qt"] = QString::fromLatin1(qVersion());
 	info["os"] = QSysInfo::prettyProductName() + " (" + QSysInfo::kernelType() + " " + QSysInfo::kernelVersion() + ", " + QSysInfo::currentCpuArchitecture() + ")";
