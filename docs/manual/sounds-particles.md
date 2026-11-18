@@ -169,6 +169,25 @@ the mod has none). **Load with every map** puts a `!` in front, which effects st
 the systems in the file; files without any are refused. **Use a sample ...** opens Mapsmith's sample particle file
 (`mapsmith_samples.pcf`: falling sparks and a slow smoke column).
 
+### Making and changing particle systems
+
+**New ...** next to the search box starts a system from a template: **Glow** (one soft light sprite - an "emissive
+light" for a weapon or a lamp), **Sparks**, **Muzzle flash**, **Smoke** or **Embers**. **Edit** under the preview
+changes the shown system. The right column then holds the editor:
+
+- **Name**: what maps and models use. A system of the game is edited as a copy with `_custom` at the end, so the
+  game's own stays as it is.
+- **Own values** (material, size, colour, how many particles) and every part as a card with typed fields: numbers,
+  colours (with a colour picker), `x y z` vectors, switches, a material field with a picker. A value that does not fit
+  turns red and keeps its last good value.
+- **Add** under each group adds one of the common parts (with a short explanation), **Remove** takes one out.
+- The preview follows every change.
+
+**Save to mod** writes the system - with its child systems, which the game needs in the same file - into
+`particles/<mod>_mapsmith.pcf` and lists that file in the mod's `particles_manifest.txt` (loaded with every map).
+Saving again replaces systems of the same name and keeps the others. Picking another system ends editing, so save
+first.
+
 **Drag** a system into the map (from the page or the bottom panel's *Particles* tab) for an `info_particle_system`
 that plays it. In the map views, particle effects are not drawn; they only show in the game.
 

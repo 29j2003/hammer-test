@@ -896,6 +896,65 @@ nur PNG/JPEG/TGA/BMP weiter (GIF/PSD/HDR/PIC/PNM werden vorher abgewiesen) – s
 sourcepp heben. Qt 6.8.3 (Windows-CI) hat CVE-2025-5992 (ICC-Profile, Absturz) – nur für Bilder, die der Mapper selbst
 öffnet; beim nächsten Qt-Wechsel ≥ 6.8.4 bzw. eine aktuelle Open-Source-Version nehmen.
 
+## Leuchten, Effekte an Modellen, Partikel-Editor (Recherche und Bau)
+
+Kern: `model_glow` (Leuchten), `model_effects` (Effekte als Sequenz-Events/`$keyvalues`), `particle_edit` (Partikel
+bearbeiten, Vorlagen, Speichern); UI: `glow_dialog` („Glow ...“ auf der Models-Seite, Rechtsklick „Make it glow ...“),
+`effects_panel` (Abschnitt „Effects“ der Models-Seite, für die Weapons-Seite wiederverwendbar), `particle_editor`
+(„Edit“/„New ...“ auf der Particles-Seite), `model_viewer` (Selfillum-Vorschau `setGlow`, Marker `setMarkers`).
+Belege aus Mapbase (`/sp/src` des Mod-Repos):
+
+- **Partikel laden** (`game/shared/particle_parse.cpp`): `particles/particles_manifest.txt` wird per
+  `LoadFromFile(..., "GAME")` als *eine* Datei gelesen – das Manifest der Mod ersetzt das des Spiels ganz, deshalb
+  übernimmt Mapsmith beim ersten Eintrag die Liste des Spiels (`withManifestEntry` aus `asset_import`). `"!"` vor dem
+  Pfad = mit jeder Karte vorladen (Mapsmith setzt es für die eigene Datei). `maps/<karte>_particles.txt` lädt pro Karte
+  weitere Dateien, nur unter `particles/`. Die Partikel-Bibliothek selbst (`particles.lib`) liegt im SDK nur als Binärdatei
+  vor: ob eine Definition gleichen Namens die des Spiels ersetzt, ist im Quelltext nicht prüfbar – deshalb speichert der
+  Editor bearbeitete Spiel-Systeme standardmäßig unter neuem Namen (`…_custom`).
+- **PCF-Format:** Binär-DMX, die Dateien des Spiels sind „binary 2 / format pcf 1“; Typ-Nummern der Kodierung < 3
+  (kvpp `IDv1`): 1 Element, 2 Int, 3 Float, 4 Bool, 5 String, 8 Color, 9 Vector2, 10 Vector3, 11 Vector4, 12 QAngle,
+  15 Element-Array, 16 Int-Array, 17 Float-Array. Ein System (`DmeParticleSystemDefinition`) hängt seine Teile
+  (`DmeParticleOperator` mit `functionName`) und Kinder (`DmeParticleChild` mit `child` = Element-Verweis, `delay`)
+  per Element-Index an – Kinder müssen in derselben Datei stehen (`withChildren` kopiert sie mit). Der Leser merkt sich
+  den Typ jedes Werts (`ParticleValueType`), damit der Schreiber denselben Typ zurückschreibt; nicht schreibbare Typen
+  (Binär, Matrix, String-Arrays) fallen mit Hinweis weg. Vorschau = schreiben und wieder lesen (`roundTrip`): sie zeigt,
+  was gespeichert würde. Unbekannte Attribute ignoriert die Engine, fehlende bekommen ihren Standard.
+- **Effekte an Animationen** (`game/client/c_baseanimating.cpp`, `C_BaseAnimating::FireEvent`):
+  `AE_CL_CREATE_PARTICLE_EFFECT` mit Optionen `"<system> <attach-typ> <attachment>"` (Attachment per Name oder Nummer),
+  `AE_CL_STOP_PARTICLE_EFFECT "<system> [instantly]"` (nur Mapbase, aus dem Alien-Swarm-SDK). Attach-Typen aus
+  `particle_parse.cpp` (`GetAttachTypeFromString`): start_at_origin, follow_origin, start_at_customorigin,
+  start_at_attachment, follow_attachment, follow_rootbone. Viewmodels reichen Events erst an die Waffe
+  (`C_BaseViewModel::FireEvent` → `OnFireEvent`), dann an `C_BaseAnimating`; Attachments eines Viewmodels rechnet
+  `FormatViewModelAttachment` in die Welt-Sicht um. **Immer:** Block `particles` in `$keyvalues` des Modells
+  (`DelayedInitModelEffects`: `name`, `attachment_type`, `attachment_point`). Alte Event-Nummern stehen in
+  `cl_animevent.h` (5001 Mündungsfeuer, 5004 Sound …) und `scriptevent.h` – `eventNameForNumber`.
+  Eintragen in die `.qc` + Kompilieren gehört zum Neu-Kompilier-Weg von `model_export`; bis dahin bewahrt
+  `modelsrc/<modell>/mapsmith_effects.txt` die Effekte auf, „Copy .qc lines“ gibt die Zeilen.
+- **Leuchten im Material** (`materialsystem/stdshaders`): VertexLitGeneric mischt
+  `lerp(diffuse, g_SelfIllumTint * albedo, mask)` (`vertexlit_and_unlit_generic_ps2x.fxc`) – das Leuchten hat die
+  Farbe der Textur, getönt. `$selfillummask` (eigene Textur, RGB) ersetzt das Basis-Alpha, das Modelle oft für Phong
+  oder Envmap brauchen. Im Phong-Pfad (`skin_ps20b.fxc`) gibt es unter der Taschenlampe kein Selfillum (SKIP-Regel).
+  Pulsieren: Proxy `Sine` (sineMin/sineMax/sinePeriod) in einen Hilfsvektor (`CResultProxy::SetFloatResult` setzt bei
+  Vektoren alle Komponenten), `Multiply` Farbe × Puls → `$selfillumtint`. **Nur während einer Animation:** kein
+  Standard-Proxy kennt die laufende Sequenz; Mapbases `VScriptProxy` (`vscript_client.cpp`) ruft pro Zeichnen
+  `OnBind()` eines Skripts mit `entity` = gezeichnete Entity auf, und `C_BaseAnimating` bietet Skripten `GetSequence`,
+  `GetSequenceActivityName`, `GetSequenceName`, `GetCycle`. Mapsmith schreibt dieses Skript nach
+  `scripts/vscripts/mapsmith/glow/` (Pfad-Regel `VScriptRunScript`: ohne Endung wird `.nut` angehängt). Ohne
+  Skripting bleibt `$selfillumtint` 0 – kein Leuchten statt falschem.
+- **Echtes Licht:** mapbase-fidelity (`game/client/fidelity/fidelity_glow.cpp`) macht aus `$selfillum` +
+  `$selfillummask` + `$selfillumtint` von selbst dynamisches Licht, liest die Werte aber einmal je Modell (Analyse) –
+  ein per Proxy geänderter Farbton während einer Animation wird nicht verfolgt; winzige Leuchtflächen an Waffen geben
+  absichtlich kein Licht. **Vorschlag fürs Mod-Repo (nicht gebaut):** in `fidelity_glow.cpp` die aktuelle
+  `$selfillumtint` pro Frame lesen (oder `$mapsmith_glowsettings` auswerten: Animationen + Zyklusbereich), dann
+  leuchtet das Licht nur während z. B. des Reloads. `env_`-Entities gehen am Viewmodel nicht; Partikel haben in der
+  SDK-2013-Bibliothek keinen Licht-Operator.
+- **Schreiben in die Mod:** VMT-Kopie am selben Pfad (überdeckt VPK), Masken-VTF `<material>_glowmask` (DXT, ≤ 1024),
+  vorhandene Mod-Dateien einmal als `.mapsmith-backup`; Buchführung als `ImportRecord` (Art „glow“/„particles“) in
+  `cfg/mapsmith_imports.txt`, „Restore original“ = `undoImport`. Ein erneutes Apply nimmt erst das alte zurück.
+- Prüfungen: `tests/test_model_effects.cpp` (Masken, VMT-Text, Skript, Rundreise PCF mit allen Typen und Kindern,
+  Vorlagen simulierbar, Speichern/Mergen, Pfade), UI-Test „model glow, model effects and the particle editor …“,
+  Fuzz-Ziele `pcf` (inkl. Editor-Rundreise) und `text` Fall 20.
+
 ## Wichtige Formeln (aus dem Quellcode von VBSP/VRAD, Source SDK 2013 / Mapbase)
 
 - **plane**: `normal = normalize((p0 - p1) × (p2 - p1))`, zeigt nach außen; `dist = dot(p0, normal)`.

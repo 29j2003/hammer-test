@@ -33,6 +33,9 @@
 #include <sme/mod_menu.h>
 #include <sme/model_export.h>
 #include <sme/model_import.h>
+#include <sme/model_effects.h>
+#include <sme/model_glow.h>
+#include <sme/particle_edit.h>
 #include <sme/particles.h>
 #include <sme/recent_projects.h>
 #include <sme/relief_pattern.h>
@@ -102,8 +105,14 @@ inline void phy(const std::uint8_t* data, std::size_t size) {
 /// Particle files (.pcf, binary DMX) for the particle browser.
 inline void pcf(const std::uint8_t* data, std::size_t size) {
 	const auto in = bytes(data, size);
-	(void)readParticleDefinitions(in);
+	const auto definitions = readParticleDefinitions(in);
 	(void)particleSystemNames(in);
+	// The particle editor: every system as values, its children along, written and read again.
+	std::vector<PcfSystem> systems;
+	for (const auto& d : definitions) {
+		if (systems.size() < 64) systems.push_back(toPcfSystem(d));
+	}
+	if (!systems.empty()) (void)roundTrip(withChildren({systems.front()}, definitions));
 }
 
 /// Sounds (WAV/ADPCM, MP3, OGG, FLAC). The first byte picks the file name the decoder is told.
@@ -146,7 +155,7 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 	if (size < 1) return;
 	const std::string_view in = text(data + 1, size - 1);
 	try {
-		switch (data[0] % 20) {
+		switch (data[0] % 21) {
 		case 0: (void)parseKeyValues(in); break;
 		case 1: (void)parseMaterial(in, "fuzz/material"); break;
 		case 2: (void)parseHammerConfig(in, "GameConfig.txt"); break;
@@ -224,6 +233,19 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 			(void)parseModelVariant(in);
 			(void)decodeTextFile(Bytes(reinterpret_cast<const std::byte*>(in.data()), reinterpret_cast<const std::byte*>(in.data() + in.size())));
 			break;
+		case 20: {
+			// Model effects kept in the mod, a glow read back from a material, effects of a model's
+			// events and $keyvalues.
+			const auto effects = readEffectsText(in);
+			(void)effectEvents(effects);
+			(void)effectKeyValues(effects);
+			(void)effectsFromModel({{"reload", 3, "AE_CL_CREATE_PARTICLE_EFFECT", std::string(in.substr(0, 200))}}, in);
+			if (const auto material = parseMaterial(in, "fuzz/material")) {
+				(void)readGlowSettings(*material);
+				(void)glowMaterialText(in, "models/fuzz", GlowSettings{});
+			}
+			break;
+		}
 		}
 	} catch (const std::exception&) {
 		// Some readers report broken syntax as an exception; the editor shows the message.
