@@ -74,6 +74,10 @@ struct PhysicsModel {
 /// a ragdoll: each solid on its bone), turned back for studiomdl.
 [[nodiscard]] std::string physicsSmd(const PhysicsModel& physics, const std::vector<StudioBone>& bones);
 
+/// Frames of poses (frames[f][bone]: position and rotation relative to the parent, in the
+/// game's model space) as an animation .smd: every bone in every frame, root bones turned back
+/// for studiomdl. sequenceSmd and the animation editor write with it.
+[[nodiscard]] std::string poseFramesSmd(const std::vector<StudioBone>& bones, const std::vector<std::vector<std::pair<AnimVec, AnimQuat>>>& frames);
 /// One sequence as an animation .smd: every bone of the model in every frame (a delta sequence
 /// on the rest pose), root bones turned back for studiomdl.
 [[nodiscard]] std::string sequenceSmd(const AnimatedModel& model, int sequence);

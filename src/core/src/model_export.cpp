@@ -395,19 +395,14 @@ std::string physicsSmd(const PhysicsModel& physics, const std::vector<StudioBone
 	return out;
 }
 
-std::string sequenceSmd(const AnimatedModel& model, int sequence) {
-	const auto& bones = model.bones();
+std::string poseFramesSmd(const std::vector<StudioBone>& bones, const std::vector<std::vector<std::pair<AnimVec, AnimQuat>>>& frames) {
 	std::string out = "version 1\nnodes\n";
 	for (std::size_t i = 0; i < bones.size(); ++i) out += std::to_string(i) + " \"" + clean(bones[i].name) + "\" " + std::to_string(bones[i].parent) + "\n";
 	out += "end\nskeleton\n";
-	const int frames = sequence >= 0 && sequence < int(model.sequences().size()) ? std::clamp(model.sequences()[std::size_t(sequence)].frames, 1, 100000) : 1;
-	std::vector<AnimVec> pos;
-	std::vector<AnimQuat> quat;
-	for (int f = 0; f < frames; ++f) {
-		model.localPose(sequence, frames > 1 ? float(f) / float(frames - 1) : 0.f, pos, quat, false);
+	for (std::size_t f = 0; f < frames.size(); ++f) {
 		out += "time " + std::to_string(f) + "\n";
-		for (std::size_t i = 0; i < bones.size() && i < pos.size(); ++i) {
-			auto [p, q] = bones[i].parent < 0 ? turnedBack(pos[i], quat[i]) : std::pair{pos[i], quat[i]};
+		for (std::size_t i = 0; i < bones.size() && i < frames[f].size(); ++i) {
+			auto [p, q] = bones[i].parent < 0 ? turnedBack(frames[f][i].first, frames[f][i].second) : frames[f][i];
 			const AnimVec r = quaternionAngles(q);
 			out += std::to_string(i) + " " + number(p.x) + " " + number(p.y) + " " + number(p.z) + " " + number(r.x) + " " + number(r.y) + " " + number(r.z) +
 			       "\n";
@@ -415,6 +410,20 @@ std::string sequenceSmd(const AnimatedModel& model, int sequence) {
 	}
 	out += "end\n";
 	return out;
+}
+
+std::string sequenceSmd(const AnimatedModel& model, int sequence) {
+	const int frames = sequence >= 0 && sequence < int(model.sequences().size()) ? std::clamp(model.sequences()[std::size_t(sequence)].frames, 1, 100000) : 1;
+	std::vector<std::vector<std::pair<AnimVec, AnimQuat>>> poses(static_cast<std::size_t>(frames));
+	std::vector<AnimVec> pos;
+	std::vector<AnimQuat> quat;
+	for (int f = 0; f < frames; ++f) {
+		model.localPose(sequence, frames > 1 ? float(f) / float(frames - 1) : 0.f, pos, quat, false);
+		auto& frame = poses[std::size_t(f)];
+		frame.resize(std::min(pos.size(), quat.size()));
+		for (std::size_t i = 0; i < frame.size(); ++i) frame[i] = {pos[i], quat[i]};
+	}
+	return poseFramesSmd(model.bones(), poses);
 }
 
 std::optional<ModelExport> decompileModel(const GameFileSystem& fs, std::string_view modelPath, const ModelExportOptions& options, std::string* error,
