@@ -1,6 +1,7 @@
 // road_texture.cpp - Road tool: chains of floor faces and their texture axes (see road_texture.h).
 
 #include <sme/road_texture.h>
+#include <sme/texture_enhance.h>
 
 #include <sme/brush.h>
 #include <sme/csg.h>
@@ -472,7 +473,12 @@ std::pair<int, int> materialTextureSize(const GameFileSystem& fs, std::string_vi
 	const std::string texture = vmt ? vmt->previewTexture() : std::string();
 	if (!texture.empty()) {
 		if (const auto data = fs.read("materials/" + normalizeMaterialName(texture) + ".vtf")) {
-			if (const auto info = readTextureInfo(*data); info && info->width > 0 && info->height > 0) return {info->width, info->height};
+			if (const auto info = readTextureInfo(*data); info && info->width > 0 && info->height > 0) {
+				// A texture Enhance textures made larger shows as large as before: its transform
+				// scales the coordinates back (texture_enhance.h), so the mapping size is the old one.
+				const auto [su, sv] = mappingScale(*vmt);
+				return {std::max(1, int(std::lround(info->width / su))), std::max(1, int(std::lround(info->height / sv)))};
+			}
 		}
 	}
 	return {512, 512};

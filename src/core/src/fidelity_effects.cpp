@@ -17,6 +17,7 @@
 #include <sme/material.h>
 #include <sme/relief_pattern.h>
 #include <sme/text.h>
+#include <sme/texture_enhance.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -431,9 +432,14 @@ std::string patternWallTexture(std::string_view material, std::string_view origi
 	if (!std::regex_match(shaderOf(originalVmt), plain)) return {};
 	const std::string c = clean(originalVmt);
 	static const std::regex moved(R"re("?\$(basetexturetransform|bumptransform|basetexture2|seamless_scale)"?\s)re", ICASE);
-	if (std::regex_search(c, moved)) return {};
 	const auto parsed = parseMaterial(originalVmt, material);
 	if (!parsed) return {};
+	// Enhance textures' own uniform scale (a larger texture shown as large as before) keeps the
+	// height map in the base coordinates: such a wall still gets the relief.
+	if (std::regex_search(c, moved) &&
+	    !(onlyMappingTransforms(*parsed) && parsed->param("$basetexture2").empty() && parsed->param("$seamless_scale").empty())) {
+		return {};
+	}
 	const std::string base = baseTexture(c);
 	if (force) {
 		// The decision file says on: only what cannot carry relief at all stays out.
@@ -502,8 +508,11 @@ std::optional<PatternHeights> patternHeights(const GameFileSystem& fs, std::stri
 	const auto bytes = fs.read("materials/" + toLower(out.textureName) + ".vtf");
 	if (!bytes) return std::nullopt;
 	if (const auto info = readTextureInfo(*bytes)) {
-		out.fullWidth = info->width;
-		out.fullHeight = info->height;
+		// The size the texture shows at (an enhanced, larger one is scaled back by its transform).
+		const auto parsed = parseMaterial(originalVmt, material);
+		const auto [su, sv] = parsed ? mappingScale(*parsed) : std::pair{1.0, 1.0};
+		out.fullWidth = unsigned(std::max(1.0, std::round(info->width / su)));
+		out.fullHeight = unsigned(std::max(1.0, std::round(info->height / sv)));
 	}
 	const auto image = decodeTexture(*bytes, size);
 	if (!image) return std::nullopt;
@@ -1012,6 +1021,14 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 	EnhancementPlan plan;
 	std::set<std::string> kept;
 	std::set<std::string> reliefVisited;   // materials whose relief file this plan decided about
+	// Materials Enhance textures made larger: their effects are made from the enhanced original
+	// (larger textures, the transform that keeps their size), and where this plan would remove a
+	// generated material, Enhance textures' own copy stays instead (texture_enhance.h).
+	const TextureManifest textures = loadTextureManifest(modDir);
+	const auto originalOf = [&](const std::string& material) -> std::optional<std::string> {
+		if (textures.materials.empty()) return fs.readOriginal(vmtPath(material), modDir);
+		return enhancedOriginal(fs, modDir, textures, normalizeMaterialName(material));
+	};
 	const EffectCandidates found = candidates ? EffectCandidates{} : findEffectCandidates(fs, modDir);
 	const EffectCandidates& all = candidates ? *candidates : found;
 	const auto heightFileOf = [&modDir](const std::string& material) {
@@ -1045,7 +1062,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			if (effectIsOn(effect, *own)) ++plan.active[effect];
 			return;
 		}
-		const auto original = fs.readOriginal(path, modDir);
+		const auto original = originalOf(material);
 		if (!original) return;
 		const auto skipped = excluded.find(effect);
 		const bool want = settings.enabled(effect) && !settings.isExcluded(effect, material) &&
@@ -1204,7 +1221,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 		if (reliefOn) {
 			for (const auto& material : *options.mapMaterials) {
 				if (done.count(material)) continue;
-				const auto original = fs.readOriginal(vmtPath(material), modDir);
+				const auto original = originalOf(material);
 				if (!original || patternWallTexture(material, *original).empty()) continue;
 				plan1(GameEffect::Relief, material, false);
 			}
@@ -1223,7 +1240,7 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 			const MaterialDecision decided = options.decisions->lookup(line.pattern);
 			if (decided.parallax != ParallaxChoice::On && decided.bump != BumpChoice::Generate) continue;
 			done.insert(line.pattern);
-			const auto original = fs.readOriginal(vmtPath(line.pattern), modDir);
+			const auto original = originalOf(line.pattern);
 			if (!original || patternWallTexture(line.pattern, *original, true).empty()) continue;
 			plan1(GameEffect::Relief, line.pattern, false);
 		}
@@ -1287,6 +1304,22 @@ EnhancementPlan planEnhancements(const GameFileSystem& fs, const std::filesystem
 	if (std::any_of(all.begin(), all.end(), [](const auto& entry) { return entry.first == GameEffect::Liquid; })) {
 		planContainerModels(fs, modDir, settings, options.shaderDll, plan);
 	}
+	// An enhanced material keeps its larger textures: instead of the game's original coming back,
+	// Enhance textures' copy (the original with its keys) is written.
+	for (auto& change : plan.changes) {
+		if (!change.remove || !textures.find(normalizeMaterialName(change.material))) continue;
+		if (const auto layered = enhancedOriginal(fs, modDir, textures, normalizeMaterialName(change.material))) {
+			change.remove = false;
+			change.text = std::string(TEXTURE_ENHANCE_MARKER) + " from " + vmtPath(normalizeMaterialName(change.material)) +
+			              " (Mapsmith > Materials > Enhance textures; Remove enhancements takes it out)" + CRLF + *layered;
+		}
+	}
+	// Changes that would write what the file already holds (that copy, again) are none.
+	std::erase_if(plan.changes, [](const EffectChange& change) {
+		if (change.remove || !std::string_view(change.text).starts_with(TEXTURE_ENHANCE_MARKER) || !change.heightFile.empty() || !change.normalFile.empty()) return false;
+		const auto now = readFile(change.file);
+		return now && *now == change.text;
+	});
 	return plan;
 }
 

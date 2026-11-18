@@ -71,6 +71,7 @@ add_library(smecore STATIC
 	src/gap_fill.cpp
 	src/prop_placement.cpp
 	src/command_search.cpp
+	src/texture_enhance.cpp
 	src/texture_flow.cpp
 	src/history.cpp
 	src/keyvalues.cpp
