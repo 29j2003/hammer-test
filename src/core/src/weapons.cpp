@@ -419,4 +419,48 @@ bool restoreSound(const fs::path& modDir, std::string_view wave, std::string* er
 	return forgetImport(modDir, *record);
 }
 
+std::optional<ImportRecord> textureReplacement(const fs::path& modDir, std::string_view texture) {
+	return recordFor(modDir, "texture", normalizePath(texture));
+}
+
+bool restoreTexture(const fs::path& modDir, std::string_view texture, std::string* error) {
+	const auto record = textureReplacement(modDir, texture);
+	if (!record) return true;
+	if (!undoImport(*record, error)) return false;
+	return forgetImport(modDir, *record);
+}
+
+std::optional<ImportRecord> replaceTexture(const fs::path& modDir, std::string_view texture, const ImageRgba& image, unsigned maxSize, std::string* error) {
+	const std::string name = normalizePath(texture);
+	const std::string path = "materials/" + name + ".vtf";
+	if (name.empty() || !isSafeGamePath(path)) {
+		if (error) *error = "not a texture path: " + std::string(texture);
+		return std::nullopt;
+	}
+	auto vtf = encodeVtf(image, true, false, maxSize, error);
+	if (!vtf) return std::nullopt;
+	if (!restoreTexture(modDir, name, error)) return std::nullopt;
+	const fs::path target = modDir / toNativePath(path);
+	ImportRecord record{"texture", name, {}, {}, {}};
+	std::error_code ec;
+	if (fs::exists(target, ec)) {
+		fs::copy_file(target, target.string() + std::string(BACKUP), fs::copy_options::overwrite_existing, ec);
+		if (ec) {
+			if (error) *error = "cannot back up " + displayPath(target);
+			return std::nullopt;
+		}
+		record.replaced.push_back(target);
+	} else {
+		record.created.push_back(target);
+	}
+	const std::string bytes(reinterpret_cast<const char*>(vtf->data()), vtf->size());
+	if (!writeFile(target, bytes, error)) return std::nullopt;
+	if (!rememberImport(modDir, record)) {
+		undoImport(record);
+		if (error) *error = "cannot write " + displayPath(importLogFile(modDir));
+		return std::nullopt;
+	}
+	return record;
+}
+
 } // namespace sme

@@ -270,18 +270,28 @@ void ModelViewer::paintGL() {
 	const qreal dpr = devicePixelRatioF();
 	glViewport(0, 0, int(width() * dpr), int(height() * dpr));
 	const float pitch = qDegreesToRadians(m_pitch), yaw = qDegreesToRadians(m_yaw);
-	const QVector3D eye = m_center + m_distance * QVector3D(std::cos(yaw) * std::cos(pitch), std::sin(yaw) * std::cos(pitch), std::sin(pitch));
+	QVector3D eye = m_center + m_distance * QVector3D(std::cos(yaw) * std::cos(pitch), std::sin(yaw) * std::cos(pitch), std::sin(pitch));
+	QVector3D target = m_center;
 	QMatrix4x4 projection, view;
-	projection.perspective(FOV, float(std::max(1, width())) / float(std::max(1, height())), std::max(0.5f, m_distance * 0.01f), m_distance * 20 + 1000);
-	view.lookAt(eye, m_center, QVector3D(0, 0, 1));
+	const float aspect = float(std::max(1, width())) / float(std::max(1, height()));
+	if (m_firstPerson) {
+		// Source gives the field of view for a 4:3 screen and keeps its height on wider ones.
+		const float vertical = 2.0f * qRadiansToDegrees(std::atan(std::tan(qDegreesToRadians(m_viewFov * 0.5f)) * 0.75f));
+		eye = {};
+		target = {1, 0, 0};
+		projection.perspective(vertical, aspect, 0.5f, 4000);
+	} else {
+		projection.perspective(FOV, aspect, std::max(0.5f, m_distance * 0.01f), m_distance * 20 + 1000);
+	}
+	view.lookAt(eye, target, QVector3D(0, 0, 1));
 	const QMatrix4x4 viewProj = projection * view;
 	// Light from the camera's upper left.
-	const QVector3D forward = (m_center - eye).normalized();
+	const QVector3D forward = (target - eye).normalized();
 	const QVector3D right = QVector3D::crossProduct(forward, QVector3D(0, 0, 1)).normalized();
 	const QVector3D keyDir = (-forward + QVector3D(0, 0, 0.9f) - right * 0.5f).normalized();
 
 	glEnable(GL_DEPTH_TEST);
-	if (m_gridVertices > 0) {
+	if (m_gridVertices > 0 && !m_firstPerson) {
 		m_lineProgram->bind();
 		m_lineProgram->setUniformValue("u_viewProj", viewProj);
 		m_lineProgram->setUniformValue("u_color", QVector4D(0.38f, 0.40f, 0.44f, 1.0f));
@@ -347,7 +357,7 @@ void ModelViewer::mousePressEvent(QMouseEvent* event) {
 }
 
 void ModelViewer::mouseMoveEvent(QMouseEvent* event) {
-	if (m_dragButton == Qt::NoButton) return;
+	if (m_dragButton == Qt::NoButton || m_firstPerson) return;
 	const QPointF delta = event->position() - m_lastMouse;
 	m_lastMouse = event->position();
 	if (m_dragButton == Qt::LeftButton) {
@@ -370,10 +380,17 @@ void ModelViewer::mouseReleaseEvent(QMouseEvent*) {
 }
 
 void ModelViewer::mouseDoubleClickEvent(QMouseEvent*) {
-	frameModel();
+	if (!m_firstPerson) frameModel();
+}
+
+void ModelViewer::setFirstPerson(bool on, float fov) {
+	m_firstPerson = on;
+	m_viewFov = std::clamp(fov > 0 ? fov : 54.0f, 20.0f, 120.0f);
+	update();
 }
 
 void ModelViewer::wheelEvent(QWheelEvent* event) {
+	if (m_firstPerson) return;
 	const float steps = float(event->angleDelta().y()) / 120.0f;
 	m_distance = std::clamp(m_distance * std::pow(0.85f, steps), 2.0f, 60000.0f);
 	update();

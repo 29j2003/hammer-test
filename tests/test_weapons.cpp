@@ -10,6 +10,7 @@
 #include <sme/model_events.h>
 #include <sme/model_export.h>
 #include <sme/model_rebuild.h>
+#include <sme/texture.h>
 #include <sme/weapons.h>
 
 #include <doctest/doctest.h>
@@ -441,4 +442,29 @@ TEST_CASE("weapons: a sound replaced at the same path, like the original, and re
 	REQUIRE(replaceSound(mod, "weapons/smg1/smg1_fire1.wav", tone(44100, 1, 100), nullptr, &error));
 	REQUIRE(restoreSound(mod, "weapons/smg1/smg1_fire1.wav", &error));
 	CHECK(readAll(wav) == "own");
+}
+
+TEST_CASE("weapons: a texture replaced at the same path and restored") {
+	test::Fixture f;
+	test::createFixture(f);
+	const auto mod = f.root / "texture/mymod";
+	fs::create_directories(mod);
+	ImageRgba image;
+	image.width = 8;
+	image.height = 8;
+	image.pixels.assign(8 * 8 * 4, std::byte{200});
+	std::string error;
+	REQUIRE_MESSAGE(replaceTexture(mod, "models/weapons/v_gun/gun_skin", image, 2048, &error), error);
+	const fs::path vtf = mod / "materials/models/weapons/v_gun/gun_skin.vtf";
+	REQUIRE(fs::exists(vtf));
+	const auto bytes = readAll(vtf);
+	const auto info = readTextureInfo(std::as_bytes(std::span(bytes.data(), bytes.size())), &error);
+	REQUIRE(info);
+	CHECK(info->width == 8);
+	CHECK(textureReplacement(mod, "models/weapons/v_gun/gun_skin"));
+	REQUIRE(replaceTexture(mod, "models/weapons/v_gun/gun_skin", image, 2048, &error));
+	CHECK(loadImports(mod).size() == 1);
+	REQUIRE(restoreTexture(mod, "models/weapons/v_gun/gun_skin", &error));
+	CHECK_FALSE(fs::exists(vtf));
+	CHECK_FALSE(replaceTexture(mod, "../evil", image, 2048, &error));
 }

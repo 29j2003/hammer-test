@@ -53,6 +53,7 @@ class StartPage;
 class ModPage;
 class ModelsPage;
 class AnimationsPage;
+class WeaponsPage;
 class MapsPanel;
 class LogPanel;
 class MaterialCache;
@@ -98,7 +99,7 @@ public:
 	[[nodiscard]] MaterialEditor* materialEditor() const { return m_materialEditor; }
 	[[nodiscard]] CompileRunner& compiler() { return m_compiler; }
 	/// Pages of the side bar on the left.
-	enum class Page { Map, Materials, Models, Animations, Sounds, Particles, Project };
+	enum class Page { Map, Materials, Models, Animations, Weapons, Sounds, Particles, Project };
 	void showPage(Page page);
 	/// The start page: continue, recent projects, start new (shown at start when wanted).
 	void showStartPage();
@@ -120,6 +121,7 @@ public:
 	[[nodiscard]] ModPage* modPage() const { return m_modPage; }
 	[[nodiscard]] ModelsPage* modelsPage() const { return m_modelsPage; }
 	[[nodiscard]] AnimationsPage* animationsPage() const { return m_animationsPage; }
+	[[nodiscard]] WeaponsPage* weaponsPage() const { return m_weaponsPage; }
 	[[nodiscard]] QTabWidget* projectTabs() const { return m_projectPage; }
 	/// Project › Texts (the mod's localization and caption files).
 	[[nodiscard]] class TextsPanel* textsPanel() const { return m_textsPanel; }
@@ -246,6 +248,7 @@ private:
 	ModPage* m_modPage = nullptr;           ///< Project page, tab "Overview"
 	ModelsPage* m_modelsPage = nullptr;     ///< Models page: browser and 3D view of the game's models
 	AnimationsPage* m_animationsPage = nullptr;   ///< Animations page: sequences of a model played in 3D
+	WeaponsPage* m_weaponsPage = nullptr;         ///< Weapons page: scripts, view models, sounds, look, stats
 	QTabWidget* m_projectPage = nullptr;     ///< Overview, Features, Maps, Menu, Texts, Source control, Mod code, Ship
 	class ModCodePanel* m_modCode = nullptr;
 	class FeaturesPanel* m_features = nullptr;

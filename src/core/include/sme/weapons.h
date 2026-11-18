@@ -123,4 +123,15 @@ bool restoreSound(const std::filesystem::path& modDir, std::string_view wave, st
 /// The import list record of a replaced wave (nullopt if Mapsmith did not replace it).
 [[nodiscard]] std::optional<ImportRecord> soundReplacement(const std::filesystem::path& modDir, std::string_view wave);
 
+/// Replaces a texture of the game ("models/weapons/v_smg1/smg1_sheet", below materials/, no
+/// extension) with a picture: a VTF at the same path in the mod (power of two, at most `maxSize`,
+/// DXT1/DXT5), recorded as kind "texture"; an earlier replacement is taken back first and the
+/// mod's own file kept as a backup. Model textures are mapped 0..1, so any size fits.
+[[nodiscard]] std::optional<ImportRecord> replaceTexture(const std::filesystem::path& modDir, std::string_view texture, const ImageRgba& image,
+                                                         unsigned maxSize = 2048, std::string* error = nullptr);
+/// Takes a replaced texture out again. True if there was nothing to do.
+bool restoreTexture(const std::filesystem::path& modDir, std::string_view texture, std::string* error = nullptr);
+/// The import list record of a replaced texture.
+[[nodiscard]] std::optional<ImportRecord> textureReplacement(const std::filesystem::path& modDir, std::string_view texture);
+
 } // namespace sme
