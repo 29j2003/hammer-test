@@ -108,6 +108,13 @@
 #include <sme/shipping.h>
 #include <sme/soundscape_area.h>
 #include <sme/editor_report.h>
+#include <sme/model_effects.h>
+#include <sme/model_glow.h>
+#include <sme/particle_edit.h>
+#include <sme/particles.h>
+#include "effects_panel.h"
+#include "glow_dialog.h"
+#include "particle_editor.h"
 
 #include <cmath>
 #include <filesystem>
@@ -12651,4 +12658,128 @@ TEST_CASE("claude: Project > Claude switches the bridge on, Claude reads and cha
 	CHECK(bridge.process.waitForFinished(5000));
 	qunsetenv("SME_CLAUDE_PIPE");
 	qunsetenv("SME_CLAUDE_DATA_DIR");
+}
+
+TEST_CASE("model glow, model effects and the particle editor write into the mod and take it back") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1366, 768);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	editor.newMap();
+
+	// Glow: a model material lights up in the view, Apply writes it into the mod, Restore takes it out.
+	window.showPage(MainWindow::Page::Models);
+	auto* page = window.modelsPage();
+	REQUIRE(page);
+	for (int i = 0; i < 200 && page->list()->model()->rowCount() == 0; ++i) QTest::qWait(50);
+	page->selectModel("models/humans/group01/male_07.mdl");
+	auto* viewer = page->viewer();
+	for (int i = 0; i < 200 && !viewer->model(); ++i) QTest::qWait(20);
+	REQUIRE(viewer->model());
+	for (int i = 0; i < 100 && !page->findChild<QPushButton*>("modelGlow")->isEnabled(); ++i) QTest::qWait(20);
+	auto* glow = page->openGlow("models/humans/male_sheet");
+	REQUIRE(glow);
+	settle();
+	GlowSettings s;
+	s.mask = GlowSettings::Mask::Whole;
+	s.red = 0.2;
+	s.strength = 2;
+	glow->setSettings(s);
+	CHECK(glow->coverage() == doctest::Approx(1.0).epsilon(0.01));
+	CHECK(viewer->hasGlow("models/humans/male_sheet"));
+	CHECK(glow->frameGeometry().height() <= 768);   // fits a small screen
+	const auto vmt = f.mod / "materials/models/humans/male_sheet.vmt";
+	const auto readText = [](const std::filesystem::path& file) {
+		std::ifstream in(file, std::ios::binary);
+		std::stringstream text;
+		text << in.rdbuf();
+		return text.str();
+	};
+	REQUIRE(glow->apply());
+	CHECK(std::filesystem::exists(f.mod / "materials/models/humans/male_sheet_glowmask.vtf"));
+	CHECK(readText(vmt).find("$selfillum") != std::string::npos);
+	REQUIRE(glow->restore());
+	CHECK(readText(vmt).find("$selfillum") == std::string::npos);   // the mod's own copy is back as it was
+	CHECK_FALSE(std::filesystem::exists(f.mod / "materials/models/humans/male_sheet_glowmask.vtf"));
+	glow->close();
+	settle();
+	CHECK_FALSE(viewer->hasGlow("models/humans/male_sheet"));
+
+	// Effects of the model: kept in the mod, shown as .qc lines. (Apply/Restore read the game
+	// again, which empties the page: the model is picked once more.)
+	auto* effects = page->effectsPanel();
+	REQUIRE(effects);
+	for (int i = 0; i < 200 && page->list()->model()->rowCount() == 0; ++i) QTest::qWait(50);
+	page->selectModel("models/humans/group01/male_07.mdl");
+	for (int i = 0; i < 200 && effects->model() != "models/humans/group01/male_07.mdl"; ++i) QTest::qWait(20);
+	REQUIRE(effects->model() == "models/humans/group01/male_07.mdl");
+	ModelEffect sparks;
+	sparks.particle = "demo_sparks";
+	sparks.attach = EffectAttach::FollowRootBone;
+	sparks.sequence = "idle";
+	sparks.startFrame = 2;
+	effects->setEffects({sparks});
+	CHECK(effects->qcText().contains("{ event AE_CL_CREATE_PARTICLE_EFFECT 2 \"demo_sparks follow_rootbone\" }"));
+	CHECK(std::filesystem::exists(modelEffectsFile(f.mod, "models/humans/group01/male_07.mdl")));
+	page->selectModel("models/props_demo/supply_crate.mdl");
+	for (int i = 0; i < 200 && !effects->effects().empty(); ++i) QTest::qWait(20);
+	CHECK(effects->effects().empty());
+	page->selectModel("models/humans/group01/male_07.mdl");
+	for (int i = 0; i < 200 && effects->effects().empty(); ++i) QTest::qWait(20);
+	REQUIRE(effects->effects().size() == 1);   // read back from the mod
+	CHECK(effects->effects()[0] == sparks);
+	effects->setEffects({});
+	CHECK_FALSE(std::filesystem::exists(modelEffectsFile(f.mod, "models/humans/group01/male_07.mdl")));
+
+	// Particle editor: a new glow from the template, changed, previewed and saved into the mod.
+	window.showPage(MainWindow::Page::Particles);
+	auto* particles = window.findChild<ParticleBrowser*>();
+	REQUIRE(particles);
+	for (int i = 0; i < 200 && particles->tree()->topLevelItemCount() == 0; ++i) QTest::qWait(50);
+	particles->newFromTemplate(ParticleTemplate::Glow);
+	REQUIRE(particles->editing());
+	auto* edit = particles->particleEditor();
+	edit->nameField()->setText("my_reload_glow");
+	edit->nameField()->setFocus();
+	QTest::keyClick(edit->nameField(), Qt::Key_End);
+	QTest::keyClicks(edit->nameField(), "2");   // textEdited needs typing
+	CHECK(edit->system().name == "my_reload_glow2");
+	CHECK(edit->setValueText("properties", -1, "color", "255 40 20 255"));
+	CHECK_FALSE(edit->setValueText("properties", -1, "color", "red"));
+	CHECK(edit->addPart("operators", "Radius Scale"));
+	QTest::qWait(250);   // the preview follows after a short pause
+	particles->preview()->advance(0.2);
+	CHECK(particles->preview()->particleCount() == 1);
+	REQUIRE(particles->saveEdited());
+	const auto pcf = f.mod / "particles/mymod_mapsmith.pcf";
+	REQUIRE(std::filesystem::exists(pcf));
+	const std::string data = readText(pcf);
+	const auto systems = readParticleDefinitions(std::as_bytes(std::span(data.data(), data.size())));
+	REQUIRE(systems.size() == 1);
+	CHECK(systems[0].name == "my_reload_glow2");
+	CHECK(systems[0].operators.size() == 3);
+	const auto* color = systems[0].properties.find("color");
+	REQUIRE(color);
+	CHECK(color->numbers[1] == doctest::Approx(40));
+	CHECK(readText(f.mod / "particles/particles_manifest.txt").find("!particles/mymod_mapsmith.pcf") != std::string::npos);
+	// A system of the mod itself keeps its name when edited (one of the game's would become a
+	// "_custom" copy), with its child.
+	settle();
+	for (int i = 0; i < 200 && particles->tree()->topLevelItemCount() == 0; ++i) QTest::qWait(50);
+	REQUIRE(particles->selectSystem("demo_fire_small"));
+	REQUIRE(particles->editShownSystem());
+	CHECK(particles->particleEditor()->system().name == "demo_fire_small");
+	CHECK(particles->particleEditor()->system().children.size() == 1);   // its smoke column
 }

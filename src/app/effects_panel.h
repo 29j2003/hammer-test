@@ -78,6 +78,7 @@ public:
 	/// The model the list belongs to (loads its saved effects); `viewer` shows the attachments.
 	void setModel(const QString& modelPath, ModelViewer* viewer);
 	[[nodiscard]] const std::vector<ModelEffect>& effects() const { return m_effects; }
+	[[nodiscard]] const QString& model() const { return m_model; }
 	/// Replaces the list (and saves it).
 	void setEffects(std::vector<ModelEffect> effects);
 	/// The .qc text the effects become: event lines per sequence and the $keyvalues block.
