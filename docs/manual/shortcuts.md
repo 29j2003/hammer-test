@@ -149,4 +149,18 @@ The Tool tab's key tables follow your own shortcuts.
 | Shift+F9 | Play from here: quick compile with the player at the 3D camera, then play |
 | F1 | Shortcuts |
 
+## Animation editor
+
+| Key | Does |
+|---|---|
+| K | Key the chosen bones at this frame |
+| Delete | Delete their key at this frame |
+| Space | Play or pause |
+| ← / → | One frame back / forward |
+| Home / End | First / last frame |
+| E / W | Turn rings / move arrows |
+| Ctrl+Z / Ctrl+Y | Undo / redo |
+| Ctrl+C / Ctrl+V | Copy / paste the chosen bones' pose |
+| Ctrl+S | Save the keys |
+
 On macOS, Ctrl is the Command key wherever the system uses it.

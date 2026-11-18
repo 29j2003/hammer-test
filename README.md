@@ -203,6 +203,12 @@ memory and lists every key or value that would change.
   scrub, speed, loop - see which entities of the map use them and put one on the selected prop, NPC or
   `scripted_sequence`. **Add animation ...** brings an `.smd` onto the model's skeleton and builds it into the mod
   with the game's `studiomdl`.
+- **Animation editor** (*Edit animation ...* / *New animation ...* on the Animations page, *Animate ...* on the Models
+  page): improve an animation or make a new one with keys, like in Source Filmmaker - click a bone, turn it with the
+  rings or move it with the arrows, press K, the motion between keys is filled in. The original keeps playing under your
+  changes. A player's view shows weapon models as in the game. *Preview in Mapsmith* plays it at once; *Build ...* makes
+  it a new animation or replaces the animation in the model itself (a weapon's reload), with the old model kept to
+  restore.
 - **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
   has the tabs *Overview*, *Features*, *Maps*, *Menu*, *Texts*, *Source control*, *Ship* and *Build from source* (below). *Overview* shows the chosen game or

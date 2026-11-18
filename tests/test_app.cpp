@@ -12822,6 +12822,7 @@ TEST_CASE("animation editor: improve an animation with keys, preview it and rebu
 		ed->setFrame(15);
 		settle();
 		ed->grab().save(shot);
+		ed->view()->grabFramebuffer().save(shot + ".view.png");
 	}
 
 	// Save: the keys in the mod's modelsrc/, picked up again when the animation is opened.
