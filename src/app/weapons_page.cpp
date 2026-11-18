@@ -125,6 +125,7 @@ WeaponsPage::WeaponsPage(Editor* editor, MaterialCache* materials, QWidget* pare
 		if (m_loader.property("generation").toInt() != m_generation) return;
 		m_animated = m_loader.result();
 		showSequences();
+		showSounds();   // the events are listed per animation
 		applyPose();
 		updateTransport();
 	});
