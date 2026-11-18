@@ -2,6 +2,7 @@
 
 #include <sme/model_effects.h>
 
+#include <sme/filesystem.h>
 #include <sme/keyvalues.h>
 #include <sme/text.h>
 
@@ -209,6 +210,64 @@ std::vector<ModelEffect> effectsFromModel(const std::vector<SequenceEvent>& even
 		} catch (const std::exception&) {
 			// Broken text: no Always effects.
 		}
+	}
+	return out;
+}
+
+std::filesystem::path modelEffectsFile(const std::filesystem::path& modDir, std::string_view modelPath) {
+	std::string path = normalizePath(modelPath);
+	if (path.ends_with(".mdl")) path.resize(path.size() - 4);
+	if (path.empty() || !isSafeGamePath(path) || !startsWithI(path, "models/")) return {};
+	return modDir / "modelsrc" / std::filesystem::path(path.substr(7)) / "mapsmith_effects.txt";
+}
+
+std::string writeEffectsText(const std::vector<ModelEffect>& effects) {
+	KvNode root;
+	KvNode list = KvNode::makeBlock("mapsmith_effects");
+	for (const auto& e : effects) {
+		KvNode node = KvNode::makeBlock("effect");
+		node.set("particle", cleanWord(e.particle));
+		node.set("attach", std::string(effectAttachName(e.attach)));
+		node.set("attachment", cleanWord(e.attachment));
+		node.set("when", e.when == ModelEffect::When::Always ? "always" : "animation");
+		node.set("sequence", cleanWord(e.sequence));
+		node.set("start", std::to_string(std::max(0, e.startFrame)));
+		node.set("end", std::to_string(std::max(-1, e.endFrame)));
+		node.set("instantly", e.stopInstantly ? "1" : "0");
+		list.children.push_back(std::move(node));
+	}
+	root.children.push_back(std::move(list));
+	return "// Effects Mapsmith adds to this model when it compiles it (Models page, Effects).\n" + writeKeyValues(root);
+}
+
+std::vector<ModelEffect> readEffectsText(std::string_view text) {
+	std::vector<ModelEffect> out;
+	try {
+		const KvNode root = parseKeyValues(text);
+		const KvNode* list = root.find("mapsmith_effects");
+		if (!list) return out;
+		const auto toInt = [](const std::string& s, int fallback) {
+			try {
+				return std::clamp(std::stoi(s), -1, 100000);
+			} catch (const std::exception&) {
+				return fallback;
+			}
+		};
+		for (const auto& node : list->children) {
+			if (!node.block || !iequals(node.key, "effect") || out.size() >= 256) continue;
+			ModelEffect e;
+			e.particle = cleanWord(node.get("particle"));
+			e.attach = effectAttachFromName(node.get("attach")).value_or(EffectAttach::FollowAttachment);
+			e.attachment = cleanWord(node.get("attachment"));
+			e.when = iequals(node.get("when"), "always") ? ModelEffect::When::Always : ModelEffect::When::DuringAnimation;
+			e.sequence = cleanWord(node.get("sequence"));
+			e.startFrame = std::max(0, toInt(node.get("start"), 0));
+			e.endFrame = toInt(node.get("end"), -1);
+			e.stopInstantly = node.get("instantly") == "1";
+			if (!e.particle.empty()) out.push_back(std::move(e));
+		}
+	} catch (const std::exception&) {
+		out.clear();
 	}
 	return out;
 }

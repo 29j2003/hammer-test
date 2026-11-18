@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -87,6 +88,14 @@ struct ModelEffect {
 /// the particles block gives the Always ones. Other events are left out. `keyValues` is the text
 /// of the model's $keyvalues (may be empty; broken text gives no Always effects).
 [[nodiscard]] std::vector<ModelEffect> effectsFromModel(const std::vector<SequenceEvent>& events, std::string_view keyValues);
+
+/// The effects a mapper set up for a model, kept in the mod until the model is compiled with
+/// them: <mod>/modelsrc/<model path without .mdl>/mapsmith_effects.txt (KeyValues text; the
+/// folder model export writes to). Empty path for a model path that is not safe.
+[[nodiscard]] std::filesystem::path modelEffectsFile(const std::filesystem::path& modDir, std::string_view modelPath);
+[[nodiscard]] std::string writeEffectsText(const std::vector<ModelEffect>& effects);
+/// Reads the text back (untrusted: broken text or values give fewer effects, never more than 256).
+[[nodiscard]] std::vector<ModelEffect> readEffectsText(std::string_view text);
 
 /// The name of an event number of SDK 2013's eventlist.h / the old client events ("5004" ->
 /// "AE_CL_PLAYSOUND"); empty for unknown numbers.

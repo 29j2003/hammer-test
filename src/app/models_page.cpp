@@ -6,7 +6,9 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "effects_panel.h"
 #include "enhancements.h"
+#include "glow_dialog.h"
 #include "material_cache.h"
 #include "model_thumbnails.h"
 #include "model_viewer.h"
@@ -24,6 +26,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
@@ -216,11 +219,29 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	rightLayout->addWidget(m_details);
 	auto* materialsTitle = new QLabel(tr("Materials (click to edit)"));
 	materialsTitle->setProperty("role", "key");
-	rightLayout->addWidget(materialsTitle);
+	auto* materialsRow = new QHBoxLayout;
+	materialsRow->addWidget(materialsTitle, 1);
+	m_glow = new QPushButton(tr("Glow ..."));
+	m_glow->setObjectName("modelGlow");
+	m_glow->setToolTip(tr("Make parts of a material glow (lamps, screens, sights) - always or only during animations"));
+	m_glow->setEnabled(false);
+	materialsRow->addWidget(m_glow);
+	rightLayout->addLayout(materialsRow);
 	m_materialList = new QListWidget;
 	m_materialList->setObjectName("modelMaterials");
 	m_materialList->setMaximumHeight(110);
 	rightLayout->addWidget(m_materialList);
+	m_effects = new EffectsPanel(editor, assets, right);
+	rightLayout->addWidget(m_effects);
+	connect(m_glow, &QPushButton::clicked, this, [this] { openGlow(); });
+	connect(m_effects, &EffectsPanel::compileRequested, this, [this](const QString& model, const std::vector<SequenceEvent>&, const QString&) {
+		// Compiling a model with new events goes through its .qc and studiomdl (model_export);
+		// until that is wired up here the .qc lines can be copied.
+		QMessageBox::information(this, tr("Compile into model"),
+		                         tr("Compiling %1 with its effects is not available on this page yet. Use \"Copy .qc lines\" and add them to the "
+		                            "model's .qc (Export for editing ... writes one), then compile it with studiomdl.")
+		                             .arg(model));
+	});
 	m_enhancementSwitches = new EnhancementSwitches(editor->enhancements(), right);
 	rightLayout->addWidget(m_enhancementSwitches);
 	m_enhancementSwitches->setModel({});
@@ -312,9 +333,14 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_materialList->setContextMenuPolicy(Qt::CustomContextMenu);
 	connect(m_materialList, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
 		auto* item = m_materialList->itemAt(pos);
-		if (!item || !m_menuFiller) return;
+		if (!item) return;
 		QMenu menu;
-		m_menuFiller(&menu, {AssetKind::Material, item->text().toStdString()}, AssetPlace::ModelsPage);
+		const QString material = item->text();
+		menu.addAction(tr("Make it glow ..."), this, [this, material] { openGlow(material); });
+		if (m_menuFiller) {
+			menu.addSeparator();
+			m_menuFiller(&menu, {AssetKind::Material, item->text().toStdString()}, AssetPlace::ModelsPage);
+		}
 		menu.exec(m_materialList->viewport()->mapToGlobal(pos));
 	});
 	connect(m_materialList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
@@ -518,7 +544,30 @@ void ModelsPage::loaded(const Loaded& result) {
 		m_viewer->setModel(nullptr);
 		m_viewer->setMessage(tr("Cannot load %1: %2").arg(result.path.section('/', -1), result.error));
 	}
+	if (result.withInfo) {
+		m_viewer->clearGlow();
+		m_viewer->setMarkers({});
+		m_effects->setModel(result.geometry ? m_current : QString(), m_viewer);
+	}
+	m_glow->setEnabled(result.geometry && !result.geometry->meshes.empty());
 	updateDetails();
+}
+
+GlowDialog* ModelsPage::openGlow(const QString& material) {
+	const auto& geometry = m_viewer->model();
+	if (!geometry || m_current.isEmpty()) return nullptr;
+	QStringList materials;
+	for (const auto& mesh : geometry->meshes) materials << QString::fromStdString(mesh.material);
+	materials.removeDuplicates();
+	std::vector<std::pair<std::string, std::string>> animations;
+	for (std::size_t i = 0; i < m_info.sequences.size(); ++i) {
+		animations.emplace_back(m_info.sequences[i], i < m_info.activities.size() ? m_info.activities[i] : std::string());
+	}
+	auto* dialog = new GlowDialog(m_editor, m_viewer, m_current, materials, std::move(animations), this);
+	connect(dialog, &GlowDialog::modChanged, this, &ModelsPage::modChanged);
+	if (!material.isEmpty()) dialog->selectMaterial(material);
+	dialog->show();
+	return dialog;
 }
 
 void ModelsPage::rebuildBodyGroups() {

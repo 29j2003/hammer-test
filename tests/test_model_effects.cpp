@@ -241,6 +241,15 @@ TEST_CASE("effects: events for an animation, keyvalues for always, and back") {
 	CHECK(effectProblems(reload, {"eject"}, {"reload"}, 40).size() == 1);
 	CHECK(effectProblems(reload, {"muzzle"}, {"reload"}, 20).size() == 1);   // stops after the end of a 20-frame animation
 	CHECK(effectProblems(ModelEffect{}, {}, {}).size() == 3);                 // no particle, no attachment, no animation
+	// Kept in the mod between sessions.
+	const auto saved = readEffectsText(writeEffectsText({reload, always}));
+	REQUIRE(saved.size() == 2);
+	CHECK(saved[0] == reload);
+	CHECK(saved[1] == always);
+	CHECK(readEffectsText("garbage {{").empty());
+	CHECK(modelEffectsFile("/mod", "models/weapons/v_smg1.mdl") == std::filesystem::path("/mod/modelsrc/weapons/v_smg1/mapsmith_effects.txt"));
+	CHECK(modelEffectsFile("/mod", "models/../../x.mdl").empty());
+	CHECK(modelEffectsFile("/mod", "materials/x.vmt").empty());
 	CHECK(eventNameForNumber(5004) == "AE_CL_PLAYSOUND");
 	CHECK(eventNameForNumber(5001) == "CL_EVENT_MUZZLEFLASH0");
 	CHECK(eventNameForNumber(42).empty());
