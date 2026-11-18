@@ -215,6 +215,39 @@ liquid and glass colour and opacity, the *Fill level* (*Different in every prop*
 A material that `deploy.bat` generated is marked as such. Saving it in the editor makes it the mod's own, and
 `deploy.bat` leaves it alone from then on.
 
+## Enhance textures
+
+Half-Life 2's textures are often 512 pixels or less: up close they are blurry, and many walls have no bump map. *Enhance
+textures* makes them larger and sharper and adds bump maps, for your mod only - the game's own files stay as they are.
+
+1. On the **Materials** page, select the materials (Ctrl/Shift+click) and right-click: *Enhance textures ...*. Or use
+   *...* › *Enhance textures of the listed materials ...* for everything the search and category show.
+2. The list shows each material's size now and after, whether it gets a bump map, and why some are left as they are
+   (decals, tool textures, animated textures, materials you wrote yourself).
+3. Click a material: the comparison shows the same spot before and after. Drag the yellow line.
+4. Choose:
+   - **Upscale**: *2x* or *4x* (or *Off* for bump maps only). *AI* uses Real-ESRGAN, which ships with Mapsmith and
+     needs a graphics card with Vulkan; it invents fine detail. *Sharp* is built in and fast. Without a Vulkan card,
+     Mapsmith uses *Sharp* by itself.
+   - **Max size**: the longer side at most (2048 by default). Larger textures need more video memory in the game.
+   - **Bump maps for materials without one**: made from the texture's pattern or brightness, as Game enhancements
+     makes its relief.
+   - **Their own bump maps larger too**, **Reflection masks** (shiny only where bright), **Compress**.
+5. Press **Apply**. The work runs in the background; you can keep mapping.
+
+What you get:
+
+- **Seamless**: tiling textures are scaled as if their neighbours were around them, so no seams appear at the tile
+  edges. Clamped textures (sky, some signs) keep their edges.
+- **Same size on your walls**: a texture twice as large would show twice as large on every brush. Mapsmith writes the
+  larger texture under a new name (`<texture>_mapsmith_hd.vtf`) with a copy of the material that scales the texture
+  coordinates back (`$basetexturetransform "center 0 0 scale 2 2 ..."`), so walls look exactly as before - only
+  sharper. This also holds for maps that are already compiled. Model textures are replaced at their own path.
+- **Game enhancements** build on the enhanced materials: relief, liquid and water use the larger textures.
+- **Compile again** for new bump maps on walls: VRAD bakes the light for bump maps only for materials that have one.
+- **Remove enhancements** (in the same dialog) deletes everything Mapsmith wrote for those materials. The list of what
+  it wrote is `cfg/mapsmith_textures.txt` in the mod.
+
 ## Cubemap reflections
 
 In the lighting preview, shiny materials (those with `$envmap`) reflect the map as they will in the game, without

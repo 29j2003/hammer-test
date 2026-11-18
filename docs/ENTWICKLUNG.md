@@ -137,6 +137,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `fidelity_effects` | Game enhancements: Effekte von mapbase-fidelity (Liquid, Wind, Water; Relief „aus“-Kopien, wo Mapsmith keins will oder es ausgeschaltet ist, sonst macht es `deploy.bat` – außer auf Wänden der eigenen Karten: Muster-Relief `makePatternRelief`; nichts mit Mod-Shadern ohne `bin/game_shader_dx6.dll`, `EnhancementOptions`) nach den Regeln und mit dem Text von `deploy.ps1` (`deployWouldApply`, `makeEffectMaterial`, Marker `DEPLOY_MARKER`), Einstellungen der Mod in `cfg/mapsmith_enhancements.txt` (`EnhancementSettings`: Effekt aus, Modelle/Materialien ausgenommen), Kandidaten aus den Original-Materialien des Spiels (`GameFileSystem::readOriginal` überspringt den Mod-Ordner), `planEnhancements` (an = Text wie deploy, aus = Kopie des Originals mit `MAPSMITH_MARKER`, damit `deploy.bat` sie als eigene Datei stehen lässt; Dateien der Mod ohne Marker nie anfassen → `keptOwn`); Ausschluss wirkt pro Material, also für alle Modelle mit diesem Material |
 | `material_decisions` | Entscheidungen der Mod über ihre Materialien in `<mod>/cfg/mapsmith_materials.txt` (Julius 16.11.2026: „Texturen schicken, im Chat entscheiden, wie jede benutzt wird“; „bei kleinen Ziegeln konnte ich Parallax nicht einstellen“): eine Zeile je Material oder Platzhalter (`*` beliebig inkl. `/`, `?` ein Zeichen), Schlüssel `role` (facade wall trim roof shop ground interior unsuitable), `windows=CxR`, `floors`, `windowrects=u0,v0,u1,v1;…`, `scale`, `parallax` (auto/on/off), `depth` (0–0,1), `pattern` (brick tile plank stone none), `bump` (auto/generate/off, `BumpChoice`), `bumpstrength` (0,1–4), `note="…"`; `//`-Kommentare, unbekannte Schlüssel bleiben (`extra`), unveränderte Zeilen bleiben wörtlich (`Line::raw`, `changed`), schlechte Werte → `problems()` mit Zeilennummer, nie ein Abbruch. `lookup`: je Schlüssel gewinnt die spezifischste Zeile (exakt = 100000 + feste Zeichen, Platzhalter = feste Zeichen, bei Gleichstand die spätere). `edit` (leere Zeile fällt weg), `merge` (Antwort aus dem Chat, ohne ihre Kommentare), `compareDecisions` (Vorschau vorher → nachher), `saveMaterialDecisions` (temp + rename, leere Datei wird gelöscht). `applyMaterialDecision` legt eine Entscheidung über `TextureAnalysis` (Rolle, Fenster-Raster aus `windows=CxR` ohne Rechtecke, Geschosse, `scaleOverride`, `decided`). Tests: `tests/test_material_decisions.cpp` |
 | `material_review` | Materialien zum Ansehen exportieren (Kontaktbögen für den Chat, Kern ohne Qt): `reviewMaterialList` (Umfang Karten-Materialien / Ordner / alle Welt-Materialien; Tools/Skybox/Decals nur auf Wunsch, nie Modelle; sortiert nach Ordner, dann Name – deterministisch), `reviewEntry` (Shader, Basis-/Bump-Textur, Größe, Flags, `analyzeTexture`, `detectReliefLayout` mit Steinhöhe in Texeln, Relief jetzt/automatisch, Effekte, Entscheidung, Vorschaubilder 384 px), `reviewIndexCsv`/`reviewIndexJson`, `reviewReadme` (Antwortformat mit Beispielen), `reviewSheets` (12 je Bogen), `reviewParts` (ZIP-Teile ≤ 20 MB, jeder mit README + Index). **Bilder für die 3D-Prüfung** (Julius 17.11.2026: „die Auflösung ist sub-optimal, ob Parallax richtig ist, kann ich nicht erkennen“): `reviewRelief` liest das Material wie Game enhancements (Original am Mod-Ordner vorbei, eigene handgeschriebene Mod-Materialien so wie sie sind) und füllt `heightSource` (pattern/material/normal/brightness/none), `reliefDepth`, `reliefNote`, `bumpGenerated` über `reliefHeights` (`fidelity_effects`) – dieselbe Entscheidung wie der Plan; mit `ReviewPictures` die Bilder: Basistextur bis 1024 (`fitPicture` verkleinert auch Texturen ohne Mipmaps), Höhe grau bis 512 (bei none: was parallax=on nähme), eigene Normal-Map bis 512. `reviewPictureName` → `pictures/NNN_base.jpg`. `ReviewScope::reliefOnly` + `reviewCanGetRelief`: nur Wand/Boden/Dach/Fassade (Rolle aus der Entscheidung, sonst `analyzeTexture`; durchsichtig/Decal nie) |
+| `texture_enhance` | Enhance textures (Julius 18.11.2026: „RTX Remix nicht direkt, aber die Werkzeuge: hochskalieren, verbessern, Bump-Maps zu Texturen, ein einfacher Ablauf“): Bilder `resizeLanczos` (Lanczos-3 separabel, Farbe und Alpha getrennt, Ränder `EdgeMode::Wrap` für Kacheln, `Clamp` bei CLAMPS/CLAMPT), `sharpen` (Unschärfemaske 1-2-1 zeilenweise, nur Farbe), `resizeNormalMap` (als Vektoren, wieder Länge 1; ssbump nur resampelt), `padPicture`/`cropPicture` (Rand aus der eigenen Fortsetzung für die KI, `aiMargin`), `thresholdAlpha` (Cut-out bleibt 0/255), `glossMaskFromColor` (Helligkeit 5–95 % gestreckt), `upscalePicture` (KI über den Rückruf `AiUpscaler` mit Rand, Alpha immer per Lanczos; sonst/bei Fehler Sharp mit `note`). Plan `planEnhancement` (Art Welt/Modell nach Shader + Pfad, Gründe für „skipped“: Tool, Interface/Effekte, Decals wegen `$decalscale`, fremde Transformation, animiert/Cubemap/Rendertarget/Pixel-Art/ohne Mips/kein Zweierpotenz, eigene handgeschriebene Mod-Materialien; `File` None/Ours/Generated), `makeEnhancement` (VTF 7.4 über vtfpp mit übernommenen Flags `KEPT_FLAGS`, DXT1/DXT5 oder BGRA8888; Bump-Map aus `reliefHeights` wie Game enhancements, sonst `heightFromColor`, `encodeGeneratedNormalVtf` ≤ 1024; Material-Text), `previewEnhancement` (Mitte der Textur mit echten Nachbarn), `writeEnhancements` (temp + rename, nie fremde Dateien, alte Dateien eines früheren Laufs weg), `removeEnhancements`, `refreshEnhancementLayers` (Schlüssel wieder auf Materialien, die deploy.bat neu schrieb). Material-Text: `layerMaterialText`/`unlayerMaterialText`/`hasLayer` (über `editMaterialText`, Marker-Zeile bleibt oben, Patches in insert/replace), `mappingTransformText`, `mappingScale`, `onlyMappingTransforms`, `enhancedOriginal` (für `planEnhancements`). Eintrag `<mod>/cfg/mapsmith_textures.txt` (KeyValues, `TextureManifest`, nicht vertrauenswürdig: nur sichere `materials/…vtf`). Tests: `tests/test_texture_enhance.cpp`, Fuzz-Ziel `text` (Fälle 1 und 11) |
 | `sky_presets` | Licht passend zum Himmel (`applySky`, auch als Teil einer größeren Transaktion, Tabelle der Himmel) |
 | `material_replace` | Material ersetzen (ganze Karte, Auswahl oder gewählte Flächen; exakt oder Platzhalter; Ausrichtung behalten oder an der Welt ausrichten; Overlays/Decals), `countMaterialMatches` für die Vorschau |
 | `autosave` | Namen und Buchführung der Autosaves (`<karte>_<JJJJMMTT-HHMMSS>.vmf` in `autosave/` neben der Karte; ältere `<karte>.<stempel>.vmf` werden weiter gelesen – kein Punkt vor dem Stempel, VBSP hielt den Rest für die Endung), `autosaveOriginal`/`withoutAutosave` (Autosave → Karte, für Öffnen und die Liste „zuletzt bearbeitet“), Liste neueste zuerst, welche gelöscht werden (`autosavesToRemove`), Name der `.vmx`-Sicherung |
@@ -207,6 +208,8 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `enhancements` | `GameEnhancements` (gehört dem `Editor`): bei Spielwechsel und jeder Schalter-Änderung `planEnhancements` im Hintergrund, schreibt/entfernt die Dateien (`QSaveFile`, `noteWrittenFile`), meldet `materialsChanged` (Viewport/Browser laden neu); Kandidaten einmal pro Spiel. `EnhancementSwitches` (Schalter eines Modells: Object Properties, Models-Seite), `EnhancementsSection` (Project › Overview) |
 | `material_decision_store` | `MaterialDecisionStore` (gehört dem `Editor`, vor `GameEnhancements` angelegt): Entscheidungs-Datei der offenen Mod lesen/schreiben, `QFileSystemWatcher` (Datei + Ordner; eigene Schreibvorgänge über `m_lastWritten` ignoriert), Signal `changed` → Game enhancements planen neu, Gebäude-Dialog und Material-Editor zeigen neu; `problemsFound` → Log. `setParallax(Materialien, Wahl, Tiefe)`, `setBump(Materialien, Wahl, Stärke)`; `fillParallaxMenu` baut das Untermenü Auto/On/Off/Depth (Asset Browser `parallaxMenu`, Rechtsklick auf Flächen `contextParallax`), `fillBumpMenu` Auto/Generate/Off/Strength (`bumpMenu`, `contextBump`); im Material-Editor die Gruppe „Bump map in Game enhancements“ (`decisionBump`, `decisionBumpStrength`), deren Vorschau die erzeugte Bump-Map live zeigt (`refreshGeneratedBump`: `reliefHeights` im Hintergrund, Stärke nur neu `normalMapFromHeight`) |
 | `material_review_dialog` | „Export materials for review ...“ (`MaterialReviewDialog`: Umfang, Ausgabe-Ordner, Zähler, Fortschritt + Abbrechen über QtConcurrent und atomare Zähler; `exportMaterialReview` zeichnet jeden Bogen mit QPainter (1656 px breit, 4 × 3 Kacheln à 384 px, Nummer/Name/Größe/Shader/Flags, Rolle/Muster, Bump klein in der Ecke), speichert JPEG (Qualität 82, sonst PNG) und gibt die Bilder gleich frei; mit „Pictures for the 3D check“ (`ReviewExportOptions::pictures`, Standard an, `QSettings review/pictures`) dazu `pictures/NNN_base/height/normal.jpg` (Qualität 85); ein Bogen mit seinen Bildern ist eine Einheit für die Teile (zu groß → einzelne Dateien), dann `index.csv`/`.json`, `README.txt`, ZIP-Teile `mapsmith_materials_partNofM.zip` über `writeZip`; die Liste entsteht auch im Hintergrund (Reliefs-Filter liest jedes Bild)), „Load material decisions ...“ (`MaterialDecisionsDialog`: Text einfügen oder `.txt`, Merge/Replace, Vorschau + Probleme, Apply), `openMaterialDecisionsFile`. Knöpfe: Project › Overview Zeile „Materials:“ und „...“ über der Materialliste. Test: `material decisions: Parallax Off …` in `tests/test_app.cpp`; Beispiel-Export `SME_REVIEW_SAMPLE=<ordner> sme_app_tests --no-skip -tc="material review*"` |
+| `texture_enhance_dialog` | „Enhance textures ...“ (`TextureEnhanceDialog`, nicht modal; `openTextureEnhanceDialog(editor, Materialien, parent)` für andere Editoren, z. B. die Materialien eines Modells): Liste mit jetzt/nachher/Bump/Grund, `EnhanceCompareView` (vorher bilinear vergrößert | nachher, Teiler ziehen), Optionen (Upscale Off/2x/4x + AI/Sharp, Max size, Bump maps, größere eigene Bump-Maps, Glanzmasken, Compress; in QSettings `enhance/…`), Planen/Vorschau/Schreiben im Hintergrund (QtConcurrent, Sharp auf allen Kernen bis auf einen über einen eigenen `QThreadPool`, KI nacheinander), in Achtergruppen geschrieben, Abbrechen; danach `GameEnhancements::materialsChanged` (Ansichten lesen neu) und `sync()`. Knöpfe: Materials-Seite „...“ › „Enhance textures of the listed materials ...“ (`materialsEnhance`), Rechtsklick „Enhance textures ...“ (`contextEnhanceTextures`). Test: `enhance textures: the dialog …` in `tests/test_app.cpp` |
+| `ai_upscaler` | Real-ESRGAN ncnn Vulkan als eigenes Programm: `realEsrganFolder` (neben der exe `tools/realesrgan`, für Entwickler `SME_REALESRGAN_DIR`; nur wenn Programm und Modell da sind), `makeAiUpscaler` (PNG in eigenen `QTemporaryDir`, `QProcess` mit vollem Pfad, unter Windows `CREATE_NO_WINDOW`, Abbrechen alle 100 ms, höchstens 10 min, letzte Zeile der Ausgabe als Fehler). Ins Paket legt es `tools/fetch_realesrgan.ps1` (CI und Release, feste SHA-256, nur exe, `vcomp140.dll`, Modell `realesrgan-x4plus`) |
 | `maps_panel` | Project › Maps: alle Karten, Stapel-Kompilieren, Dateiaktionen |
 | `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
 | `texts_panel` | Project › Texts: Lokalisierung und Captions der Mod (Tabelle Token × Sprache, Caption-Vorschau, Speichern, Captions kompilieren) |
@@ -896,6 +899,60 @@ nur PNG/JPEG/TGA/BMP weiter (GIF/PSD/HDR/PIC/PNM werden vorher abgewiesen) – s
 sourcepp heben. Qt 6.8.3 (Windows-CI) hat CVE-2025-5992 (ICC-Profile, Absturz) – nur für Bilder, die der Mapper selbst
 öffnet; beim nächsten Qt-Wechsel ≥ 6.8.4 bzw. eine aktuelle Open-Source-Version nehmen.
 
+## Source-Dateien und -Formate (Recherche für die Editoren, 18.11.2026)
+
+Belegt aus dem Mapbase-Quellcode (`/home/user/mymod/sp/src`, Stand der Mod) und dem Valve Developer Wiki; die Engine selbst
+ist nicht im SDK – was nur die Engine weiß, ist so gekennzeichnet.
+
+- **Suchpfade** (`gameinfo.txt` › `FileSystem` › `SearchPaths`, Mapsmith: `gameinfo`, `filesystem`): Zeilen von oben nach
+  unten, die erste Fundstelle gewinnt; `|gameinfo_path|` = Ordner der gameinfo.txt (die Mod), `|all_source_engine_paths|` =
+  Ordner des Basisspiels (bei Mods auf Source SDK Base 2013 dessen Ordner, nicht Half-Life 2), `|appid_N|` = Spiel mit der
+  AppID. Ein Ordner bindet sein `pak01_dir.vpk` direkt vor sich ein; `custom/*` jeden Unterordner. Lose Dateien der Mod
+  (`|gameinfo_path|.` steht oben) überdecken also Dateien gleichen Pfads aus den VPKs des Spiels – darauf beruhen Game
+  enhancements und Enhance textures. Groß/klein egal, `/` und `\` gleich.
+- **VTF** (`public/vtf/vtf.h`): Source 2013 schreibt und liest 7.0–7.4 (`VTF_MINOR_VERSION 4`; 7.5 ist jünger), Mapsmith
+  schreibt 7.4. Kopf mit Breite/Höhe (Zweierpotenzen), Flags, Reflectivity (VRAD nimmt sie für das Licht), Mip-Anzahl,
+  Bildern; dazu ein kleines DXT1-Vorschaubild (Lowres). Flags: `POINTSAMPLE 0x1`, `TRILINEAR 0x2`, `CLAMPS 0x4`, `CLAMPT 0x8`,
+  `ANISOTROPIC 0x10`, `HINT_DXT5 0x20`, `SRGB 0x40`, `NORMAL 0x80`, `NOMIP 0x100`, `NOLOD 0x200`, `ALL_MIPS 0x400`,
+  `PROCEDURAL 0x800`, `ONEBITALPHA 0x1000`, `EIGHTBITALPHA 0x2000`, `ENVMAP 0x4000`, `RENDERTARGET 0x8000`, `CLAMPU 0x2000000`,
+  `SSBUMP 0x8000000`, `BORDER 0x20000000`. Ab 7.3 eine Ressourcen-Liste (u. a. Partikel-Sheets, LOD-Einstellungen).
+  DXT1 ohne/mit 1-Bit-Alpha, DXT5 für weiches Alpha, Normal-Maps unkomprimiert (BGRA8888), weil DXT sie sichtbar verfälscht.
+- **VMT** (`materialsystem/stdshaders`): erster Block = Shader, Schlüssel ohne Groß/klein; `patch { include "…" insert {…}
+  replace {…} }` erweitert ein anderes Material (Mapsmith: `material`); `%`-Schlüssel nur für die Werkzeuge (`%compilenodraw`,
+  `%tooltexture` …), `$`-Schlüssel für den Shader. Koordinaten-Transformationen `$basetexturetransform`, `$bumptransform`,
+  `$envmapmasktransform`, `$basetexturetransform2` (Mapbase), `$bumptransform2`, `$blendmasktransform` haben die Form
+  `center u v scale su sv rotate r translate tu tv`; Standard `center .5 .5 …` (die Skalierung wirkt um die Mitte – Mapsmith
+  schreibt deshalb `center 0 0`, sonst verschöbe sich die Textur um eine halbe Kachel). LightmappedGeneric
+  (`lightmappedgeneric_dx9_helper.cpp`, `SetVertexShaderTextureTransform`) wendet sie auf die Basis-, Bump- (ohne `$detail`;
+  mit `$detail` nimmt die Bump-Map die Basis-Koordinaten), Masken- und zweite Basis-Koordinaten an; `$detail` liegt auf der
+  Basis-Transformation mal `$detailscale` (`SetVertexShaderTextureScaledTransform`), Taschenlampe ebenso
+  (`BaseVSShader.cpp`, `SetFlashlightVertexShaderConstants`). Fidelity_Parallax der Mod liest `$basetexturetransform`,
+  `$bumptransform`, `$basetexturetransform2` (`fidelity_parallax_body.h`) und die Höhenkarte in den Bump-Koordinaten (sonst
+  den Basis-Koordinaten). Mit `$seamless_scale` gibt es keine Texturkoordinaten (Weltposition), die Größe spielt keine Rolle.
+- **Texturgröße auf Brushes**: VBSP speichert Texel pro Welteinheit (`textures.cpp`: `textureVecsTexelsPerWorldUnits =
+  axis / textureWorldUnitsPerTexel`, also 1/Hammer-Scale) und in `texdata` die Größe aus `GetPreviewImageProperties`
+  (`utilmatlib.cpp`, die Größe des `$basetexture`/`%tooltexture`). Die Engine teilt beim Laden durch die Mapping-Größe des
+  Materials (`IMaterial::GetMappingWidth`, die `.vtf`-Kopfgröße der Basistextur; *nur Engine, nicht im SDK – aus dem
+  bekannten Engine-Code `BuildMSurfaceVerts`*). Folge: eine doppelt so große Textur erscheint auf jeder Karte doppelt so groß,
+  auch auf schon kompilierten (das sagt auch das VDC zu Texture Scale: 512er bei 0,25 = 128 Einheiten). Lösung von Enhance
+  textures: neue Textur unter `<name>_mapsmith_hd`, Kopie des Materials mit allen genannten Transformationen
+  `scale K K` – die Koordinaten wieder wie vorher. Modelle (VVD-Koordinaten 0..1), Himmel und Overlays (U/V 0..1) brauchen
+  nichts. Größenabhängig und deshalb ausgelassen: Decals (`$decalscale` × Mapping-Größe), Sprites (`spritemodel.cpp`
+  `GetMappingWidth`), Seile (`c_rope.cpp`), Detail-Sprites (`detailobjectsystem.cpp`), Partikel-Sheets (`particlemgr.cpp`).
+- **Bump-Maps auf Brushes nachträglich**: VBSP setzt `SURF_BUMPLIGHT` beim Kompilieren nach dem Material
+  (`textures.cpp`, `UTILMATLIB_NEEDS_BUMPED_LIGHTMAPS`); VRAD backt nur dann die drei gerichteten Lightmaps
+  (`lightmap.cpp`). Eine neue `$bumpmap` auf Wänden wirkt deshalb erst nach erneutem Kompilieren (Dialog sagt es).
+- **Mapsmiths eigene Ansicht** rechnet wie die Engine: `MaterialInfo::mappingSize` = volle `.vtf`-Größe ÷ `mappingScale`
+  (vorher die Größe des geladenen Bildes – bei Texturen über 1024 die halbe, ein alter Fehler), ebenso `materialTextureSize`
+  (Justify, Straßen, Gebäude, Textur-Fluss) und das Relief (`patternHeights`).
+
+Quellen: Mapbase-Code wie oben; [VTF (Valve Developer Community)](https://developer.valvesoftware.com/wiki/VTF_(Valve_Texture_Format));
+[$basetexturetransform](https://developer.valvesoftware.com/wiki/$basetexturetransform2) (Standardwerte, Mitte);
+[Applying Textures / Texture scale](https://developer.valvesoftware.com/wiki/Applying_Textures);
+[Hammer Replace Textures](https://developer.valvesoftware.com/wiki/Hammer_Replace_Textures_Dialog) (Skalierung beim Austausch
+größerer Texturen); Real-ESRGAN: [xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (BSD-3),
+[Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) (MIT).
+
 ## Wichtige Formeln (aus dem Quellcode von VBSP/VRAD, Source SDK 2013 / Mapbase)
 
 - **plane**: `normal = normalize((p0 - p1) × (p2 - p1))`, zeigt nach außen; `dist = dot(p0, normal)`.
@@ -1164,6 +1221,10 @@ Die Häufigkeiten sind eine Einschätzung aus diesen Quellen, keine Zählung.
 
 - Alles ist bisher nur mit erzeugten Testdaten geprüft – **nicht** mit echten HL2/Mapbase/Black-Mesa-Installationen und
   nicht auf Windows. Nächster Schritt: `sme-probe report` und `sme-probe vmf` auf Julius' PC.
+- Enhance textures: dass die Engine Brush-Koordinaten zur Laufzeit durch die Mapping-Größe des Materials teilt (und nicht
+  durch die beim Kompilieren gespeicherte `texdata`-Größe), stammt aus dem Engine-Code, der nicht im SDK liegt. Im Spiel
+  prüfen: eine Wand mit vergrößerter Textur muss genauso groß gekachelt aussehen wie vorher (sonst `$basetexturetransform`
+  weglassen). Real-ESRGAN ist nur mit einem Stellvertreter getestet (kein Vulkan im Container), nicht mit dem echten Programm.
 - MDL-Offsets (`studiohdr_t` v44–49) stammen aus `studio.h`; mit echten Modellen gegenprüfen (`sme-probe` zeigt Sequenzen).
 - Black Mesa (Xengine) ist ungetestet; VMF-Unterschiede unbekannt.
 - PCF-Dateien: nur binäre DMX (wie sie die Spiele ausliefern); Text-DMX wird übersprungen.
@@ -1230,11 +1291,7 @@ Erledigt (Branch `research`): häufige Kompilierfehler erklärt; Spielerstart im
 14. **Mesh-Modus (Variante B)**: freie Meshes → konvex zerlegen bzw. als Static Prop + Nodraw-Hülle (alter Punkt 4). Hoch / hoch.
 15. **Echte Physik-Simulation, VRAD-Schnellvorschau** (alter Punkt 5). Mittel / hoch.
 
-16. **KI-Hochskalierung von Texturen** (Julius 17.11.2026: „ggf. Auflösung erhöhen“; noch nicht gebaut, braucht sein OK):
-    ein externes Real-ESRGAN-ncnn-vulkan (eigene `.exe`, nicht im Repo, Lizenz BSD-3 prüfen) skaliert die Basistexturen
-    2×/4× hoch; Mapsmith schreibt die Ergebnisse als Kopien in die Mod (`materials/…` mit Marker, wie Game enhancements:
-    eigene Dateien nie überschreiben, Entfernen räumt auf), Relief/Bump werden aus den größeren Bildern neu gemacht.
-    Fragen vorher: GPU nötig (Vulkan), Speicher (×4/×16 je Textur), welche Materialien (nur Wände der Karten?). Hoch / mittel.
+16. ~~**KI-Hochskalierung von Texturen**~~ (Enhance textures, `texture_enhance`, 18.11.2026). Offen: Real-ESRGAN auf echter Windows-GPU prüfen; Glanz-/Phong-Masken für Modelle; Normal-Maps per KI statt aus der Höhe; Decals mit angepasstem `$decalscale`. Mittel / mittel.
 
 ### Älterer Fahrplan
 
