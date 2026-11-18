@@ -81,6 +81,8 @@
 #include <QWheelEvent>
 
 #include <sme/csg.h>
+#include <sme/road_texture.h>
+#include <sme/texture_enhance.h>
 #include <sme/studio_anim.h>
 #include <sme/animation_use.h>
 #include <sme/npc_scripts.h>
@@ -149,6 +151,7 @@
 #include <QLocalSocket>
 #include "material_editor.h"
 #include "material_review_dialog.h"
+#include "texture_enhance_dialog.h"
 #include "material_field.h"
 #include "surface_dialogs.h"
 #include <sme/grid_snap.h>
@@ -12651,4 +12654,79 @@ TEST_CASE("claude: Project > Claude switches the bridge on, Claude reads and cha
 	CHECK(bridge.process.waitForFinished(5000));
 	qunsetenv("SME_CLAUDE_PIPE");
 	qunsetenv("SME_CLAUDE_DATA_DIR");
+}
+
+TEST_CASE("enhance textures: the dialog plans, compares, writes the larger texture into the mod and removes it again") {
+	// Julius, 18.11.2026: "the tools to upscale, improve ... bump maps to textures, a streamlined easy process".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	// The Materials page offers it in its "..." menu.
+	CHECK(window.assets()->findChild<QAction*>("materialsEnhance"));
+
+	auto* dialog = openTextureEnhanceDialog(&editor, {"concrete/wall01", "tools/toolsnodraw"}, &window);
+	REQUIRE(dialog);
+	const auto waitIdle = [&] {
+		for (int i = 0; i < 600 && dialog->busy(); ++i) QTest::qWait(50);
+		settle();
+	};
+	waitIdle();
+	// Fits a 1366 x 768 screen.
+	CHECK(dialog->minimumSizeHint().width() <= 1366);
+	CHECK(dialog->minimumSizeHint().height() <= 740);
+	REQUIRE(dialog->plans().size() == 2);
+	CHECK_MESSAGE(dialog->plans()[0].skipped.empty(), dialog->plans()[0].skipped);
+	CHECK(dialog->plans()[1].skipped == "a tool material");
+	auto* list = dialog->findChild<QTreeWidget*>("enhanceList");
+	REQUIRE(list);
+	REQUIRE(list->topLevelItemCount() == 2);
+	CHECK(list->topLevelItem(0)->text(1) == "64 x 64");
+	CHECK(list->topLevelItem(0)->text(2) == "128 x 128");
+	CHECK(dialog->findChild<QLabel*>("enhanceSummary")->text().contains("1 of 2"));
+	// The comparison of the selected material.
+	list->setCurrentItem(list->topLevelItem(0));
+	waitIdle();
+	// Without the AI program next to the test, the built-in scaling.
+	CHECK(dialog->options().method == UpscaleMethod::Sharp);
+
+	QSignalSpy finished(dialog, &TextureEnhanceDialog::runFinished);
+	dialog->apply();
+	REQUIRE(finished.wait(60000));
+	waitIdle();
+	const auto hd = f.mod / "materials/concrete/wall01_mapsmith_hd.vtf";
+	CHECK(std::filesystem::exists(hd));
+	CHECK(std::filesystem::exists(f.mod / "materials/concrete/wall01.vmt"));
+	CHECK(std::filesystem::exists(textureManifestFile(f.mod)));
+	const auto material = loadMaterial(editor.game()->files, "concrete/wall01");
+	REQUIRE(material);
+	CHECK(material->param("$basetexture") == "concrete/wall01_mapsmith_hd");
+	// The walls keep their size: the views divide by the texture's old size.
+	CHECK(materialTextureSize(editor.game()->files, "concrete/wall01") == std::pair{64, 64});
+	CHECK(dialog->findChild<QLabel*>("enhanceStatus")->text().contains("Enhanced 1 material"));
+	// Planned again: the same material is the earlier copy of Mapsmith's now.
+	REQUIRE(dialog->plans().size() == 2);
+	CHECK(dialog->plans()[0].file == MaterialEnhancement::File::Ours);
+
+	finished.clear();
+	dialog->removeAll();
+	REQUIRE(finished.wait(60000));
+	waitIdle();
+	CHECK_FALSE(std::filesystem::exists(hd));
+	CHECK_FALSE(std::filesystem::exists(f.mod / "materials/concrete/wall01.vmt"));
+	CHECK_FALSE(std::filesystem::exists(textureManifestFile(f.mod)));
+	CHECK(loadMaterial(editor.game()->files, "concrete/wall01")->param("$basetexture") == "concrete/wall01");
+	dialog->close();
+	settle();
 }
