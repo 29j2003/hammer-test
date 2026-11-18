@@ -25,6 +25,16 @@ Mesa 3D (https://www.mesa3d.org) - MIT License
     OpenGL 3.3 driver (llvmpipe). License text: licenses/Mesa-MIT.txt. It is built with
     LLVM (https://llvm.org), Apache License 2.0 with LLVM Exceptions.
 
+Real-ESRGAN ncnn Vulkan (https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) - MIT License
+    tools/realesrgan/realesrgan-ncnn-vulkan.exe, the AI upscaler of "Enhance textures",
+    unchanged from release v0.2.5.0 of https://github.com/xinntao/Real-ESRGAN, run as a separate
+    program. Copyright (c) 2021 Xintao Wang. License text: licenses/Real-ESRGAN-ncnn-vulkan-MIT.txt.
+    Its model (tools/realesrgan/models/realesrgan-x4plus.*) comes from Real-ESRGAN, BSD 3-Clause
+    License, Copyright (c) 2021 Xintao Wang: licenses/Real-ESRGAN-BSD-3.txt.
+    It is built with ncnn (https://github.com/Tencent/ncnn), BSD 3-Clause License, Copyright (C)
+    2017 Tencent: licenses/ncnn-BSD-3.txt. vcomp140.dll next to it is Microsoft's OpenMP runtime
+    (Visual C++ Redistributable), passed on unchanged as Microsoft allows.
+
 stb_vorbis (https://github.com/nothings/stb) - Public Domain (Unlicense) or MIT License
     Ogg Vorbis decoding for the sound preview. Copyright (c) 2017 Sean Barrett.
     Used under its public domain alternative.
