@@ -203,7 +203,13 @@ memory and lists every key or value that would change.
   scrub, speed, loop - see which entities of the map use them and put one on the selected prop, NPC or
   `scripted_sequence`. **Add animation ...** brings an `.smd` onto the model's skeleton and builds it into the mod
   with the game's `studiomdl`.
-- **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Sounds*, *Particles* and *Project* each fill
+- **Weapons**: every weapon of the game and mod with its first-person model in 3D as the game shows it (or the world
+  model), all its animations, its sounds - play, **Replace ...** with your own file, **Edit ...**, **Restore**, or let a
+  slot use another sound - and the sounds and effects its animations trigger (change, move, add, then **Build model**
+  rebuilds it into the mod with `studiomdl`), its materials (**Edit material**, **Replace texture ...**, **Enhance
+  textures ...**) and its stats (magazine, ammo, HUD slot, damage and most ammo carried). Everything goes into the mod
+  as its own copy and can be restored.
+- **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Weapons*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
   has the tabs *Overview*, *Features*, *Maps*, *Menu*, *Texts*, *Source control*, *Ship* and *Build from source* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
