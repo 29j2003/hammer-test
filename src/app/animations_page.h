@@ -117,6 +117,9 @@ signals:
 	void entityRequested(int entityId);
 	/// studiomdl finished (ok: the new model is in the mod and shown).
 	void compileFinished(bool ok);
+	/// "Edit animation ..." / "New animation ...": open the Animation editor on this model and
+	/// sequence (newAnimation: a new one starting from that sequence's pose).
+	void animationEditRequested(const QString& model, const QString& sequence, bool newAnimation);
 
 protected:
 	void showEvent(QShowEvent* event) override;
@@ -180,6 +183,8 @@ private:
 	QPushButton* m_add = nullptr;
 	QPushButton* m_addSample = nullptr;
 	QPushButton* m_export = nullptr;   ///< "Use a sample ...": the dialog in samples/animations
+	QPushButton* m_edit = nullptr;     ///< "Edit animation ...": the Animation editor on the chosen sequence
+	QPushButton* m_newAnimation = nullptr;
 	QTimer* m_timer = nullptr;
 	QTimer* m_mapRefresh = nullptr;
 	QElapsedTimer m_clock;

@@ -53,6 +53,7 @@ class StartPage;
 class ModPage;
 class ModelsPage;
 class AnimationsPage;
+class AnimationEditor;
 class MapsPanel;
 class LogPanel;
 class MaterialCache;
@@ -120,6 +121,10 @@ public:
 	[[nodiscard]] ModPage* modPage() const { return m_modPage; }
 	[[nodiscard]] ModelsPage* modelsPage() const { return m_modelsPage; }
 	[[nodiscard]] AnimationsPage* animationsPage() const { return m_animationsPage; }
+	/// The Animation editor on a model's sequence (newAnimation: a new one from its pose; empty
+	/// sequence: from the idle). One window, raised if it is open already.
+	AnimationEditor* openAnimationEditor(const QString& model, const QString& sequence, bool newAnimation = false);
+	[[nodiscard]] AnimationEditor* animationEditor() const;
 	[[nodiscard]] QTabWidget* projectTabs() const { return m_projectPage; }
 	/// Project › Texts (the mod's localization and caption files).
 	[[nodiscard]] class TextsPanel* textsPanel() const { return m_textsPanel; }
@@ -246,6 +251,7 @@ private:
 	ModPage* m_modPage = nullptr;           ///< Project page, tab "Overview"
 	ModelsPage* m_modelsPage = nullptr;     ///< Models page: browser and 3D view of the game's models
 	AnimationsPage* m_animationsPage = nullptr;   ///< Animations page: sequences of a model played in 3D
+	QPointer<AnimationEditor> m_animationEditor;  ///< Animation editor window (made on first use)
 	QTabWidget* m_projectPage = nullptr;     ///< Overview, Features, Maps, Menu, Texts, Source control, Mod code, Ship
 	class ModCodePanel* m_modCode = nullptr;
 	class FeaturesPanel* m_features = nullptr;

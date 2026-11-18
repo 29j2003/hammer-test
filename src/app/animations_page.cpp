@@ -209,6 +209,24 @@ AnimationsPage::AnimationsPage(Editor* editor, AssetBrowser* assets, MaterialCac
 	m_export->setToolTip(tr("Export the chosen animation as an .smd (with the model's reference and a .qc) to edit it in Blender"));
 	addRow->addWidget(m_export);
 	rv->addLayout(addRow);
+	// Keys like in Source Filmmaker: the Animation editor.
+	m_edit = new QPushButton(tr("Edit animation ..."));
+	m_edit->setObjectName("animationEdit");
+	m_edit->setToolTip(tr("Improve the chosen animation with keys, like in Source Filmmaker: turn bones, set keys on a timeline"));
+	m_newAnimation = new QPushButton(tr("New animation ..."));
+	m_newAnimation->setObjectName("animationNew");
+	m_newAnimation->setToolTip(tr("Make a new animation for this model with keys, starting from the chosen animation's pose"));
+	auto* editRow = new QHBoxLayout;
+	editRow->setContentsMargins(0, 0, 0, 0);
+	editRow->addWidget(m_edit, 1);
+	editRow->addWidget(m_newAnimation, 1);
+	rv->addLayout(editRow);
+	connect(m_edit, &QPushButton::clicked, this, [this] {
+		if (!m_model.isEmpty() && !currentSequence().isEmpty()) emit animationEditRequested(m_model, currentSequence(), false);
+	});
+	connect(m_newAnimation, &QPushButton::clicked, this, [this] {
+		if (!m_model.isEmpty()) emit animationEditRequested(m_model, currentSequence(), true);
+	});
 	// New animations wait here until they are built into the mod.
 	m_pendingBar = new QFrame;
 	m_pendingBar->setObjectName("animationPending");

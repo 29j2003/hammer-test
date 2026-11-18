@@ -13,6 +13,7 @@
 #include "claude_service.h"
 #include "mod_code_panel.h"
 #include "mod_page.h"
+#include "anim_editor.h"
 #include "animations_page.h"
 #include "models_page.h"
 #include "maps_panel.h"
@@ -544,6 +545,9 @@ void MainWindow::createDocks() {
 		showPage(Page::Map);
 		activeView()->frameSelection();
 	});
+	connect(m_animationsPage, &AnimationsPage::animationEditRequested, this,
+	        [this](const QString& model, const QString& sequence, bool newAnimation) { openAnimationEditor(model, sequence, newAnimation); });
+	connect(m_modelsPage, &ModelsPage::animateRequested, this, [this](const QString& model) { openAnimationEditor(model, {}, true); });
 	connect(m_modelsPage, &ModelsPage::placeRequested, this, [this](const QString& classname, const std::vector<std::pair<std::string, std::string>>& keys) {
 		m_editor->setCurrentEntity(classname, keys);
 		showPage(Page::Map);
@@ -881,6 +885,19 @@ void MainWindow::createDocks() {
 
 void MainWindow::showMaterialEditor() {
 	showPage(Page::Materials);
+}
+
+AnimationEditor* MainWindow::animationEditor() const {
+	return m_animationEditor.data();
+}
+
+AnimationEditor* MainWindow::openAnimationEditor(const QString& model, const QString& sequence, bool newAnimation) {
+	if (!m_animationEditor) m_animationEditor = new AnimationEditor(m_editor, m_materials, m_animationsPage, this);
+	m_animationEditor->openModel(model, sequence, newAnimation);
+	m_animationEditor->show();
+	m_animationEditor->raise();
+	m_animationEditor->activateWindow();
+	return m_animationEditor;
 }
 
 void MainWindow::showPage(Page page) {
