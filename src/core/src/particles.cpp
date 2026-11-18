@@ -48,28 +48,42 @@ ParticleValue toValue(const kvpp::DMXAttribute& attribute, const std::vector<kvp
 	std::visit(
 		[&](const auto& v) {
 			using T = std::decay_t<decltype(v)>;
+			using Type = ParticleValueType;
 			if constexpr (std::is_same_v<T, std::monostate>) {
 			} else if constexpr (std::is_same_v<T, kvpp::DMXValue::Element>) {
 				out.text = elementName(v);
-			} else if constexpr (std::is_same_v<T, std::int32_t> || std::is_same_v<T, float> || std::is_same_v<T, std::uint64_t> ||
-			                     std::is_same_v<T, std::uint8_t>) {
+				out.type = Type::Element;
+			} else if constexpr (std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::uint64_t> || std::is_same_v<T, std::uint8_t>) {
 				out.numbers = {static_cast<double>(v)};
+				out.type = Type::Int;
+			} else if constexpr (std::is_same_v<T, float>) {
+				out.numbers = {static_cast<double>(v)};
+				out.type = Type::Float;
 			} else if constexpr (std::is_same_v<T, bool>) {
 				out.numbers = {v ? 1.0 : 0.0};
+				out.type = Type::Bool;
 			} else if constexpr (std::is_same_v<T, std::string>) {
 				out.text = v;
+				out.type = Type::String;
 			} else if constexpr (std::is_same_v<T, kvpp::DMXValue::Time>) {
 				out.numbers = {static_cast<double>(v.seconds)};
+				out.type = Type::Float;   // a time of later encodings: a float in the game's version 2 files
 			} else if constexpr (std::is_same_v<T, kvpp::DMXValue::Color>) {
 				out.numbers = {double(v.r), double(v.g), double(v.b), double(v.a)};
+				out.type = Type::Color;
 			} else if constexpr (std::is_same_v<T, kvpp::DMXValue::Vector2> || std::is_same_v<T, kvpp::DMXValue::Vector3> ||
 			                     std::is_same_v<T, kvpp::DMXValue::Vector4> || std::is_same_v<T, kvpp::DMXValue::EulerAngles> ||
 			                     std::is_same_v<T, kvpp::DMXValue::Quaternion>) {
 				for (std::uint8_t i = 0; i < v.size(); ++i) out.numbers.push_back(static_cast<double>(v[i]));
+				if constexpr (std::is_same_v<T, kvpp::DMXValue::Vector2>) out.type = Type::Vector2;
+				else if constexpr (std::is_same_v<T, kvpp::DMXValue::Vector3>) out.type = Type::Vector3;
+				else if constexpr (std::is_same_v<T, kvpp::DMXValue::EulerAngles>) out.type = Type::Angles;
+				else if constexpr (std::is_same_v<T, kvpp::DMXValue::Vector4>) out.type = Type::Vector4;
 			} else if constexpr (std::is_same_v<T, std::vector<kvpp::DMXValue::Element>>) {
 				out.text = std::to_string(v.size()) + (v.size() == 1 ? " element" : " elements");
 			} else if constexpr (std::is_same_v<T, std::vector<std::int32_t>> || std::is_same_v<T, std::vector<float>>) {
 				for (const auto x : v) out.numbers.push_back(static_cast<double>(x));
+				out.type = std::is_same_v<T, std::vector<float>> ? Type::FloatArray : Type::IntArray;
 			} else if constexpr (std::is_same_v<T, std::vector<std::string>>) {
 				for (const auto& s : v) out.text += (out.text.empty() ? "" : ", ") + s;
 			} else {
@@ -199,7 +213,21 @@ std::vector<ParticleDefinition> readParticleDefinitions(std::span<const std::byt
 namespace {
 
 /// Binary DMX version 2: attribute types as numbered then (DmAttributeType_t of the Orange Box).
-enum class DmxType : std::uint8_t { Element = 1, Int = 2, Float = 3, Bool = 4, String = 5, Color = 8, Vector3 = 10, ElementArray = 15 };
+enum class DmxType : std::uint8_t {
+	Element = 1,
+	Int = 2,
+	Float = 3,
+	Bool = 4,
+	String = 5,
+	Color = 8,
+	Vector2 = 9,
+	Vector3 = 10,
+	Vector4 = 11,
+	Angles = 12,
+	ElementArray = 15,
+	IntArray = 16,
+	FloatArray = 17
+};
 
 class DmxWriter {
 public:
@@ -232,6 +260,7 @@ struct DmxElement {
 	std::string type, name;
 	PcfValues values;
 	std::vector<std::pair<std::string, std::vector<std::int32_t>>> arrays;   ///< element arrays, written after the values
+	std::vector<std::pair<std::string, std::int32_t>> references;           ///< single element references (a child's "child")
 };
 
 } // namespace
@@ -263,6 +292,25 @@ std::vector<std::byte> writeParticleFile(const std::vector<PcfSystem>& systems) 
 		arrays.emplace_back("children", std::vector<std::int32_t>{});
 		elements[std::size_t(index)].arrays = std::move(arrays);
 	}
+	// Children: a DmeParticleChild per entry, pointing at the child system's element (only
+	// systems of this file can be pointed at).
+	for (std::size_t s = 0; s < systems.size(); ++s) {
+		std::vector<std::int32_t> refs;
+		for (const auto& child : systems[s].children) {
+			std::int32_t target = -1;
+			for (std::size_t t = 0; t < systems.size(); ++t) {
+				if (iequals(systems[t].name, child.name)) target = definitions[t];
+			}
+			if (target < 0) continue;
+			refs.push_back(std::int32_t(elements.size()));
+			DmxElement e{"DmeParticleChild", child.name, {{"delay", float(std::max(0.0, child.delay))}}, {}, {}};
+			e.references.emplace_back("child", target);
+			elements.push_back(std::move(e));
+		}
+		for (auto& [key, list] : elements[std::size_t(definitions[s])].arrays) {
+			if (key == "children") list = refs;
+		}
+	}
 	elements[0].arrays.emplace_back("particleSystemDefinitions", std::move(definitions));
 
 	// The string table: element types and attribute names (version 2 keeps element names and
@@ -279,6 +327,7 @@ std::vector<std::byte> writeParticleFile(const std::vector<PcfSystem>& systems) 
 		stringIndex(e.type);
 		for (const auto& [key, value] : e.values) stringIndex(key);
 		for (const auto& [key, refs] : e.arrays) stringIndex(key);
+		for (const auto& [key, ref] : e.references) stringIndex(key);
 	}
 
 	DmxWriter w;
@@ -299,7 +348,7 @@ std::vector<std::byte> writeParticleFile(const std::vector<PcfSystem>& systems) 
 		}
 	}
 	for (const auto& e : elements) {
-		w.i32(std::int32_t(e.values.size() + e.arrays.size()));
+		w.i32(std::int32_t(e.values.size() + e.arrays.size() + e.references.size()));
 		for (const auto& [key, value] : e.values) {
 			w.u16(stringIndex(key));
 			std::visit(
@@ -323,14 +372,43 @@ std::vector<std::byte> writeParticleFile(const std::vector<PcfSystem>& systems) 
 						w.byte(v.g);
 						w.byte(v.b);
 						w.byte(v.a);
-					} else {
+					} else if constexpr (std::is_same_v<T, Vec3>) {
 						w.byte(std::uint8_t(DmxType::Vector3));
 						w.f32(float(v.x));
 						w.f32(float(v.y));
 						w.f32(float(v.z));
+					} else if constexpr (std::is_same_v<T, PcfVector2>) {
+						w.byte(std::uint8_t(DmxType::Vector2));
+						w.f32(v.x);
+						w.f32(v.y);
+					} else if constexpr (std::is_same_v<T, PcfVector4>) {
+						w.byte(std::uint8_t(DmxType::Vector4));
+						w.f32(v.x);
+						w.f32(v.y);
+						w.f32(v.z);
+						w.f32(v.w);
+					} else if constexpr (std::is_same_v<T, PcfAngles>) {
+						w.byte(std::uint8_t(DmxType::Angles));
+						w.f32(v.pitch);
+						w.f32(v.yaw);
+						w.f32(v.roll);
+					} else if constexpr (std::is_same_v<T, std::vector<int>>) {
+						w.byte(std::uint8_t(DmxType::IntArray));
+						w.i32(std::int32_t(v.size()));
+						for (const int x : v) w.i32(x);
+					} else {
+						static_assert(std::is_same_v<T, std::vector<float>>);
+						w.byte(std::uint8_t(DmxType::FloatArray));
+						w.i32(std::int32_t(v.size()));
+						for (const float x : v) w.f32(x);
 					}
 				},
 				value);
+		}
+		for (const auto& [key, ref] : e.references) {
+			w.u16(stringIndex(key));
+			w.byte(std::uint8_t(DmxType::Element));
+			w.i32(ref);
 		}
 		for (const auto& [key, refs] : e.arrays) {
 			w.u16(stringIndex(key));

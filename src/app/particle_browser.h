@@ -16,6 +16,7 @@
 #include <optional>
 #include <vector>
 
+#include <sme/particle_edit.h>
 #include <sme/particles.h>
 
 class QCheckBox;
@@ -36,6 +37,7 @@ namespace sme::app {
 
 class AssetBrowser;
 class Editor;
+class ParticleEditor;
 
 /// Draws a running particle simulation with an orbit camera (left drag turns, wheel zooms).
 /// Runs only while visible and playing.
@@ -105,10 +107,21 @@ public:
 	/// Selects a system by name in the list (shows it); false if there is none.
 	bool selectSystem(const QString& name);
 
+	/// Editing (particle_editor.h): the shown system ("Edit"), or a new one from a template
+	/// ("New ..."). The preview follows every change. Save writes it into the mod.
+	bool editShownSystem();
+	void newFromTemplate(ParticleTemplate kind);
+	/// Writes the edited system (with its children) into the mod's particle file; false with a
+	/// message in the info line when there is no mod or writing fails.
+	bool saveEdited();
+	[[nodiscard]] ParticleEditor* particleEditor() const { return m_particleEditor; }
+	[[nodiscard]] bool editing() const { return m_particleEditor != nullptr; }
 
 signals:
 	/// "Import ...": bring the mapper's own files into the mod (ImportDialog).
 	void importRequested();
+	/// A save changed the mod's files (the game's file list should be read again).
+	void modChanged();
 
 private:
 	void fill();
@@ -116,6 +129,11 @@ private:
 	void showSystem(const QString& name, const QString& file);
 	void showParts(const ParticleDefinition* definition, const QString& file);
 	[[nodiscard]] std::vector<ParticleDefinition> definitionsOf(const QString& file);
+	/// The systems a system's children may come from: its file plus the files of missing children.
+	[[nodiscard]] std::vector<ParticleDefinition> libraryFor(const QString& file);
+	void startEditing(PcfSystem system, const QString& note);
+	void stopEditing();
+	void updateEditPreview();
 
 	Editor* m_editor;
 	AssetBrowser* m_assets;
@@ -131,6 +149,11 @@ private:
 	QScrollArea* m_partsScroll;
 	QWidget* m_parts = nullptr;
 	QHash<QString, std::vector<ParticleDefinition>> m_files;   ///< read .pcf files (cleared with the game)
+	QString m_shownName, m_shownFile;                          ///< the system the parts show
+	std::vector<ParticleDefinition> m_editLibrary;            ///< where the edited system's children come from
+	ParticleEditor* m_particleEditor = nullptr;                ///< while editing: in the parts column
+	QPushButton* m_edit = nullptr;
+	QTimer m_previewSoon;
 };
 
 } // namespace sme::app

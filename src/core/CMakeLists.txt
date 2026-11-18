@@ -82,6 +82,9 @@ add_library(smecore STATIC
 	src/doors.cpp
 	src/io_links.cpp
 	src/particles.cpp
+	src/particle_edit.cpp
+	src/model_glow.cpp
+	src/model_effects.cpp
 	src/material.cpp
 	src/scene_export.cpp
 	src/shape_fit.cpp
