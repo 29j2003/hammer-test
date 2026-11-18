@@ -353,20 +353,45 @@ void sharpen(ImageRgba& image, double amount, EdgeMode edgesU, EdgeMode edgesV) 
 	if (!validImage(image) || amount <= 0) return;
 	const int w = image.width, h = image.height;
 	const std::vector<std::byte> src = image.pixels;
-	const auto at = [&](int x, int y, int c) {
-		return float(std::to_integer<int>(src[(std::size_t(edgeIndex(y, h, edgesV)) * std::size_t(w) + std::size_t(edgeIndex(x, w, edgesU))) * 4 + std::size_t(c)]));
-	};
-	const float a = float(std::clamp(amount, 0.0, 2.0));
-	for (int y = 0; y < h; ++y) {
+	// The neighbours' columns once (wrapped or clamped), then a separable 1-2-1 blur per row.
+	std::vector<std::size_t> left(static_cast<std::size_t>(w)), right(static_cast<std::size_t>(w));
+	for (int x = 0; x < w; ++x) {
+		left[std::size_t(x)] = std::size_t(edgeIndex(x - 1, w, edgesU)) * 4;
+		right[std::size_t(x)] = std::size_t(edgeIndex(x + 1, w, edgesU)) * 4;
+	}
+	const std::size_t stride = std::size_t(w) * 4;
+	// Each row blurred across (1 2 1) into floats; three rows are kept.
+	std::vector<float> rows(stride * 3);
+	const auto blurRow = [&](int y, float* out) {
+		const std::byte* row = src.data() + std::size_t(edgeIndex(y, h, edgesV)) * stride;
 		for (int x = 0; x < w; ++x) {
+			const std::size_t i = std::size_t(x) * 4;
 			for (int c = 0; c < 3; ++c) {
-				const float blur = (at(x - 1, y - 1, c) + 2 * at(x, y - 1, c) + at(x + 1, y - 1, c) + 2 * at(x - 1, y, c) + 4 * at(x, y, c) + 2 * at(x + 1, y, c) +
-				                    at(x - 1, y + 1, c) + 2 * at(x, y + 1, c) + at(x + 1, y + 1, c)) /
-				                   16.f;
-				const float v = at(x, y, c);
-				image.pixels[(std::size_t(y) * std::size_t(w) + std::size_t(x)) * 4 + std::size_t(c)] = std::byte(toByte(v + a * (v - blur)));
+				out[i + std::size_t(c)] = float(std::to_integer<int>(row[left[std::size_t(x)] + std::size_t(c)])) +
+				                          2.f * float(std::to_integer<int>(row[i + std::size_t(c)])) +
+				                          float(std::to_integer<int>(row[right[std::size_t(x)] + std::size_t(c)]));
 			}
 		}
+	};
+	const float a = float(std::clamp(amount, 0.0, 2.0));
+	float* above = rows.data();
+	float* here = rows.data() + stride;
+	float* below = rows.data() + 2 * stride;
+	blurRow(-1, above);
+	blurRow(0, here);
+	for (int y = 0; y < h; ++y) {
+		blurRow(y + 1, below);
+		std::byte* dst = image.pixels.data() + std::size_t(y) * stride;
+		const std::byte* row = src.data() + std::size_t(y) * stride;
+		for (std::size_t i = 0; i < stride; i += 4) {
+			for (std::size_t c = 0; c < 3; ++c) {
+				const float blur = (above[i + c] + 2.f * here[i + c] + below[i + c]) / 16.f;
+				const float v = float(std::to_integer<int>(row[i + c]));
+				dst[i + c] = std::byte(toByte(v + a * (v - blur)));
+			}
+		}
+		std::swap(above, here);
+		std::swap(here, below);
 	}
 }
 

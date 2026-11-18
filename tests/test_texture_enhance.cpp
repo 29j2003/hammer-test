@@ -15,6 +15,7 @@
 #include <sme/texture_enhance.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -509,4 +510,19 @@ TEST_CASE("texture enhance: Game enhancements keeps the enhanced copy instead of
 	test::writeText(mod / "materials/brick/wall04.vmt", it->text);
 	const auto again = planEnhancements(fs, mod, EnhancementSettings{}, {}, &none, noDll);
 	CHECK(std::none_of(again.changes.begin(), again.changes.end(), [](const EffectChange& c) { return c.material == "brick/wall04"; }));
+}
+
+TEST_CASE("texture enhance: time for one 1024 texture (run with --no-skip)" * doctest::skip()) {
+	ImageRgba image = pattern(1024);
+	const auto t0 = std::chrono::steady_clock::now();
+	const auto up = upscalePicture(image, 2048, 2048, UpscaleMethod::Sharp, 0.35, EdgeMode::Wrap, EdgeMode::Wrap, nullptr);
+	const auto t1 = std::chrono::steady_clock::now();
+	const auto vtf = encodeVtf(up.image, true, false, 4096);
+	const auto t2 = std::chrono::steady_clock::now();
+	const auto normal = resizeNormalMap(image, 2048, 2048, false);
+	const auto t3 = std::chrono::steady_clock::now();
+	const auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+	MESSAGE("1024 -> 2048 sharp " << ms(t0, t1) << " ms, DXT1 with mipmaps " << ms(t1, t2) << " ms, normal map " << ms(t2, t3) << " ms");
+	CHECK(vtf);
+	CHECK(normal.width == 2048);
 }
