@@ -19,6 +19,7 @@
 #include <sme/text.h>
 #include <sme/visibility.h>
 #include <sme/texture.h>
+#include <sme/texture_enhance.h>
 
 namespace sme::app {
 
@@ -141,10 +142,17 @@ std::shared_ptr<MaterialInfo> loadInfo(const GameFileSystem& fs, const QString& 
 	}
 	const auto preview = material->previewTexture();
 	if (!preview.empty()) {
-		if (const auto image = loadTexture(fs, preview, maxSize, &error)) {
+		const auto data = fs.read("materials/" + normalizeMaterialName(preview) + ".vtf");
+		if (const auto image = data ? decodeTexture(*data, maxSize, &error) : std::nullopt) {
 			info->image = toQImage(*image);
+			// The size the texture covers on brushes: its full size (the view may hold a smaller
+			// mip), scaled back where Enhance textures made it larger (texture_enhance.h).
+			if (const auto header = readTextureInfo(*data)) {
+				const auto [su, sv] = mappingScale(*material);
+				info->mappingSize = QSize(std::max(1, int(std::lround(header->width / su))), std::max(1, int(std::lround(header->height / sv))));
+			}
 		} else {
-			info->error = QString::fromStdString(error);
+			info->error = data ? QString::fromStdString(error) : QString::fromStdString("materials/" + normalizeMaterialName(preview) + ".vtf not found");
 		}
 	}
 	if (const auto second = material->param("$basetexture2"); !second.empty() && maxSize > 128) {

@@ -1310,8 +1310,9 @@ void SceneRenderer::rebuild(const MapDocument& doc, const EntityCatalog* catalog
 				double width = 64, height = 64;
 				if (const auto info = m_materials ? m_materials->get(material) : nullptr) {
 					if (!info->image.isNull()) {
-						width = info->image.width() * double(info->decalScale);
-						height = info->image.height() * double(info->decalScale);
+						const QSize size = info->mappingSize.isValid() ? info->mappingSize : info->image.size();
+						width = size.width() * double(info->decalScale);
+						height = size.height() * double(info->decalScale);
 					}
 				} else {
 					m_decalsWaiting.insert(material);
@@ -1784,7 +1785,9 @@ void SceneRenderer::uploadTexture(GpuTexture& tex, const MaterialInfo& info) {
 	const QImage& image = info.image.isNull() ? MaterialCache::checkerboard() : info.image;
 	const QImage rgba = image.format() == QImage::Format_RGBA8888 ? image : image.convertToFormat(QImage::Format_RGBA8888);
 	upload(tex.id, rgba);
-	tex.size = info.image.isNull() ? QSize(64, 64) : info.image.size();
+	// Face coordinates are in texels of the full texture (a view may hold a smaller mip; an enhanced
+	// texture is scaled back by its transform), as the engine divides by the material's mapping size.
+	tex.size = info.image.isNull() ? QSize(64, 64) : (info.mappingSize.isValid() ? info.mappingSize : info.image.size());
 	if (!info.image2.isNull()) {
 		upload(tex.id2, info.image2.convertToFormat(QImage::Format_RGBA8888));
 	}

@@ -19,6 +19,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <sme/container_models.h>
+#include <sme/texture_enhance.h>
 #include <sme/game.h>
 #include <sme/map.h>
 #include <sme/text.h>
@@ -153,6 +154,8 @@ void GameEnhancements::sync() {
 		options.mapMaterials = &mapMaterials;
 		options.decisions = &decisions;
 		result.shaderDll = options.shaderDll;
+		// Enhance textures' keys back on generated materials deploy.bat wrote anew (sme/texture_enhance.h).
+		for (const auto& material : refreshEnhancementLayers(*fs, modDir, fs)) result.written << QString::fromStdString(material);
 		result.plan = planEnhancements(*fs, modDir, settings, result.excluded, &result.candidates, options);
 		for (const auto& change : result.plan.changes) {
 			const QString name = QString::fromStdString(change.material);

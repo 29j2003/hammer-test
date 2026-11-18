@@ -814,7 +814,8 @@ std::pair<unsigned, unsigned> targetSize(unsigned w, unsigned h, unsigned factor
 
 } // namespace
 
-MaterialEnhancement planEnhancement(const GameFileSystem& fs, const fs::path& modDir, std::string_view materialName, const EnhanceOptions& options) {
+MaterialEnhancement planEnhancement(const GameFileSystem& fs, const fs::path& modDir, std::string_view materialName, const EnhanceOptions& options,
+                                    const TextureManifest* knownManifest, const MaterialDecisions* knownDecisions) {
 	MaterialEnhancement plan;
 	plan.material = normalizeMaterialName(materialName);
 	const std::string& name = plan.material;
@@ -848,7 +849,8 @@ MaterialEnhancement planEnhancement(const GameFileSystem& fs, const fs::path& mo
 		return plan;
 	}
 	// The record of an earlier run: plan from the material without it.
-	const TextureManifest manifest = loadTextureManifest(modDir);
+	const TextureManifest readManifest = knownManifest ? TextureManifest{} : loadTextureManifest(modDir);
+	const TextureManifest& manifest = knownManifest ? *knownManifest : readManifest;
 	const EnhancedMaterial* earlier = manifest.find(name);
 	std::string text = *baseline;
 	if (earlier && plan.file == MaterialEnhancement::File::Generated) text = unlayerMaterialText(text, *earlier);
@@ -948,7 +950,7 @@ MaterialEnhancement planEnhancement(const GameFileSystem& fs, const fs::path& mo
 	}
 	// A bump map where there is none - unless Game enhancements makes one (bump=generate) or the
 	// decision file says off; materials that cannot show one are left without.
-	const MaterialDecision decision = loadMaterialDecisions(modDir).lookup(name);
+	const MaterialDecision decision = knownDecisions ? knownDecisions->lookup(name) : loadMaterialDecisions(modDir).lookup(name);
 	const std::string shaderLower = toLower(material->shader);
 	const bool canBump = shaderLower.find("lightmappedgeneric") != std::string::npos || shaderLower.find("worldvertextransition") != std::string::npos ||
 	                     shaderLower.find("vertexlitgeneric") != std::string::npos || shaderLower.starts_with("fidelity_parallax");

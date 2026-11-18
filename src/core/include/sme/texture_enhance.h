@@ -157,8 +157,13 @@ struct MaterialEnhancement {
 /// Plans one material ("brick/wall01"): which textures get larger, what is new, why not. Reads
 /// the game's files; writes nothing. Never touches the mod's hand-written materials (skipped with
 /// the reason) except for model textures written at their own path.
+/// `manifest`/`decisions`: the mod's record and decision file when the caller has them read
+/// already (many materials at once); null: read here.
+struct TextureManifest;
+class MaterialDecisions;
 [[nodiscard]] MaterialEnhancement planEnhancement(const GameFileSystem& fs, const std::filesystem::path& modDir, std::string_view material,
-                                                  const EnhanceOptions& options);
+                                                  const EnhanceOptions& options, const TextureManifest* manifest = nullptr,
+                                                  const MaterialDecisions* decisions = nullptr);
 
 // --- The record in the mod ------------------------------------------------------------------
 

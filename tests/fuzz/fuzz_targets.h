@@ -41,6 +41,7 @@
 #include <sme/studio_anim.h>
 #include <sme/studio_model.h>
 #include <sme/texture.h>
+#include <sme/texture_enhance.h>
 
 #include <algorithm>
 #include <exception>
@@ -148,7 +149,18 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 	try {
 		switch (data[0] % 20) {
 		case 0: (void)parseKeyValues(in); break;
-		case 1: (void)parseMaterial(in, "fuzz/material"); break;
+		case 1: {
+			(void)parseMaterial(in, "fuzz/material");
+			// Enhance textures puts its keys on material texts and takes them out again.
+			EnhancedMaterial record;
+			record.material = "fuzz/material";
+			record.scaleU = record.scaleV = 2;
+			record.renamed["$basetexture"] = "fuzz/material_mapsmith_hd";
+			record.bumpName = "fuzz/material_mapsmith_bump";
+			(void)unlayerMaterialText(layerMaterialText(in, record), record);
+			(void)hasLayer(in, record);
+			break;
+		}
 		case 2: (void)parseHammerConfig(in, "GameConfig.txt"); break;
 		case 3:
 			for (const auto& scape : parseSoundscapes(in)) (void)upsertSoundscape(in, scape);
@@ -175,6 +187,7 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 		case 10: (void)MaterialDecisions::parse(in).lookup("brick/wall01"); break;
 		case 11:
 			(void)parseEnhancementSettings(in);
+			(void)writeTextureManifest(parseTextureManifest(in));
 			(void)parseCfgValues(in);
 			(void)parseFeaturesCfg(in);
 			(void)parseRecentProjects(in);

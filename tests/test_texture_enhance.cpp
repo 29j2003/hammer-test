@@ -473,3 +473,40 @@ TEST_CASE("texture enhance: a reflection mask only where the material reflects w
 	CHECK(loadMaterial(fs, "metal/floor")->param("$envmapmask") == "metal/floor_mapsmith_mask");
 	CHECK(loadMaterial(fs, "metal/floor")->param("$basetexturetransform").empty());
 }
+
+TEST_CASE("texture enhance: Game enhancements keeps the enhanced copy instead of removing a generated material") {
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "enhance4/hl2";
+	const auto mod = f.root / "enhance4/mymod";
+	test::writeText(game / "materials/brick/wall04.vmt", "\"LightmappedGeneric\"\n{\n\t\"$basetexture\" \"brick/wall04\"\n}\n");
+	writeVtf(game / "materials/brick/wall04.vtf", pattern(64));
+	GameFileSystem fs;
+	fs.addDirectory(mod, {"game", "mod"});
+	fs.addDirectory(game, {"game"});
+	EnhanceOptions options;
+	options.method = UpscaleMethod::Sharp;
+	options.bumpMaps = false;
+	const auto plan = planEnhancement(fs, mod, "brick/wall04", options);
+	REQUIRE(plan.skipped.empty());
+	REQUIRE(writeEnhancements(mod, {makeEnhancement(fs, mod, plan, options)}, nullptr, &fs).size() == 1);
+	// Game enhancements made relief from it (deploy.bat or Mapsmith) - a generated material on the
+	// mod's shader DLL. Without the DLL the plan removes such materials: the enhanced copy comes back.
+	const std::string relief = std::string(PATTERN_RELIEF_MARKER) + " (relief) from materials/brick/wall04.vmt hash 1 \r\n\"Fidelity_Parallax\"\r\n{\r\n" +
+	                           "\t\"$basetexture\" \"brick/wall04_mapsmith_hd\"\r\n\t\"$basetexturetransform\" \"" + mappingTransformText(2, 2) + "\"\r\n}\r\n";
+	test::writeText(mod / "materials/brick/wall04.vmt", relief);
+	EnhancementOptions noDll;
+	noDll.shaderDll = false;
+	const EffectCandidates none;
+	const auto ge = planEnhancements(fs, mod, EnhancementSettings{}, {}, &none, noDll);
+	const auto it = std::find_if(ge.changes.begin(), ge.changes.end(), [](const EffectChange& c) { return c.material == "brick/wall04"; });
+	REQUIRE(it != ge.changes.end());
+	CHECK_FALSE(it->remove);
+	CHECK(it->text.starts_with(TEXTURE_ENHANCE_MARKER));
+	CHECK(it->text.find("brick/wall04_mapsmith_hd") != std::string::npos);
+	CHECK(it->text.find("LightmappedGeneric") != std::string::npos);
+	// Written, the same plan has nothing more to do for it.
+	test::writeText(mod / "materials/brick/wall04.vmt", it->text);
+	const auto again = planEnhancements(fs, mod, EnhancementSettings{}, {}, &none, noDll);
+	CHECK(std::none_of(again.changes.begin(), again.changes.end(), [](const EffectChange& c) { return c.material == "brick/wall04"; }));
+}

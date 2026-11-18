@@ -2051,7 +2051,8 @@ void PropertiesPanel::buildFaces(QVBoxLayout* layout) {
 	auto* jg = new QGridLayout;
 	const auto textureSize = [this](const std::string& material) {
 		if (const auto info = m_materials->get(qs(material)); info && !info->image.isNull()) {
-			return std::pair<int, int>{info->image.width(), info->image.height()};
+			const QSize size = info->mappingSize.isValid() ? info->mappingSize : info->image.size();
+			return std::pair<int, int>{size.width(), size.height()};
 		}
 		return std::pair<int, int>{512, 512};
 	};

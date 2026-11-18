@@ -31,7 +31,10 @@ struct MaterialInfo {
 	bool isSky = false;
 	bool isNodraw = false;
 	Kind kind = Kind::Opaque;
-	QImage image;              ///< Base texture, RGBA8888 (null if missing)
+	QImage image;              ///< Base texture, RGBA8888 (null if missing; may be a smaller mip)
+	/// Texels the texture covers on a brush (its full .vtf size over Enhance textures' coordinate
+	/// scale): what face texture coordinates are divided by. Invalid when there is no texture.
+	QSize mappingSize;
 	QImage image2;             ///< $basetexture2 for blended displacements
 	QImage height;             ///< Relief heights (mapbase-fidelity, see setRelief), null without
 	float parallaxDepth = 0;   ///< Relief depth in texture units

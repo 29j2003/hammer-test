@@ -32,6 +32,7 @@
 #include "material_decision_store.h"
 #include "material_editor.h"
 #include "material_review_dialog.h"
+#include "texture_enhance_dialog.h"
 #include "material_cache.h"
 #include "panels.h"
 #include "particle_browser.h"
@@ -775,6 +776,7 @@ void MainWindow::createDocks() {
 		}
 	});
 	connect(m_assets, &AssetBrowser::reviewExportRequested, this, &MainWindow::materialReviewDialog);
+	connect(m_assets, &AssetBrowser::enhanceTexturesRequested, this, [this](const QStringList& materials) { openTextureEnhanceDialog(m_editor, materials, this); });
 	connect(m_assets, &AssetBrowser::decisionsLoadRequested, this, &MainWindow::materialDecisionsDialog);
 	connect(m_editor->materialDecisions(), &MaterialDecisionStore::problemsFound, this, [this](const QStringList& problems) {
 		m_editor->message(tr("mapsmith_materials.txt: %1").arg(problems.join(QStringLiteral("; "))));
