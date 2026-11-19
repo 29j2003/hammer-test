@@ -601,7 +601,8 @@ void HudEditor::buildUi() {
 		if (m_updating || !m_fonts->currentItem()) return;
 		setFontSize(m_fonts->currentItem()->text(0), v);
 	});
-	connect(m_fontFamily, &QComboBox::currentTextChanged, this, [this](const QString& family) {
+	// Chosen from the list or typed and confirmed with Enter (not on every key).
+	connect(m_fontFamily, &QComboBox::textActivated, this, [this](const QString& family) {
 		if (m_updating || !m_fonts->currentItem() || family.trimmed().isEmpty()) return;
 		setFontFamily(m_fonts->currentItem()->text(0), family.trimmed());
 	});
@@ -646,8 +647,10 @@ void HudEditor::reload() {
 	} else if (!problems.isEmpty()) {
 		m_source->setText(problems.join(" · "));
 	} else {
-		const auto where = [this](bool fromMod) { return fromMod ? tr("your mod") : tr("the game (saved into your mod on the first change)"); };
-		m_source->setText(tr("Layout from %1, colours and fonts from %2.").arg(where(m_layoutFromMod), where(m_schemeFromMod)));
+		const auto where = [this](bool fromMod) { return fromMod ? tr("your mod") : tr("the game"); };
+		QString text = tr("Layout from %1, colours and fonts from %2.").arg(where(m_layoutFromMod), where(m_schemeFromMod));
+		if (!m_layoutFromMod || !m_schemeFromMod) text += tr(" Saving puts your own copy into the mod; the game's files stay as they are.");
+		m_source->setText(text);
 	}
 	if (m_layout && m_selected.isEmpty()) m_selected = "HudHealth";
 	refresh();
