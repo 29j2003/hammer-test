@@ -145,7 +145,8 @@ struct ModMenuSaveResult {
 /// Writes the menu into the mod: gameinfo.txt (only the display keys change), cfg/chapterN.cfg
 /// (and removes chapter configs past the last chapter), the localization file, the chapter
 /// backgrounds and GameMenu.res. A file that already exists is copied to "<name>.bak" before it
-/// is first overwritten (an existing .bak is never replaced).
-ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu& menu, std::string_view language = "english");
+/// is first overwritten (an existing .bak is never replaced). With `chapters` false the chapter
+/// files stay as they are (the Chapters tab owns them, see sme/chapters.h).
+ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu& menu, std::string_view language = "english", bool chapters = true);
 
 } // namespace sme

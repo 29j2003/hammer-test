@@ -24,6 +24,7 @@ add_library(smeapp STATIC
 	map_look_panel.cpp
 	maps_panel.cpp
 	menu_editor.cpp
+	chapters_panel.cpp
 	texts_panel.cpp
 	mod_code_panel.cpp
 	features_panel.cpp

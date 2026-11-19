@@ -177,6 +177,7 @@
 #include "enhancements.h"
 #include "features_panel.h"
 #include "main_window.h"
+#include "chapters_panel.h"
 #include "start_page.h"
 #include "mod_code_panel.h"
 #include "mod_page.h"
@@ -4193,7 +4194,7 @@ TEST_CASE("show in ...: right-click menus lead to the asset in the browsers and 
 	}
 }
 
-TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's files") {
+TEST_CASE("menu editor: title and a menu entry go into the mod's files; chapters are shown, edited on the Chapters tab") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());
 	QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -4227,18 +4228,11 @@ TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's 
 	QTest::keyClicks(title, "DEMO STORY");
 	CHECK(menu.menu().info.at("title") == "DEMO STORY");
 
-	// A chapter starting the demo map, with a title.
-	menu.findChild<QPushButton*>("menuAddChapter")->click();
-	QApplication::processEvents();
-	REQUIRE(menu.menu().chapters.size() == 1);
-	auto* map = menu.findChild<QComboBox*>("chapterMap");
-	REQUIRE(map);
-	CHECK(map->findText("demo") >= 0);   // offered from maps/ and mapsrc/
-	map->setCurrentText("demo");
-	auto* chapterTitle = menu.findChild<QLineEdit*>("chapterTitle");
-	REQUIRE(chapterTitle);
-	chapterTitle->clear();
-	QTest::keyClicks(chapterTitle, "THE BEGINNING");
+	// Chapters are only listed here; "Edit chapters ..." asks for the Chapters tab.
+	CHECK(menu.findChildren<QLabel*>("menuChapterRow").isEmpty());
+	QSignalSpy editChapters(&menu, &MenuEditor::editChaptersRequested);
+	menu.findChild<QPushButton*>("menuEditChapters")->click();
+	CHECK(editChapters.count() == 1);
 
 	// A menu entry that starts the map directly, moved to the top.
 	menu.findChild<QPushButton*>("menuAddItem")->click();
@@ -4258,13 +4252,7 @@ TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's 
 	CHECK(gameInfoValue(gameinfo, "title") == "DEMO STORY");
 	CHECK(gameinfo.find("SearchPaths") != std::string::npos);   // the rest stayed
 	CHECK(readFileText(f.mod / "gameinfo.txt.bak").value_or(std::string()) == gameinfoBefore);
-	CHECK(chapterMap(readFileText(f.mod / "cfg/chapter1.cfg").value_or(std::string())) == "demo");
-	const auto locText = readFileText(f.mod / "resource/mymod_english.txt").value_or(std::string());
-	REQUIRE(locText.size() > 2);
-	CHECK(static_cast<unsigned char>(locText[0]) == 0xFF);   // UTF-16 LE with BOM
-	std::vector<std::byte> locBytes(locText.size());
-	std::transform(locText.begin(), locText.end(), locBytes.begin(), [](char c) { return static_cast<std::byte>(c); });
-	CHECK(parseLocalization(decodeTextFile(locBytes)).get("MYMOD_Chapter1_Title") == "THE BEGINNING");
+	CHECK_FALSE(std::filesystem::exists(f.mod / "cfg/chapter1.cfg"));   // the Menu tab leaves the chapter files alone
 	const auto items = parseGameMenu(readFileText(f.mod / "resource/GameMenu.res").value_or(std::string()));
 	REQUIRE_FALSE(items.empty());
 	CHECK(items.back().label == "Play the demo");
@@ -4273,11 +4261,16 @@ TEST_CASE("menu editor: title, a new chapter and a menu entry go into the mod's 
 	// Reading again gives the same.
 	menu.reload();
 	CHECK(menu.menu().menuFromMod);
-	REQUIRE(menu.menu().chapters.size() == 1);
-	CHECK(menu.menu().chapters[0].title == "THE BEGINNING");
 	CHECK(menu.findChild<QLineEdit*>("menuInfo_title")->text() == "DEMO STORY");
-	QApplication::processEvents();   // the rebuilt cards show on the next round of events
-	CHECK(menu.findChildren<QFrame*>("chapterCard").size() == 1);
+	// A chapter saved elsewhere shows after reloadChapters, the title edit stays.
+	test::writeText(f.mod / "cfg/chapter1.cfg", "map demo\n");
+	title->selectAll();
+	QTest::keyClicks(title, "DEMO STORY 2");
+	menu.reloadChapters();
+	REQUIRE(menu.menu().chapters.size() == 1);
+	CHECK(menu.menu().chapters[0].map == "demo");
+	CHECK(menu.findChildren<QLabel*>("menuChapterRow").size() == 1);
+	CHECK(menu.menu().info.at("title") == "DEMO STORY 2");
 	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
 		menu.grab().save(QDir(shots).filePath("menu_editor.png"));
 	}
@@ -13482,4 +13475,144 @@ TEST_CASE("model glow, model effects and the particle editor write into the mod 
 	REQUIRE(particles->editShownSystem());
 	CHECK(particles->particleEditor()->system().name == "demo_fire_small");
 	CHECK(particles->particleEditor()->system().children.size() == 1);   // its smoke column
+}
+
+TEST_CASE("chapters tab: cards with picture, title per language, maps and background; reorder, checks, save, play and restore") {
+	// Julius, 19.11.2026: "Kapitel-Editor: Kapitel, Hintergrundkarten fürs Menü, Ladebilder".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	test::writeText(f.mod / "maps/demo.bsp", "VBSP fake map");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1366, 768);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	auto* panel = window.findChild<ChaptersPanel*>();
+	REQUIRE(panel);
+	auto* tabs = window.projectTabs();
+	CHECK(tabs->tabText(tabs->indexOf(panel)) == "Chapters");
+	CHECK(tabs->indexOf(panel) + 1 == tabs->indexOf(window.findChild<MenuEditor*>()));   // next to Menu
+	window.showPage(MainWindow::Page::Project);
+	tabs->setCurrentWidget(panel);
+	settle();
+	CHECK(panel->chapters().chapters.empty());
+	CHECK(panel->chapters().languages == std::vector<std::string>{"english", "german"});
+	REQUIRE(panel->problems().size() == 1);   // "No chapters"
+
+	// A chapter: the map from the list, the title typed, a picture.
+	panel->findChild<QPushButton*>("chaptersAdd")->click();
+	settle();
+	REQUIRE(panel->chapters().chapters.size() == 1);
+	auto* map = panel->findChild<QComboBox*>("chapterMap");
+	REQUIRE(map);
+	CHECK(map->findText("demo") >= 0);
+	map->setCurrentText("demo");
+	CHECK(panel->chapters().chapters[0].map == "demo");
+	auto* title = panel->findChild<QLineEdit*>("chapterTitle");
+	REQUIRE(title);
+	title->selectAll();
+	QTest::keyClicks(title, "THE BEGINNING");
+	CHECK(panel->chapters().chapters[0].title() == "THE BEGINNING");
+	ImageRgba photo;
+	photo.width = 640;
+	photo.height = 360;
+	photo.pixels.assign(std::size_t(640) * 360 * 4, std::byte{200});
+	panel->setPicture(0, photo);
+	settle();
+	CHECK_FALSE(panel->chapters().chapters[0].picture.empty());
+	CHECK(panel->findChild<QLabel*>("chapterPicture")->pixmap().width() > 0);
+	// The German title (falls back to English until typed).
+	panel->setLanguage("german");
+	settle();
+	title = panel->findChild<QLineEdit*>("chapterTitle");
+	CHECK(title->text().isEmpty());
+	CHECK(title->placeholderText() == "THE BEGINNING");
+	QTest::keyClicks(title, "DER ANFANG");
+	CHECK(panel->chapters().chapters[0].title("german") == "DER ANFANG");
+	panel->setLanguage("english");
+
+	// Play: the game starts at the map (the compiled demo map).
+	QObject::disconnect(panel, &ChaptersPanel::playRequested, nullptr, nullptr);   // no game process in the test
+	QSignalSpy play(panel, &ChaptersPanel::playRequested);
+	auto* playButton = panel->findChild<QPushButton*>("chapterPlay");
+	REQUIRE(playButton);
+	CHECK(playButton->isEnabled());
+	playButton->click();
+	REQUIRE(play.count() == 1);
+	CHECK(play.at(0).at(0).toString() == "demo");
+
+	// A second chapter without a map: an error in the checks; moved to the front, then back.
+	panel->addChapter();
+	settle();
+	const auto hasCheck = [&](int chapter, const QString& part) {
+		return std::any_of(panel->problems().begin(), panel->problems().end(),
+		                   [&](const ChapterProblem& p) { return p.chapter == chapter && QString::fromStdString(p.text).contains(part); });
+	};
+	CHECK(hasCheck(2, "No map"));
+	CHECK(hasCheck(2, "No picture"));
+	panel->moveChapter(1, 0);
+	CHECK(panel->chapters().chapters[1].map == "demo");
+	CHECK(hasCheck(1, "No map"));
+	panel->moveChapter(0, 1);
+	panel->setMap(1, "missing_map");
+	CHECK(hasCheck(2, "not found"));
+	panel->setMap(1, "demo");
+	CHECK(hasCheck(2, "same map"));
+	panel->setMoreMaps(1, "demo_b, demo_c");
+	CHECK(panel->chapters().chapters[1].moreMaps == std::vector<std::string>{"demo_b", "demo_c"});
+	panel->setBackground(0, "demo");
+	CHECK(hasCheck(1, "loading picture"));
+	panel->setLoadingPicture("demo", photo);
+	CHECK_FALSE(hasCheck(1, "loading picture"));
+	CHECK(panel->findChild<QListWidget*>("chaptersChecks")->count() > 0);
+
+	// Save: configs, titles in both languages, picture, backgrounds, loading pictures, Mapbase's list.
+	QString error;
+	REQUIRE(panel->save(&error));
+	CHECK(error.isEmpty());
+	CHECK_FALSE(panel->modified());
+	CHECK(chapterMap(readFileText(f.mod / "cfg/chapter1.cfg").value_or(std::string())) == "demo");
+	CHECK(chapterMap(readFileText(f.mod / "cfg/chapter2.cfg").value_or(std::string())) == "demo");
+	CHECK(loadLocalizationFile(f.mod / "resource/mymod_english.txt").value().get("MYMOD_Chapter1_Title") == "THE BEGINNING");
+	CHECK(loadLocalizationFile(f.mod / "resource/mymod_german.txt").value().get("MYMOD_Chapter1_Title") == "DER ANFANG");
+	CHECK(loadLocalizationFile(f.mod / "resource/mymod_german.txt").value().get("MyMod_Hint_Flashlight").size() > 0);   // other texts stay
+	CHECK(std::filesystem::exists(f.mod / "materials/vgui/chapters/chapter1.vtf"));
+	CHECK(std::filesystem::exists(f.mod / "materials/console/demo_widescreen.vtf"));
+	CHECK(parseChapterBackgrounds(readFileText(f.mod / "scripts/ChapterBackgrounds.txt").value_or(std::string())).at(1) == "demo");
+	const auto list = parseChapterList(readFileText(f.mod / "scripts/chapters.txt").value_or(std::string()));
+	CHECK(list.chapters.size() == 2);
+	CHECK(list.maps.size() == 3);   // demo once, demo_b, demo_c
+	CHECK(panel->findChild<QPushButton*>("chaptersRestore")->isEnabled());
+	// The Menu tab lists them now.
+	auto* menu = window.findChild<MenuEditor*>();
+	REQUIRE(menu);
+	CHECK(menu->menu().chapters.size() == 2);
+	// After a reload the same (picture and loading picture found again).
+	panel->reload();
+	settle();
+	REQUIRE(panel->chapters().chapters.size() == 2);
+	CHECK_FALSE(panel->chapters().chapters[0].picture.empty());
+	CHECK_FALSE(hasCheck(1, "loading picture"));
+
+	if (const QString shots = qEnvironmentVariable("SME_TEST_SCREENSHOTS"); !shots.isEmpty()) {
+		window.grab().save(QDir(shots).filePath("chapters_tab.png"));
+	}
+
+	// Restore original: the mod as before (no chapters, the German file as it was).
+	REQUIRE(panel->restore(&error));
+	CHECK_FALSE(std::filesystem::exists(f.mod / "cfg/chapter1.cfg"));
+	CHECK_FALSE(std::filesystem::exists(f.mod / "materials/console/demo.vtf"));
+	CHECK(loadLocalizationFile(f.mod / "resource/mymod_german.txt").value().find("MYMOD_Chapter1_Title") < 0);
+	CHECK(panel->chapters().chapters.empty());
+	CHECK_FALSE(panel->findChild<QPushButton*>("chaptersRestore")->isEnabled());
 }

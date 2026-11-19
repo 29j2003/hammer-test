@@ -61,25 +61,24 @@ public:
 	/// The menu as edited so far.
 	[[nodiscard]] const ModMenu& menu() const { return m_menu; }
 	[[nodiscard]] MenuPreview* preview() const { return m_preview; }
-	/// Adds a chapter at the end (map and title to fill in), like the "+ Chapter" button.
-	void addChapter();
+	/// Reads the chapters again (after the Chapters tab saved them), keeping every other edit.
+	void reloadChapters();
 
 signals:
 	/// After a successful save (the paths written).
 	void saved(const QStringList& files);
+	/// "Edit chapters ...": the chapters are edited on the Chapters tab.
+	void editChaptersRequested();
 
 private:
 	void buildInfoSection(QVBoxLayout* layout);
 	void rebuildChapters();
 	void rebuildItems();
-	QWidget* makeChapterCard(int index);
 	QWidget* makeItemRow(int index);
 	void updatePreview();
 	void setStatus(const QString& text, bool error = false);
 	/// Text shown for a menu label: "#tokens" resolved through the mod's file or the game's own.
 	[[nodiscard]] QString displayLabel(const std::string& label) const;
-	/// Maps the mod has (compiled and sources), for the chapter and background pickers.
-	[[nodiscard]] QStringList mapNames() const;
 
 	Editor* m_editor;
 	ModMenu m_menu;

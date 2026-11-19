@@ -13,6 +13,7 @@
 #include <sme/assets.h>
 #include <sme/audio.h>
 #include <sme/building_builder.h>
+#include <sme/chapters.h>
 #include <sme/checks.h>
 #include <sme/choreography.h>
 #include <sme/compile_log.h>
@@ -194,6 +195,8 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 		case 7:
 			(void)writeChapterBackgrounds(parseChapterBackgrounds(in));
 			(void)setChapterMap(in, "d1_town");
+			(void)writeChapterList(parseChapterList(in));   // scripts/chapters.txt (Mapbase)
+			(void)isSafeMapName(in);
 			break;
 		case 8:
 			(void)gameInfoValue(in, "title");

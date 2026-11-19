@@ -225,7 +225,7 @@ memory and lists every key or value that would change.
   as its own copy and can be restored.
 - **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Weapons*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
-  has the tabs *Overview*, *Features*, *Maps*, *Menu*, *Texts*, *Source control*, *Ship* and *Build from source* (below). *Overview* shows the chosen game or
+  has the tabs *Overview*, *Features*, *Maps*, *Chapters*, *Menu*, *Texts*, *Source control*, *Ship* and *Build from source* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
   was found, and the entity definitions (FGDs); **New mod ...** is there and in the File menu.
 - **Maps** (Project page): every map of the game or mod in one list, with when it was changed, whether its BSP is *up to date*,
@@ -239,12 +239,18 @@ memory and lists every key or value that would change.
   multiplayer), tick the maps to take along. The editor writes `gameinfo.txt`, the usual folders,
   `cfg/autoexec.cfg` and `resource/<mod>_english.txt` (the title), copies the maps into `mapsrc` and switches to the
   new mod. Restart Steam once to see it in the library; a Mapbase mod also needs Mapbase's `bin` files.
+- **Chapters** (*New Game*): one card per chapter.
+  - Picture (cropped to New Game's frame), title per language, start map, *Also maps* (Mapbase unlocks the chapter there).
+  - Background map behind the menu + its loading picture.
+  - Drag ⠿ to reorder, *▶ Play* starts the game at the chapter.
+  - *Checks* lists what is missing (map not compiled, no title, no picture ...).
+  - *Save* writes `cfg/chapterN.cfg`, titles, `materials/vgui/chapters/`, `materials/console/`, `scripts/ChapterBackgrounds.txt`,
+    `scripts/chapters.txt`; *Restore original* puts the mod's files back.
 - **Menu** (your mod's main menu): the name, menu title and second line, logo switch, window icon and developer details
-  from `gameinfo.txt`; the chapters of *New Game* as cards (map, title, background map; add, remove, reorder); and the
+  from `gameinfo.txt`, the chapters (read only, *Edit chapters ...*) and the
   menu entries (text or `#token`, command such as *OpenNewGameDialog* or `engine map mymap`, *Only in game*, *Not in
   multiplayer*; add, remove, reorder). A preview on the right shows the menu over the background map's screenshot
-  (*As shown during a game* adds Resume and Save). *Save to the mod* writes `gameinfo.txt` (only these keys change),
-  `cfg/chapterN.cfg`, `resource/<mod>_english.txt` (chapter titles, UTF-16), `scripts/ChapterBackgrounds.txt` and
+  (*As shown during a game* adds Resume and Save). *Save to the mod* writes `gameinfo.txt` (only these keys change) and
   `resource/GameMenu.res`; each file it replaces is kept once as `.bak`.
 - **Texts** (your mod's `resource/<mod>_<language>.txt` and captions): a table of tokens with a column per language,
   missing translations marked, *+ Token*, *Rename*, *Delete*, *+ Language*. For captions: buttons for the caption tags

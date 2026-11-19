@@ -644,7 +644,7 @@ ModMenu loadModMenu(const std::filesystem::path& modDir, const GameFileSystem* f
 	return menu;
 }
 
-ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu& menu, std::string_view language) {
+ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu& menu, std::string_view language, bool chapters) {
 	ModMenuSaveResult result;
 	const std::string folder = modDir.filename().string();
 
@@ -660,6 +660,12 @@ ModMenuSaveResult saveModMenu(const std::filesystem::path& modDir, const ModMenu
 		if (!writeWithBackup(gameinfoPath, utf8Bytes(text), result)) return result;
 	} else {
 		result.error = "The mod has no gameinfo.txt: " + displayPath(gameinfoPath);
+		return result;
+	}
+
+	if (!chapters) {
+		const auto menuPath = resolveI(modDir, "resource/GameMenu.res").value_or(modDir / "resource" / "GameMenu.res");
+		writeWithBackup(menuPath, utf8Bytes(writeGameMenu(menu.items)), result);
 		return result;
 	}
 
