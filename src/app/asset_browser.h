@@ -205,6 +205,8 @@ signals:
 	/// "Enhance textures ..." for these materials (the selected ones, or every one listed).
 	void enhanceTexturesRequested(const QStringList& materials);
 	void decisionsLoadRequested();
+	/// "New material from photo ..." in the "..." menu.
+	void photoMaterialRequested();
 
 protected:
 	void resizeEvent(QResizeEvent* event) override;

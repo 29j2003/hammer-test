@@ -184,6 +184,10 @@ bool plausiblePictureSize(std::span<const std::byte> data) {
 
 } // namespace
 
+bool writeImportFile(ImportRecord& record, const fs::path& file, std::span<const std::byte> data, bool overwrite, std::string* error) {
+	return writeImported(record, file, data, overwrite, error);
+}
+
 std::string importName(std::string_view text) {
 	std::string out;
 	bool gap = false;

@@ -125,3 +125,9 @@ tell us if something does not work as described. In particular:
 - particle effects and glow on a view model were not checked in the game (where the particles appear on the weapon,
   whether they stop on time);
 - a replaced sound might keep playing the old version until the game is restarted (the game keeps a sound cache).
+
+## Check model
+
+- *Look* › *Check model* (also on the *Models* page): missing files, checksums that do not match, too many bones or vertices, missing materials, unknown sounds and effects – each with what to do.
+- *Build model* checks the weapon before and after building; only missing files or wrong checksums stop it.
+

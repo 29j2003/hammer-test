@@ -54,6 +54,7 @@ class ModPage;
 class ModelsPage;
 class AnimationsPage;
 class AnimationEditor;
+class PhotoMaterialDialog;
 class WeaponsPage;
 class MapsPanel;
 class LogPanel;
@@ -152,6 +153,8 @@ public:
 	void setCrashJournal(const QString& text) { m_crashJournal = text; }
 	/// "Import ..." (pages, File › Import into the mod): the import dialog for a kind of file.
 	ImportDialog* openImport(ImportDialog::Kind kind);
+	/// "New material from photo ..." (Materials page): a non-modal dialog, deleted when closed.
+	PhotoMaterialDialog* openPhotoMaterialDialog();
 	/// File › Import into the mod › Imported files: the list of imports, each can be removed.
 	void showImports();
 	/// Reads the mod's files again soon (after imports, updates); the open map stays.

@@ -1,6 +1,7 @@
 // models_page.cpp - The Models page (see models_page.h).
 
 #include "models_page.h"
+#include "model_check_dialog.h"
 
 #include "model_export_dialog.h"
 
@@ -226,6 +227,11 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_glow->setToolTip(tr("Make parts of a material glow (lamps, screens, sights) - always or only during animations"));
 	m_glow->setEnabled(false);
 	materialsRow->addWidget(m_glow);
+	m_check = new QPushButton(tr("Check model"));
+	m_check->setObjectName("modelCheck");
+	m_check->setToolTip(tr("Look for what would break the model in the game: files, checksums, limits, missing materials, sounds and effects"));
+	m_check->setEnabled(false);
+	materialsRow->addWidget(m_check);
 	rightLayout->addLayout(materialsRow);
 	m_materialList = new QListWidget;
 	m_materialList->setObjectName("modelMaterials");
@@ -234,6 +240,7 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_effects = new EffectsPanel(editor, assets, right);
 	rightLayout->addWidget(m_effects);
 	connect(m_glow, &QPushButton::clicked, this, [this] { openGlow(); });
+	connect(m_check, &QPushButton::clicked, this, [this] { openModelCheckDialog(m_editor, m_current, this); });
 	// "Compile into model ..." is wired to a ModelRebuildJob by the main window.
 	m_enhancementSwitches = new EnhancementSwitches(editor->enhancements(), right);
 	rightLayout->addWidget(m_enhancementSwitches);
@@ -550,6 +557,7 @@ void ModelsPage::loaded(const Loaded& result) {
 		m_effects->setModel(result.geometry ? m_current : QString(), m_viewer);
 	}
 	m_glow->setEnabled(result.geometry && !result.geometry->meshes.empty());
+	m_check->setEnabled(!m_current.isEmpty());
 	updateDetails();
 }
 

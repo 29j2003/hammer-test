@@ -19,6 +19,7 @@
 
 #include <optional>
 
+#include <sme/model_check.h>
 #include <sme/model_rebuild.h>
 
 class QProcess;
@@ -41,6 +42,8 @@ public:
 	[[nodiscard]] bool busy() const { return m_busy; }
 	/// The model being rebuilt (empty when idle).
 	[[nodiscard]] QString model() const { return m_busy ? m_model : QString(); }
+	/// What the model check found in the model the last successful build made.
+	[[nodiscard]] const std::vector<ModelIssue>& lastCheck() const { return m_lastCheck; }
 	/// Everything studiomdl printed for the last rebuild.
 	[[nodiscard]] QString log() const { return m_log; }
 	/// studiomdl to use instead of the game's (tests: a script that writes the model).
@@ -68,6 +71,7 @@ private:
 
 	Editor* m_editor;
 	QString m_model;
+	std::vector<ModelIssue> m_lastCheck;
 	QString m_log;
 	QString m_studiomdlOverride;
 	bool m_busy = false;
