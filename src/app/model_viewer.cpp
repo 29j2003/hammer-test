@@ -116,11 +116,39 @@ ModelViewer::~ModelViewer() {
 	doneCurrent();
 }
 
+namespace {
+
+/// Box of posed vertices without the few farthest ones (2 % on each side per axis): a stray vertex
+/// (an unused body part parked far away) must not pull the camera and the grid off the model.
+Bounds poseBounds(const std::vector<ModelVertex>& vertices) {
+	Bounds out;
+	if (vertices.empty()) return out;
+	std::vector<float> axis(vertices.size());
+	double lo[3], hi[3];
+	for (int a = 0; a < 3; ++a) {
+		for (std::size_t i = 0; i < vertices.size(); ++i) axis[i] = vertices[i].position[a];
+		const std::size_t cut = vertices.size() / 50;
+		auto first = axis.begin() + std::ptrdiff_t(cut), last = axis.end() - 1 - std::ptrdiff_t(cut);
+		std::nth_element(axis.begin(), first, axis.end());
+		lo[a] = *first;
+		std::nth_element(axis.begin(), last, axis.end());
+		hi[a] = *last;
+	}
+	out.add(Vec3{lo[0], lo[1], lo[2]});
+	out.add(Vec3{hi[0], hi[1], hi[2]});
+	return out;
+}
+
+} // namespace
+
 void ModelViewer::setModel(std::shared_ptr<const ModelGeometry> model, bool frame) {
 	m_model = std::move(model);
 	m_dirty = true;
 	m_pose.clear();
 	m_poseDirty = false;
+	m_fitBounds = {};
+	m_gridDirty = true;
+	m_frameOnPose = frame;
 	if (m_model) m_message.clear();
 	if (frame) frameModel();
 	update();
@@ -130,6 +158,13 @@ void ModelViewer::setPose(std::vector<ModelVertex> vertices) {
 	if (!m_model || (!vertices.empty() && vertices.size() != m_model->vertices.size())) return;
 	m_pose = std::move(vertices);
 	m_poseDirty = true;
+	if (m_frameOnPose && !m_pose.empty()) {
+		// The first pose decides where the model really is (a view model's idle is far from its rest pose).
+		m_frameOnPose = false;
+		m_fitBounds = poseBounds(m_pose);
+		m_gridDirty = true;
+		frameModel();
+	}
 	update();
 }
 
@@ -173,10 +208,18 @@ void ModelViewer::setWireframe(bool on) {
 void ModelViewer::frameModel() {
 	m_yaw = 35;
 	m_pitch = 18;
-	if (m_model && !m_model->bounds.empty()) {
-		const Vec3 c = m_model->bounds.center();
+	if (!m_pose.empty()) {
+		// Framing again (double-click) fits the pose shown now.
+		const Bounds b = poseBounds(m_pose);
+		if (!b.empty()) {
+			m_fitBounds = b;
+			m_gridDirty = true;
+		}
+	}
+	if (const Bounds bounds = viewBounds(); m_model && !bounds.empty()) {
+		const Vec3 c = bounds.center();
 		m_center = QVector3D(float(c.x), float(c.y), float(c.z));
-		const float radius = float(std::max(4.0, length(m_model->bounds.size()) * 0.5));
+		const float radius = float(std::max(4.0, length(bounds.size()) * 0.5));
 		m_distance = radius / std::sin(float(FOV * 0.5 * M_PI / 180.0)) * 1.05f;
 	} else {
 		m_center = {};
@@ -222,20 +265,18 @@ void ModelViewer::initializeGL() {
 	m_dirty = true;
 }
 
-void ModelViewer::releaseGeometry() {
-	if (m_vao) glDeleteVertexArrays(1, &m_vao);
-	if (m_vbo) glDeleteBuffers(1, &m_vbo);
-	if (m_ibo) glDeleteBuffers(1, &m_ibo);
-	m_vao = m_vbo = m_ibo = 0;
+Bounds ModelViewer::viewBounds() const {
+	if (!m_fitBounds.empty()) return m_fitBounds;
+	return m_model ? m_model->bounds : Bounds{};
 }
 
-void ModelViewer::upload() {
-	m_dirty = false;
-	releaseGeometry();
+
+void ModelViewer::uploadGrid() {
+	m_gridDirty = false;
 	// Floor grid under the model: lines every 16 units (64 for big models) for a sense of size.
 	std::vector<float> grid;
-	if (m_model && !m_model->bounds.empty()) {
-		const Bounds& b = m_model->bounds;
+	const Bounds b = viewBounds();
+	if (m_model && !b.empty()) {
 		const double extent = std::max({b.size().x, b.size().y, 64.0});
 		const double step = extent > 512 ? 64 : 16;
 		const double half = std::ceil(extent * 0.75 / step) * step;
@@ -253,6 +294,19 @@ void ModelViewer::upload() {
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
 	glBindVertexArray(0);
+}
+
+void ModelViewer::releaseGeometry() {
+	if (m_vao) glDeleteVertexArrays(1, &m_vao);
+	if (m_vbo) glDeleteBuffers(1, &m_vbo);
+	if (m_ibo) glDeleteBuffers(1, &m_ibo);
+	m_vao = m_vbo = m_ibo = 0;
+}
+
+void ModelViewer::upload() {
+	m_dirty = false;
+	releaseGeometry();
+	uploadGrid();
 	if (!m_model || m_model->empty()) return;
 
 	glGenVertexArrays(1, &m_vao);
@@ -305,6 +359,8 @@ void ModelViewer::paintGL() {
 	if (m_dirty) {
 		upload();
 		m_poseDirty = !m_pose.empty();
+	} else if (m_gridDirty) {
+		uploadGrid();
 	}
 	if (m_poseDirty && m_vbo && m_model) {
 		// The posed vertices replace the rest pose in the buffer (same layout and count).
