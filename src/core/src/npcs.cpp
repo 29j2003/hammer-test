@@ -3,6 +3,7 @@
 #include <sme/npcs.h>
 
 #include <sme/entity_catalog.h>
+#include <sme/filesystem.h>
 #include <sme/npc_scripts.h>
 #include <sme/text.h>
 #include <sme/weapons.h>
@@ -170,6 +171,18 @@ std::string prettyClassName(std::string_view className) {
 		upper = false;
 	}
 	return out.empty() ? std::string(className) : out;
+}
+
+std::string weaponLabel(std::string_view weaponClass) {
+	static constexpr std::pair<std::string_view, std::string_view> NAMES[] = {
+		{"weapon_pistol", "Pistol"}, {"weapon_smg1", "SMG"}, {"weapon_ar2", "Pulse rifle (AR2)"}, {"weapon_shotgun", "Shotgun"},
+		{"weapon_357", ".357 Magnum"}, {"weapon_crossbow", "Crossbow"}, {"weapon_rpg", "RPG"}, {"weapon_crowbar", "Crowbar"},
+		{"weapon_stunstick", "Stun stick"}, {"weapon_alyxgun", "Alyx's gun"}, {"weapon_annabelle", "Annabelle"}, {"weapon_frag", "Grenade"},
+	};
+	for (const auto& [cls, name] : NAMES) {
+		if (iequals(cls, weaponClass)) return std::string(name);
+	}
+	return prettyClassName(weaponClass);
 }
 
 std::vector<NpcInfo> findNpcs(const EntityCatalog* catalog, const std::function<bool(std::string_view)>& modelExists) {

@@ -90,6 +90,9 @@ struct NpcSkillValue {
 /// additionalequipment, model, and for citizens citizentype Unique so the head stays.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> npcPlacementKeys(const NpcInfo& npc, std::string_view weapon, std::string_view model);
 
+/// A weapon's name for people: Half-Life 2's ("weapon_ar2" -> "Pulse rifle (AR2)"), else prettyClassName.
+[[nodiscard]] std::string weaponLabel(std::string_view weaponClass);
+
 /// A class name for people: "npc_combine_s" -> "Combine S", "weapon_smg1" -> "Smg1".
 [[nodiscard]] std::string prettyClassName(std::string_view className);
 

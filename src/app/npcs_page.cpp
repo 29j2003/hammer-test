@@ -669,7 +669,7 @@ void NpcsPage::showStats() {
 			m_statsForm->addRow(capsLabel(tr("Weapon damage when NPCs shoot")));
 			header = true;
 		}
-		addRow(name, qs(prettyClassName(weapon)), tr("%1 - damage per hit of this weapon for every NPC (the ammo's value)").arg(qs(name)));
+		addRow(name, qs(weaponLabel(weapon)), tr("%1 - damage per hit of this weapon for every NPC (the ammo's value)").arg(qs(name)));
 	}
 	if (m_statEditors.isEmpty()) m_statsForm->addRow(noteLabel(tr("This NPC has no skill values (its health is set in the game's code).")));
 }
@@ -734,7 +734,7 @@ void NpcsPage::showWeapons() {
 	none->setData(Qt::UserRole, QString());
 	m_weaponList->addItem(none);
 	for (const auto& weapon : npc->weapons) {
-		auto* item = new QListWidgetItem(qs(prettyClassName(weapon)) + QStringLiteral("  (%1)").arg(qs(weapon)));
+		auto* item = new QListWidgetItem(qs(weaponLabel(weapon)) + QStringLiteral("  (%1)").arg(qs(weapon)));
 		item->setData(Qt::UserRole, qs(weapon));
 		m_weaponList->addItem(item);
 	}

@@ -128,4 +128,6 @@ TEST_CASE("npcs: sounds by prefix and placement keys") {
 	      Keys{{"additionalequipment", "weapon_smg1"}, {"citizentype", "4"}, {"model", "models/humans/group01/male_07.mdl"}});
 	CHECK(prettyClassName("npc_combine_s") == "Combine S");
 	CHECK(prettyClassName("weapon_smg1") == "Smg1");
+	CHECK(weaponLabel("weapon_smg1") == "SMG");
+	CHECK(weaponLabel("weapon_mymod_laser") == "Mymod Laser");
 }
