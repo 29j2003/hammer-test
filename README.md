@@ -210,7 +210,9 @@ memory and lists every key or value that would change.
   scrub, speed, loop - see which entities of the map use them and put one on the selected prop, NPC or
   `scripted_sequence`. **Add animation ...** brings an `.smd` onto the model's skeleton and builds it into the mod
   with the game's `studiomdl`.
-- **Animation editor** (*Edit animation ...* / *New animation ...* / *Animate ...*): keys like in Source Filmmaker.
+- **Animation editor** (*Edit animation ...* / *New animation ...* / *Animate ...* / *Change hand pose ...*): two modes.
+  - *Pose (all animations)*: move hands/arms with grips, bend fingers (*Curl*, *Spread*) - every animation gets it.
+  - *Animate (one animation)*: keys like in Source Filmmaker.
   - Work in 3D (orbit, Front/Side/Top, player's view beside it for weapons).
   - Drag a hand or foot grip, the limb follows (IK); or turn bones with rings.
   - Auto key, *Set key (K)*; Smooth, Linear, Step, Ease in/out; motion path; ghosts.

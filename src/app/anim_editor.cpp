@@ -11,6 +11,7 @@
 #include "process_guard.h"
 #include "ui_helpers.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -35,12 +36,14 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QWidgetAction>
 #include <QtConcurrent>
 
 #include <sme/animation_import.h>
@@ -210,32 +213,63 @@ void AnimationEditor::buildUi() {
 	root->setContentsMargins(8, 8, 8, 8);
 	root->setSpacing(6);
 
-	// Top row: what is edited, keys, undo, results.
+	// Top row: what is edited, the mode, undo, save, build.
 	auto* top = new QHBoxLayout;
 	m_title = new QLabel(tr("No model"));
 	m_title->setObjectName("animEditorTitle");
 	m_title->setProperty("role", "sectionTitle");
 	top->addWidget(m_title, 1);
-	auto* key = new QPushButton(tr("Set key (K)"));
-	key->setObjectName("animKey");
-	key->setProperty("accent", true);
-	key->setToolTip(tr("Key the chosen bones (or the placed hand/foot) at the playhead"));
-	top->addWidget(key);
-	m_autoKeyBox = new QCheckBox(tr("Auto key"));
-	m_autoKeyBox->setObjectName("animAutoKey");
-	m_autoKeyBox->setChecked(true);
-	m_autoKeyBox->setToolTip(tr("On: every move sets a key at the playhead. Off: a move only changes a key that is there - Set key first"));
-	top->addWidget(m_autoKeyBox);
-	m_interpBar = new QComboBox;
-	m_interpBar->setObjectName("animInterpBar");
-	m_interpBar->setToolTip(tr("How the motion runs from the keys at the playhead to the next key"));
-	top->addWidget(m_interpBar);
+	// Two modes: one change for every animation (the pose), or keys in one animation.
+	m_modePose = new QToolButton;
+	m_modePose->setObjectName("animModePose");
+	m_modePose->setText(tr("Pose (all animations)"));
+	m_modePose->setCheckable(true);
+	m_modePose->setToolTip(tr("Change how the hands and arms hold the weapon in every animation at once: drag a grip, bend the fingers"));
+	m_modeAnimate = new QToolButton;
+	m_modeAnimate->setObjectName("animModeAnimate");
+	m_modeAnimate->setText(tr("Animate (one animation)"));
+	m_modeAnimate->setCheckable(true);
+	m_modeAnimate->setChecked(true);
+	m_modeAnimate->setToolTip(tr("Improve one animation or make a new one with keys, like in Source Filmmaker"));
+	auto* modes = new QButtonGroup(this);
+	modes->setExclusive(true);
+	modes->addButton(m_modePose);
+	modes->addButton(m_modeAnimate);
+	top->addWidget(m_modePose);
+	top->addWidget(m_modeAnimate);
+	top->addSpacing(12);
 	m_undo = new QPushButton(tr("Undo"));
 	m_undo->setObjectName("animUndo");
 	m_redo = new QPushButton(tr("Redo"));
 	m_redo->setObjectName("animRedo");
 	top->addWidget(m_undo);
 	top->addWidget(m_redo);
+	auto* saveButton = new QPushButton(tr("Save"));
+	saveButton->setObjectName("animSave");
+	saveButton->setToolTip(tr("Keep your work in a project file below the mod's modelsrc/ (Ctrl+S) to go on later"));
+	top->addWidget(saveButton);
+	m_compile = new QPushButton(tr("Build ..."));
+	m_compile->setObjectName("animCompile");
+	m_compile->setProperty("accent", true);
+
+	// Animate: keys.
+	m_animateTools = new QWidget;
+	auto* animRow = new QHBoxLayout(m_animateTools);
+	animRow->setContentsMargins(0, 0, 0, 0);
+	auto* key = new QPushButton(tr("Set key (K)"));
+	key->setObjectName("animKey");
+	key->setToolTip(tr("Key the chosen bones (or the placed hand/foot) at the playhead"));
+	animRow->addWidget(key);
+	m_autoKeyBox = new QCheckBox(tr("Auto key"));
+	m_autoKeyBox->setObjectName("animAutoKey");
+	m_autoKeyBox->setChecked(true);
+	m_autoKeyBox->setToolTip(tr("On: every move sets a key at the playhead. Off: a move only changes a key that is there - Set key first"));
+	animRow->addWidget(m_autoKeyBox);
+	animRow->addWidget(new QLabel(tr("To next key")));
+	m_interpBar = new QComboBox;
+	m_interpBar->setObjectName("animInterpBar");
+	m_interpBar->setToolTip(tr("How the motion runs from the key at the playhead to the next key"));
+	animRow->addWidget(m_interpBar);
 	auto* animMenuButton = new QPushButton(tr("Animation ▾"));
 	animMenuButton->setObjectName("animMenu");
 	auto* animMenu = new QMenu(animMenuButton);
@@ -253,19 +287,35 @@ void AnimationEditor::buildUi() {
 	animMenu->addAction(tr("Cut everything before the playhead"), this, [this] { cutBeforePlayhead(); });
 	animMenu->addAction(tr("Cut everything after the playhead"), this, [this] { cutAfterPlayhead(); });
 	animMenuButton->setMenu(animMenu);
-	top->addWidget(animMenuButton);
-	auto* saveButton = new QPushButton(tr("Save"));
-	saveButton->setObjectName("animSave");
-	saveButton->setToolTip(tr("Keep the keys in a project file below the mod's modelsrc/ (Ctrl+S) to go on later"));
-	top->addWidget(saveButton);
+	animRow->addWidget(animMenuButton);
 	auto* preview = new QPushButton(tr("Preview in Mapsmith"));
 	preview->setObjectName("animPreview");
 	preview->setToolTip(tr("Play it on the Animations page now (not built into the mod yet)"));
-	top->addWidget(preview);
-	m_compile = new QPushButton(tr("Build ..."));
-	m_compile->setObjectName("animCompile");
+	animRow->addWidget(preview);
 
-	// Second row: how it is seen.
+	// Pose: which animation it is checked on.
+	m_poseTools = new QWidget;
+	auto* poseToolsRow = new QHBoxLayout(m_poseTools);
+	poseToolsRow->setContentsMargins(0, 0, 0, 0);
+	poseToolsRow->addWidget(new QLabel(tr("Check on")));
+	m_poseSequence = new QComboBox;
+	m_poseSequence->setObjectName("animPoseSequence");
+	m_poseSequence->setToolTip(tr("The pose is the same in every animation - look at it on reload, fire, idle ... (Space plays)"));
+	m_poseSequence->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	poseToolsRow->addWidget(m_poseSequence);
+	auto* resetPose = new QPushButton(tr("Reset pose"));
+	resetPose->setObjectName("animPoseReset");
+	resetPose->setToolTip(tr("Back to the model's own pose (the hands and fingers as they were)"));
+	poseToolsRow->addWidget(resetPose);
+	connect(resetPose, &QPushButton::clicked, this, [this] {
+		if (!m_edit || m_edit->keyCount() == 0) return;
+		m_edit->clearBones({});
+		m_shownRevision = -1;
+		refresh();
+	});
+	m_poseTools->hide();
+
+	// Second row: how it is seen, the mode's tools.
 	auto* viewRow = new QHBoxLayout;
 	viewRow->addWidget(new QLabel(tr("View")));
 	m_camera = new QComboBox;
@@ -278,34 +328,53 @@ void AnimationEditor::buildUi() {
 	m_camera->setToolTip(tr("3D: drag to turn around the model, right-drag to move, wheel to zoom, F frames the chosen bone.\n"
 	                        "Player's view: as a first-person weapon is seen in the game (viewmodel_fov 54)"));
 	viewRow->addWidget(m_camera);
-	m_split = new QCheckBox(tr("Player's view beside it"));
-	m_split->setObjectName("animSplit");
-	m_split->setToolTip(tr("Show the player's view next to the 3D view (for weapons)"));
-	viewRow->addWidget(m_split);
 	m_rotate = new QToolButton;
 	m_rotate->setObjectName("animGizmoRotate");
 	m_rotate->setText(tr("Turn (E)"));
 	m_rotate->setCheckable(true);
 	m_rotate->setChecked(true);
+	m_rotate->setToolTip(tr("Click a bone, then drag its rings to turn it"));
 	m_move = new QToolButton;
 	m_move->setObjectName("animGizmoMove");
 	m_move->setText(tr("Move (W)"));
 	m_move->setCheckable(true);
+	m_move->setToolTip(tr("Click a bone, then drag its arrows to move it"));
 	viewRow->addWidget(m_rotate);
 	viewRow->addWidget(m_move);
+	// What else the view shows, in one menu.
+	auto* show = new QToolButton;
+	show->setObjectName("animShow");
+	show->setText(tr("Show ▾"));
+	show->setPopupMode(QToolButton::InstantPopup);
+	auto* showMenu = new QMenu(show);
+	auto* showBox = new QWidget;
+	auto* showLayout = new QVBoxLayout(showBox);
+	showLayout->setContentsMargins(8, 6, 8, 6);
+	m_split = new QCheckBox(tr("Player's view beside it"));
+	m_split->setObjectName("animSplit");
+	m_split->setToolTip(tr("Show the player's view next to the 3D view (for weapons)"));
 	m_pathBox = new QCheckBox(tr("Motion path"));
 	m_pathBox->setObjectName("animPath");
 	m_pathBox->setChecked(true);
 	m_pathBox->setToolTip(tr("Show where the chosen bone goes over the whole animation (orange dots: keys)"));
-	viewRow->addWidget(m_pathBox);
 	m_ghosts = new QCheckBox(tr("Ghosts"));
 	m_ghosts->setObjectName("animGhosts");
 	m_ghosts->setToolTip(tr("Show the skeleton a few frames before and after, faint (onion skin)"));
-	viewRow->addWidget(m_ghosts);
+	for (auto* box : {m_split, m_pathBox, m_ghosts}) showLayout->addWidget(box);
+	auto* showAction = new QWidgetAction(showMenu);
+	showAction->setDefaultWidget(showBox);
+	showMenu->addAction(showAction);
+	show->setMenu(showMenu);
+	viewRow->addWidget(show);
+	viewRow->addSpacing(16);
+	viewRow->addWidget(m_animateTools);
+	viewRow->addWidget(m_poseTools);
 	viewRow->addStretch(1);
 	auto* compileMenu = new QMenu(m_compile);
-	compileMenu->addAction(tr("As a new animation (Mapsmith's copy of the model) ..."), this, [this] { previewInMapsmith(true); });
-	compileMenu->addAction(tr("Replace the animation in the model (into the mod) ..."), this, [this] {
+	auto* buildPoseAction = compileMenu->addAction(tr("Build the pose into the model (all animations)"), this, [this] { buildPose(); });
+	buildPoseAction->setObjectName("animBuildPose");
+	auto* asNewAction = compileMenu->addAction(tr("As a new animation (Mapsmith's copy of the model) ..."), this, [this] { previewInMapsmith(true); });
+	auto* replaceAction = compileMenu->addAction(tr("Replace the animation in the model (into the mod) ..."), this, [this] {
 		if (!m_edit) return;
 		// Which sequence: the tweaked one, or one to pick for a new animation.
 		QDialog dialog(this);
@@ -334,18 +403,21 @@ void AnimationEditor::buildUi() {
 		QString error;
 		if (!restoreOriginal(&error)) setMessage(error);
 	});
-	connect(compileMenu, &QMenu::aboutToShow, this, [this, restore] { restore->setEnabled(replaced()); });
+	connect(compileMenu, &QMenu::aboutToShow, this, [this, restore, buildPoseAction, asNewAction, replaceAction] {
+		restore->setEnabled(replaced());
+		buildPoseAction->setVisible(m_pose);
+		asNewAction->setVisible(!m_pose);
+		replaceAction->setVisible(!m_pose);
+	});
 	m_compile->setMenu(compileMenu);
 	top->addWidget(m_compile);
 	root->addLayout(top);
 	root->addLayout(viewRow);
 	// How it works, in three steps.
-	auto* howTo = noteLabel(tr("1. Drag an orange grip to place a hand or foot (or click a bone and turn its rings).   "
-	                           "2. Set key (K) - with Auto key every move is keyed.   "
-	                           "3. Go to another frame and place it again; Space plays. Right-click a key: Smooth, Linear, Step, Ease in/out."));
-	howTo->setObjectName("animHowTo");
-	howTo->setWordWrap(true);
-	root->addWidget(howTo);
+	m_howTo = noteLabel(QString());
+	m_howTo->setObjectName("animHowTo");
+	m_howTo->setWordWrap(true);
+	root->addWidget(m_howTo);
 
 	// Middle: bones | 3D | values.
 	auto* split = new QSplitter(Qt::Horizontal);
@@ -368,6 +440,8 @@ void AnimationEditor::buildUi() {
 	m_bones->setUniformRowHeights(true);
 	lv->addWidget(m_bones, 1);
 	left->setMinimumWidth(180);
+	m_bonePanel = left;
+	left->hide();   // under "More": clicking the model chooses bones
 	split->addWidget(left);
 
 	auto* views = new QWidget;
@@ -452,8 +526,22 @@ void AnimationEditor::buildUi() {
 	poseRow->addWidget(mirror);
 	bf->addRow(poseRow);
 
+	// Hands: curl and spread the fingers (per finger under More).
+	auto* handsBox = new QGroupBox(tr("Fingers"));
+	handsBox->setObjectName("animHands");
+	auto* hv = new QVBoxLayout(handsBox);
+	m_handsContent = new QWidget;
+	auto* hl = new QVBoxLayout(m_handsContent);
+	hl->setContentsMargins(0, 0, 0, 0);
+	hv->addWidget(m_handsContent);
+	m_handsBox = handsBox;
+	handsBox->hide();
+	rv->addWidget(handsBox);
+
 	auto* clipBox = new QGroupBox(tr("Animation"));
+	m_clipBox = clipBox;
 	auto* cf = new QFormLayout(clipBox);
+	m_clipForm = cf;
 	m_name = new QLineEdit;
 	m_name->setObjectName("animName");
 	cf->addRow(tr("Name"), m_name);
@@ -489,7 +577,7 @@ void AnimationEditor::buildUi() {
 	m_moreButton->setObjectName("animMore");
 	m_moreButton->setText(tr("More ▸"));
 	m_moreButton->setCheckable(true);
-	m_moreButton->setToolTip(tr("Exact values of the chosen bone, reset, copy and paste a pose, mirror"));
+	m_moreButton->setToolTip(tr("The bone list, exact values of the chosen bone, reset, copy and paste a pose, mirror, each finger on its own"));
 	rv->addWidget(m_moreButton);
 	m_moreBox = boneBox;
 	boneBox->hide();
@@ -521,9 +609,11 @@ void AnimationEditor::buildUi() {
 	transport->addWidget(m_frameBox);
 	m_frameOf = new QLabel;
 	transport->addWidget(m_frameOf);
-	m_timeline = new AnimTimeline;
-	transport->addWidget(m_timeline, 1);
+	transport->addStretch(1);
 	root->addLayout(transport);
+	// The timeline over the whole width: easier to hit a frame and drag keys.
+	m_timeline = new AnimTimeline;
+	root->addWidget(m_timeline);
 	m_status = new QLabel;
 	m_status->setObjectName("animStatus");
 	m_status->setWordWrap(true);
@@ -564,8 +654,18 @@ void AnimationEditor::buildUi() {
 	});
 	connect(m_moreButton, &QToolButton::toggled, this, [this](bool on) {
 		m_moreBox->setVisible(on);
+		m_bonePanel->setVisible(on);
+		for (QWidget* w : {static_cast<QWidget*>(m_activity), static_cast<QWidget*>(m_fps), static_cast<QWidget*>(m_editFromBox)}) m_clipForm->setRowVisible(w, on);
+		for (auto& hand : m_handSliders) {
+			if (hand.fingerBox) hand.fingerBox->setVisible(on);
+		}
 		m_moreButton->setText(on ? tr("More ▾") : tr("More ▸"));
 	});
+	// The rarer animation settings wait under More too.
+	for (QWidget* w : {static_cast<QWidget*>(m_activity), static_cast<QWidget*>(m_fps), static_cast<QWidget*>(m_editFromBox)}) m_clipForm->setRowVisible(w, false);
+	connect(m_modePose, &QToolButton::clicked, this, [this] { setPoseMode(true); });
+	connect(m_modeAnimate, &QToolButton::clicked, this, [this] { setPoseMode(false); });
+	connect(m_poseSequence, &QComboBox::activated, this, [this] { setPoseSequence(m_poseSequence->currentText()); });
 	connect(m_editFromBox, &QSpinBox::valueChanged, this, [this](int frame) {
 		if (!m_edit || m_filling) return;
 		m_edit->setEditFrom(frame);
@@ -757,6 +857,7 @@ void AnimationEditor::openModel(const QString& model, const QString& sequence, b
 	m_model = qs(normalizePath(model.toStdString()));
 	m_sequence = sequence;
 	m_new = newAnimation;
+	m_openPose = false;
 	m_pendingClip.reset();
 	// A project saved for this model and animation goes on where it was left.
 	if (!newAnimation && !sequence.isEmpty() && m_editor->gameEntry()) {
@@ -790,6 +891,7 @@ bool AnimationEditor::openProject(const QString& path, QString* error) {
 
 void AnimationEditor::startLoading() {
 	m_edit.reset();
+	m_parked.reset();
 	m_animated.reset();
 	m_selection.clear();
 	m_frame = 0;
@@ -868,37 +970,78 @@ void AnimationEditor::geometryArrived() {
 	refresh();
 }
 
+AnimClip AnimationEditor::defaultClip() const {
+	AnimClip clip;
+	clip.model = m_model.toStdString();
+	clip.baseSequence = m_sequence.toStdString();
+	clip.mode = m_new ? AnimClip::Mode::New : AnimClip::Mode::Tweak;
+	bool fresh = m_new;
+	const int base = m_animated->findSequence(clip.baseSequence);
+	if (base >= 0) {
+		const auto& seq = m_animated->sequences()[std::size_t(base)];
+		clip.fps = seq.fps > 0 ? seq.fps : 30;
+		clip.loop = seq.looping;
+		clip.activity = seq.activity;
+		clip.frames = m_new ? 30 : std::max(1, seq.frames);
+	} else {
+		// No sequence given: a new animation from the model's idle (or its rest pose).
+		const int idle = m_animated->idleSequence();
+		clip.baseSequence = idle >= 0 ? m_animated->sequences()[std::size_t(idle)].name : std::string();
+		clip.mode = AnimClip::Mode::New;
+		clip.frames = 30;
+		fresh = true;
+	}
+	clip.name = fresh ? "new_animation" : sequenceNameFromFile(m_sequence.toStdString() + "_edit");
+	if (fresh) clip.activity.clear();
+	return clip;
+}
+
+std::optional<AnimClip> AnimationEditor::savedClip(const std::string& name) const {
+	if (modDir().isEmpty() || m_model.isEmpty() || name.empty()) return std::nullopt;
+	const QString path = QDir(modDir()).filePath(qs(animClipPath(m_model.toStdString(), name)));
+	if (!QFileInfo::exists(path)) return std::nullopt;
+	return readAnimClip(readFile(path).toStdString());
+}
+
+AnimClip AnimationEditor::poseClip() const {
+	if (auto saved = savedClip(POSE_LAYER_NAME); saved && saved->mode == AnimClip::Mode::Pose) {
+		saved->model = m_model.toStdString();
+		return *saved;
+	}
+	AnimClip clip;
+	clip.model = m_model.toStdString();
+	clip.name = POSE_LAYER_NAME;
+	clip.mode = AnimClip::Mode::Pose;
+	// Shown on the opened animation, else the idle, else the first one.
+	int shown = m_sequence.isEmpty() ? -1 : m_animated->findSequence(m_sequence.toStdString());
+	if (shown < 0) shown = m_animated->idleSequence();
+	if (shown < 0 && !m_animated->sequences().empty()) shown = 0;
+	if (shown >= 0) clip.baseSequence = m_animated->sequences()[std::size_t(shown)].name;
+	return clip;
+}
+
 void AnimationEditor::beginEditing() {
 	AnimClip clip;
 	if (m_pendingClip) {
 		clip = std::move(*m_pendingClip);
 		m_pendingClip.reset();
+	} else if (m_openPose) {
+		clip = poseClip();
 	} else {
-		clip.model = m_model.toStdString();
-		clip.baseSequence = m_sequence.toStdString();
-		clip.mode = m_new ? AnimClip::Mode::New : AnimClip::Mode::Tweak;
-		const int base = m_animated->findSequence(clip.baseSequence);
-		if (base >= 0) {
-			const auto& seq = m_animated->sequences()[std::size_t(base)];
-			clip.fps = seq.fps > 0 ? seq.fps : 30;
-			clip.loop = seq.looping;
-			clip.activity = seq.activity;
-			clip.frames = m_new ? 30 : std::max(1, seq.frames);
-		} else {
-			// No sequence given: a new animation from the model's idle (or its rest pose).
-			const int idle = m_animated->idleSequence();
-			clip.baseSequence = idle >= 0 ? m_animated->sequences()[std::size_t(idle)].name : std::string();
-			clip.mode = AnimClip::Mode::New;
-			clip.frames = 30;
-			m_new = true;
-		}
-		clip.name = m_new ? "new_animation" : sequenceNameFromFile(m_sequence.toStdString() + "_edit");
-		if (m_new) clip.activity.clear();
+		clip = defaultClip();
 	}
+	m_openPose = false;
+	m_new = clip.mode == AnimClip::Mode::New;
+	m_pose = clip.mode == AnimClip::Mode::Pose;
+	m_parked.reset();
 	clip.model = m_model.toStdString();
 	m_edit = std::make_unique<AnimEditor>(*m_animated, std::move(clip));
+	if (m_pose) m_edit->setPreviewSequence(m_edit->clip().baseSequence);
 	m_savedRevision = m_edit->revision();
 	fillBoneTree();
+	fillHands();
+	fillPoseSequences();
+	applyMode();
 	m_frame = 0;
 	m_shownRevision = -1;
 	updateTitle();
@@ -911,6 +1054,209 @@ void AnimationEditor::beginEditing() {
 	setMessage(m_edit->ikChains().empty() ? tr("Click a bone, turn it with the rings (or move it with W), K sets a key. Space plays.")
 	                                      : tr("Drag an orange grip to place a hand or foot - the arm or leg follows. Space plays."));
 	emit loaded(true);
+}
+
+// --- Modes: Pose (all animations) and Animate (one animation) ----------------------------------
+
+void AnimationEditor::openPose(const QString& model) {
+	openModel(model, QString(), false);
+	m_openPose = true;   // the loading has only started: beginEditing() takes it
+}
+
+void AnimationEditor::setPoseMode(bool on) {
+	if (!m_animated || !m_edit) {
+		m_openPose = on;
+		applyMode();
+		return;
+	}
+	if (on == m_pose) {
+		applyMode();
+		return;
+	}
+	setPlaying(false);
+	std::unique_ptr<AnimEditor> next;
+	int nextSaved = 0;
+	if (m_parked && (m_parked->clip().mode == AnimClip::Mode::Pose) == on) {
+		next = std::move(m_parked);
+		nextSaved = m_parkedSavedRevision;
+	} else {
+		AnimClip clip = on ? poseClip() : defaultClip();
+		clip.model = m_model.toStdString();
+		next = std::make_unique<AnimEditor>(*m_animated, std::move(clip));
+		if (on) next->setPreviewSequence(next->clip().baseSequence);
+		nextSaved = next->revision();
+	}
+	m_parked = std::move(m_edit);
+	m_parkedSavedRevision = m_savedRevision;
+	m_edit = std::move(next);
+	m_savedRevision = nextSaved;
+	m_pose = on;
+	m_new = m_edit->clip().mode == AnimClip::Mode::New;
+	m_selection.clear();
+	m_frame = 0;
+	m_shownRevision = -1;
+	m_pathRevision = -1;
+	fillHands();
+	fillPoseSequences();
+	applyMode();
+	refresh();
+	setMessage(on ? tr("Pose: drag a grip or bend the fingers - it changes every animation alike. Check on shows it on another one.")
+	              : tr("Animate: keys in \"%1\". Your pose is kept - switch back to Pose to go on with it.").arg(qs(m_edit->clip().name)));
+}
+
+void AnimationEditor::applyMode() {
+	{
+		QSignalBlocker a(m_modePose), b(m_modeAnimate);
+		m_modePose->setChecked(m_pose);
+		m_modeAnimate->setChecked(!m_pose);
+	}
+	m_animateTools->setVisible(!m_pose);
+	m_poseTools->setVisible(m_pose);
+	m_clipBox->setVisible(!m_pose);
+	m_handsBox->setVisible(m_edit && !m_edit->hands().empty());
+	m_howTo->setText(m_pose ? tr("1. Drag an orange grip: the hand goes there, the arm follows (or click a bone and turn it).   "
+	                             "2. Bend the fingers with Curl and Spread.   "
+	                             "3. Check it on other animations, then Build ... - every animation of the model gets it.")
+	                        : tr("1. Go to a frame and drag an orange grip (or click a bone and turn its rings).   "
+	                             "2. Every move sets a key there (Auto key) - or press K.   "
+	                             "3. Go to another frame, move it again; Space plays. Right-click a key: Smooth, Linear, Step, Ease in/out."));
+	updateTitle();
+}
+
+void AnimationEditor::fillPoseSequences() {
+	QSignalBlocker block(m_poseSequence);
+	m_poseSequence->clear();
+	if (!m_animated) return;
+	for (const auto& seq : m_animated->sequences()) {
+		if (seq.model == 0 && !seq.delta) m_poseSequence->addItem(qs(seq.name));
+	}
+	if (m_edit) m_poseSequence->setCurrentIndex(std::max(0, m_poseSequence->findText(qs(m_edit->clip().baseSequence), Qt::MatchFixedString)));
+}
+
+void AnimationEditor::setPoseSequence(const QString& sequence) {
+	if (!m_edit || !m_pose) return;
+	const bool wasSaved = m_edit->revision() == m_savedRevision;
+	m_edit->setPreviewSequence(sequence.toStdString());
+	if (wasSaved) m_savedRevision = m_edit->revision();   // only what is shown changed
+	{
+		QSignalBlocker block(m_poseSequence);
+		m_poseSequence->setCurrentIndex(std::max(0, m_poseSequence->findText(qs(m_edit->clip().baseSequence), Qt::MatchFixedString)));
+	}
+	m_frame = 0;
+	m_playFrame = 0;
+	m_shownRevision = -1;
+	m_pathRevision = -1;
+	refresh();
+}
+
+void AnimationEditor::fillHands() {
+	m_handSliders.clear();
+	auto* layout = static_cast<QVBoxLayout*>(m_handsContent->layout());
+	while (auto* item = layout->takeAt(0)) {
+		if (auto* w = item->widget()) w->deleteLater();
+		delete item;
+	}
+	if (!m_edit) return;
+	const auto& hands = m_edit->hands();
+	const bool more = m_moreButton->isChecked();
+	for (std::size_t h = 0; h < hands.size(); ++h) {
+		auto* box = new QWidget;
+		auto* form = new QFormLayout(box);
+		form->setContentsMargins(0, 0, 0, 4);
+		auto* title = new QLabel(QStringLiteral("<b>%1</b>").arg(tr(hands[h].label.c_str())));
+		form->addRow(title);
+		HandSliders sliders;
+		const auto slider = [&](int low, int high, const QString& name, const QString& tip) {
+			auto* s = new QSlider(Qt::Horizontal);
+			s->setRange(low, high);
+			s->setObjectName(name);
+			s->setToolTip(tip);
+			return s;
+		};
+		sliders.curl = slider(-25, 100, QString("animCurl%1").arg(h), tr("Open hand (left) to fist (right)"));
+		sliders.spread = slider(-100, 100, QString("animSpread%1").arg(h), tr("Fingers together (left) or fanned out (right)"));
+		form->addRow(tr("Curl"), sliders.curl);
+		form->addRow(tr("Spread"), sliders.spread);
+		sliders.fingerBox = new QWidget;
+		auto* fingerForm = new QFormLayout(sliders.fingerBox);
+		fingerForm->setContentsMargins(0, 0, 0, 0);
+		for (std::size_t f = 0; f < hands[h].fingers.size(); ++f) {
+			auto* s = slider(-100, 100, QString("animFinger%1_%2").arg(h).arg(f), tr("This finger bent more (right) or less (left) than the others"));
+			fingerForm->addRow(tr(hands[h].fingers[f].label.c_str()), s);
+			sliders.fingers.push_back(s);
+		}
+		sliders.fingerBox->setVisible(more);
+		form->addRow(sliders.fingerBox);
+		layout->addWidget(box);
+		const int hand = int(h);
+		const auto apply = [this, hand] {
+			if (m_filling || !m_edit || hand >= int(m_handSliders.size())) return;
+			const HandSliders& now = m_handSliders[std::size_t(hand)];
+			HandShape shape;
+			shape.curl = float(now.curl->value()) / 100.f;
+			shape.spread = float(now.spread->value()) / 100.f;
+			const auto& rig = m_edit->hands()[std::size_t(hand)];
+			for (std::size_t f = 0; f < now.fingers.size() && f < rig.fingers.size(); ++f) {
+				if (now.fingers[f]->value() != 0) shape.fingers[m_edit->bones()[std::size_t(rig.fingers[f].segments.front())].name] = float(now.fingers[f]->value()) / 100.f;
+			}
+			setPlaying(false);
+			if (m_sliderDrag) m_edit->revertChange();
+			m_edit->setHandShape(hand, shape, m_frame);
+			m_shownRevision = -1;
+			refresh();
+		};
+		std::vector<QSlider*> all{sliders.curl, sliders.spread};
+		all.insert(all.end(), sliders.fingers.begin(), sliders.fingers.end());
+		for (auto* s : all) {
+			connect(s, &QSlider::valueChanged, this, apply);
+			connect(s, &QSlider::sliderPressed, this, [this] {
+				if (!m_edit) return;
+				m_sliderDrag = true;
+				m_edit->beginChange();
+			});
+			connect(s, &QSlider::sliderReleased, this, [this] {
+				if (!m_edit || !m_sliderDrag) return;
+				m_sliderDrag = false;
+				m_edit->endChange();
+				m_shownRevision = -1;
+				refresh();
+			});
+		}
+		m_handSliders.push_back(std::move(sliders));
+	}
+	refreshHands();
+}
+
+void AnimationEditor::refreshHands() {
+	if (!m_edit || m_sliderDrag) return;
+	const bool filling = m_filling;
+	m_filling = true;
+	for (std::size_t h = 0; h < m_handSliders.size() && h < m_edit->hands().size(); ++h) {
+		const HandShape shape = m_edit->handShape(int(h));
+		auto& sliders = m_handSliders[h];
+		sliders.curl->setValue(int(std::lround(shape.curl * 100.f)));
+		sliders.spread->setValue(int(std::lround(shape.spread * 100.f)));
+		const auto& rig = m_edit->hands()[h];
+		for (std::size_t f = 0; f < sliders.fingers.size() && f < rig.fingers.size(); ++f) {
+			float extra = 0;
+			const std::string& name = m_edit->bones()[std::size_t(rig.fingers[f].segments.front())].name;
+			for (const auto& [bone, value] : shape.fingers) {
+				if (iequals(bone, name)) extra = value;
+			}
+			sliders.fingers[f]->setValue(int(std::lround(extra * 100.f)));
+		}
+	}
+	m_filling = filling;
+}
+
+void AnimationEditor::setHandShape(int hand, float curl, float spread) {
+	if (!m_edit || hand < 0 || hand >= int(m_edit->hands().size())) return;
+	HandShape shape = m_edit->handShape(hand);
+	shape.curl = curl;
+	shape.spread = spread;
+	m_edit->setHandShape(hand, shape, m_frame);
+	m_shownRevision = -1;
+	refresh();
 }
 
 void AnimationEditor::fillBoneTree() {
@@ -1127,6 +1473,7 @@ void AnimationEditor::refresh() {
 	m_timeline->setKeys(std::move(chosen), m_edit->keyFrames());
 	m_timeline->setEditFrom(m_edit->clip().editFrom);
 	refreshFields();
+	refreshHands();
 	m_undo->setEnabled(m_edit->canUndo());
 	m_redo->setEnabled(m_edit->canRedo());
 	updateTitle();
@@ -1242,7 +1589,7 @@ bool AnimationEditor::autoKey() const {
 void AnimationEditor::finishDrag() {
 	if (!m_edit) return;
 	// Without Auto key a move only changes a key that was there: otherwise it is taken back.
-	if (!autoKey() && m_dragBone >= 0 && !m_dragHadKey) {
+	if (!m_pose && !autoKey() && m_dragBone >= 0 && !m_dragHadKey) {
 		m_edit->revertChange();
 		setMessage(tr("Auto key is off: Set key (K) at this frame first, then move the bone"));
 	}
@@ -1361,8 +1708,10 @@ void AnimationEditor::setMessage(const QString& text) {
 QString AnimationEditor::titleText() const {
 	if (!m_edit) return m_model.isEmpty() ? tr("No model") : tr("%1 - loading").arg(m_model.section('/', -1));
 	const auto& clip = m_edit->clip();
+	const QString unsaved = m_edit->revision() != m_savedRevision ? QStringLiteral(" *") : QString();
+	if (clip.mode == AnimClip::Mode::Pose) return tr("%1 - pose for all animations%2").arg(m_model.section('/', -1), unsaved);
 	const QString what = clip.mode == AnimClip::Mode::Tweak ? tr("improving \"%1\"").arg(qs(clip.baseSequence)) : tr("new animation");
-	return tr("%1 - %2 as \"%3\"%4").arg(m_model.section('/', -1), what, qs(clip.name), m_edit->revision() != m_savedRevision ? QStringLiteral(" *") : QString());
+	return tr("%1 - %2 as \"%3\"%4").arg(m_model.section('/', -1), what, qs(clip.name), unsaved);
 }
 
 void AnimationEditor::updateTitle() {
@@ -1435,7 +1784,90 @@ QString AnimationEditor::log() const {
 	return m_log->toPlainText();
 }
 
+std::map<std::string, std::string> AnimationEditor::rebuildRecord() const {
+	std::map<std::string, std::string> record;
+	if (m_model.isEmpty()) return record;
+	const QByteArray text = readFile(QDir(sourceFolder()).filePath("rebuild.txt"));
+	if (text.size() > 64 * 1024) return record;
+	for (const QByteArray& line : text.split('\n')) {
+		const QList<QByteArray> parts = line.trimmed().split('\t');
+		if (parts.size() != 2 || record.size() >= 512) continue;
+		const std::string sequence = toLower(std::string(trim(parts[0].toStdString())));
+		const std::string name = sequenceNameFromFile(parts[1].trimmed().toStdString());
+		if (!sequence.empty() && !name.empty() && sequence.find_first_of("/\\") == std::string::npos) record[sequence] = name;
+	}
+	return record;
+}
+
+void AnimationEditor::writeRebuildRecord(const std::map<std::string, std::string>& record) const {
+	const QString path = QDir(sourceFolder()).filePath("rebuild.txt");
+	if (record.empty()) {
+		QFile::remove(path);
+		return;
+	}
+	QByteArray text = "# Mapsmith: what the Animation editor built into the mod's model (sequence, project); #pose = the pose\n";
+	for (const auto& [sequence, name] : record) text += QByteArray::fromStdString(sequence + "\t" + name + "\n");
+	writeFile(path, text);
+}
+
 bool AnimationEditor::replaceInModel(const QString& sequence) {
+	if (!m_edit || !m_animated) return false;
+	m_replaceSequence = sequence.isEmpty() ? qs(m_edit->clip().baseSequence) : sequence;
+	if (m_replaceSequence.isEmpty()) {
+		m_log->show();
+		m_log->appendPlainText(tr("Choose the sequence to replace"));
+		return false;
+	}
+	const int replacedIndex = m_animated->findSequence(m_replaceSequence.toStdString());
+	if (replacedIndex < 0 || m_animated->sequences()[std::size_t(replacedIndex)].model != 0) {
+		m_log->show();
+		m_log->appendPlainText(tr("The model has no sequence \"%1\" of its own to replace.").arg(m_replaceSequence));
+		return false;
+	}
+	if (m_animated->sequences()[std::size_t(replacedIndex)].blends > 1) {
+		m_log->appendPlainText(tr("Note: \"%1\" blends several poses (aiming); it becomes this one animation.").arg(m_replaceSequence));
+	}
+	// A pose built into the model before stays on this animation too.
+	auto frames = m_edit->bake();
+	auto record = rebuildRecord();
+	if (record.count("#pose")) {
+		if (auto pose = savedClip(POSE_LAYER_NAME); pose && pose->mode == AnimClip::Mode::Pose) applyPoseLayer(*pose, m_edit->bones(), frames);
+	}
+	SequenceReplacement replacement;
+	replacement.smd = poseFramesSmd(m_edit->bones(), frames);
+	replacement.fps = m_edit->clip().fps;
+	replacement.loop = m_edit->clip().loop ? 1 : 0;
+	std::map<std::string, SequenceReplacement> replacements;
+	const std::string key = m_replaceSequence.toLower().toStdString();
+	replacements[key] = std::move(replacement);
+	record[key] = m_edit->clip().name;
+	m_pendingRecord = std::move(record);
+	return startRebuild(std::move(replacements));
+}
+
+bool AnimationEditor::buildPose() {
+	if (!m_edit || !m_animated || !m_pose) return false;
+	save();
+	// What was built before (improved animations) stays, with the pose on top.
+	auto record = rebuildRecord();
+	std::map<std::string, AnimClip> built;
+	for (const auto& [sequence, name] : record) {
+		if (sequence == "#pose") continue;
+		if (auto clip = savedClip(name); clip && clip->mode != AnimClip::Mode::Pose) built[sequence] = std::move(*clip);
+	}
+	auto replacements = poseLayerReplacements(*m_animated, m_edit->clip(), built);
+	if (replacements.empty()) {
+		setMessage(tr("The pose changes nothing yet - drag a grip or bend the fingers first"));
+		return false;
+	}
+	if (m_edit->keyCount() > 0) record["#pose"] = POSE_LAYER_NAME;
+	else record.erase("#pose");
+	m_replaceSequence.clear();
+	m_pendingRecord = std::move(record);
+	return startRebuild(std::move(replacements));
+}
+
+bool AnimationEditor::startRebuild(std::map<std::string, SequenceReplacement> replacements) {
 	if (!m_edit || !m_editor->game() || modDir().isEmpty()) return false;
 	if ((m_studiomdl && m_studiomdl->state() != QProcess::NotRunning) || m_decompile.isRunning()) return false;
 	m_log->clear();
@@ -1446,19 +1878,6 @@ bool AnimationEditor::replaceInModel(const QString& sequence) {
 		                           .arg(program.isEmpty() ? tr("no SDK tools set") : program));
 		return false;
 	}
-	m_replaceSequence = sequence.isEmpty() ? qs(m_edit->clip().baseSequence) : sequence;
-	if (m_replaceSequence.isEmpty()) {
-		m_log->appendPlainText(tr("Choose the sequence to replace"));
-		return false;
-	}
-	const int replacedIndex = m_animated->findSequence(m_replaceSequence.toStdString());
-	if (replacedIndex < 0 || m_animated->sequences()[std::size_t(replacedIndex)].model != 0) {
-		m_log->appendPlainText(tr("The model has no sequence \"%1\" of its own to replace.").arg(m_replaceSequence));
-		return false;
-	}
-	if (const int s = replacedIndex; m_animated->sequences()[std::size_t(s)].blends > 1) {
-		m_log->appendPlainText(tr("Note: \"%1\" blends several poses (aiming); it becomes this one animation.").arg(m_replaceSequence));
-	}
 	setPlaying(false);
 	save();
 	m_log->appendPlainText(tr("Taking %1 apart ...").arg(m_model));
@@ -1467,11 +1886,7 @@ bool AnimationEditor::replaceInModel(const QString& sequence) {
 	ModelExportOptions options;
 	options.materials = false;
 	options.pictures = false;
-	SequenceReplacement replacement;
-	replacement.smd = m_edit->smd();
-	replacement.fps = m_edit->clip().fps;
-	replacement.loop = m_edit->clip().loop ? 1 : 0;
-	options.replacements[m_replaceSequence.toLower().toStdString()] = std::move(replacement);
+	options.replacements = std::move(replacements);
 	m_decompile.setFuture(QtConcurrent::run([fs, path, options]() -> std::optional<ModelExport> { return decompileModel(*fs, path, options); }));
 	return true;
 }
@@ -1493,7 +1908,9 @@ void AnimationEditor::finishReplace(int code, bool crashed) {
 			if (QFileInfo::exists(base + ext)) files.noteWrittenFile(toPath(base + ext));
 		}
 		if (m_editor->models()) m_editor->models()->forget(m_model);
-		m_log->appendPlainText(tr("Built %1 into the mod - the game plays your \"%2\" now.").arg(m_model, m_replaceSequence));
+		writeRebuildRecord(m_pendingRecord);
+		if (m_replaceSequence.isEmpty()) m_log->appendPlainText(tr("Built %1 into the mod - every animation has your pose now.").arg(m_model));
+		else m_log->appendPlainText(tr("Built %1 into the mod - the game plays your \"%2\" now.").arg(m_model, m_replaceSequence));
 		setMessage(tr("Built into the mod. \"Restore the original model\" (Build menu) puts the old one back."));
 	} else {
 		if (code == 0 && !crashed) m_log->appendPlainText(tr("The built files do not belong together (their checksums differ) - the game would refuse the model."));
@@ -1505,6 +1922,7 @@ void AnimationEditor::finishReplace(int code, bool crashed) {
 		setMessage(tr("Building failed - the mod's model is as it was. See the lines below."));
 	}
 	m_movedAside.clear();
+	m_pendingRecord.clear();
 	emit replaceFinished(ok);
 }
 
@@ -1533,6 +1951,7 @@ bool AnimationEditor::restoreOriginal(QString* error) {
 		if (QFile::rename(kept.filePath(name), target)) files.noteWrittenFile(toPath(target));
 	}
 	QDir(original).removeRecursively();
+	writeRebuildRecord({});
 	if (m_editor->models()) m_editor->models()->forget(m_model);
 	setMessage(tr("%1 is the original again (the rebuilt one is kept in %2)").arg(m_model, QDir::toNativeSeparators(aside)));
 	// The base of the tweak is the same model, now from the game again.

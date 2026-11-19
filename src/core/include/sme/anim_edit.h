@@ -14,6 +14,15 @@
 // blends from the original into the change, like placing a hand in Source Filmmaker. After a
 // bone's last key that key holds. Frames before the edit-from frame stay exactly as the base.
 //
+// Pose (a layer for all animations): a clip in Mode::Pose holds one change per bone (its key at
+// frame 0, no anchor) that is put on top of every animation of the model alike - hold a weapon
+// lower or closer, another grip, bent fingers. The base sequence only chooses which animation the
+// preview shows; poseLayerReplacements() bakes every animation of the model with the layer for a
+// rebuild (model_rebuild / ModelExportOptions::replacements). Fingers: findHands() finds each
+// hand's finger chains by bone names (ValveBiped Finger0..4 with segments 01/02 ..., Thumb/Index/
+// Middle/Ring/Pinky and others); setHandShape() bends them with two sliders, curl (open - fist)
+// and spread, and per finger a little more or less.
+//
 // Placing a hand or foot: two-bone IK chains (upper arm - forearm - hand, thigh - calf - foot,
 // found by bone names) - placeEnd() turns the two upper bones so the end reaches a point and
 // keeps the end's own orientation, as SFM's rig handles and Blender's IK do.
@@ -34,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include <sme/model_export.h>
 #include <sme/studio_anim.h>
 
 namespace sme {
@@ -59,9 +69,20 @@ struct BoneKey {
 	}
 };
 
+/// The finger sliders of one hand (Pose and Animate): curl -0.25 (bent back) .. 1 (fist), spread
+/// -1 (together) .. 1 (fanned out), and per finger (by its first bone's name) more or less curl
+/// on top (-1 .. 1).
+struct HandShape {
+	float curl = 0, spread = 0;
+	std::map<std::string, float> fingers;
+	bool operator==(const HandShape&) const = default;
+};
+
 /// An animation being edited (see the file comment).
 struct AnimClip {
-	enum class Mode { Tweak, New };
+	/// Tweak: on an existing sequence; New: from one still pose; Pose: one change for every
+	/// animation of the model (a layer, see the file comment).
+	enum class Mode { Tweak, New, Pose };
 	std::string model;          ///< "models/weapons/v_smg1.mdl"
 	std::string name;           ///< The sequence it becomes ("reload_fast")
 	Mode mode = Mode::Tweak;
@@ -78,6 +99,8 @@ struct AnimClip {
 	std::string activity;       ///< "ACT_VM_RELOAD" or empty
 	/// Keys per bone (the model's bone name), sorted by frame, at most one per frame.
 	std::map<std::string, std::vector<BoneKey>> tracks;
+	/// Finger sliders by hand bone name (what the sliders show; the keys hold the result).
+	std::map<std::string, HandShape> hands;
 	bool operator==(const AnimClip&) const = default;
 };
 
@@ -90,6 +113,26 @@ struct IkChain {
 	int root = -1, mid = -1, end = -1;   ///< Upper arm, forearm, hand (or thigh, calf, foot)
 	std::string label;                   ///< "Right hand", "Left foot"
 };
+
+/// One finger: its bones from the hand outwards.
+struct FingerChain {
+	std::string label;            ///< "Thumb", "Index", "Middle", "Ring", "Pinky" or "Finger 2"
+	std::vector<int> segments;    ///< 1 .. 4 bones
+	bool thumb = false;
+};
+/// A hand with fingers (for the curl and spread sliders).
+struct HandRig {
+	int bone = -1;                ///< The hand bone
+	std::string label;            ///< "Right hand"
+	std::vector<FingerChain> fingers;
+	/// Per finger bone (same order as segments): the axis it bends about, in the bone's own axes,
+	/// and the axis it spreads about (first segment only).
+	std::vector<std::vector<AnimVec>> curlAxes;
+	std::vector<AnimVec> spreadAxes;
+	std::vector<float> spreadSign;   ///< Which way "spread" turns each finger (+1/-1, 0: does not spread)
+};
+/// The hands of a skeleton with at least two fingers each (bone names, rest pose geometry).
+[[nodiscard]] std::vector<HandRig> findHands(const std::vector<StudioBone>& bones);
 
 /// A pose of some bones copied from a frame (Ctrl+C / Ctrl+V): offsets by bone name.
 struct ClipPose {
@@ -147,6 +190,17 @@ public:
 	/// two upper bones turn (the elbow/knee stays on its side), the end keeps its orientation; all
 	/// three are keyed. A point out of reach is placed as far as the chain goes. False if nothing changed.
 	bool placeEnd(int chain, int frame, const AnimVec& target);
+	/// The hands with fingers (see HandRig), found once.
+	[[nodiscard]] const std::vector<HandRig>& hands() const { return m_hands; }
+	/// Bends a hand's fingers (index into hands()) at `frame` to this shape and keys them; the
+	/// shape is kept in the clip (AnimClip::hands) for the sliders. Earlier turns of those finger
+	/// bones are replaced.
+	void setHandShape(int hand, const HandShape& shape, int frame);
+	/// The shape last set for a hand (all zero if none).
+	[[nodiscard]] HandShape handShape(int hand) const;
+	/// Pose mode: which animation the preview shows under the layer (length, fps and loop follow it;
+	/// not an undo step - the layer stays the same).
+	void setPreviewSequence(const std::string& sequence);
 	/// The IK chains of the model (see IkChain), found once.
 	[[nodiscard]] const std::vector<IkChain>& ikChains() const { return m_chains; }
 	/// The chain whose end (or upper bones) is this bone, -1 if none.
@@ -213,6 +267,7 @@ private:
 	const AnimatedModel* m_model;
 	AnimClip m_clip;
 	std::vector<IkChain> m_chains;
+	std::vector<HandRig> m_hands;
 	int m_base = -1;
 	std::vector<AnimClip> m_undo, m_redo;
 	std::optional<AnimClip> m_changeStart;
@@ -225,6 +280,21 @@ private:
 [[nodiscard]] std::string boneGroup(std::string_view boneName);
 /// The other side's bone name ("ValveBiped.Bip01_L_Hand" -> "...R_Hand"), empty if it has no side.
 [[nodiscard]] std::string mirroredBoneName(std::string_view boneName);
+
+/// Puts a pose layer (a Mode::Pose clip's one change per bone) on baked frames
+/// (frames[f][bone] = position, rotation relative to the parent).
+void applyPoseLayer(const AnimClip& pose, const std::vector<StudioBone>& bones, std::vector<std::vector<std::pair<AnimVec, AnimQuat>>>& frames);
+/// Every animation of the model with a pose layer (a Mode::Pose clip) put on top, as replacements
+/// for a rebuild (decompileModel / model_rebuild): the model's own sequences that are not deltas
+/// (gestures add onto others, they keep theirs), sequence name in lower case -> frames. A sequence
+/// with a clip in `built` (e.g. a reload improved in the editor and built before) gets that clip's
+/// frames (its length, fps and loop) under the layer - so a rebuild always is original + built
+/// clips + pose, whichever was built last. `built`: sequence name (lower case) -> the clip built in
+/// its place (any mode). Empty if the layer and the built clips change nothing.
+[[nodiscard]] std::map<std::string, SequenceReplacement> poseLayerReplacements(const AnimatedModel& model, const AnimClip& pose,
+                                                                              const std::map<std::string, AnimClip>& built = {});
+/// The file name of a model's pose layer project ("pose_layer").
+inline constexpr const char* POSE_LAYER_NAME = "pose_layer";
 
 /// The clip as a project file (.smanim, KeyValues text) and back. Reading checks and limits
 /// everything (untrusted); nullopt with an error on a broken file.

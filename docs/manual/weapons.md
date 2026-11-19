@@ -38,7 +38,9 @@ same place - the game reads your mod's folder first, so your copy wins. Every ch
 The **Animations** tab lists the model's animations with their activity (`ACT_VM_RELOAD` is the reload, `ACT_VM_IDLE`
 the weapon in the hands, ...), length and how many events each has. Double-click one to play it.
 
-**Edit animation ...** opens the animation in the animation editor.
+- **Edit animation ...** - this animation in the animation editor (keys).
+- **Change hand pose ...** - the animation editor in *Pose* mode: move the hands and arms, bend the fingers; every
+  animation of the weapon gets it when you build it. See [the Animation editor](entities.html#the-animation-editor-keys-like-in-source-filmmaker).
 
 ## Sounds
 

@@ -508,3 +508,226 @@ TEST_CASE("anim edit: checksums of a compiled model's files") {
 	CHECK_FALSE(vvdChecksum(std::vector<std::byte>(3)));
 	CHECK_FALSE(mdlChecksum(vvd));
 }
+
+namespace {
+
+/// A right arm with a hand and three fingers (thumb, two fingers of three bones each), pointing
+/// along +X; the fingers lie a little bent towards -Z (the palm side), the thumb's root sits
+/// below the palm. Two animations: "idle" (still) and "fire" (the forearm turns).
+test::StudioModelSpec handModel() {
+	test::StudioModelSpec spec;
+	spec.groups.push_back({"body", {{"body", {{-1, -1, -1, 1, 1, 1}}}}});
+	spec.bones = {{"root", -1, {0, 0, 0}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_UpperArm", 0, {0, 0, 0}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Forearm", 1, {10, 0, 0}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Hand", 2, {10, 0, 0}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger0", 3, {1, 1.5f, -1}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger01", 4, {1.5f, 0.5f, 0}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger1", 3, {3, 1, 0}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger11", 6, {2, 0, -0.3f}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger12", 7, {1.5f, 0, -0.3f}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger2", 3, {3, -1, 0}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger21", 9, {2, 0, -0.3f}, {0, 0, 0}},
+	              {"ValveBiped.Bip01_R_Finger22", 10, {1.5f, 0, -0.3f}, {0, 0, 0}}};
+	spec.boxBones = {3};
+	test::StudioModelSpec::Animation idle{"idle", "ACT_VM_IDLE", 30, true, {}};
+	for (int f = 0; f < 5; ++f) idle.frames.push_back({{0, 0, 0, 0, 0, 0}});
+	spec.animations.push_back(idle);
+	test::StudioModelSpec::Animation fire{"fire", "ACT_VM_PRIMARYATTACK", 30, false, {}};
+	for (int f = 0; f < 9; ++f) {
+		fire.frames.push_back({{0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0}, {10, 0, 0, 0, 0, 0.05f * float(f)}});
+	}
+	spec.animations.push_back(fire);
+	return spec;
+}
+
+AnimatedModel loadHand() {
+	const auto files = test::makeStudioModel(handModel());
+	std::string error;
+	auto model = AnimatedModel::fromFiles({{"models/weapons/v_hand.mdl", files.mdl, {}}}, &error);
+	REQUIRE_MESSAGE(model, error);
+	return std::move(*model);
+}
+
+AnimClip poseClip() {
+	AnimClip clip;
+	clip.model = "models/weapons/v_hand.mdl";
+	clip.name = POSE_LAYER_NAME;
+	clip.mode = AnimClip::Mode::Pose;
+	return clip;
+}
+
+} // namespace
+
+TEST_CASE("anim edit: hands and fingers are found by their names, thumb first") {
+	const auto model = loadHand();
+	const auto hands = findHands(model.bones());
+	REQUIRE(hands.size() == 1);
+	const HandRig& hand = hands[0];
+	CHECK(hand.label == "Right hand");
+	REQUIRE(hand.fingers.size() == 3);
+	CHECK(hand.fingers[0].thumb);
+	CHECK(hand.fingers[0].label == "Thumb");
+	CHECK(hand.fingers[0].segments.size() == 2);
+	CHECK(hand.fingers[1].label == "Finger 1");
+	CHECK(hand.fingers[1].segments.size() == 3);
+	CHECK(hand.curlAxes.size() == 3);
+	CHECK(hand.spreadSign[1] == -hand.spreadSign[2]);   // the two fingers spread to opposite sides
+	// A skeleton without fingers has no hands to bend.
+	CHECK(findHands(loadBody().bones()).empty());
+}
+
+TEST_CASE("anim edit: the finger sliders curl towards the palm and spread the fingers apart") {
+	const auto model = loadHand();
+	AnimEditor editor(model, poseClip());
+	editor.setPreviewSequence("idle");
+	REQUIRE(editor.hands().size() == 1);
+	const int tip1 = editor.boneIndex("ValveBiped.Bip01_R_Finger12"), tip2 = editor.boneIndex("ValveBiped.Bip01_R_Finger22");
+	const auto before = editor.boneToModel(0);
+	HandShape fist;
+	fist.curl = 1;
+	editor.setHandShape(0, fist, 0);
+	const auto curled = editor.boneToModel(0);
+	// The tips go down towards the palm (-Z) and back towards the hand.
+	CHECK(position(curled[std::size_t(tip1)]).z < position(before[std::size_t(tip1)]).z - 1.5f);
+	CHECK(position(curled[std::size_t(tip1)]).x < position(before[std::size_t(tip1)]).x - 1.f);
+	CHECK(editor.handShape(0).curl == doctest::Approx(1));
+	// Bent back a little: the other way.
+	HandShape open;
+	open.curl = -0.25f;
+	editor.setHandShape(0, open, 0);
+	CHECK(position(editor.boneToModel(0)[std::size_t(tip1)]).z > position(before[std::size_t(tip1)]).z);
+	// Spread: the two fingers' tips move apart.
+	HandShape spread;
+	spread.spread = 1;
+	editor.setHandShape(0, spread, 0);
+	const auto fanned = editor.boneToModel(0);
+	const auto gap = [&](const std::vector<BoneMatrix>& w) { return std::fabs(position(w[std::size_t(tip1)]).y - position(w[std::size_t(tip2)]).y); };
+	CHECK(gap(fanned) > gap(before) + 0.5f);
+	// One finger alone: only it bends.
+	HandShape one;
+	one.fingers["ValveBiped.Bip01_R_Finger1"] = 1;
+	editor.setHandShape(0, one, 0);
+	const auto single = editor.boneToModel(0);
+	CHECK(position(single[std::size_t(tip1)]).z < position(before[std::size_t(tip1)]).z - 1.5f);
+	CHECK(position(single[std::size_t(tip2)]).z == doctest::Approx(position(before[std::size_t(tip2)]).z).epsilon(1e-3));
+	// Each slider move is one undo step.
+	CHECK(editor.undo());
+	CHECK(editor.handShape(0).spread == doctest::Approx(1));
+}
+
+TEST_CASE("anim edit: a pose layer is one change on every frame of every animation") {
+	const auto model = loadHand();
+	AnimEditor editor(model, poseClip());
+	editor.setPreviewSequence("fire");
+	CHECK(editor.clip().frames == 9);
+	CHECK(editor.clip().baseSequence == "fire");
+	const int hand = editor.boneIndex("ValveBiped.Bip01_R_Hand");
+	// A change made at any frame goes to the layer (frame 0), without an anchor, and holds everywhere.
+	editor.rotateBone(hand, 6, axisAngle(0, 1, 0, 0.6f));
+	REQUIRE(editor.clip().tracks.size() == 1);
+	REQUIRE(editor.clip().tracks.begin()->second.size() == 1);
+	CHECK(editor.clip().tracks.begin()->second[0].frame == 0);
+	const auto offsetAt = [&](float f) { return editor.offset(hand, f).first; };
+	CHECK(offsetAt(0).w == doctest::Approx(offsetAt(8).w));
+	CHECK(offsetAt(0).w < 0.99f);
+	// The IK grip also writes the layer.
+	const int chain = editor.chainOf(hand);
+	REQUIRE(chain >= 0);
+	const AnimVec at = position(editor.boneToModel(4)[std::size_t(hand)]);
+	CHECK(editor.placeEnd(chain, 4, {at.x - 2, at.y + 1, at.z - 2}));
+	for (const auto& [bone, keys] : editor.clip().tracks) {
+		CHECK(keys.size() == 1);
+		CHECK(keys[0].frame == 0);
+	}
+	// The length of the layer follows the shown animation, no length change of its own.
+	editor.setFrameCount(30);
+	CHECK(editor.clip().frames == 9);
+	editor.setPreviewSequence("idle");
+	CHECK(editor.clip().frames == 5);
+
+	// Baked for a rebuild: both animations, the hand turned on every frame like the layer says.
+	const auto replacements = poseLayerReplacements(model, editor.clip());
+	REQUIRE(replacements.size() == 2);
+	REQUIRE(replacements.count("fire") == 1);
+	REQUIRE(replacements.count("idle") == 1);
+	CHECK(replacements.at("fire").fps == 0.f);   // keeps the sequence's own
+	CHECK(replacements.at("fire").smd.find("time 8") != std::string::npos);
+	CHECK(replacements.at("idle").smd.find("time 4") != std::string::npos);
+	// The baked frames are the editor's pose on that animation.
+	editor.setPreviewSequence("fire");
+	std::vector<AnimVec> pos;
+	std::vector<AnimQuat> quat;
+	editor.pose(8, pos, quat);
+	const auto parsed = parseSmd(replacements.at("fire").smd);
+	REQUIRE(parsed);
+	const SmdAnimation& smd = *parsed;
+	REQUIRE(smd.frames.size() == 9);
+	REQUIRE(std::size_t(hand) < smd.frames[8].size());
+	// The .smd holds Euler angles; the turn of the hand matches the editor's (up to the sign of the quaternion).
+	const AnimQuat baked = angleQuaternion(smd.frames[8][std::size_t(hand)].second);
+	const float d = std::fabs(baked.x * quat[std::size_t(hand)].x + baked.y * quat[std::size_t(hand)].y + baked.z * quat[std::size_t(hand)].z +
+	                          baked.w * quat[std::size_t(hand)].w);
+	CHECK(d == doctest::Approx(1).epsilon(1e-3));
+	// Nothing in the layer: nothing to rebuild.
+	CHECK(poseLayerReplacements(model, poseClip()).empty());
+	// A clip built before in place of "fire" (a longer one) stays under the layer.
+	AnimClip longer;
+	longer.model = "models/weapons/v_hand.mdl";
+	longer.name = "fire_edit";
+	longer.baseSequence = "fire";
+	longer.frames = 20;
+	longer.fps = 24;
+	std::map<std::string, AnimClip> built{{"fire", longer}};
+	const auto both = poseLayerReplacements(model, editor.clip(), built);
+	REQUIRE(both.count("fire") == 1);
+	CHECK(both.at("fire").smd.find("time 19") != std::string::npos);
+	CHECK(both.at("fire").fps == doctest::Approx(24));
+	CHECK(both.at("fire").loop == 0);
+	// Only the built clip, no layer: just that sequence.
+	const auto onlyBuilt = poseLayerReplacements(model, poseClip(), built);
+	CHECK(onlyBuilt.size() == 1);
+}
+
+TEST_CASE("anim edit: a pose layer and its finger sliders in the project file") {
+	const auto model = loadHand();
+	AnimEditor editor(model, poseClip());
+	editor.setPreviewSequence("idle");
+	HandShape shape;
+	shape.curl = 0.5f;
+	shape.spread = -0.3f;
+	shape.fingers["ValveBiped.Bip01_R_Finger2"] = 0.25f;
+	editor.setHandShape(0, shape, 0);
+	const std::string text = writeAnimClip(editor.clip());
+	CHECK(text.find("\"pose\"") != std::string::npos);
+	std::string error;
+	const auto back = readAnimClip(text, &error);
+	REQUIRE_MESSAGE(back, error);
+	CHECK(back->mode == AnimClip::Mode::Pose);
+	REQUIRE(back->hands.count("ValveBiped.Bip01_R_Hand") == 1);
+	const HandShape& read = back->hands.at("ValveBiped.Bip01_R_Hand");
+	CHECK(read.curl == doctest::Approx(0.5f));
+	CHECK(read.spread == doctest::Approx(-0.3f));
+	CHECK(read.fingers.at("ValveBiped.Bip01_R_Finger2") == doctest::Approx(0.25f));
+	REQUIRE(back->tracks.size() == editor.clip().tracks.size());
+	for (const auto& [bone, keys] : editor.clip().tracks) {
+		REQUIRE(back->tracks.count(bone) == 1);
+		REQUIRE(back->tracks.at(bone).size() == 1);
+		CHECK(back->tracks.at(bone)[0].frame == 0);
+		CHECK(back->tracks.at(bone)[0].rot.w == doctest::Approx(keys[0].rot.w).epsilon(1e-5));
+	}
+	// Broken hand blocks are dropped or limited.
+	const auto odd = readAnimClip("\"smanim\" { \"frames\" \"1\" \"mode\" \"pose\" \"hand\" { \"bone\" \"\" } "
+	                              "\"hand\" { \"bone\" \"h\" \"curl\" \"7\" \"spread\" \"nan\" \"finger\" \"a\" \"finger\" \"b x\" } }",
+	                              &error);
+	REQUIRE(odd);
+	REQUIRE(odd->hands.size() == 1);
+	CHECK(odd->hands.at("h").curl == doctest::Approx(1));
+	CHECK(odd->hands.at("h").spread == doctest::Approx(0));
+	CHECK(odd->hands.at("h").fingers.empty());
+	// Old project files (tweak/new, no hands) read as before.
+	const auto old = readAnimClip("\"smanim\" { \"frames\" \"3\" \"mode\" \"tweak\" }", &error);
+	REQUIRE(old);
+	CHECK(old->mode == AnimClip::Mode::Tweak);
+	CHECK(old->hands.empty());
+}

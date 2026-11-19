@@ -14209,4 +14209,207 @@ TEST_CASE("material from a photo and model check: dialog, files in the mod, chec
 	CHECK(window.findChild<QPushButton*>("modelCheck"));
 }
 
+TEST_CASE("animation editor pose mode: one hand and finger pose for every animation, built into the model and restored (studiomdl faked)") {
+	// Julius, 19.11.2026: "the animation editor needs a bit simpler, I also want to change hand/arm pose for it".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	// A view model: two arms with hands and fingers (thumb + two fingers), "idle" and "fire".
+	{
+		test::StudioModelSpec spec;
+		spec.groups.push_back({"body", {{"body", {{-4, -4, 0, 4, 4, 30}, {-2, 8, 28, 2, 30, 32}, {-2, -30, 28, 2, -8, 32}}}}});
+		spec.bones = {{"ValveBiped.Bip01_Spine", -1, {0, 0, 20}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_L_UpperArm", 0, {0, 8, 10}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_L_Forearm", 1, {0, 12, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_L_Hand", 2, {0, 10, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_UpperArm", 0, {0, -8, 10}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Forearm", 4, {0, -12, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Hand", 5, {0, -10, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger0", 6, {1.5f, -1, -1}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger01", 7, {0.5f, -1.5f, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger1", 6, {1, -3, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger11", 9, {0, -2, -0.3f}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger12", 10, {0, -1.5f, -0.3f}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger2", 6, {-1, -3, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger21", 12, {0, -2, -0.3f}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Finger22", 13, {0, -1.5f, -0.3f}, {0, 0, 0}}};
+		spec.boxBones = {0, 3, 6};
+		const auto still = [&](float spineZ) {
+			std::vector<std::array<float, 6>> frame;
+			for (const auto& b : spec.bones) frame.push_back({b.pos[0], b.pos[1], b.pos[2], 0, 0, 0});
+			frame[0][2] = spineZ;
+			return frame;
+		};
+		test::StudioModelSpec::Animation idle{"idle", "ACT_VM_IDLE", 30, true, {}};
+		for (int k = 0; k < 5; ++k) idle.frames.push_back(still(20));
+		test::StudioModelSpec::Animation fire{"fire", "ACT_VM_PRIMARYATTACK", 30, false, {}};
+		for (int k = 0; k < 9; ++k) fire.frames.push_back(still(20.f + float(k)));
+		spec.animations = {idle, fire};
+		test::writeStudioModel(f.mod / "models/weapons/v_test.mdl", test::makeStudioModel(spec));
+	}
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	// The Weapons page has the way in.
+	CHECK(window.weaponsPage()->findChild<QPushButton*>("weaponHandPose"));
+
+	auto* ed = window.openHandPose("models/weapons/v_test.mdl");
+	REQUIRE(ed);
+	QSignalSpy loaded(ed, &AnimationEditor::loaded);
+	REQUIRE((ed->ready() || loaded.wait(10000)));
+	REQUIRE(QTest::qWaitForWindowExposed(ed));
+	settle();
+	AnimEditor* clip = ed->clipEditor();
+	REQUIRE(clip);
+	// Pose mode: the pose tools, no key tools; simple layout (bone list under More), fits the screen.
+	CHECK(ed->poseMode());
+	CHECK(clip->clip().mode == AnimClip::Mode::Pose);
+	CHECK(ed->findChild<QToolButton*>("animModePose")->isChecked());
+	CHECK_FALSE(ed->findChild<QPushButton*>("animKey")->isVisible());
+	auto* checkOn = ed->findChild<QComboBox*>("animPoseSequence");
+	REQUIRE(checkOn);
+	CHECK(checkOn->isVisible());
+	CHECK(checkOn->count() == 2);
+	CHECK_FALSE(ed->boneTree()->isVisible());
+	CHECK(ed->findChild<QLabel*>("animHowTo")->text().contains("grip"));
+	CHECK(ed->minimumSizeHint().width() <= 1366);
+	CHECK(ed->minimumSizeHint().height() <= 740);
+	REQUIRE(clip->hands().size() == 1);
+	CHECK(ed->findChild<QWidget*>("animHands")->isVisible());
+
+	// Curl: the fingers bend - one change for every frame, at frame 0 of the layer.
+	const int tip = clip->boneIndex("ValveBiped.Bip01_R_Finger12");
+	const auto zOf = [&](int bone, int frame) { return clip->boneToModel(float(frame))[std::size_t(bone)].m[2][3]; };
+	const float tipBefore = zOf(tip, 0);
+	auto* curl = ed->findChild<QSlider*>("animCurl0");
+	REQUIRE(curl);
+	curl->setValue(80);
+	settle();
+	CHECK(clip->handShape(0).curl == doctest::Approx(0.8f));
+	CHECK(zOf(tip, 0) < tipBefore - 1.f);
+	for (const auto& [bone, keys] : clip->clip().tracks) {
+		CHECK(keys.size() == 1);
+		CHECK(keys[0].frame == 0);
+	}
+	// The grip at another frame: still one change for all.
+	const int hand = clip->boneIndex("ValveBiped.Bip01_R_Hand");
+	ed->setFrame(3);
+	const auto handAt = [&](int frame) {
+		const auto& m = clip->boneToModel(float(frame))[std::size_t(hand)].m;
+		return QVector3D(m[0][3], m[1][3], m[2][3]);
+	};
+	const QVector3D before = handAt(3);
+	QPointF grip;
+	REQUIRE(ed->view()->gripOnScreen(hand, grip));
+	const auto send = [&](QEvent::Type type, const QPoint& pos, Qt::MouseButtons buttons) {
+		QMouseEvent event(type, QPointF(pos), ed->view()->mapToGlobal(QPointF(pos)), Qt::LeftButton, buttons, Qt::NoModifier);
+		QApplication::sendEvent(ed->view(), &event);
+	};
+	send(QEvent::MouseButtonPress, grip.toPoint(), Qt::LeftButton);
+	send(QEvent::MouseMove, grip.toPoint() + QPoint(0, -20), Qt::LeftButton);
+	send(QEvent::MouseMove, grip.toPoint() + QPoint(0, -40), Qt::LeftButton);
+	send(QEvent::MouseButtonRelease, grip.toPoint() + QPoint(0, -40), Qt::NoButton);
+	settle();
+	CHECK((handAt(3) - before).length() > 1.f);
+	CHECK(clip->hasKey(hand, 0));
+	CHECK_FALSE(clip->hasKey(hand, 3));
+	// Check on "fire": the hand holds the same change there.
+	const auto offsetBefore = clip->offset(hand, 0).first;
+	checkOn->setCurrentIndex(checkOn->findText("fire"));
+	emit checkOn->activated(checkOn->currentIndex());
+	settle();
+	CHECK(clip->clip().baseSequence == "fire");
+	CHECK(clip->clip().frames == 9);
+	CHECK(clip->offset(hand, 7).first.w == doctest::Approx(offsetBefore.w));
+	// Undo takes the grip back, the curl stays.
+	ed->findChild<QPushButton*>("animUndo")->click();
+	CHECK_FALSE(clip->hasKey(hand, 0));
+	CHECK(clip->handShape(0).curl == doctest::Approx(0.8f));
+	CHECK(curl->value() == 80);
+
+	// Animate mode and back: the pose is kept.
+	ed->findChild<QToolButton*>("animModeAnimate")->click();
+	settle();
+	CHECK_FALSE(ed->poseMode());
+	CHECK(ed->findChild<QPushButton*>("animKey")->isVisible());
+	CHECK_FALSE(checkOn->isVisible());
+	CHECK(ed->clipEditor()->clip().mode != AnimClip::Mode::Pose);
+	// More shows the bone list and each finger on its own.
+	ed->findChild<QToolButton*>("animMore")->click();
+	settle();
+	CHECK(ed->boneTree()->isVisible());
+	CHECK(ed->findChild<QSlider*>("animFinger0_1")->isVisible());
+	ed->findChild<QToolButton*>("animMore")->click();
+	ed->setPoseMode(true);
+	settle();
+	clip = ed->clipEditor();
+	CHECK(clip->clip().mode == AnimClip::Mode::Pose);
+	CHECK(clip->handShape(0).curl == doctest::Approx(0.8f));
+	if (const auto shot = qEnvironmentVariable("SME_ANIM_EDITOR_SHOT"); !shot.isEmpty()) {
+		ed->grab().save(shot + ".pose.png");
+		ed->findChild<QToolButton*>("animModeAnimate")->click();
+		settle();
+		ed->grab().save(shot + ".animate.png");
+		ed->setPoseMode(true);
+		settle();
+		clip = ed->clipEditor();
+	}
+
+	// Build: every animation of the model with the pose, the record of what is in the model.
+	const QString modDir = fromPath(f.mod);
+	const QString sourceDir = modDir + "/modelsrc/weapons/v_test";
+	const QString modelFiles = modDir + "/models/weapons/v_test";
+	const auto script = [&](const QString& name, const QString& body) {
+		const QString path = home.filePath(name);
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(("#!/bin/sh\n" + body + "\n").toUtf8());
+		file.close();
+		file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+		return path;
+	};
+	ed->setStudiomdlProgram(script("studiomdl_ok", "for e in mdl vvd dx90.vtx; do cp '" + sourceDir + "/original/mod/v_test.'$e '" + modelFiles + ".'$e; done"));
+	QSignalSpy built(ed, &AnimationEditor::replaceFinished);
+	REQUIRE(ed->buildPose());
+	REQUIRE(built.wait(20000));
+	CHECK(built.takeFirst().at(0).toBool());
+	CHECK(ed->replaced());
+	CHECK(QFileInfo::exists(sourceDir + "/animations/pose_layer.smanim"));
+	{
+		QFile qc(sourceDir + "/compile/v_test.qc");
+		REQUIRE(qc.open(QIODevice::ReadOnly));
+		const QString text = QString::fromUtf8(qc.readAll());
+		INFO(text.toStdString());
+		CHECK(text.contains("$sequence \"idle\""));
+		CHECK(text.contains("$sequence \"fire\""));
+		QFile record(sourceDir + "/rebuild.txt");
+		REQUIRE(record.open(QIODevice::ReadOnly));
+		CHECK(QString::fromUtf8(record.readAll()).contains("#pose\tpose_layer"));
+	}
+	// The baked "fire" has the bent finger: its tip lower than in the original on the last frame.
+	{
+		QFile smd(sourceDir + "/compile/anims/fire.smd");
+		REQUIRE(smd.open(QIODevice::ReadOnly));
+		CHECK(QString::fromUtf8(smd.readAll()).contains("\ntime 8\n"));
+	}
+	// Restore: the original model again, nothing recorded as built.
+	QString error;
+	REQUIRE(ed->restoreOriginal(&error));
+	CHECK_FALSE(ed->replaced());
+	CHECK_FALSE(QFileInfo::exists(sourceDir + "/rebuild.txt"));
+	ed->close();
+}
+
 #include "test_app.moc"

@@ -355,8 +355,20 @@ read - export `.smd`.
 
 ## The Animation editor: keys like in Source Filmmaker
 
-Improve an animation (a weapon's reload, an NPC's wave) or make a new one - no Blender.
-Open: **Edit animation ...** / **New animation ...** (Animations page), **Animate ...** (Models page), **Edit animation ...** (Weapons page).
+Improve an animation (a weapon's reload, an NPC's wave), make a new one, or change how a weapon is held - no Blender.
+Open: **Edit animation ...** / **New animation ...** (Animations page), **Animate ...** (Models page), **Edit animation ...** /
+**Change hand pose ...** (Weapons page).
+
+**Two modes** (top of the window)
+- **Pose (all animations)** - one change for every animation of the model: hold the weapon lower, closer, another grip.
+- **Animate (one animation)** - keys on a timeline (below).
+
+**Pose (all animations)**
+1. Drag an orange grip - the hand goes there, the arm follows.
+2. **Fingers**: *Curl* (open - fist), *Spread* (together - fanned out); each finger alone under **More ▸**.
+3. **Check on** another animation (reload, fire ...) - the pose is the same everywhere. **Space** plays it.
+4. **Build ... › Build the pose into the model** - every animation gets it (animations you built before keep their changes).
+   **Reset pose** starts over; **Restore the original model** undoes the build.
 
 **Three steps**
 1. **Place it** - drag an orange grip (*Right hand*, *Left foot* ...): the arm or leg follows (IK), the hand keeps its turn.
@@ -387,7 +399,10 @@ Open: **Edit animation ...** / **New animation ...** (Animations page), **Animat
 
 **Good to know**
 - The original keeps playing under your changes; a bone's first key blends in from the start (or from *Change from frame*).
-- **More ▸** - exact values, *Original pose*, *Clear bone*, *Copy pose* / *Paste*, *Mirror*.
+- **More ▸** - bone list, exact values, *Original pose*, *Clear bone*, *Copy pose* / *Paste*, *Mirror*, activity, fps,
+  *Change from frame*, each finger alone.
+- **Fingers** in Animate mode key the fingers at the playhead.
+- **Show ▾** - motion path, ghosts, player's view beside it.
 - **Save** (Ctrl+S) - keys go to `modelsrc/<model>/animations/` in the mod; opening the animation again goes on from there.
 - **Preview in Mapsmith** - plays it on the Animations page (not in the game yet).
 - **Build ... › As a new animation** - adds it to Mapsmith's copy of the model (`models/mapsmith/...`).

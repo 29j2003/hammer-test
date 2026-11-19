@@ -127,6 +127,8 @@ public:
 	/// The Animation editor on a model's sequence (newAnimation: a new one from its pose; empty
 	/// sequence: from the idle). One window, raised if it is open already.
 	AnimationEditor* openAnimationEditor(const QString& model, const QString& sequence, bool newAnimation = false);
+	/// The Animation editor in Pose mode on a model: one hand/arm pose for all its animations.
+	AnimationEditor* openHandPose(const QString& model);
 	[[nodiscard]] AnimationEditor* animationEditor() const;
 	[[nodiscard]] WeaponsPage* weaponsPage() const { return m_weaponsPage; }
 	[[nodiscard]] NpcsPage* npcsPage() const { return m_npcsPage; }

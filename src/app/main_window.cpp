@@ -574,6 +574,7 @@ void MainWindow::createDocks() {
 	});
 	connect(m_weaponsPage, &WeaponsPage::editAnimationRequested, this,
 	        [this](const QString& model, const QString& sequence) { openAnimationEditor(model, sequence); });
+	connect(m_weaponsPage, &WeaponsPage::handPoseRequested, this, [this](const QString& model) { openHandPose(model); });
 	connect(m_weaponsPage, &WeaponsPage::modChanged, this, &MainWindow::reloadGameSoon);
 	connect(m_weaponsPage, &WeaponsPage::enhanceTexturesRequested, this,
 	        [this](const QStringList& materials) { openTextureEnhanceDialog(m_editor, materials, this); });
@@ -975,6 +976,15 @@ AnimationEditor* MainWindow::animationEditor() const {
 AnimationEditor* MainWindow::openAnimationEditor(const QString& model, const QString& sequence, bool newAnimation) {
 	if (!m_animationEditor) m_animationEditor = new AnimationEditor(m_editor, m_materials, m_animationsPage, this);
 	m_animationEditor->openModel(model, sequence, newAnimation);
+	m_animationEditor->show();
+	m_animationEditor->raise();
+	m_animationEditor->activateWindow();
+	return m_animationEditor;
+}
+
+AnimationEditor* MainWindow::openHandPose(const QString& model) {
+	if (!m_animationEditor) m_animationEditor = new AnimationEditor(m_editor, m_materials, m_animationsPage, this);
+	m_animationEditor->openPose(model);
 	m_animationEditor->show();
 	m_animationEditor->raise();
 	m_animationEditor->activateWindow();
