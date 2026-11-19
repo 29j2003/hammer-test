@@ -40,6 +40,9 @@ uniform sampler2D u_texture;
 uniform vec3 u_keyDir;
 uniform bool u_alphaTest;
 uniform float u_alpha;
+uniform bool u_glow;
+uniform sampler2D u_glowMask;
+uniform vec3 u_glowTint;
 out vec4 fragColor;
 void main() {
 	vec4 base = texture(u_texture, v_uv);
@@ -48,7 +51,10 @@ void main() {
 	float key = dot(n, u_keyDir) * 0.5 + 0.5;
 	float fill = max(dot(n, vec3(0.0, 0.0, -1.0)), 0.0);
 	vec3 light = vec3(0.22, 0.23, 0.25) + vec3(1.0, 0.97, 0.92) * key * key * 0.95 + vec3(0.25, 0.3, 0.4) * fill * 0.4;
-	fragColor = vec4(base.rgb * light, u_alpha < 1.0 ? base.a * u_alpha : 1.0);
+	vec3 color = base.rgb * light;
+	// $selfillum as the game draws it: towards tint * base colour where the mask is white.
+	if (u_glow) color = mix(color, u_glowTint * base.rgb, texture(u_glowMask, v_uv).r);
+	fragColor = vec4(color, u_alpha < 1.0 ? base.a * u_alpha : 1.0);
 }
 )";
 
@@ -98,6 +104,10 @@ ModelViewer::~ModelViewer() {
 	for (const auto& texture : std::as_const(m_textures)) {
 		if (texture.id != m_white) glDeleteTextures(1, &texture.id);
 	}
+	for (const auto& glow : std::as_const(m_glows)) {
+		if (glow.id) glDeleteTextures(1, &glow.id);
+	}
+	for (const GLuint id : std::as_const(m_releasedGlows)) glDeleteTextures(1, &id);
 	glDeleteTextures(1, &m_white);
 	glDeleteVertexArrays(1, &m_gridVao);
 	glDeleteBuffers(1, &m_gridVbo);
@@ -120,6 +130,33 @@ void ModelViewer::setPose(std::vector<ModelVertex> vertices) {
 	if (!m_model || (!vertices.empty() && vertices.size() != m_model->vertices.size())) return;
 	m_pose = std::move(vertices);
 	m_poseDirty = true;
+	update();
+}
+
+void ModelViewer::setGlow(const QString& material, const QImage& mask, const QVector3D& tint) {
+	const QString name = normalizedMaterialName(material);
+	if (auto it = m_glows.find(name); it != m_glows.end()) {
+		if (it->id) m_releasedGlows.push_back(it->id);
+		m_glows.erase(it);
+	}
+	if (!mask.isNull()) m_glows.insert(name, Glow{mask.convertToFormat(QImage::Format_RGBA8888), 0, tint});
+	update();
+}
+
+void ModelViewer::clearGlow() {
+	for (const auto& glow : std::as_const(m_glows)) {
+		if (glow.id) m_releasedGlows.push_back(glow.id);
+	}
+	m_glows.clear();
+	update();
+}
+
+bool ModelViewer::hasGlow(const QString& material) const {
+	return m_glows.contains(normalizedMaterialName(material));
+}
+
+void ModelViewer::setMarkers(QList<Marker> markers) {
+	m_markers = std::move(markers);
 	update();
 }
 
@@ -271,6 +308,23 @@ void ModelViewer::paintGL() {
 	glViewport(0, 0, int(width() * dpr), int(height() * dpr));
 	const Camera view = camera();
 	const QMatrix4x4 viewProj = viewProjection();
+	m_lastViewProj = viewProj;
+	// Glow masks: old ones deleted, new ones uploaded (only when they change).
+	for (const GLuint id : std::as_const(m_releasedGlows)) glDeleteTextures(1, &id);
+	m_releasedGlows.clear();
+	for (auto& glow : m_glows) {
+		if (glow.mask.isNull()) continue;
+		glGenTextures(1, &glow.id);
+		glBindTexture(GL_TEXTURE_2D, glow.id);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, glow.mask.width(), glow.mask.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, glow.mask.constBits());
+		glGenerateMipmap(GL_TEXTURE_2D);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glow.mask = QImage();
+	}
 	// Light from the camera's upper left.
 	const QVector3D forward = (view.center - view.eye).normalized();
 	const QVector3D right = QVector3D::crossProduct(forward, QVector3D(0, 0, 1)).normalized();
@@ -289,6 +343,7 @@ void ModelViewer::paintGL() {
 		m_program->setUniformValue("u_viewProj", viewProj);
 		m_program->setUniformValue("u_keyDir", keyDir);
 		m_program->setUniformValue("u_texture", 0);
+		m_program->setUniformValue("u_glowMask", 1);
 		glActiveTexture(GL_TEXTURE0);
 		glBindVertexArray(m_vao);
 		// Opaque first, then see-through materials blended on top.
@@ -301,6 +356,15 @@ void ModelViewer::paintGL() {
 			for (const auto& mesh : m_model->meshes) {
 				const Texture texture = textureFor(QString::fromStdString(mesh.material));
 				if (texture.translucent != translucentPass) continue;
+				const auto glow = m_glows.constFind(normalizedMaterialName(QString::fromStdString(mesh.material)));
+				const bool glowing = glow != m_glows.constEnd() && glow->id;
+				m_program->setUniformValue("u_glow", glowing);
+				if (glowing) {
+					m_program->setUniformValue("u_glowTint", glow->tint);
+					glActiveTexture(GL_TEXTURE1);
+					glBindTexture(GL_TEXTURE_2D, glow->id);
+					glActiveTexture(GL_TEXTURE0);
+				}
 				glBindTexture(GL_TEXTURE_2D, texture.id);
 				m_program->setUniformValue("u_alphaTest", texture.alphaTest);
 				m_program->setUniformValue("u_alpha", translucentPass ? 0.999f : 1.0f);
@@ -330,6 +394,21 @@ void ModelViewer::paintGL() {
 
 	QPainter painter(this);
 	if (m_model && !m_model->empty()) paintOverlay(painter, viewProj);
+	if (!m_markers.isEmpty() && m_model) {
+		painter.setRenderHint(QPainter::Antialiasing);
+		for (const auto& marker : std::as_const(m_markers)) {
+			const QVector4D clip = viewProj * QVector4D(marker.position, 1.0f);
+			if (clip.w() <= 0.01f) continue;
+			const QPointF at((clip.x() / clip.w() * 0.5f + 0.5f) * float(width()), (0.5f - clip.y() / clip.w() * 0.5f) * float(height()));
+			const QColor color = marker.highlighted ? QColor(255, 190, 70) : QColor(90, 200, 255);
+			painter.setPen(QPen(QColor(20, 20, 24), 3));
+			painter.setBrush(color);
+			painter.drawEllipse(at, marker.highlighted ? 6.0 : 4.0, marker.highlighted ? 6.0 : 4.0);
+			painter.setPen(color);
+			painter.drawText(at + QPointF(8, -6), marker.label);
+		}
+	}
+
 	if (!m_message.isEmpty() || !m_model || m_model->empty()) {
 		painter.setPen(QColor(160, 165, 175));
 		QString text = m_message;

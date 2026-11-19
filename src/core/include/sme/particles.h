@@ -22,12 +22,17 @@
 
 namespace sme {
 
+/// The DMX type a value had in the file (the particle editor writes it back with the same type:
+/// the game reads every key with its own type).
+enum class ParticleValueType { Other, Int, Float, Bool, String, Color, Vector2, Vector3, Vector4, Angles, IntArray, FloatArray, Element };
+
 /// One value of a system or a part, as text for the panel and as numbers for the simulation
 /// (a color has four numbers 0..255, a vector three; an element array has none).
 struct ParticleValue {
 	std::string key;
 	std::string text;
 	std::vector<double> numbers;
+	ParticleValueType type = ParticleValueType::Other;
 };
 
 /// A part of a system: functionName ("emit_continuously") and its values.
@@ -67,10 +72,24 @@ struct ParticleDefinition {
 /// A colour of a particle file (0..255 each).
 struct PcfColor {
 	std::uint8_t r = 255, g = 255, b = 255, a = 255;
+	bool operator==(const PcfColor&) const = default;
+};
+/// Two, four numbers and Euler angles of a particle file (DMX Vector2, Vector4, QAngle).
+struct PcfVector2 {
+	float x = 0, y = 0;
+	bool operator==(const PcfVector2&) const = default;
+};
+struct PcfVector4 {
+	float x = 0, y = 0, z = 0, w = 0;
+	bool operator==(const PcfVector4&) const = default;
+};
+struct PcfAngles {
+	float pitch = 0, yaw = 0, roll = 0;
+	bool operator==(const PcfAngles&) const = default;
 };
 /// A value to write into a particle file; its DMX type comes with it (the game reads each key
 /// with its own type: max_particles int, emission_rate float, color1 colour, gravity vector).
-using PcfValue = std::variant<int, float, bool, std::string, PcfColor, Vec3>;
+using PcfValue = std::variant<int, float, bool, std::string, PcfColor, Vec3, PcfVector2, PcfVector4, PcfAngles, std::vector<int>, std::vector<float>>;
 using PcfValues = std::vector<std::pair<std::string, PcfValue>>;
 /// A part of a system to write: functionName ("emit_continuously") and its values.
 struct PcfFunction {
@@ -82,11 +101,14 @@ struct PcfSystem {
 	std::string name;
 	PcfValues properties;   ///< material, max_particles, radius, color, ...
 	std::vector<PcfFunction> emitters, initializers, operators, renderers, forces, constraints;
+	/// Child systems (by name; they must be in the same file - the game links them by element).
+	std::vector<ParticleChild> children;
 };
 /// A .pcf with the systems, in the encoding of the game's own files (binary DMX version 2,
 /// "format pcf 1"): a DmElement "untitled" listing the DmeParticleSystemDefinitions in
-/// particleSystemDefinitions, each part a DmeParticleOperator. Element ids are derived from the
-/// names, so the same systems give the same bytes.
+/// particleSystemDefinitions, each part a DmeParticleOperator, each child a DmeParticleChild
+/// ("child" = the system's element, "delay"). A child named but not in `systems` is left out.
+/// Element ids are derived from the names, so the same systems give the same bytes.
 [[nodiscard]] std::vector<std::byte> writeParticleFile(const std::vector<PcfSystem>& systems);
 
 /// One particle as the preview draws it.

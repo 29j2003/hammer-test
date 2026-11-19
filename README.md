@@ -178,7 +178,13 @@ memory and lists every key or value that would change.
   turn around it (drag; right drag moves up and down; the wheel zooms), pause, restart, slow down or speed up. Next to it
   its parts as cards: emitters, initializers, operators, renderers and children with all their values. The preview runs
   the common parts (emitting, lifetime, size, color, alpha, movement with gravity and drag, fading, scaling, rotation); it
-  is close to the game, not exact.
+  is close to the game, not exact. **Edit** changes a system (typed fields, add or remove parts, live preview), **New ...**
+  starts one from a template (glow, sparks, muzzle flash, smoke, embers); **Save to mod** writes it into the mod's own
+  particle file and particle list.
+- **Glow and effects on models**: **Glow ...** on the Models page makes parts of a material glow (found automatically,
+  from a picture or the whole material; colour, brightness, pulse; always or only during animations such as the
+  reload), shown in the 3D view at once and written into the mod with *Restore original*. **Effects** puts particle
+  systems on a model's attachments, always or during part of an animation.
 - **Sounds**: sounds are sorted into categories (weapons, NPCs, ambient, physics, player, vehicles, doors, music,
   interface, voice), each by folder, with sound script entries next to their files; search looks through all of them.
   Click a sound to hear it (WAV including ADPCM, MP3, OGG) with its waveform and loop point. Drag sounds into the map

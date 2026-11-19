@@ -93,6 +93,10 @@ public:
 	[[nodiscard]] QListWidget* materialList() const { return m_materialList; }
 	/// "Export for editing ...": opens the export dialog for a model (deletes itself when closed).
 	ModelExportDialog* exportModel(const QString& model);
+	/// "Glow ...": the glow dialog for the shown model (a material picked first if given).
+	class GlowDialog* openGlow(const QString& material = {});
+	/// The shown model's effects (particles at attachments, during animations).
+	[[nodiscard]] class EffectsPanel* effectsPanel() const { return m_effects; }
 	/// Where the right-click menus get their "Show in ..." entries from (the main window).
 	void setAssetMenuFiller(AssetMenuFiller filler) { m_menuFiller = std::move(filler); }
 
@@ -105,6 +109,8 @@ signals:
 	void openMaterialRequested(const QString& material);
 	/// "Import ...": bring the mapper's own files into the mod (ImportDialog).
 	void importRequested();
+	/// Glow changed the mod's files.
+	void modChanged();
 
 private:
 	/// What a background load produced.
@@ -146,6 +152,8 @@ private:
 	QList<QComboBox*> m_bodyBoxes;
 	QLabel* m_details;
 	QListWidget* m_materialList;
+	QPushButton* m_glow = nullptr;
+	class EffectsPanel* m_effects = nullptr;
 	class EnhancementSwitches* m_enhancementSwitches;
 	AssetMenuFiller m_menuFiller;
 	QComboBox* m_placeAs;

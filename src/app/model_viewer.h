@@ -6,6 +6,8 @@
 #pragma once
 
 #include <QHash>
+#include <QImage>
+#include <QList>
 #include <QMatrix4x4>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
@@ -57,6 +59,21 @@ public:
 	[[nodiscard]] float yaw() const { return m_yaw; }
 	[[nodiscard]] float distance() const { return m_distance; }
 
+	/// Glow preview ("Glow ..."): the material is drawn like the game's $selfillum - towards
+	/// tint * base colour where the mask is white (mask: grey picture in the texture's layout).
+	/// An empty mask takes the material's glow away again.
+	void setGlow(const QString& material, const QImage& mask, const QVector3D& tint);
+	void clearGlow();
+	[[nodiscard]] bool hasGlow(const QString& material) const;
+	/// Labelled points drawn over the model (attachments for "Effects ..."), in model space.
+	struct Marker {
+		QVector3D position;
+		QString label;
+		bool highlighted = false;
+	};
+	void setMarkers(QList<Marker> markers);
+	[[nodiscard]] const QList<Marker>& markers() const { return m_markers; }
+
 protected:
 	/// Where the next frame is seen from (subclasses may put the camera elsewhere, e.g. the
 	/// animation editor's first-person view of a weapon). fov: vertical, in degrees.
@@ -103,6 +120,15 @@ private:
 	QHash<QString, Texture> m_textures;   ///< Uploaded base textures by material name
 	GLuint m_white = 0;                   ///< For materials without a texture
 	bool m_initialized = false;
+	struct Glow {
+		QImage mask;          ///< Waiting for upload (null once uploaded)
+		GLuint id = 0;
+		QVector3D tint;
+	};
+	QHash<QString, Glow> m_glows;         ///< By normalized material name
+	QList<GLuint> m_releasedGlows;        ///< Textures to delete on the next paint
+	QList<Marker> m_markers;
+	QMatrix4x4 m_lastViewProj;            ///< For placing the markers
 	// Orbit camera around m_center.
 	QVector3D m_center;
 	float m_yaw = 35, m_pitch = 18, m_distance = 200;

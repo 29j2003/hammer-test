@@ -669,6 +669,8 @@ void MainWindow::createDocks() {
 	connect(m_materialEditor, &MaterialEditor::importRequested, this, [this] { openImport(ImportDialog::Kind::Material); });
 	connect(m_modelsPage, &ModelsPage::importRequested, this, [this] { openImport(ImportDialog::Kind::Model); });
 	connect(m_particles, &ParticleBrowser::importRequested, this, [this] { openImport(ImportDialog::Kind::Particles); });
+	connect(m_modelsPage, &ModelsPage::modChanged, this, &MainWindow::reloadGameSoon);
+	connect(m_particles, &ParticleBrowser::modChanged, this, &MainWindow::reloadGameSoon);
 	connect(m_features, &FeaturesPanel::showRequested, this, [this] {
 		showPage(Page::Project);
 		m_projectPage->setCurrentWidget(m_features);

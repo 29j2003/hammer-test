@@ -6,7 +6,10 @@
 
 #include "asset_browser.h"
 #include "editor.h"
+#include "particle_editor.h"
 #include "ui_helpers.h"
+
+#include <sme/asset_import.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -17,6 +20,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
+#include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -400,6 +404,16 @@ ParticleBrowser::ParticleBrowser(Editor* editor, AssetBrowser* assets, QWidget* 
 	importParticles->setToolTip(tr("Bring a particle file (.pcf) into the mod and its particle list"));
 	searchRow->addWidget(importParticles);
 	connect(importParticles, &QPushButton::clicked, this, &ParticleBrowser::importRequested);
+	auto* newSystem = new QPushButton(tr("New ..."));
+	newSystem->setObjectName("particleNew");
+	newSystem->setToolTip(tr("Make a new particle system from a starting point (glow, sparks, smoke ...) and edit it"));
+	auto* templates = new QMenu(newSystem);
+	for (const auto kind : particleTemplates()) {
+		templates->addAction(QString::fromUtf8(particleTemplateLabel(kind).data(), int(particleTemplateLabel(kind).size())), this,
+		                     [this, kind] { newFromTemplate(kind); });
+	}
+	newSystem->setMenu(templates);
+	searchRow->addWidget(newSystem);
 	v->addLayout(searchRow);
 	m_tree = new ParticleTree;
 	addCopyShortcut(m_tree, Qt::DisplayRole);   // Ctrl+C: the effect name
@@ -445,6 +459,15 @@ ParticleBrowser::ParticleBrowser(Editor* editor, AssetBrowser* assets, QWidget* 
 	controls->addWidget(m_speed);
 	controls->addWidget(m_grid);
 	controls->addStretch(1);
+	m_edit = new QPushButton(tr("Edit"));
+	m_edit->setObjectName("particleEdit");
+	m_edit->setToolTip(tr("Change this system's values and parts; saving puts it into the mod"));
+	m_edit->setEnabled(false);
+	connect(m_edit, &QPushButton::clicked, this, &ParticleBrowser::editShownSystem);
+	controls->addWidget(m_edit);
+	m_previewSoon.setSingleShot(true);
+	m_previewSoon.setInterval(120);
+	connect(&m_previewSoon, &QTimer::timeout, this, &ParticleBrowser::updateEditPreview);
 	m->addLayout(controls);
 	// On its own line, so the dock under the map can stay narrow.
 	auto* hint = new QLabel(tr("Drag: turn · right drag: up/down · wheel: zoom"));
@@ -563,7 +586,7 @@ std::vector<ParticleDefinition> ParticleBrowser::definitionsOf(const QString& fi
 	return definitions;
 }
 
-void ParticleBrowser::showSystem(const QString& name, const QString& file) {
+std::vector<ParticleDefinition> ParticleBrowser::libraryFor(const QString& file) {
 	auto library = definitionsOf(file);
 	// Children may live in other files: add the files of the names that are missing.
 	for (int pass = 0; pass < 3; ++pass) {
@@ -585,6 +608,14 @@ void ParticleBrowser::showSystem(const QString& name, const QString& file) {
 			}
 		}
 	}
+	return library;
+}
+
+void ParticleBrowser::showSystem(const QString& name, const QString& file) {
+	if (m_particleEditor) stopEditing();
+	const auto library = libraryFor(file);
+	m_shownName = name;
+	m_shownFile = file;
 	const ParticleDefinition* definition = nullptr;
 	for (const auto& d : library) {
 		if (iequals(d.name, name.toStdString())) definition = &d;
@@ -593,9 +624,11 @@ void ParticleBrowser::showSystem(const QString& name, const QString& file) {
 	if (!definition) {
 		m_subtitle->setText(tr("%1 - could not be read").arg(file));
 		m_preview->clear();
+		m_edit->setEnabled(false);
 		showParts(nullptr, file);
 		return;
 	}
+	m_edit->setEnabled(true);
 	showParts(definition, file);
 	m_subtitle->setText(tr("%1  ·  material %2").arg(file, QString::fromStdString(definition->material())));
 	m_preview->setSystem(library, name, m_editor->game() ? &m_editor->game()->files : nullptr);
@@ -648,6 +681,101 @@ void ParticleBrowser::showParts(const ParticleDefinition* definition, const QStr
 	v->addStretch(1);
 	m_partsScroll->setWidget(parts);   // deletes the old cards
 	m_parts = parts;
+}
+
+bool ParticleBrowser::editShownSystem() {
+	if (m_shownName.isEmpty()) return false;
+	m_editLibrary = libraryFor(m_shownFile);
+	const auto it = std::find_if(m_editLibrary.begin(), m_editLibrary.end(), [&](const ParticleDefinition& d) { return iequals(d.name, m_shownName.toStdString()); });
+	if (it == m_editLibrary.end()) return false;
+	std::vector<std::string> dropped;
+	PcfSystem system = toPcfSystem(*it, &dropped);
+	// A system of the game is saved as a copy under a new name (the game's own stays as it is).
+	const auto* entry = m_editor->gameEntry();
+	const bool fromMod = entry && m_editor->game() && [&] {
+		const auto& mounts = m_editor->game()->files.mounts();
+		const auto index = m_editor->game()->files.locate(m_shownFile.toStdString());
+		std::error_code ec;
+		return index && *index < mounts.size() && std::filesystem::equivalent(mounts[*index].path, entry->gameDir, ec);
+	}();
+	QString note;
+	if (!fromMod) {
+		system.name += "_custom";
+		note = tr("A copy of %1 from %2 - saved under its own name, so the game's system stays as it is. Use the new name on your entities and models.")
+		           .arg(m_shownName, m_shownFile);
+	} else {
+		note = tr("From the mod's %1.").arg(m_shownFile);
+	}
+	if (!dropped.empty()) note += QStringLiteral(" ") + tr("%n value(s) of a kind Mapsmith cannot write are left out.", nullptr, int(dropped.size()));
+	note += QStringLiteral(" ") + tr("Picking another system ends editing - save first.");
+	startEditing(std::move(system), note);
+	return true;
+}
+
+void ParticleBrowser::newFromTemplate(ParticleTemplate kind) {
+	m_editLibrary.clear();
+	const std::string base = "mapsmith_" + particleSystemName(toLower(std::string(particleTemplateLabel(kind)).substr(0, std::string(particleTemplateLabel(kind)).find(' '))));
+	startEditing(particleFromTemplate(kind, base), tr("A new system. Change it here; the preview follows. Save to mod writes it into the mod."));
+}
+
+void ParticleBrowser::startEditing(PcfSystem system, const QString& note) {
+	auto* editorWidget = new ParticleEditor(m_editor, m_assets, m_partsScroll->viewport());
+	editorWidget->setSystem(std::move(system), note);
+	connect(editorWidget, &ParticleEditor::changed, this, [this] { m_previewSoon.start(); });
+	connect(editorWidget, &ParticleEditor::saveRequested, this, &ParticleBrowser::saveEdited);
+	connect(editorWidget, &ParticleEditor::closeRequested, this, [this] {
+		const QString name = m_shownName, file = m_shownFile;
+		stopEditing();
+		if (!name.isEmpty()) showSystem(name, file);
+		else showParts(nullptr, {});
+	});
+	m_partsScroll->setWidget(editorWidget);   // deletes the cards
+	m_parts = editorWidget;
+	m_particleEditor = editorWidget;
+	m_title->setText(QString::fromStdString(editorWidget->system().name));
+	updateEditPreview();
+}
+
+void ParticleBrowser::stopEditing() {
+	m_previewSoon.stop();
+	m_particleEditor = nullptr;   // the scroll area deletes it with the next widget
+}
+
+void ParticleBrowser::updateEditPreview() {
+	if (!m_particleEditor) return;
+	const auto& system = m_particleEditor->system();
+	auto systems = withChildren({system}, m_editLibrary);
+	// The preview shows what saving writes: the systems written and read back.
+	auto library = roundTrip(systems);
+	m_title->setText(QString::fromStdString(system.name));
+	m_subtitle->setText(tr("Editing  ·  material %1").arg(QString::fromStdString(library.empty() ? std::string() : library.front().material())));
+	m_preview->setSystem(std::move(library), QString::fromStdString(system.name), m_editor->game() ? &m_editor->game()->files : nullptr);
+}
+
+bool ParticleBrowser::saveEdited() {
+	if (!m_particleEditor) return false;
+	const auto* entry = m_editor->gameEntry();
+	const auto* game = m_editor->game();
+	if (!entry || !game) {
+		m_info->setText(tr("Open a game or mod first - the system is saved into it."));
+		return false;
+	}
+	const auto systems = withChildren({m_particleEditor->system()}, m_editLibrary);
+	const std::string file = modParticleFile(entry->gameDir.filename().string());
+	// The game's list of particle files: the mod's own list replaces it, so it must keep them.
+	const std::string manifest = game->files.readOriginal("particles/particles_manifest.txt", entry->gameDir)
+	                                 .value_or(game->files.readText("particles/particles_manifest.txt").value_or(std::string()));
+	std::string error;
+	const auto record = saveModParticles(entry->gameDir, file, systems, manifest, &error);
+	if (!record) {
+		m_info->setText(tr("Could not save: %1").arg(QString::fromStdString(error)));
+		return false;
+	}
+	rememberImport(entry->gameDir, *record);
+	m_info->setText(tr("Saved %1 into %2 (listed in particles_manifest.txt). Restart the map in the game to see it.")
+	                    .arg(QString::fromStdString(m_particleEditor->system().name), QString::fromStdString(file)));
+	emit modChanged();
+	return true;
 }
 
 } // namespace sme::app
