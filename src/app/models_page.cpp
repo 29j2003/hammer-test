@@ -244,6 +244,10 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_export->setToolTip(tr("Take the model apart into .smd files and a .qc (with its animations, collision model and materials) "
 	                        "to edit in Blender and compile again with studiomdl"));
 	placeRow->addWidget(m_export);
+	m_animate = new QPushButton(tr("Animate ..."));
+	m_animate->setObjectName("modelAnimate");
+	m_animate->setToolTip(tr("Make or improve an animation of this model with keys (Animation editor)"));
+	placeRow->addWidget(m_animate);
 	m_copy = new QPushButton(tr("Copy path"));
 	m_copy->setObjectName("modelCopy");
 	placeRow->addWidget(m_copy);
@@ -327,6 +331,9 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	});
 	connect(m_export, &QPushButton::clicked, this, [this] {
 		if (!m_current.isEmpty()) exportModel(m_current);
+	});
+	connect(m_animate, &QPushButton::clicked, this, [this] {
+		if (!m_current.isEmpty()) emit animateRequested(m_current);
 	});
 	connect(m_place, &QPushButton::clicked, this, [this] {
 		if (!m_current.isEmpty()) emit placeRequested(placeClass(), placeKeys());

@@ -82,7 +82,7 @@ int textSelector(const fs::path& path) {
 	if (ext == ".vcd") return 9;
 	if (name == "mapsmith_materials.txt") return 10;
 	if (ext == ".cfg") return 11;
-	if (ext == ".smd") return 15;
+	if (ext == ".smd" || ext == ".smanim") return 15;
 	if (ext == ".obj") return 16;
 	if (ext == ".txt" || ext == ".res" || ext == ".rad") return 0;
 	return -1;

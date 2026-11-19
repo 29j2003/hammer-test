@@ -7,6 +7,7 @@
 
 #include "fuzz_common.h"
 
+#include <sme/anim_edit.h>
 #include <sme/animation_import.h>
 #include <sme/asset_import.h>
 #include <sme/assets.h>
@@ -211,6 +212,8 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 			(void)parseSmd(in);
 			(void)readSmd(in);
 			(void)readAnimationList(in);
+			if (const auto clip = readAnimClip(in)) (void)writeAnimClip(*clip);
+			(void)replaceSequenceInQc(in, "idle", 30, true);
 			break;
 		case 16: {
 			const auto split = in.find('\0');

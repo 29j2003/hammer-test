@@ -6,6 +6,7 @@
 #pragma once
 
 #include <QHash>
+#include <QMatrix4x4>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLWidget>
@@ -16,6 +17,8 @@
 #include <vector>
 
 #include <sme/studio_model.h>
+
+class QPainter;
 
 namespace sme::app {
 
@@ -50,6 +53,19 @@ public:
 	[[nodiscard]] float distance() const { return m_distance; }
 
 protected:
+	/// Where the next frame is seen from (subclasses may put the camera elsewhere, e.g. the
+	/// animation editor's first-person view of a weapon). fov: vertical, in degrees.
+	struct Camera {
+		QVector3D eye, center, up{0, 0, 1};
+		float fov = 45;
+		float nearPlane = 0.5f, farPlane = 10000;
+	};
+	[[nodiscard]] virtual Camera camera() const;
+	/// Projection times view of camera() for the widget's size.
+	[[nodiscard]] QMatrix4x4 viewProjection() const;
+	/// Drawn on top of the model with a QPainter (helpers: skeletons, gizmos); nothing by default.
+	virtual void paintOverlay(QPainter& painter, const QMatrix4x4& viewProj);
+
 	void initializeGL() override;
 	void paintGL() override;
 	void mousePressEvent(QMouseEvent* event) override;

@@ -97,6 +97,8 @@ public:
 	void setAssetMenuFiller(AssetMenuFiller filler) { m_menuFiller = std::move(filler); }
 
 signals:
+	/// "Animate ...": open the Animation editor for a new animation of this model.
+	void animateRequested(const QString& model);
 	/// "Place in map" or a double-click: arm this class with these keyvalues on the Map page.
 	void placeRequested(const QString& classname, const std::vector<std::pair<std::string, std::string>>& keys);
 	/// A material of the model was clicked: open it in the material editor.
@@ -150,6 +152,7 @@ private:
 	QPushButton* m_place;
 	QPushButton* m_copy;
 	QPushButton* m_export;
+	QPushButton* m_animate;
 	QString m_folder;            ///< Folder picked in the tree ("models/props_c17/", empty = all)
 	QString m_current;
 	QTimer* m_usageUpdate = nullptr;   ///< Counts the model uses once after a burst of edits

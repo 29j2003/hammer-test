@@ -269,14 +269,10 @@ void ModelViewer::paintGL() {
 
 	const qreal dpr = devicePixelRatioF();
 	glViewport(0, 0, int(width() * dpr), int(height() * dpr));
-	const float pitch = qDegreesToRadians(m_pitch), yaw = qDegreesToRadians(m_yaw);
-	const QVector3D eye = m_center + m_distance * QVector3D(std::cos(yaw) * std::cos(pitch), std::sin(yaw) * std::cos(pitch), std::sin(pitch));
-	QMatrix4x4 projection, view;
-	projection.perspective(FOV, float(std::max(1, width())) / float(std::max(1, height())), std::max(0.5f, m_distance * 0.01f), m_distance * 20 + 1000);
-	view.lookAt(eye, m_center, QVector3D(0, 0, 1));
-	const QMatrix4x4 viewProj = projection * view;
+	const Camera view = camera();
+	const QMatrix4x4 viewProj = viewProjection();
 	// Light from the camera's upper left.
-	const QVector3D forward = (m_center - eye).normalized();
+	const QVector3D forward = (view.center - view.eye).normalized();
 	const QVector3D right = QVector3D::crossProduct(forward, QVector3D(0, 0, 1)).normalized();
 	const QVector3D keyDir = (-forward + QVector3D(0, 0, 0.9f) - right * 0.5f).normalized();
 
@@ -332,14 +328,36 @@ void ModelViewer::paintGL() {
 	glBindVertexArray(0);
 	glDisable(GL_DEPTH_TEST);
 
+	QPainter painter(this);
+	if (m_model && !m_model->empty()) paintOverlay(painter, viewProj);
 	if (!m_message.isEmpty() || !m_model || m_model->empty()) {
-		QPainter painter(this);
 		painter.setPen(QColor(160, 165, 175));
 		QString text = m_message;
 		if (text.isEmpty()) text = m_model ? tr("This model holds only animations for other models") : tr("Pick a model on the left");
 		painter.drawText(rect().adjusted(12, 12, -12, -12), Qt::AlignCenter | Qt::TextWordWrap, text);
 	}
 }
+
+ModelViewer::Camera ModelViewer::camera() const {
+	Camera view;
+	const float pitch = qDegreesToRadians(m_pitch), yaw = qDegreesToRadians(m_yaw);
+	view.center = m_center;
+	view.eye = m_center + m_distance * QVector3D(std::cos(yaw) * std::cos(pitch), std::sin(yaw) * std::cos(pitch), std::sin(pitch));
+	view.fov = FOV;
+	view.nearPlane = std::max(0.5f, m_distance * 0.01f);
+	view.farPlane = m_distance * 20 + 1000;
+	return view;
+}
+
+QMatrix4x4 ModelViewer::viewProjection() const {
+	const Camera view = camera();
+	QMatrix4x4 projection, look;
+	projection.perspective(view.fov, float(std::max(1, width())) / float(std::max(1, height())), view.nearPlane, view.farPlane);
+	look.lookAt(view.eye, view.center, view.up);
+	return projection * look;
+}
+
+void ModelViewer::paintOverlay(QPainter&, const QMatrix4x4&) {}
 
 void ModelViewer::mousePressEvent(QMouseEvent* event) {
 	m_lastMouse = event->position();

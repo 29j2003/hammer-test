@@ -35,6 +35,7 @@ add_library(smeapp STATIC
 	model_cache.cpp
 	model_thumbnails.cpp
 	model_viewer.cpp
+	anim_edit_view.cpp anim_timeline.cpp anim_editor.cpp
 	scene_poser.cpp
 	choreography_panel.cpp
 	choreography_panel_logic.cpp

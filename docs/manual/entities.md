@@ -317,6 +317,36 @@ model in the same step. Limits: the new model has no facial expressions (flexes)
 shown, no own collision model (props that need physics keep the original) and hitboxes made by studiomdl; `.fbx` is not
 read - export `.smd`.
 
+## The Animation editor: keys like in Source Filmmaker
+
+Improve an animation (a weapon's reload, an NPC's wave) or make a new one without Blender. Open it with **Edit animation
+...** on the Animations page (the chosen animation), **New animation ...** there (a new one starting from the chosen
+animation's pose), or **Animate ...** on the Models page.
+
+- **Bones**: click one in the 3D view (Ctrl adds more) or in the list on the left. *Search bones* and the group list
+  (*Right arm*, *Left hand*, *Spine and head*, *Weapon* ...) find them quickly.
+- **Turn (E)**: drag a ring - red, green and blue turn the bone about its own axes, the outer white ring about the view.
+  **Move (W)**: drag an arrow to move the bone along X, Y or Z. Or type the values on the right.
+- **Keys**: a change sets a key at the current frame (the orange diamond on the timeline). **K** keys the chosen bones
+  as they are now, **Delete** removes their key. Between keys the motion is filled in: *Smooth* eases in and out,
+  *Linear* keeps an even speed (right-click a key, or *To next key*).
+- **Timeline**: click or drag to move through the animation, **Space** plays, **← / →** step a frame. Drag a key to move it,
+  with **Ctrl** to copy it. The *Chosen* row shows the chosen bones' keys, *All bones* every key.
+- **Improving keeps the original**: bones without keys move exactly as before; a key only adds its change on top. To
+  make it faster or slower, change *Frames* - the original and your keys stretch with it.
+- **Copy pose / Paste** copies the chosen bones' changes to another frame; **Mirror** gives the chosen bones their other
+  side's pose (left arm like the right one); with no bone chosen, the whole pose is flipped. **Ghosts** shows the
+  skeleton a few frames before and after.
+- **Player's view (weapons)**: shows a first-person weapon model as the player sees it in the game.
+- **Save** (Ctrl+S) keeps your keys below the mod (`modelsrc/<model>/animations/`); opening the same animation again
+  goes on from there.
+- **Preview in Mapsmith** plays it on the Animations page at once (not in the game yet).
+- **Build ... › As a new animation** adds it to Mapsmith's copy of the model (`models/mapsmith/...`), like *Add animation*.
+- **Build ... › Replace the animation in the model** puts it in place of an animation of the model itself and builds the
+  model into your mod at the same path with the game's `studiomdl` - the game then uses your version (this is how a
+  weapon gets a new reload). Facial flexes, LODs and IK rules of the model are not carried over. Mapsmith keeps the
+  model as it was; **Build ... › Restore the original model** puts it back.
+
 ## NPCs and animated models
 
 Select an NPC or a `prop_dynamic`. The **Animation / pose** box (**Animation** for props) lists the model's
