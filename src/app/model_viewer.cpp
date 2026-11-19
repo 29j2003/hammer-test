@@ -277,7 +277,7 @@ void ModelViewer::paintGL() {
 	const QVector3D keyDir = (-forward + QVector3D(0, 0, 0.9f) - right * 0.5f).normalized();
 
 	glEnable(GL_DEPTH_TEST);
-	if (m_gridVertices > 0) {
+	if (m_gridVertices > 0 && !m_firstPerson) {
 		m_lineProgram->bind();
 		m_lineProgram->setUniformValue("u_viewProj", viewProj);
 		m_lineProgram->setUniformValue("u_color", QVector4D(0.38f, 0.40f, 0.44f, 1.0f));
@@ -340,6 +340,16 @@ void ModelViewer::paintGL() {
 
 ModelViewer::Camera ModelViewer::camera() const {
 	Camera view;
+	if (m_firstPerson) {
+		// As the game's view model: from the eye along +X. Source gives the field of view for a 4:3
+		// screen and keeps its height on wider ones (view.cpp), so the vertical angle is fixed.
+		view.eye = {};
+		view.center = {1, 0, 0};
+		view.fov = 2.0f * qRadiansToDegrees(std::atan(std::tan(qDegreesToRadians(m_viewFov * 0.5f)) * 0.75f));
+		view.nearPlane = 0.5f;
+		view.farPlane = 4000;
+		return view;
+	}
 	const float pitch = qDegreesToRadians(m_pitch), yaw = qDegreesToRadians(m_yaw);
 	view.center = m_center;
 	view.eye = m_center + m_distance * QVector3D(std::cos(yaw) * std::cos(pitch), std::sin(yaw) * std::cos(pitch), std::sin(pitch));
@@ -365,7 +375,7 @@ void ModelViewer::mousePressEvent(QMouseEvent* event) {
 }
 
 void ModelViewer::mouseMoveEvent(QMouseEvent* event) {
-	if (m_dragButton == Qt::NoButton) return;
+	if (m_dragButton == Qt::NoButton || m_firstPerson) return;
 	const QPointF delta = event->position() - m_lastMouse;
 	m_lastMouse = event->position();
 	if (m_dragButton == Qt::LeftButton) {
@@ -388,10 +398,17 @@ void ModelViewer::mouseReleaseEvent(QMouseEvent*) {
 }
 
 void ModelViewer::mouseDoubleClickEvent(QMouseEvent*) {
-	frameModel();
+	if (!m_firstPerson) frameModel();
+}
+
+void ModelViewer::setFirstPerson(bool on, float fov) {
+	m_firstPerson = on;
+	m_viewFov = std::clamp(fov > 0 ? fov : 54.0f, 20.0f, 120.0f);
+	update();
 }
 
 void ModelViewer::wheelEvent(QWheelEvent* event) {
+	if (m_firstPerson) return;
 	const float steps = float(event->angleDelta().y()) / 120.0f;
 	m_distance = std::clamp(m_distance * std::pow(0.85f, steps), 2.0f, 60000.0f);
 	update();

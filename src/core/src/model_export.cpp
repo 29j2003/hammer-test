@@ -395,6 +395,17 @@ std::string physicsSmd(const PhysicsModel& physics, const std::vector<StudioBone
 	return out;
 }
 
+int smdFrameCount(std::string_view smd) {
+	// "time N" lines of the skeleton block.
+	int frames = 0;
+	std::size_t at = 0;
+	while ((at = smd.find("time ", at)) != std::string_view::npos) {
+		if (at == 0 || smd[at - 1] == '\n') ++frames;
+		at += 5;
+	}
+	return std::max(frames, 1);
+}
+
 std::string poseFramesSmd(const std::vector<StudioBone>& bones, const std::vector<std::vector<std::pair<AnimVec, AnimQuat>>>& frames) {
 	std::string out = "version 1\nnodes\n";
 	for (std::size_t i = 0; i < bones.size(); ++i) out += std::to_string(i) + " \"" + clean(bones[i].name) + "\" " + std::to_string(bones[i].parent) + "\n";
@@ -533,20 +544,60 @@ std::optional<ModelExport> decompileModel(const GameFileSystem& fs, std::string_
 		}
 	}
 
-	// Animation .smd files.
+	// Animation .smd files, with each sequence's events (from its file, or the replacement).
+	std::map<std::string, SequenceEvents> eventsByName;   // lower-case sequence name -> events, first file wins
+	for (const auto& file : animated->files()) {
+		if (file.empty()) continue;
+		const auto data = iequals(file, path) ? std::optional<std::vector<std::byte>>(*mdl) : fs.read(file);
+		if (!data) continue;
+		for (auto& seq : readSequenceEvents(*data)) eventsByName.emplace(toLower(seq.sequence), std::move(seq));
+	}
 	std::string sequenceLines;
+	const auto writeSequence = [&](const std::string& seqName, const std::string& smd, float fps, bool loop, bool delta, const std::string& activity,
+	                               const std::vector<ModelEvent>& events) {
+		const std::string file = "anims/" + uniqueName(used, fileStem(seqName), ".smd");
+		out.texts[file] = smd;
+		++out.sequences;
+		std::string options = "fps " + number(fps > 0 ? fps : 30);
+		if (loop) options += " loop";
+		if (delta) options += " delta";
+		if (!activity.empty()) options += " activity \"" + clean(activity) + "\" 1";
+		if (events.empty()) {
+			sequenceLines += "$sequence \"" + clean(seqName) + "\" \"" + file + "\" " + options + "\n";
+			return;
+		}
+		// Block form (as Crowbar writes it): the file, the options, one line per event.
+		const int frames = smdFrameCount(smd);
+		sequenceLines += "$sequence \"" + clean(seqName) + "\" {\n\t\"" + file + "\"\n\t" + options + "\n";
+		for (const auto& event : events) sequenceLines += "\t" + qcEventLine(event, frames) + "\n";
+		sequenceLines += "}\n";
+	};
+	std::set<std::string> written;
 	for (const int s : sequences) {
 		if (!step()) return fail("stopped");
 		const auto& seq = animated->sequences()[std::size_t(s)];
-		const std::string file = "anims/" + uniqueName(used, fileStem(seq.name), ".smd");
-		out.texts[file] = sequenceSmd(*animated, s);
-		++out.sequences;
-		sequenceLines += "$sequence \"" + clean(seq.name) + "\" \"" + file + "\" fps " + number(seq.fps > 0 ? seq.fps : 30);
-		if (seq.looping) sequenceLines += " loop";
-		if (seq.delta) sequenceLines += " delta";
-		if (!seq.activity.empty()) sequenceLines += " activity \"" + clean(seq.activity) + "\" 1";
-		sequenceLines += "\n";
+		const std::string key = toLower(seq.name);
+		written.insert(key);
+		std::vector<ModelEvent> events;
+		if (const auto it = options.events.find(key); it != options.events.end()) {
+			events = it->second;
+		} else if (const auto found = eventsByName.find(key); found != eventsByName.end()) {
+			events = found->second.events;
+		}
+		if (const auto replaced = options.replacements.find(key); replaced != options.replacements.end() && !replaced->second.smd.empty()) {
+			const auto& r = replaced->second;
+			writeSequence(seq.name, r.smd, r.fps > 0 ? r.fps : seq.fps, r.loop < 0 ? seq.looping : r.loop == 1, seq.delta,
+			              r.activity.empty() ? seq.activity : r.activity, events);
+		} else {
+			writeSequence(seq.name, sequenceSmd(*animated, s), seq.fps, seq.looping, seq.delta, seq.activity, events);
+		}
 		if (seq.blends > 1) out.notes.push_back("sequence " + seq.name + ": a blend of " + std::to_string(seq.blends) + " poses, only the middle one is written");
+	}
+	// New sequences (replacements for names the model does not have).
+	for (const auto& [key, r] : options.replacements) {
+		if (written.count(key) || r.smd.empty()) continue;
+		const auto evIt = options.events.find(key);
+		writeSequence(key, r.smd, r.fps, r.loop == 1, false, r.activity, evIt != options.events.end() ? evIt->second : std::vector<ModelEvent>{});
 	}
 
 	// The physics model.
@@ -658,7 +709,7 @@ std::optional<ModelExport> decompileModel(const GameFileSystem& fs, std::string_
 	if (!sequenceLines.empty()) qc += "\n" + sequenceLines;
 	if (!collision.empty()) qc += "\n" + collision;
 	out.texts[out.qcFile] = qc;
-	out.notes.push_back("not written: LODs, flexes (faces), sequence events, IK rules");
+	out.notes.push_back("not written: LODs, flexes (faces), IK rules");
 	if (progress) progress(total, total);
 	return out;
 }

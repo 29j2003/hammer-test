@@ -125,6 +125,28 @@ void drawPageIcon(QPainter& p, const QString& name, const QColor& line, const QC
 		p.drawLine(QPointF(8, 40), QPointF(17, 40));
 		return;
 	}
+	if (name == "page:weapons") {
+		// A pistol from the side: barrel and slide, grip, trigger guard, a muzzle flash.
+		QPainterPath gun;
+		gun.moveTo(12, 20);
+		gun.lineTo(46, 20);
+		gun.lineTo(46, 30);
+		gun.lineTo(28, 30);
+		gun.lineTo(25, 50);
+		gun.lineTo(15, 50);
+		gun.lineTo(18, 30);
+		gun.lineTo(12, 30);
+		gun.closeSubpath();
+		p.setPen(pen(line, w));
+		p.setBrush(Qt::NoBrush);
+		p.drawPath(gun);
+		p.drawArc(QRectF(22, 26, 10, 12), 180 * 16, 180 * 16);   // trigger guard
+		p.setPen(pen(accent, w));
+		p.drawLine(QPointF(50, 25), QPointF(58, 25));
+		p.drawLine(QPointF(50, 19), QPointF(56, 14));
+		p.drawLine(QPointF(50, 31), QPointF(56, 36));
+		return;
+	}
 	if (name == "page:sounds") {
 		// Waveform bars.
 		const double heights[] = {12, 26, 40, 22, 32, 14};

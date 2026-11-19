@@ -29,6 +29,9 @@
 #include <sme/localization.h>
 #include <sme/map.h>
 #include <sme/material.h>
+#include <sme/model_events.h>
+#include <sme/model_rebuild.h>
+#include <sme/weapons.h>
 #include <sme/material_decisions.h>
 #include <sme/mod_features.h>
 #include <sme/mod_menu.h>
@@ -84,6 +87,9 @@ inline void studio(const std::uint8_t* data, std::size_t size) {
 	(void)readAttachments(mdl);
 	(void)readHitboxes(mdl);
 	(void)readSkinFamilies(mdl);
+	for (const auto& seq : readSequenceEvents(mdl)) {
+		for (const auto& event : seq.events) (void)qcEventLine(event, seq.frames);
+	}
 	(void)readMdlMaterialTable(mdl);
 	(void)buildModelGeometry({mdl, vvd, vtx}, 1, nullptr, {}, 3);
 	(void)buildBodyPartGeometry({mdl, vvd, vtx}, 0, 1);
@@ -214,6 +220,15 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 			(void)readAnimationList(in);
 			if (const auto clip = readAnimClip(in)) (void)writeAnimClip(*clip);
 			(void)replaceSequenceInQc(in, "idle", 30, true);
+			(void)smdFrameCount(in);
+			if (auto script = parseWeaponScript(in, "weapon_fuzz")) {
+				(void)script->sounds();
+				(void)writeWeaponScript(*script);
+				(void)weaponSkillValues(*script);
+			}
+			(void)withSkillValue(in, "sk_plr_dmg_smg1", "4");
+			(void)readSkillValues(in);
+			(void)readModelChanges(in, [](std::string_view) { return std::string("version 1\nnodes\nend\n"); });
 			break;
 		case 16: {
 			const auto split = in.find('\0');

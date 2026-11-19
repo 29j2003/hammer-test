@@ -245,7 +245,8 @@ compile again with studiomdl:
 
 The files go to `modelsrc/<model path>/` of your mod unless you pick another folder; **Open folder** shows them when
 it is done. On the Animations page, **Export ...** (or right-click on an animation) writes just that one animation,
-with the model's reference so the skeleton comes along. Not exported: LODs, facial flexes, animation events and IK
+with the model's reference so the skeleton comes along. Animation events (sounds, muzzle flashes, effects) go into
+the `.qc` with their animation. Not exported: LODs, facial flexes and IK
 rules; of a pose-parameter blend (9-way aims) only the middle pose is written.
 
 ## The Animations page

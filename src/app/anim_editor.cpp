@@ -129,17 +129,9 @@ AnimationEditor::AnimationEditor(Editor* editor, MaterialCache* materials, Anima
 			return;
 		}
 		// The rest runs here: write the sources, set the mod's files aside, start studiomdl.
+		// The new frames are already in the export (ModelExportOptions::replacements): the .qc keeps the
+		// sequence's activity and its events (sounds, effects), written by decompileModel.
 		ModelExport out = *exported;
-		const auto it = out.texts.find(out.qcFile);
-		const auto replaced = it == out.texts.end() ? std::nullopt
-		                                            : replaceSequenceInQc(it->second, m_replaceSequence.toStdString(), m_edit->clip().fps, m_edit->clip().loop);
-		if (!replaced) {
-			m_log->appendPlainText(tr("The model has no sequence \"%1\" of its own to replace.").arg(m_replaceSequence));
-			emit replaceFinished(false);
-			return;
-		}
-		it->second = replaced->qc;
-		out.texts[replaced->smdFile] = m_edit->smd();
 		for (const auto& note : out.notes) m_log->appendPlainText(tr("Note: %1").arg(qs(note)));
 		const QString folder = QDir(sourceFolder()).filePath("compile");
 		std::string error;
@@ -1171,7 +1163,12 @@ bool AnimationEditor::replaceInModel(const QString& sequence) {
 		m_log->appendPlainText(tr("Choose the sequence to replace"));
 		return false;
 	}
-	if (const int s = m_animated->findSequence(m_replaceSequence.toStdString()); s >= 0 && m_animated->sequences()[std::size_t(s)].blends > 1) {
+	const int replacedIndex = m_animated->findSequence(m_replaceSequence.toStdString());
+	if (replacedIndex < 0 || m_animated->sequences()[std::size_t(replacedIndex)].model != 0) {
+		m_log->appendPlainText(tr("The model has no sequence \"%1\" of its own to replace.").arg(m_replaceSequence));
+		return false;
+	}
+	if (const int s = replacedIndex; m_animated->sequences()[std::size_t(s)].blends > 1) {
 		m_log->appendPlainText(tr("Note: \"%1\" blends several poses (aiming); it becomes this one animation.").arg(m_replaceSequence));
 	}
 	setPlaying(false);
@@ -1182,6 +1179,11 @@ bool AnimationEditor::replaceInModel(const QString& sequence) {
 	ModelExportOptions options;
 	options.materials = false;
 	options.pictures = false;
+	SequenceReplacement replacement;
+	replacement.smd = m_edit->smd();
+	replacement.fps = m_edit->clip().fps;
+	replacement.loop = m_edit->clip().loop ? 1 : 0;
+	options.replacements[m_replaceSequence.toLower().toStdString()] = std::move(replacement);
 	m_decompile.setFuture(QtConcurrent::run([fs, path, options]() -> std::optional<ModelExport> { return decompileModel(*fs, path, options); }));
 	return true;
 }

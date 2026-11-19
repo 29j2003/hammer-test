@@ -98,6 +98,14 @@ struct StudioModelSpec {
 		bool rawFirstBone = false; ///< Bone 0 stored raw (Quaternion48 + Vector48, the first frame's values)
 		bool delta = false;        ///< A delta (STUDIO_DELTA): frames are offsets from the pose underneath, not from the rest pose
 		std::vector<int> blend;    ///< The sequence blends these animations (groupsize blend.size() x 1); empty: just this one
+		/// Animation events of the sequence (mstudioevent_t): a name makes it a NEW_EVENT_STYLE event.
+		struct Event {
+			float cycle = 0;
+			int number = 0;
+			std::string name;
+			std::string options;
+		};
+		std::vector<Event> events;
 	};
 	std::vector<Animation> animations;            ///< With these the sequences are the animations' (sequences is ignored)
 	std::string aniName = "models/test_anim.ani"; ///< Name of the .ani in the header

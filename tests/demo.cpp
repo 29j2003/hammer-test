@@ -751,7 +751,9 @@ void createDemo(Fixture& f) {
 	          "\"Weapon_Pistol.Single\" { \"channel\" \"CHAN_WEAPON\" \"soundlevel\" \"SNDLVL_GUNFIRE\" \"wave\" \")weapons/pistol/pistol_fire2.wav\" }\n"
 	          "\"Doors.Squeak\" { \"wave\" \"doors/door_squeak1.wav\" }\n"
 	          "\"Doors.Move1\" { \"wave\" \"doors/door_move1.wav\" }\n\"Doors.FullClose1\" { \"wave\" \"doors/door_close1.wav\" }\n"
-	          "\"Doors.Locked1\" { \"wave\" \"doors/door_locked1.wav\" }\n");
+	          "\"Doors.Locked1\" { \"wave\" \"doors/door_locked1.wav\" }\n"
+	          "\"Weapon_Pistol.Reload\" { \"channel\" \"CHAN_ITEM\" \"wave\" \"weapons/pistol/pistol_reload1.wav\" }\n"
+	          "\"Weapon_Pistol.Empty\" { \"channel\" \"CHAN_WEAPON\" \"wave\" \"weapons/pistol/pistol_empty.wav\" }\n");
 	// Real WAV files (16-bit mono): a wind loop with a cue point and a short alarm beep.
 	const auto writeWav = [](const std::filesystem::path& path, const std::vector<std::int16_t>& samples, std::optional<std::uint32_t> loop) {
 		std::vector<std::byte> out;
@@ -821,6 +823,45 @@ void createDemo(Fixture& f) {
 		writeWav(f.mod / "sound/doors/door_locked1.wav", impact, std::nullopt);
 		writeWav(f.mod / "sound/physics/metal/metal_box_impact_hard1.wav", impact, std::nullopt);
 		writeWav(f.mod / "sound/vo/hello.wav", voice, std::nullopt);
+		// The game's weapon sounds (in hl2/, so the mod can cover them).
+		writeWav((f.sdkBase / "hl2") / "sound/weapons/pistol/pistol_reload1.wav", impact, std::nullopt);
+		writeWav((f.sdkBase / "hl2") / "sound/weapons/pistol/pistol_empty.wav", impact, std::nullopt);
+	}
+	// A weapon of the game (Weapons page): its script, a first-person model with a reload that
+	// plays sounds and a fire with a muzzle flash, a world model and its material.
+	{
+		writeText((f.sdkBase / "hl2") / "scripts/weapon_pistol.txt",
+		          "WeaponData\n{\n\t\"printname\"\t\"#HL2_Pistol\"\n\t\"viewmodel\"\t\"models/weapons/v_pistol.mdl\"\n"
+		          "\t\"playermodel\"\t\"models/weapons/w_pistol.mdl\"\n\t\"anim_prefix\"\t\"pistol\"\n\t\"bucket\"\t\"1\"\n\t\"bucket_position\"\t\"0\"\n"
+		          "\t\"clip_size\"\t\"18\"\n\t\"primary_ammo\"\t\"Pistol\"\n\t\"secondary_ammo\"\t\"None\"\n\t\"weight\"\t\"2\"\n"
+		          "\tSoundData\n\t{\n\t\t\"reload\"\t\"Weapon_Pistol.Reload\"\n\t\t\"empty\"\t\"Weapon_Pistol.Empty\"\n"
+		          "\t\t\"single_shot\"\t\"Weapon_Pistol.Single\"\n\t}\n}\n");
+		StudioModelSpec gun;
+		// Barrel, slide and grip in front of the eye (the view model's origin), hands below.
+		gun.groups.push_back({"studio", {{"v_pistol", {{14, -2, -9, 26, 2, -5}, {13, -1.5f, -14, 17, 1.5f, -9}, {10, 2, -16, 16, 6, -11}}}}});
+		gun.bones = {{"root", -1, {0, 0, 0}, {0, 0, 0}}, {"Slide", 0, {20, 0, -7}, {0, 0, 0}}};
+		gun.boxBones = {1, 0, 0};
+		gun.textures = {"v_pistol_sheet"};
+		gun.cdmaterials = "models/weapons/v_pistol/";
+		StudioModelSpec::Animation idle{"idle01", "ACT_VM_IDLE", 30, true, {{{0, 0, 0, 0, 0, 0}, {20, 0, -7, 0, 0, 0}}}};
+		StudioModelSpec::Animation fire{"fire", "ACT_VM_PRIMARYATTACK", 30, false, {}};
+		for (int k = 0; k < 6; ++k) fire.frames.push_back({{0, 0, 0, 0, 0, 0}, {20 - (k < 3 ? float(k) : float(5 - k)), 0, -7, 0, 0, 0}});
+		fire.events = {{0, 5001, "", "1"}};
+		StudioModelSpec::Animation reload{"reload", "ACT_VM_RELOAD", 30, false, {}};
+		for (int k = 0; k < 31; ++k) {
+			const float t = float(std::min(k, 30 - k));
+			reload.frames.push_back({{0, 0, -t * 0.3f, 0, t * 0.02f, 0}, {20, 0, -7, 0, 0, 0}});
+		}
+		reload.events = {{0.2f, 0, "AE_CL_PLAYSOUND", "Weapon_Pistol.Reload"}, {0.8f, 5004, "", "Weapon_Pistol.Empty"}};
+		gun.animations = {idle, fire, reload};
+		writeStudioModel((f.sdkBase / "hl2") / "models/weapons/v_pistol.mdl", makeStudioModel(gun));
+		writeStudioModel((f.sdkBase / "hl2") / "models/weapons/w_pistol.mdl",
+		                 makeStudioModel({{-2, -1, 0, 8, 1, 3}, {-1, -1, -4, 1, 1, 0}}, {"idle"}, "", "w_pistol_sheet", "models/weapons/w_pistol/"));
+		writeText((f.sdkBase / "hl2") / "materials/models/weapons/v_pistol/v_pistol_sheet.vmt",
+		          "\"VertexLitGeneric\"\n{\n\t\"$basetexture\" \"models/weapons/v_pistol/v_pistol_sheet\"\n}\n");
+		writeBytes((f.sdkBase / "hl2") / "materials/models/weapons/v_pistol/v_pistol_sheet.vtf", makeVtf(32, 60, 62, 70));
+		writeText((f.sdkBase / "hl2") / "materials/models/weapons/w_pistol/w_pistol_sheet.vmt",
+		          "\"VertexLitGeneric\"\n{\n\t\"$basetexture\" \"models/weapons/v_pistol/v_pistol_sheet\"\n}\n");
 	}
 	writeText(f.mod / "scripts/soundscapes_manifest.txt", "soundscapes_manifest\n{\n\t\"file\" \"scripts/soundscapes_demo.txt\"\n}\n");
 	writeText(f.mod / "scripts/soundscapes_demo.txt",
@@ -1410,6 +1451,24 @@ StudioModelFiles makeStudioModel(const StudioModelSpec& spec) {
 			put32(mdl, seq + 60, static_cast<std::int32_t>(blend - seq));
 			put32(mdl, seq + 68, static_cast<std::int32_t>(blendOf.size()));
 			put32(mdl, seq + 72, 1);
+			// Events (80 bytes each: cycle, event, type, options[64], szeventindex).
+			if (!anim.events.empty()) {
+				const std::size_t events = grow(mdl, 80 * anim.events.size());
+				put32(mdl, seq + 24, static_cast<std::int32_t>(anim.events.size()));
+				put32(mdl, seq + 28, static_cast<std::int32_t>(events - seq));
+				for (std::size_t e = 0; e < anim.events.size(); ++e) {
+					const auto& event = anim.events[e];
+					const std::size_t at = events + 80 * e;
+					putFloat(mdl, at, event.cycle);
+					put32(mdl, at + 4, event.number);
+					put32(mdl, at + 8, event.name.empty() ? 0 : (1 << 10));
+					std::memcpy(mdl.data() + at + 12, event.options.data(), std::min<std::size_t>(event.options.size(), 63));
+					if (!event.name.empty()) {
+						const auto name = putString(mdl, event.name);
+						put32(mdl, at + 76, static_cast<std::int32_t>(name - at));
+					}
+				}
+			}
 			// Where a run of frames goes: into the .mdl (block 0, from the desc) or the .ani (block 1).
 			const auto store = [&](int first, int last) -> std::pair<std::int32_t, std::int32_t> {
 				const auto bytes = encodeAnimation(spec, anim, first, last);

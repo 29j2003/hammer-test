@@ -9,9 +9,14 @@
 // animation import read them again.
 //
 // Coordinates: studiomdl turns .smd data 90 degrees about Z; the files are turned back (as
-// animation_import's referenceSmd), so a recompile gives the model in the same place. Not written:
-// LODs, flexes (faces), sequence events, the other blend samples of a pose-parameter blend (only
-// the centre one), IK rules. Files are untrusted: every offset and count is checked.
+// animation_import's referenceSmd), so a recompile gives the model in the same place. Sequence
+// events (sounds, muzzle flashes, effects; model_events.h) are written into each $sequence block,
+// so a recompiled weapon still plays its reload sounds. Not written: LODs, flexes (faces), the
+// other blend samples of a pose-parameter blend (only the centre one), IK rules. Files are
+// untrusted: every offset and count is checked.
+//
+// Changes for a rebuild (model_rebuild.h): ModelExportOptions can replace the events of a
+// sequence, replace a sequence's frames with another animation .smd, or add new sequences.
 
 #pragma once
 
@@ -24,6 +29,7 @@
 #include <string_view>
 #include <vector>
 
+#include <sme/model_events.h>
 #include <sme/studio_anim.h>
 
 namespace sme {
@@ -82,6 +88,18 @@ struct PhysicsModel {
 /// on the rest pose), root bones turned back for studiomdl.
 [[nodiscard]] std::string sequenceSmd(const AnimatedModel& model, int sequence);
 
+/// A sequence's frames from somewhere else (an animation editor, an imported .smd).
+struct SequenceReplacement {
+	std::string smd;                 ///< Animation .smd text (skeleton of the model, turned for studiomdl like sequenceSmd's)
+	float fps = 0;                   ///< 0: keep the sequence's (30 for a new one)
+	int loop = -1;                   ///< -1 keep, 0 no, 1 loop
+	std::string activity;            ///< Empty: keep (none for a new one)
+	bool operator==(const SequenceReplacement&) const = default;
+};
+
+/// Frames in an animation .smd (the "time" lines of its skeleton block), at least 1.
+[[nodiscard]] int smdFrameCount(std::string_view smd);
+
 /// What to export.
 struct ModelExportOptions {
 	bool animations = true;               ///< Animation .smd files at all
@@ -90,6 +108,12 @@ struct ModelExportOptions {
 	bool physics = true;                  ///< The collision .smd from the .phy
 	bool materials = true;                ///< Copy the .vmt and .vtf files
 	bool pictures = true;                 ///< The textures also as .png next to their .vtf
+	/// Events that replace a sequence's own (key: sequence name in lower case; an empty list
+	/// removes all its events).
+	std::map<std::string, std::vector<ModelEvent>> events;
+	/// Frames that replace a sequence's own (key: sequence name in lower case). A name the model
+	/// has no sequence for is added as a new sequence.
+	std::map<std::string, SequenceReplacement> replacements;
 };
 
 /// The export as file contents, before anything is written (paths relative to the export folder).

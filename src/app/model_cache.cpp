@@ -29,8 +29,13 @@ void ModelCache::setFileSystem(const GameFileSystem* fs, const EntityCatalog* ca
 
 void ModelCache::forget(const QString& path) {
 	for (auto it = m_entries.begin(); it != m_entries.end();) {
-		if (!it->loading && (it.key().compare(path, Qt::CaseInsensitive) == 0 || it.key().startsWith(path + '#', Qt::CaseInsensitive))) {
-			it = m_entries.erase(it);
+		if (it.key().compare(path, Qt::CaseInsensitive) == 0 || it.key().startsWith(path + '#', Qt::CaseInsensitive)) {
+			if (it->loading) {
+				it->stale = true;
+				++it;
+			} else {
+				it = m_entries.erase(it);
+			}
 		} else {
 			++it;
 		}
@@ -66,6 +71,12 @@ std::shared_ptr<const ModelGeometry> ModelCache::get(const QString& path) {
 					return;
 				}
 				auto& entry = self->m_entries[path];
+				if (entry.stale) {
+					// Forgotten while loading: read the files again (modelReady follows that load).
+					entry = Entry{};
+					(void)self->get(path);
+					return;
+				}
 				entry.loading = false;
 				entry.geometry = shared;
 				entry.error = shared ? QString() : QString::fromStdString(error.empty() ? "unknown error" : error);

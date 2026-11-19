@@ -178,6 +178,11 @@
 #include "anim_editor.h"
 #include "anim_timeline.h"
 #include "animations_page.h"
+#include "model_rebuild_job.h"
+#include "weapons_page.h"
+#include <sme/model_rebuild.h>
+#include <sme/sound_edit.h>
+#include <sme/weapons.h>
 #include "model_export_dialog.h"
 #include "plural_text.h"
 #include "models_page.h"
@@ -1552,7 +1557,7 @@ TEST_CASE("editing with the mouse in the real window") {
 			for (int i = 0; i < sounds->categories()->count(); ++i) categoryTexts << sounds->categories()->item(i)->text();
 			CHECK(categoryTexts.front().startsWith("All sounds"));
 			REQUIRE(categoryTexts.filter("Weapons").size() == 1);
-			CHECK(categoryTexts.filter("Weapons").front().endsWith(" 2"));   // Weapon_Pistol.Single and its file
+			CHECK(categoryTexts.filter("Weapons").front().endsWith(" 6"));   // Weapon_Pistol.Single, .Reload, .Empty and their files
 			CHECK(categoryTexts.filter("Doors and buttons").front().endsWith(" 8"));   // 4 door scripts and their files
 			CHECK(categoryTexts.filter("Voice and dialogue").front().endsWith(" 2"));   // NPC_Citizen.Hello speaks
 			CHECK(categoryTexts.back().startsWith("Soundscapes"));
@@ -1562,7 +1567,11 @@ TEST_CASE("editing with the mouse in the real window") {
 			CHECK(sounds->categories()->currentItem()->text().startsWith("Weapons"));
 			CHECK_FALSE(pistol->isHidden());
 			CHECK(pistol->parent()->text(0) == "weapons/pistol");
-			CHECK(pistol->parent()->child(0)->text(0) == "Weapon_Pistol.Single");
+			{
+				QStringList names;
+				for (int i = 0; i < pistol->parent()->childCount(); ++i) names << pistol->parent()->child(i)->text(0);
+				CHECK(names.contains("Weapon_Pistol.Single"));
+			}
 			// Searching finds things in other categories too.
 			sounds->findChild<QLineEdit*>("soundSearch")->setText("squeak");
 			QTest::qWait(400);
@@ -2618,7 +2627,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		}
 		return width;
 	};
-	for (const auto page : {MainWindow::Page::Map, MainWindow::Page::Materials, MainWindow::Page::Models, MainWindow::Page::Sounds,
+	for (const auto page : {MainWindow::Page::Map, MainWindow::Page::Materials, MainWindow::Page::Models, MainWindow::Page::Weapons, MainWindow::Page::Sounds,
 	                        MainWindow::Page::Particles, MainWindow::Page::Project}) {
 		window.showPage(page);
 		settle();
@@ -13010,4 +13019,226 @@ TEST_CASE("animation editor: improve an animation with keys, preview it and rebu
 		CHECK(mdl.readAll() == originalMdl);
 	}
 	ed->close();
+}
+
+TEST_CASE("weapons page: a weapon in first person, its animations, sounds, events built into the mod, look and stats") {
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	// The game's skill values (the fixture's game has none).
+	test::writeText(f.sdkBase / "hl2/cfg/skill.cfg", "sk_plr_dmg_pistol\t\"5\"\nsk_npc_dmg_pistol\t\"3\"\nsk_max_pistol\t\"150\"\n");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1366, 768);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+
+	// The side bar has the page after Animations.
+	QAction* pageAction = nullptr;
+	for (auto* a : window.findChildren<QAction*>()) {
+		if (a->objectName() == "page:Weapons") pageAction = a;
+	}
+	REQUIRE(pageAction);
+	pageAction->trigger();
+	settle();
+	CHECK(window.currentPage() == MainWindow::Page::Weapons);
+	auto* page = window.weaponsPage();
+	REQUIRE(page);
+	CHECK(page->isVisible());
+
+	// The game's pistol, its name from the game's texts if there are any, else its class.
+	REQUIRE(page->weaponList()->count() >= 1);
+	REQUIRE(page->selectWeapon("weapon_pistol"));
+	CHECK(page->currentWeapon() == "weapon_pistol");
+	CHECK(page->currentModel() == "models/weapons/v_pistol.mdl");
+	CHECK(page->viewer()->firstPerson());
+	const auto waitFor = [](const std::function<bool()>& done, int ms = 5000) {
+		for (int i = 0; i < ms / 20 && !done(); ++i) QTest::qWait(20);
+		return done();
+	};
+	// The animations load in the background; the idle is chosen first.
+	REQUIRE(waitFor([&] { return page->sequenceTree()->topLevelItemCount() == 3; }));
+	CHECK(page->currentSequence() == "idle01");
+	REQUIRE(page->selectSequence("reload"));
+	page->setPlaying(true);
+	QTest::qWait(120);
+	CHECK(page->playing());
+	CHECK(page->viewer()->posesUploaded() > 0);
+	page->setPlaying(false);
+	// Free view and the world model.
+	page->setView(WeaponsPage::View::World);
+	CHECK(page->currentModel() == "models/weapons/w_pistol.mdl");
+	CHECK_FALSE(page->viewer()->firstPerson());
+	page->setView(WeaponsPage::View::FirstPerson);
+	REQUIRE(waitFor([&] { return page->sequenceTree()->topLevelItemCount() == 3; }));
+
+	// Sounds: the script's slots with their waves (after the sound scripts are read) and the events.
+	page->tabs()->setCurrentIndex(1);
+	settle();
+	const auto findRow = [&](const QString& text) -> QTreeWidgetItem* {
+		const auto found = page->soundTree()->findItems(text, Qt::MatchContains | Qt::MatchRecursive);
+		return found.isEmpty() ? nullptr : found.front();
+	};
+	REQUIRE(waitFor([&] { return findRow("weapons/pistol/pistol_reload1.wav") != nullptr; }));
+	CHECK(findRow("Reload (player)"));
+	CHECK(findRow("reload, frame 6: AE_CL_PLAYSOUND"));
+	CHECK(findRow("reload, frame 24: 5004 AE_CL_PLAYSOUND"));
+	CHECK(findRow("fire, frame 0: 5001"));
+
+	// Replace a wave with an own file: written at the same path in the mod, like the original
+	// (22050 Hz mono); Restore takes it out.
+	const QString source = home.filePath("mine.wav");
+	{
+		DecodedAudio audio;
+		audio.sampleRate = 44100;
+		audio.channels = 2;
+		audio.samples.assign(44100, 3000);
+		const auto wav = encodeWav(audio);
+		QFile file(source);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(reinterpret_cast<const char*>(wav.data()), qint64(wav.size()));
+	}
+	REQUIRE(page->replaceWave("weapons/pistol/pistol_reload1.wav", source));
+	const auto modWave = f.mod / "sound/weapons/pistol/pistol_reload1.wav";
+	REQUIRE(std::filesystem::exists(modWave));
+	{
+		const auto bytes = editor.game()->files.read("sound/weapons/pistol/pistol_reload1.wav");
+		REQUIRE(bytes);
+		const auto decoded = decodeAudio(*bytes, "x.wav");
+		REQUIRE(decoded);
+		CHECK(decoded->sampleRate == 22050);
+		CHECK(decoded->channels == 1);
+	}
+	CHECK(findRow("pistol_reload1.wav")->text(1) == "replaced");
+	REQUIRE(page->restoreWave("weapons/pistol/pistol_reload1.wav"));
+	CHECK_FALSE(std::filesystem::exists(modWave));
+
+	// Another sound for a slot: the mod gets its own copy of the script.
+	REQUIRE(page->setSlotSound("empty", "Weapon_Pistol.Reload"));
+	CHECK(std::filesystem::exists(f.mod / "scripts/weapon_pistol.txt"));
+	CHECK(page->currentScript()->sounds().front() == std::pair<std::string, std::string>{"empty", "Weapon_Pistol.Reload"});
+
+	// Event edits wait for Build model; a fake studiomdl "builds" the model into the mod.
+	auto events = page->eventsOf("reload");
+	REQUIRE(events.size() == 2);
+	events[0].options = "Weapon_Pistol.Single";
+	events[0].setFrame(10, 31);
+	events.pop_back();
+	page->setEvents("reload", events);
+	CHECK(page->pendingEventSequences() == 1);
+	CHECK(findRow("reload, frame 10: AE_CL_PLAYSOUND"));
+	auto* build = page->findChild<QPushButton*>("weaponBuildModel");
+	REQUIRE(build);
+	CHECK(build->isEnabled());
+	const auto script = [&](const QString& name, const QString& body) {
+		const QString path = home.filePath(name);
+		QFile file(path);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(("#!/bin/sh\n" + body + "\n").toUtf8());
+		file.close();
+		file.setPermissions(file.permissions() | QFileDevice::ExeOwner);
+		return path;
+	};
+	const QString args = home.filePath("args.txt");
+	const QString game = fromPath(f.sdkBase / "hl2");
+	page->rebuildJob()->setStudiomdl(script("studiomdl_ok", "echo \"$@\" > '" + args + "'\necho 'Processing v_pistol.qc'\n"
+	                                                         "mkdir -p \"$2/models/weapons\" && for e in mdl vvd dx90.vtx; do cp '" + game +
+	                                                         "/models/weapons/v_pistol.'$e \"$2/models/weapons/v_pistol.$e\"; done"));
+	QSignalSpy built(page->rebuildJob(), &ModelRebuildJob::finished);
+	REQUIRE(page->buildModel());
+	REQUIRE(built.wait(15000));
+	CHECK(built.takeFirst().at(0).toBool());
+	CHECK(page->pendingEventSequences() == 0);
+	CHECK(std::filesystem::exists(f.mod / "models/weapons/v_pistol.mdl"));
+	{
+		const auto folder = modelRebuildFolder(f.mod, "models/weapons/v_pistol.mdl");
+		QFile qc(fromPath(folder / "v_pistol.qc"));
+		REQUIRE(qc.open(QIODevice::ReadOnly));
+		const QString text = QString::fromUtf8(qc.readAll());
+		CHECK(text.contains("$modelname \"weapons/v_pistol.mdl\""));
+		CHECK(text.contains("{ event AE_CL_PLAYSOUND 10 \"Weapon_Pistol.Single\" }"));
+		CHECK_FALSE(text.contains("Weapon_Pistol.Empty"));
+		CHECK(text.contains("{ event 5001 0 \"1\" }"));
+		QFile argsFile(args);
+		REQUIRE(argsFile.open(QIODevice::ReadOnly));
+		CHECK(QString::fromUtf8(argsFile.readAll()).trimmed().startsWith("-game " + fromPath(f.mod)));
+	}
+	CHECK(page->rebuildJob()->rebuilt("models/weapons/v_pistol.mdl"));
+	CHECK(page->findChild<QPushButton*>("weaponRestoreModel")->isEnabled());
+	REQUIRE(page->restoreModel());
+	CHECK_FALSE(std::filesystem::exists(f.mod / "models/weapons/v_pistol.mdl"));
+
+	// Look: the model's material with its picture; a replaced texture and back.
+	page->tabs()->setCurrentIndex(2);
+	settle();
+	REQUIRE(waitFor([&] { return page->materialList()->count() > 0; }));
+	const QString material = page->materialList()->item(0)->data(Qt::UserRole).toString();
+	CHECK(material == "models/weapons/v_pistol/v_pistol_sheet");
+	const QString picture = home.filePath("skin.png");
+	{
+		QImage image(16, 16, QImage::Format_RGBA8888);
+		image.fill(QColor(200, 30, 30));
+		REQUIRE(image.save(picture));
+	}
+	REQUIRE(page->replaceTexture(material, picture));
+	CHECK(std::filesystem::exists(f.mod / "materials/models/weapons/v_pistol/v_pistol_sheet.vtf"));
+	CHECK(page->materialList()->item(0)->text().contains("texture replaced"));
+	REQUIRE(page->restoreTexture(material));
+	CHECK_FALSE(std::filesystem::exists(f.mod / "materials/models/weapons/v_pistol/v_pistol_sheet.vtf"));
+	QSignalSpy enhance(page, &WeaponsPage::enhanceTexturesRequested);
+	page->findChild<QPushButton*>("weaponEnhance")->click();
+	REQUIRE(enhance.count() == 1);
+	CHECK(enhance.takeFirst().at(0).toStringList().contains(material));
+
+	// Stats: the script's values and the ammo's skill values, saved as the mod's copies.
+	page->tabs()->setCurrentIndex(3);
+	settle();
+	auto* clip = qobject_cast<QSpinBox*>(page->statEditor("clip_size"));
+	REQUIRE(clip);
+	CHECK(clip->value() == 18);
+	auto* damage = qobject_cast<QLineEdit*>(page->statEditor("sk_plr_dmg_pistol"));
+	REQUIRE(damage);
+	CHECK(damage->text() == "5");
+	clip->setValue(24);
+	damage->setText("9");
+	REQUIRE(page->saveStats());
+	CHECK(page->currentScript()->get("clip_size") == "24");
+	CHECK(page->currentScript()->get("anim_prefix") == "pistol");   // unknown keys kept
+	CHECK(readSkillValues(readFileText(f.mod / "cfg/skill.cfg").value_or("")).at("sk_plr_dmg_pistol") == "9");
+	CHECK(std::filesystem::exists(f.mod / "cfg/skill_manifest.cfg"));
+	REQUIRE(page->restoreStats());
+	CHECK_FALSE(std::filesystem::exists(f.mod / "scripts/weapon_pistol.txt"));
+	CHECK(readSkillValues(readFileText(f.mod / "cfg/skill.cfg").value_or("")).at("sk_plr_dmg_pistol") == "5");
+	REQUIRE(page->selectWeapon("weapon_pistol"));
+	CHECK(qobject_cast<QSpinBox*>(page->statEditor("clip_size"))->value() == 18);
+
+	// Edit animation goes to the animation editor (for now the Animations page with the sequence).
+	page->tabs()->setCurrentIndex(0);
+	REQUIRE(waitFor([&] { return page->sequenceTree()->topLevelItemCount() == 3; }));
+	REQUIRE(page->selectSequence("fire"));
+	// "Edit animation ..." opens the Animation editor on that sequence.
+	page->findChild<QPushButton*>("weaponEditAnimation")->click();
+	settle();
+	REQUIRE(window.animationEditor());
+	CHECK(window.animationEditor()->isVisible());
+	CHECK(window.animationEditor()->model() == "models/weapons/v_pistol.mdl");
+	window.animationEditor()->close();
+	// "Enhance textures ..." opens the dialog with the weapon's materials.
+	if (auto* enhance = page->findChild<QPushButton*>("weaponEnhance"); enhance && enhance->isEnabled()) {
+		enhance->click();
+		settle();
+		auto* dialog = window.findChild<TextureEnhanceDialog*>();
+		CHECK(dialog);
+		if (dialog) dialog->close();
+	}
 }

@@ -37,6 +37,7 @@ public:
 	[[nodiscard]] bool failed(const QString& path) const;
 	[[nodiscard]] QString error(const QString& path) const;
 	/// Drops a model and its variants (its files changed - e.g. just built): the next get() reads them again.
+	/// A load still running is read again when it is done (its files may have changed under it).
 	void forget(const QString& path);
 
 signals:
@@ -47,6 +48,7 @@ private:
 	struct Entry {
 		std::shared_ptr<const ModelGeometry> geometry;
 		bool loading = false;
+		bool stale = false;   ///< forget() came while loading: the result is old, load again
 		QString error;
 	};
 

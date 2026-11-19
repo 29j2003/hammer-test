@@ -48,6 +48,11 @@ public:
 	[[nodiscard]] bool wireframe() const { return m_wireframe; }
 	/// Camera around the whole model, seen from the front-left and a little above.
 	void frameModel();
+	/// First-person view of a weapon's view model as the game draws it: the eye at the model's
+	/// origin looking along +X, `fov` degrees wide at 4:3 (viewmodel_fov, 54 in Half-Life 2; wider
+	/// screens see more at the sides, as in the game). Off: the orbit camera again.
+	void setFirstPerson(bool on, float fov = 54);
+	[[nodiscard]] bool firstPerson() const { return m_firstPerson; }
 	/// Orbit angles in degrees and distance in units (for tests and the reset button).
 	[[nodiscard]] float yaw() const { return m_yaw; }
 	[[nodiscard]] float distance() const { return m_distance; }
@@ -101,6 +106,8 @@ private:
 	// Orbit camera around m_center.
 	QVector3D m_center;
 	float m_yaw = 35, m_pitch = 18, m_distance = 200;
+	bool m_firstPerson = false;
+	float m_viewFov = 54;
 	QPointF m_lastMouse;
 	Qt::MouseButton m_dragButton = Qt::NoButton;
 };
