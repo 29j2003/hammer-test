@@ -13193,6 +13193,31 @@ TEST_CASE("animation editor: improve an animation with keys, preview it and rebu
 	ed->close();
 }
 
+TEST_CASE("model viewer: the free view fits the shown pose, not the rest pose (view models)") {
+	// Julius, 19.11.2026: "3D-View ist nicht aligned" - a view model's idle is far from its rest pose.
+	auto geometry = std::make_shared<ModelGeometry>();
+	for (int i = 0; i < 3; ++i) geometry->vertices.push_back(ModelVertex{{float(i * 10), float(i % 2) * 10, 0}, {0, 0, 1}, {0, 0}});
+	geometry->indices = {0, 1, 2};
+	geometry->meshes.push_back(ModelMesh{});
+	for (const auto& v : geometry->vertices) geometry->bounds.add(Vec3{v.position[0], v.position[1], v.position[2]});
+	ModelViewer viewer(nullptr);
+	viewer.resize(400, 300);
+	viewer.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&viewer));
+	viewer.setModel(geometry);
+	CHECK(viewer.orbitCenter().x() == doctest::Approx(10));
+	// The first pose (the idle) moves the model 500 units away: the camera follows it.
+	auto posed = geometry->vertices;
+	for (auto& v : posed) v.position[0] += 500;
+	viewer.setPose(posed);
+	CHECK(viewer.orbitCenter().x() == doctest::Approx(510));
+	// Later poses (playing) keep the camera still.
+	for (auto& v : posed) v.position[0] += 100;
+	viewer.setPose(posed);
+	CHECK(viewer.orbitCenter().x() == doctest::Approx(510));
+	QTest::qWait(50);
+}
+
 TEST_CASE("weapons page: a weapon in first person, its animations, sounds, events built into the mod, look and stats") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());

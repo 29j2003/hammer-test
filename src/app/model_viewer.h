@@ -59,6 +59,8 @@ public:
 	[[nodiscard]] float yaw() const { return m_yaw; }
 	[[nodiscard]] float pitch() const { return m_pitch; }
 	[[nodiscard]] float distance() const { return m_distance; }
+	/// What the orbit camera looks at (the middle of the fitted box).
+	[[nodiscard]] QVector3D orbitCenter() const { return m_center; }
 	/// Orbit camera from these angles in degrees (presets Front/Side/Top), keeping what it looks at.
 	void setOrbit(float yaw, float pitch);
 	/// Orbit camera around a point, far enough to see a sphere of this radius.
@@ -108,7 +110,11 @@ private:
 		bool translucent = false;
 	};
 	void upload();
+	void uploadGrid();
 	void releaseGeometry();
+	/// The box the camera and the grid are fitted to: the shown pose's (view models are posed far
+	/// from their rest pose), else the model's rest bounds.
+	[[nodiscard]] Bounds viewBounds() const;
 	[[nodiscard]] Texture textureFor(const QString& material);
 
 	MaterialCache* m_materials;
@@ -122,6 +128,9 @@ private:
 	std::unique_ptr<QOpenGLShaderProgram> m_program, m_lineProgram;
 	GLuint m_vao = 0, m_vbo = 0, m_ibo = 0, m_gridVao = 0, m_gridVbo = 0;
 	int m_gridVertices = 0;
+	bool m_gridDirty = true;              ///< Grid to rebuild (model or fitted box changed)
+	bool m_frameOnPose = false;           ///< Frame again once the first pose arrives
+	Bounds m_fitBounds;                   ///< Box of the pose the view was fitted to (empty: rest bounds)
 	QHash<QString, Texture> m_textures;   ///< Uploaded base textures by material name
 	GLuint m_white = 0;                   ///< For materials without a texture
 	bool m_initialized = false;
