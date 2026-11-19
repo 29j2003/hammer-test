@@ -197,7 +197,9 @@ jobs:
           current=$(gh release view testing --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null \
             | sed -nE 's/^Mapsmith-[0-9.]+-test\.([0-9]+)-windows\.zip$/\1/p' | head -n 1 || true)
           if [ -n "$current" ] && [ "$current" -gt "$RUN" ]; then echo "test build $current is newer - kept"; exit 0; fi
-          printf '%s\n\nTest build %s from commit %s.\n' "$MESSAGE" "$RUN" "$SHA" > notes.md
+          # The commit message without its trailer lines (Co-Authored-By, Claude-Session).
+          printf '%s\n' "$MESSAGE" | grep -v -E '^(Co-Authored-By|Claude-Session):' > notes.md || true
+          printf '\nTest build %s from commit %s.\n' "$RUN" "$SHA" >> notes.md
           gh release delete testing --repo "$REPO" --cleanup-tag --yes 2>/dev/null || true
           gh release create testing out/* --repo "$REPO" --prerelease --target "$SHA" \
             --title "Mapsmith $version test build $RUN" --notes-file notes.md
