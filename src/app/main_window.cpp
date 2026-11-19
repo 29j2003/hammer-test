@@ -22,6 +22,7 @@
 #include "model_rebuild_job.h"
 #include "maps_panel.h"
 #include "menu_editor.h"
+#include "hud_editor.h"
 #include "start_page.h"
 #include "texts_panel.h"
 #include "new_mod_dialog.h"
@@ -628,6 +629,8 @@ void MainWindow::createDocks() {
 	m_projectPage->addTab(m_textsPanel, tr("Texts"));
 	connect(m_textsPanel, &TextsPanel::saved, menuEditor, [menuEditor] { menuEditor->refreshTitles(); });
 	connect(menuEditor, &MenuEditor::saved, m_textsPanel, [this] { m_textsPanel->reloadIfUnchanged(); });
+	// HUD: positions, colours and fonts of the mod's HUD (HudLayout.res, ClientScheme.res).
+	m_projectPage->addTab(new HudEditor(m_editor, projectTabs), tr("HUD"));
 	auto* sourceControl = new SourceControlPanel(m_editor, projectTabs);
 	m_projectPage->addTab(sourceControl, tr("Source control"));
 	// Build from source: for people who build the mod themselves (update after a pull, game

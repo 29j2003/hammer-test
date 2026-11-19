@@ -78,6 +78,7 @@ int textSelector(const fs::path& path) {
 	if (name.find("soundscape") != std::string::npos) return 3;
 	if (name.find("closecaption") != std::string::npos || name.find("_english") != std::string::npos) return 4;
 	if (name == "gamemenu.res") return 6;
+	if (name == "hudlayout.res" || name == "clientscheme.res") return 21;
 	if (name == "chapterbackgrounds.txt") return 7;
 	if (ext == ".vcd") return 9;
 	if (name == "mapsmith_materials.txt") return 10;

@@ -155,6 +155,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `mod_base_files` | Was eine HL2-Mod vom Basisspiel braucht, die Engine aber nur aus der Mod liest: `cfg/skill.cfg` (+ `skill_episodic.cfg` bei Episodic) und `skill_manifest.cfg` (der Spielcode führt bei jedem Kartenstart `exec skill_manifest.cfg` aus; ohne sie sind alle `sk_max_*` 0 – impulse 101, Munitionskisten und Pickups geben keine Munition, `sk_plr_dmg_*` und NPC-Gesundheit ebenso 0) und die HUD-Texte in `resource/<mod>_<sprache>.txt` (Token wie `#HL2_Pulse_Rifle` werden nur dort gesucht; fehlende Sprachen fallen auf Englisch zurück). `checkModBaseFiles` (fehlt `HL2_Pulse_Rifle` in der englischen Datei → Texte fehlen), `addModBaseFiles` mit zwei Lesern: Valves Mod-Vorlage aus dem Bundle (`template/<spiel>/…`, Episodic hat kein skill.cfg → das aus hl2) vor den Spieldateien (`cfg/skill.cfg`, `resource/hl2_*.txt`, `episodic_*`, `ep2_*`); `skill_manifest.cfg` wird erzeugt (exec je vorhandener Datei); Token nur ergänzt (eigene Texte und `GameTitle` bleiben, Schlüssel = Name + Bedingung wie `[$X360]`), andere Sprachen nur, wo eine Quelle sie hat; nie überschreiben |
 | `mod_template` | Neue Mod: `gameInfoText` (SDK 2013 Singleplayer/Multiplayer, Mapbase mit `mapbaseMounts` aus `sourcemods/mapbase_shared`), `modFolders`, `modResourceFile` (UTF-16 LE mit BOM, `GameTitle`), `modAutoexec` (setzt `sv_cheats` nicht mehr: Cheats kommen über „Run the game“), `isValidModFolder`/`suggestModFolder`, `createMod` (verweigert vorhandene Ordner, kopiert Karten nach `mapsrc`); Anführungszeichen im Titel werden zu `'` (die Engine kennt keine Escapes) |
 | `mod_menu` | Hauptmenü der Mod: gameinfo-Anzeige-Keys (zeilenweise, Rest bleibt), Kapitel-Configs, Lokalisierung UTF-16, ChapterBackgrounds, GameMenu.res, Laden/Speichern mit `.bak` |
+| `hud_layout` | HUD editor core: `parseResFile` (.res with text offsets, block/value conditions, `#base` noted, limits), `resConditionTrue` (Windows PC: `$WIN32`/`$WINDOWS`, `! && \|\| ()`), `withResValue` (edit in place / insert before `}` – comments stay), vgui positions `resolveHudRect` (r/c/s/p, f/o/p sizes) and back `hudPositionText`/`hudSizeText`, `hudElements`/`hudElementInfo`, scheme `schemeColors`/`resolveSchemeColor`/`schemeFonts`/`pickFontEntry`/`fontPixelTall`/`schemeFontFiles`, `saveHudFile`/`restoreHudFiles` (backup once, `ImportRecord` kind `hud`) |
 | `localization` | Texte der Mod: Lokalisierungsdateien verlustfrei (Kommentare, `[$X360]`-Bedingungen, Reihenfolge), Dateisätze `<name>_<sprache>.txt`, Caption-Tags, Captions → `.dat` (VCCD) |
 | `editor_report` | Editor-Bericht (siehe Abschnitt „Editor-Bericht“): `PickTrace`/`formatPickTrace`/`parsePickLog` (picks.log), `brushesAlongRay` (Strahl durch die Karte, reine Geometrie, versteckte Brushes/Flächen ausgelassen), `describeSolid`/`describeChange` (Ebenenpunkte vorher/nachher, markiert `INVALID` und `POINTS INWARD`), `describeRoadPlan`/`describeFlowPlan` (mit `RoadPlan::notes`), `reportScene` (Objekte bis 1024 Einheiten um die Auswahl, Ids bleiben; ganze Karte unter 5 MB), `maskPersonalText`/`homeFolder`, `replay.txt` (`formatSettings`/`parseSettings`, Auswahlen `0/12`, `0/12/45`, Straßen-/Flow-Einstellungen), `replayEditorReport` (für `sme-probe editor-report`) |
 | `claude_scope` | Was Claude über die Claude-Integration anfassen darf (siehe „Claude-Integration“): `checkExchangeName` (Namen im Austausch-Ordner: kein `..`, keine absoluten/Laufwerks-/UNC-Pfade, kein `:`, keine reservierten Windows-Namen, höchstens 4 Ebenen), `exchangeExtensionAllowed` (nur `.txt .md .csv .json .log .vmt`), `resolveInside`/`pathInside` (kanonische Pfade, Links/Junctions werden nicht verfolgt), `checkMaterialName`/`modMaterialFile` (nur vorhandene `.vmt` der Mod selbst unter `<mod>/materials`), `checkVmtParameter`/`checkVmtValue`, `decisionLineFromClaude` (eine Zeile der Entscheidungs-Datei, die genau so zurückgelesen wird), `ClaudeRateLimit` (gleitendes Fenster), `constantTimeEquals` |
@@ -223,6 +224,7 @@ Windows und CI: siehe „Bauen, CI, Abgabe“.
 | `ai_upscaler` | Real-ESRGAN ncnn Vulkan als eigenes Programm: `realEsrganFolder` (neben der exe `tools/realesrgan`, für Entwickler `SME_REALESRGAN_DIR`; nur wenn Programm und Modell da sind), `makeAiUpscaler` (PNG in eigenen `QTemporaryDir`, `QProcess` mit vollem Pfad, unter Windows `CREATE_NO_WINDOW`, Abbrechen alle 100 ms, höchstens 10 min, letzte Zeile der Ausgabe als Fehler). Ins Paket legt es `tools/fetch_realesrgan.ps1` (CI und Release, feste SHA-256, nur exe, `vcomp140.dll`, Modell `realesrgan-x4plus`) |
 | `maps_panel` | Project › Maps: alle Karten, Stapel-Kompilieren, Dateiaktionen |
 | `menu_editor` | Project › Menu: Hauptmenü der Mod mit Vorschau |
+| `hud_editor` | Project › HUD: `HudPreview` (screen at a resolution, game-like background or picture `hud/background`, drag = move, corner = resize → `changed`), `HudEditor` (element list, fields anchor/X/Y/size/visible/TextColor/bgcolor_override/NumberFont, Colours + Fonts tabs, undo stack of both texts, `save`/`restoreOriginal`; custom TTFs from `CustomFontFiles` via `QFontDatabase`; lazy read on `gameChanged`). UI test "hud editor: …" |
 | `texts_panel` | Project › Texts: Lokalisierung und Captions der Mod (Tabelle Token × Sprache, Caption-Vorschau, Speichern, Captions kompilieren) |
 | `source_control_panel` | Project › Source control: Git (Änderungen, Commit, Fetch/Pull/Push, Verlauf); meldet `pulled(root, changed)` und „Update mod“ (`updateModRequested`) an Mod code |
 | `mod_code_panel` | Project › Build from source (letzter Tab, nur wer die Mod selbst baut): `update.ps1`/`deploy.ps1`/`report.ps1` per `QProcess` ohne Konsole (Schritte, Fortschritt, Log, Zusammenfassung mit Rat, Cancel beendet den ganzen Prozessbaum), Checkout finden/wählen je Mod, Optionen je Mod (nach Pull aktualisieren, beim Start `git fetch` bzw. Pull & Update), Zeile auf dem Overview (`banner()`); nach Erfolg `modUpdated` → `MainWindow` öffnet das Spiel neu (Caches, Game enhancements); `reportHowTo()` = Tooltip aller „Pack game report“-Knöpfe (Map-Menü, Compile, Problems → `MainWindow::makeReport`); „nothing to pack“ ist kein roter Fehler, sondern zeigt die drei Schritte; Hinweis + Link „Make editor report ...“ (`editorReportRequested` → `MainWindow::makeEditorReport`), damit der Spiel-Bericht nicht mit dem Editor-Bericht verwechselt wird (Julius, 10.11.2026) |
@@ -1348,6 +1350,35 @@ Quellen: [Level Design FAQ (VDC)](https://developer.valvesoftware.com/wiki/Categ
 [Source SDK Forum (Steam)](https://steamcommunity.com/app/211/discussions/0/1741100729969247730),
 [sdk-2013-hammer (Hammer2K13, Carve entfernt)](https://github.com/Mix-Anik/sdk-2013-hammer).
 Die Häufigkeiten sind eine Einschätzung aus diesen Quellen, keine Zählung.
+
+## HUD: how Source reads it (research 19.11.2026)
+
+Sources: Mapbase code (`sp/src`), game files `sp/game/mod_hl2`. Engine-only parts (vgui2.dll) marked *assumed*.
+
+- **Files**: `scripts/HudLayout.res` (positions, per-element settings), `resource/ClientScheme.res` (colours, fonts),
+  `scripts/HudAnimations_manifest.txt` + `HudAnimations*.txt` (flashes, fades – not edited). Mod copies win (search paths).
+- **Loading**: `CHud::Init` reads HudLayout.res and finds each element's block by name (`hud.cpp`);
+  `ClientModeShared` loads it into the viewport with `LoadControlSettings` and sets the viewport proportional
+  (`clientmode_shared.cpp`: `SetProportional(true)`).
+- **Conditions**: blocks and values may end in `[$WIN32]`, `[$X360]`, `[!$OSX]` …; HL2's files have a PC and a console
+  block per element (`HudHealth [$WIN32]` / `[$X360]`). First active entry wins (`KeyValues::FindKey`).
+- **Positions** (`vgui_controls/Panel.cpp` `ComputePos`, `ComputeWide`, `ComputeTall`, `ApplySettings`):
+  - values in 640 × 480 units; proportional scale = screen height ÷ 480 (*assumed*: `GetProportionalScaledValue` in
+    vgui2.dll; matches HL2's HUD at 1080p).
+  - `r` = from right/bottom edge, `c` = from centre; then `s` = fraction of own size, `p` = fraction of parent.
+  - sizes: `f` = parent minus value, `o` = other axis × factor, `p` = (parent − value) × factor.
+- **Per-element settings** are `CPanelAnimationVar`s read from the block (`hud_numericdisplay.h`): `TextColor`
+  (default `FgColor`), `NumberFont` (`HudNumbers`), `NumberGlowFont`, `SmallNumberFont`, `TextFont` (`Default`),
+  `text_xpos/ypos`, `digit_xpos/ypos`, `digit2_xpos/ypos` (proportional). Background: `bgcolor_override` (Panel).
+- **Scheme**: `Colors` (named), `BaseSettings` (`FgColor`, `BgColor`, `BrightFg`, `DamagedBg` … – colour or name),
+  `Fonts` (entries `"1"`, `"2"` …; `yres "min max"` = used only in that height range, `tall` in pixels there; entries
+  without `yres` scale with height ÷ 480 – *assumed*, vgui2.dll), `CustomFontFiles` (`resource/HALFLIFE2.ttf`,
+  `HL2crosshairs.ttf`).
+- **Reload in game**: `hud_reloadscheme` (or restart).
+- **Editor rules**: edits replace only the value text (or add a line before `}`), so comments, console variants and
+  unknown keys stay; first save keeps the mod's own file as `.mapsmith-backup`; *Restore original* = `undoImport`.
+- **Not done**: `HudAnimations` (colour flashes), `#base` files are listed but not followed, labels use fixed English
+  samples (HEALTH, SUIT, AMMO …) instead of the localization tokens.
 
 ## Waffen, Sounds, Events: wie Source sie lädt (Recherche November 2026)
 
