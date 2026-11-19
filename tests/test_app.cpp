@@ -13063,12 +13063,41 @@ TEST_CASE("weapons page: a weapon in first person, its animations, sounds, event
 	REQUIRE(page);
 	CHECK(page->isVisible());
 
-	// The game's pistol, its name from the game's texts if there are any, else its class.
+	// The game's pistol, its name from the game's texts if there are any, else its class. NPC and
+	// debug weapons (the citizens' suitcase, cubemap) only with "Show NPC and developer weapons".
+	const auto listed = [&](const QString& className) {
+		for (int i = 0; i < page->weaponList()->count(); ++i) {
+			if (page->weaponList()->item(i)->data(Qt::UserRole).toString() == className) return true;
+		}
+		return false;
+	};
 	REQUIRE(page->weaponList()->count() >= 1);
+	CHECK(listed("weapon_pistol"));
+	CHECK_FALSE(listed("weapon_citizensuitcase"));
+	CHECK_FALSE(listed("weapon_cubemap"));
+	auto* showAll = page->findChild<QCheckBox*>("weaponShowAll");
+	REQUIRE(showAll);
+	CHECK(showAll->text().contains("2 more"));
+	showAll->setChecked(true);
+	settle();
+	CHECK(listed("weapon_citizensuitcase"));
+	CHECK(listed("weapon_cubemap"));
+	// The suitcase has no first-person model: first person shows it in free view, with a note.
+	REQUIRE(page->selectWeapon("weapon_citizensuitcase"));
+	page->setView(WeaponsPage::View::FirstPerson);
+	CHECK_FALSE(page->viewer()->firstPerson());
+	CHECK(page->findChild<QLabel*>("weaponViewNote")->isVisibleTo(page));
+	page->setView(WeaponsPage::View::Free);
+	showAll->setChecked(false);
+	settle();
+	CHECK_FALSE(listed("weapon_cubemap"));
+	// Same print names stay apart: the class is under the name.
 	REQUIRE(page->selectWeapon("weapon_pistol"));
+	CHECK(page->weaponList()->currentItem()->text().endsWith("weapon_pistol"));
 	CHECK(page->currentWeapon() == "weapon_pistol");
 	CHECK(page->currentModel() == "models/weapons/v_pistol.mdl");
-	CHECK(page->viewer()->firstPerson());
+	// Free view first (Julius, 19.11.2026: from all sides), framed on the model once it has loaded.
+	CHECK_FALSE(page->viewer()->firstPerson());
 	const auto waitFor = [](const std::function<bool()>& done, int ms = 5000) {
 		for (int i = 0; i < ms / 20 && !done(); ++i) QTest::qWait(20);
 		return done();
@@ -13087,6 +13116,8 @@ TEST_CASE("weapons page: a weapon in first person, its animations, sounds, event
 	CHECK(page->currentModel() == "models/weapons/w_pistol.mdl");
 	CHECK_FALSE(page->viewer()->firstPerson());
 	page->setView(WeaponsPage::View::FirstPerson);
+	CHECK(page->viewer()->firstPerson());
+	CHECK_FALSE(page->findChild<QLabel*>("weaponViewNote")->isVisibleTo(page));
 	REQUIRE(waitFor([&] { return page->sequenceTree()->topLevelItemCount() == 3; }));
 
 	// Sounds: the script's slots with their waves (after the sound scripts are read) and the events.
