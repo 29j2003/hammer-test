@@ -148,8 +148,12 @@ TEST_CASE("photo material: pictures, VMT for world and model, files with undo") 
 	CHECK(record->created.size() == 3);
 	const fs::path vmtFile = f.mod / "materials" / (photoMaterialName(options) + ".vmt");
 	CHECK(fs::exists(vmtFile));
-	std::ifstream in(f.mod / "materials" / (photoMaterialName(options) + ".vtf"), std::ios::binary);
-	std::vector<char> bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+	std::vector<char> bytes;
+	{
+		// Closed again before undoImport: Windows cannot delete a file that is still open.
+		std::ifstream in(f.mod / "materials" / (photoMaterialName(options) + ".vtf"), std::ios::binary);
+		bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+	}
 	const auto info = readTextureInfo(std::as_bytes(std::span(bytes.data(), bytes.size())));
 	REQUIRE(info);
 	CHECK(info->width == 512);
