@@ -11,15 +11,23 @@ nav_order: 6.7
 
 ## The Weapons page
 
-The **Weapons** page (side bar, after *Animations*) lists every weapon of your game and mod - every
-`scripts/weapon_*.txt` the game can see. A dot after the name means your mod already has its own copy of the script.
+The **Weapons** page (side bar, after *Animations*) lists your game's and mod's weapons (`scripts/weapon_*.txt`).
 
-Pick a weapon and its **first-person model** turns up in the middle, the way the player sees it in the game: the eye at
-the model's origin, with the weapon's *view model FOV* (54 in Half-Life 2, or the script's own `viewmodel_fov` in
-Mapbase mods). The box above the view switches to **Free view** (turn it around with the mouse, wheel to zoom) and to
-the **World model** (the model on the ground and in NPCs' hands).
+- **Listed:** player weapons and your mod's own weapons that have a first-person model (`models/weapons/v_*.mdl`).
+- **Hidden:** NPC-only weapons (Alyx's gun, Annabelle, the citizens' package and suitcase), debug and unfinished ones
+  (cubemap, physgun, hopwire ...), weapons whose first-person model is missing. Tick **Show NPC and developer weapons**
+  to see them.
+- **Class name** under each name: some weapons share a print name (NPC weapons borrow the SMG's).
+- **Dot** after the name: your mod has its own copy of the script. One entry per weapon; the mod's copy wins.
 
-Below the view are play/pause, a slider through the animation and the frame number.
+The view (box above it):
+
+- **Free view** (default): the model from all sides - left mouse turns, right/middle mouse moves, wheel zooms.
+- **First person:** as the player sees it (eye at the model's origin, view model FOV 54 or the script's
+  `viewmodel_fov`). A model that is no first-person model is shown in free view, with a note.
+- **World model:** the model on the ground and in NPCs' hands.
+
+Below the view: play/pause, a slider through the animation, the frame (a one-frame idle reads "one pose").
 
 Nothing you do here changes the game's own files. Every change goes into your mod as its own copy of the file, at the
 same place - the game reads your mod's folder first, so your copy wins. Every change can be taken back with a

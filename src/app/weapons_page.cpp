@@ -41,6 +41,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -106,8 +107,10 @@ WeaponsPage::WeaponsPage(Editor* editor, MaterialCache* materials, AssetBrowser*
 				: m_model;
 			if (path.compare(wanted, Qt::CaseInsensitive) != 0) return;
 			m_geometry = m_editor->models()->get(wanted);
-			m_viewer->setModel(m_geometry, false);
+			m_viewer->setModel(m_geometry, m_framePending);
+			m_framePending = false;
 			if (!m_geometry) m_viewer->setMessage(tr("Cannot load: %1").arg(m_editor->models()->error(wanted)));
+			checkBounds();
 			applyPose();
 			showLook();
 		});
@@ -168,6 +171,12 @@ void WeaponsPage::buildUi() {
 	m_list = new QListWidget;
 	m_list->setObjectName("weaponList");
 	leftLayout->addWidget(m_list, 1);
+	m_showAll = new QCheckBox(tr("Show NPC and developer weapons"));
+	m_showAll->setObjectName("weaponShowAll");
+	m_showAll->setToolTip(tr("Also list weapons only NPCs carry (Alyx's gun, the citizens' package ...), debug and unfinished ones "
+	                         "(cubemap, physgun ...) and weapons without a first-person model"));
+	m_showAll->setChecked(QSettings().value("weapons/showAll", false).toBool());
+	leftLayout->addWidget(m_showAll);
 	leftLayout->addWidget(noteLabel(tr("From scripts/weapon_*.txt. Changes go into your mod as its own copies; the game's files stay as they are.")));
 	left->setMinimumWidth(150);
 	left->setMaximumWidth(240);
@@ -184,12 +193,18 @@ void WeaponsPage::buildUi() {
 	header->addWidget(m_title, 1);
 	m_viewMode = new QComboBox;
 	m_viewMode->setObjectName("weaponView");
-	m_viewMode->addItem(tr("First person"), int(View::FirstPerson));
 	m_viewMode->addItem(tr("Free view"), int(View::Free));
+	m_viewMode->addItem(tr("First person"), int(View::FirstPerson));
 	m_viewMode->addItem(tr("World model"), int(View::World));
-	m_viewMode->setToolTip(tr("First person: as the player sees it in the game (view model FOV of the script, else 54)"));
+	m_viewMode->setToolTip(tr("Free view: turn with the left mouse button, move with the right or middle one, zoom with the wheel\n"
+	                          "First person: as the player sees it in the game (view model FOV of the script, else 54)\n"
+	                          "World model: the model in the world (on the floor, in an NPC's hand)"));
 	header->addWidget(m_viewMode);
 	middleLayout->addLayout(header);
+	m_viewNote = noteLabel(QString());
+	m_viewNote->setObjectName("weaponViewNote");
+	m_viewNote->hide();
+	middleLayout->addWidget(m_viewNote);
 	m_viewer = new ModelViewer(m_materials);
 	m_viewer->setObjectName("weaponViewer");
 	m_viewer->setMinimumSize(240, 200);
@@ -230,6 +245,10 @@ void WeaponsPage::buildUi() {
 		showWeapon();
 	});
 	connect(m_viewMode, &QComboBox::currentIndexChanged, this, [this] { setView(View(m_viewMode->currentData().toInt())); });
+	connect(m_showAll, &QCheckBox::toggled, this, [this](bool on) {
+		QSettings().setValue("weapons/showAll", on);
+		refresh();
+	});
 	connect(m_play, &QToolButton::clicked, this, [this] { setPlaying(!m_playing); });
 	connect(m_scrub, &QSlider::sliderMoved, this, [this](int value) {
 		m_cycle = float(value) / 1000.f;
@@ -574,22 +593,46 @@ void WeaponsPage::refresh() {
 	const QString kept = currentWeapon();
 	m_weapons.clear();
 	m_pendingEvents.clear();
-	if (auto* game = m_editor->game()) m_weapons = findWeapons(game->files, modDir());
+	std::size_t hidden = 0;
+	if (auto* game = m_editor->game()) {
+		const bool all = m_showAll->isChecked();
+		const GameFileSystem& files = game->files;
+		for (auto& weapon : findWeapons(files, modDir())) {
+			// Player weapons (and the mod's own ones) with a first-person model; the rest on request.
+			if (all || listedByDefault(weapon, [&files](std::string_view model) { return files.exists(model); })) {
+				m_weapons.push_back(std::move(weapon));
+			} else {
+				++hidden;
+			}
+		}
+	}
 	{
 		QSignalBlocker block(m_list);
 		m_list->clear();
 		for (const auto& weapon : m_weapons) {
 			const QString name = qs(weaponDisplayName(weapon, [this](std::string_view token) { return lookupToken(token); }));
-			auto* item = new QListWidgetItem(name + (weapon.inMod ? QStringLiteral("  •") : QString()));
-			item->setToolTip(qs(weapon.className) + (weapon.inMod ? tr(" - the mod has its own script") : QString()));
+			// The class under the name: several weapons share a print name (NPC weapons borrow the SMG's).
+			auto* item = new QListWidgetItem(name + (weapon.inMod ? QStringLiteral("  •") : QString()) + QStringLiteral("\n") + qs(weapon.className));
+			QString tip = qs(weapon.className) + (weapon.inMod ? tr(" - the mod has its own script") : QString());
+			switch (weaponRole(weapon.className)) {
+			case WeaponRole::Npc: tip += tr("\nOnly NPCs carry it in the game"); break;
+			case WeaponRole::Developer: tip += tr("\nA debug, unfinished or template weapon of the game's code"); break;
+			case WeaponRole::Unknown: tip += tr("\nNot a weapon of the game's code: your mod's own (its code decides what it does)"); break;
+			case WeaponRole::Player: break;
+			}
+			item->setToolTip(tip);
 			item->setData(Qt::UserRole, qs(weapon.className));
+			item->setData(Qt::UserRole + 1, name);
 			m_list->addItem(item);
 		}
 	}
+	m_showAll->setText(hidden > 0 ? tr("Show NPC and developer weapons (%1 more)").arg(hidden) : tr("Show NPC and developer weapons"));
 	if (m_weapons.empty()) {
 		m_current = -1;
 		m_viewer->setModel(nullptr);
-		m_viewer->setMessage(m_editor->game() ? tr("This game has no weapon scripts (scripts/weapon_*.txt)") : tr("Open a game first"));
+		m_viewer->setMessage(m_editor->game() ? (hidden > 0 ? tr("No player weapons found - tick \"Show NPC and developer weapons\"")
+		                                                    : tr("This game has no weapon scripts (scripts/weapon_*.txt)"))
+		                                      : tr("Open a game first"));
 		showWeapon();
 		return;
 	}
@@ -632,7 +675,7 @@ void WeaponsPage::showWeapon() {
 	setPlaying(false);
 	m_pendingEvents.clear();
 	const auto* script = currentScript();
-	m_title->setText(script ? QStringLiteral("<b>%1</b>  %2").arg(m_list->currentItem() ? m_list->currentItem()->text().remove(QStringLiteral("  •")).toHtmlEscaped() : QString(),
+	m_title->setText(script ? QStringLiteral("<b>%1</b>  %2").arg(m_list->currentItem() ? m_list->currentItem()->data(Qt::UserRole + 1).toString().toHtmlEscaped() : QString(),
 	                                                              qs(script->className).toHtmlEscaped())
 	                        : QString());
 	loadModel();
@@ -658,7 +701,16 @@ void WeaponsPage::loadModel() {
 		const float own = QString(qs(script->get("viewmodel_fov"))).toFloat();
 		if (own > 0) fov = own;
 	}
-	m_viewer->setFirstPerson(m_view == View::FirstPerson && !path.empty(), fov);
+	// First person only for a first-person model: anything else (an NPC weapon's world model, a
+	// debug model) sits at the eye and the camera would be inside it - it is shown in free view.
+	const bool firstPerson = m_view == View::FirstPerson && isViewModelPath(path);
+	if (m_view == View::FirstPerson && !path.empty() && !firstPerson) {
+		m_viewNote->setText(tr("%1 is not a first-person model - shown in free view").arg(qs(path).section('/', -1)));
+		m_viewNote->show();
+	} else {
+		m_viewNote->hide();
+	}
+	m_viewer->setFirstPerson(firstPerson, fov);
 	m_model = model;
 	m_animated.reset();
 	m_modelEvents.clear();
@@ -680,8 +732,11 @@ void WeaponsPage::loadModel() {
 	}
 	if (m_editor->models()) m_editor->models()->forget(model);   // A rebuild may have changed it
 	m_geometry = m_editor->models() ? m_editor->models()->get(model) : nullptr;
-	m_viewer->setModel(m_geometry, m_view != View::FirstPerson);
+	m_viewer->setModel(m_geometry, !firstPerson);
+	// A model that is still loading is framed when it arrives (modelReady), not around nothing.
+	m_framePending = !m_geometry && !firstPerson;
 	if (!m_geometry) m_viewer->setMessage(tr("Loading %1 ...").arg(model.section('/', -1)));
+	checkBounds();
 	if (auto* game = m_editor->game()) {
 		if (const auto mdl = game->files.read(path)) {
 			m_modelEvents = readSequenceEvents(*mdl);
@@ -792,6 +847,16 @@ void WeaponsPage::applyPose() {
 	m_viewer->setPose(std::move(vertices));
 }
 
+void WeaponsPage::checkBounds() {
+	if (!m_geometry || m_geometry->vertices.empty()) return;
+	// A weapon model is at most a few hundred units long; a far bigger box means it is no weapon
+	// model (a map-sized prop, broken data), and framing it would show nothing useful.
+	const auto size = m_geometry->bounds.size();
+	if (m_geometry->bounds.empty() || std::max({size.x, size.y, size.z}) > 4096) {
+		m_viewer->setMessage(tr("This model is %1 units big - it does not look like a weapon model").arg(int(std::max({size.x, size.y, size.z}))));
+	}
+}
+
 void WeaponsPage::updateTransport() {
 	const int index = sequenceIndex();
 	m_play->setEnabled(index >= 0);
@@ -805,8 +870,10 @@ void WeaponsPage::updateTransport() {
 		return;
 	}
 	const auto& seq = m_animated->sequences()[std::size_t(index)];
-	const int frame = seq.frames > 1 ? int(std::lround(m_cycle * float(seq.frames - 1))) : 0;
-	m_time->setText(tr("frame %1 / %2").arg(frame).arg(std::max(0, seq.frames - 1)));
+	// Frames counted from 1 as the timeline shows them; a one-frame pose reads "frame 1 / 1".
+	const int frames = std::max(1, seq.frames);
+	const int frame = frames > 1 ? int(std::lround(m_cycle * float(frames - 1))) : 0;
+	m_time->setText(seq.frames > 1 ? tr("frame %1 / %2").arg(frame + 1).arg(frames) : tr("one pose (no motion)"));
 }
 
 std::vector<ModelEvent> WeaponsPage::eventsOf(const QString& sequence) const {

@@ -830,6 +830,10 @@ void createDemo(Fixture& f) {
 	// A weapon of the game (Weapons page): its script, a first-person model with a reload that
 	// plays sounds and a fire with a muzzle flash, a world model and its material.
 	{
+		// An NPC weapon that borrows a player weapon's name and a debug weapon: not listed by default.
+		writeText((f.sdkBase / "hl2") / "scripts/weapon_citizensuitcase.txt",
+		          "WeaponData\n{\n\t\"printname\"\t\"#HL2_Pistol\"\n\t\"viewmodel\"\t\"models/weapons/w_pistol.mdl\"\n}\n");
+		writeText((f.sdkBase / "hl2") / "scripts/weapon_cubemap.txt", "WeaponData\n{\n\t\"printname\"\t\"cubemap\"\n\t\"viewmodel\"\t\"models/shadertest/envballs.mdl\"\n}\n");
 		writeText((f.sdkBase / "hl2") / "scripts/weapon_pistol.txt",
 		          "WeaponData\n{\n\t\"printname\"\t\"#HL2_Pistol\"\n\t\"viewmodel\"\t\"models/weapons/v_pistol.mdl\"\n"
 		          "\t\"playermodel\"\t\"models/weapons/w_pistol.mdl\"\n\t\"anim_prefix\"\t\"pistol\"\n\t\"bucket\"\t\"1\"\n\t\"bucket_position\"\t\"0\"\n"

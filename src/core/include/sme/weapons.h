@@ -64,6 +64,23 @@ struct WeaponScript {
 /// the ones the mod has its own copy of.
 [[nodiscard]] std::vector<WeaponScript> findWeapons(const GameFileSystem& fs, const std::filesystem::path& modDir);
 
+/// What a weapon class is for, from the classes Half-Life 2, Episode One/Two and Mapbase define
+/// (game/server/hl2 + episodic, LINK_ENTITY_TO_CLASS; the player's set from player.cpp "impulse 101").
+enum class WeaponRole {
+	Player,      ///< A player weapon of the game (weapon_smg1, weapon_357 ...)
+	Npc,         ///< Only NPCs carry it (weapon_alyxgun, weapon_annabelle, weapon_citizensuitcase ...)
+	Developer,   ///< Debug, unfinished or a template (weapon_cubemap, weapon_physgun, weapon_custom_scripted1 ...)
+	Unknown,     ///< Not a class of the game's code: the mod's own weapon (its code decides)
+};
+/// The role of a class (case does not matter).
+[[nodiscard]] WeaponRole weaponRole(std::string_view className);
+/// Whether a model path is a first-person view model ("models/weapons/v_smg1.mdl").
+[[nodiscard]] bool isViewModelPath(std::string_view model);
+/// Whether the Weapons page lists the weapon by default: a player weapon, or a weapon of the mod's
+/// own code (Unknown), whose view model is a first-person model that exists (`modelExists`).
+/// NPC and developer weapons only with "Show NPC and developer weapons".
+[[nodiscard]] bool listedByDefault(const WeaponScript& script, const std::function<bool(std::string_view model)>& modelExists);
+
 /// The name to show: the printname's text through `lookup` ("#HL2_SMG1" -> "SMG"), else the
 /// printname, else the class without "weapon_".
 [[nodiscard]] std::string weaponDisplayName(const WeaponScript& script, const std::function<std::string(std::string_view token)>& lookup = {});

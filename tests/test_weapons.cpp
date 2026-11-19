@@ -629,3 +629,50 @@ TEST_CASE("weapons: a texture replaced at the same path and restored") {
 	CHECK_FALSE(fs::exists(vtf));
 	CHECK_FALSE(replaceTexture(mod, "../evil", image, 2048, &error));
 }
+
+TEST_CASE("weapons: player weapons listed, NPC and developer ones hidden, one entry per class") {
+	// Julius, 19.11.2026 (build 137): "cubemap", the citizens' "fake SMGs", annabelle and doubled entries in the list.
+	CHECK(weaponRole("weapon_smg1") == WeaponRole::Player);
+	CHECK(weaponRole("WEAPON_357") == WeaponRole::Player);
+	CHECK(weaponRole("weapon_citizensuitcase") == WeaponRole::Npc);
+	CHECK(weaponRole("weapon_annabelle") == WeaponRole::Npc);
+	CHECK(weaponRole("weapon_cubemap") == WeaponRole::Developer);
+	CHECK(weaponRole("weapon_custom_scripted1") == WeaponRole::Developer);
+	CHECK(weaponRole("weapon_mymod_laser") == WeaponRole::Unknown);
+	CHECK(isViewModelPath("models/weapons/v_smg1.mdl"));
+	CHECK(isViewModelPath("Models\\Weapons\\V_Pistol.MDL"));
+	CHECK_FALSE(isViewModelPath("models/weapons/w_smg1.mdl"));
+	CHECK_FALSE(isViewModelPath("models/props_c17/suitcase001a.mdl"));
+	CHECK_FALSE(isViewModelPath(""));
+
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "list/hl2";
+	const auto mod = f.root / "list/mymod";
+	const auto script = [](std::string_view print, std::string_view view) {
+		return "WeaponData\n{\n\t\"printname\" \"" + std::string(print) + "\"\n\t\"viewmodel\" \"" + std::string(view) + "\"\n}\n";
+	};
+	test::writeText(game / "scripts/weapon_smg1.txt", script("#HL2_SMG1", "models/weapons/v_smg1.mdl"));
+	test::writeText(game / "scripts/weapon_citizensuitcase.txt", script("#HL2_SMG1", "models/weapons/w_suitcase_passenger.mdl"));
+	test::writeText(game / "scripts/weapon_cubemap.txt", script("cubemap", "models/shadertest/envballs.mdl"));
+	test::writeText(game / "scripts/weapon_rpg.txt", script("#HL2_RPG", "models/weapons/v_rpg.mdl"));   // its model is missing
+	test::writeText(mod / "scripts/weapon_laser.txt", script("Laser", "models/weapons/v_laser.mdl"));      // the mod's own weapon
+	test::writeText(mod / "scripts/Weapon_SMG1.txt", script("My SMG", "models/weapons/v_smg1.mdl"));       // the mod's copy, other case
+	GameFileSystem files;
+	files.addDirectory(mod, {"game", "mod"});
+	files.addDirectory(game, {"game"});
+	const auto weapons = findWeapons(files, mod);
+	std::vector<std::string> classes;
+	for (const auto& w : weapons) classes.push_back(w.className);
+	CHECK(classes == std::vector<std::string>{"weapon_citizensuitcase", "weapon_cubemap", "weapon_laser", "weapon_rpg", "weapon_smg1"});
+	const auto smg = std::find_if(weapons.begin(), weapons.end(), [](const WeaponScript& w) { return w.className == "weapon_smg1"; });
+	REQUIRE(smg != weapons.end());
+	CHECK(smg->inMod);   // the mod's copy wins
+
+	const auto exists = [](std::string_view model) { return model == "models/weapons/v_smg1.mdl" || model == "models/weapons/v_laser.mdl"; };
+	std::vector<std::string> listed;
+	for (const auto& w : weapons) {
+		if (listedByDefault(w, exists)) listed.push_back(w.className);
+	}
+	CHECK(listed == std::vector<std::string>{"weapon_laser", "weapon_smg1"});
+}

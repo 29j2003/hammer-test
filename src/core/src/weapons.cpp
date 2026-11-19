@@ -9,6 +9,7 @@
 #include <array>
 #include <cctype>
 #include <fstream>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 
@@ -223,8 +224,59 @@ std::vector<WeaponScript> findWeapons(const GameFileSystem& files, const fs::pat
 		script->inMod = !modDir.empty() && resolveI(modDir, path).has_value();
 		out.push_back(std::move(*script));
 	}
-	std::sort(out.begin(), out.end(), [](const WeaponScript& a, const WeaponScript& b) { return a.className < b.className; });
+	// One entry per class: file names differing only in case ("Weapon_SMG1.txt") are the same
+	// class to the game (its file system ignores case); the mod's copy wins, as in the game.
+	for (auto& w : out) w.className = toLower(w.className);
+	std::stable_sort(out.begin(), out.end(), [](const WeaponScript& a, const WeaponScript& b) {
+		return a.className != b.className ? a.className < b.className : a.inMod > b.inMod;
+	});
+	out.erase(std::unique(out.begin(), out.end(), [](const WeaponScript& a, const WeaponScript& b) { return a.className == b.className; }), out.end());
 	return out;
+}
+
+namespace {
+
+// Player weapons of HL2/EP1/EP2 (player.cpp CheatImpulseCommands gives these, plus the stunstick,
+// which only Metrocops carry in HL2 but has a full view model and works for the player).
+constexpr std::array<std::string_view, 12> PLAYER_WEAPONS = {"weapon_357",     "weapon_ar2",     "weapon_bugbait",    "weapon_crossbow",
+                                                             "weapon_crowbar", "weapon_frag",    "weapon_physcannon", "weapon_pistol",
+                                                             "weapon_rpg",     "weapon_shotgun", "weapon_smg1",       "weapon_stunstick"};
+// Weapons only NPCs use (they borrow a player weapon's print name or have none).
+constexpr std::array<std::string_view, 6> NPC_WEAPONS = {"weapon_alyxgun",         "weapon_annabelle",     "weapon_citizenpackage",
+                                                         "weapon_citizensuitcase", "weapon_oldmanharpoon", "weapon_smg2"};
+// Debug tools, unfinished or cut weapons, multiplayer/SDK bases and Mapbase's scripted-weapon template.
+constexpr std::array<std::string_view, 25> DEVELOPER_WEAPONS = {
+	"weapon_cubemap",      "weapon_physgun",        "weapon_hopwire",     "weapon_custom_scripted1", "weapon_brickbat",
+	"weapon_extinguisher", "weapon_flaregun",       "weapon_immolator",   "weapon_irifle",           "weapon_manhack",
+	"weapon_mattpipe",     "weapon_molotov",        "weapon_sniperrifle", "weapon_striderbuster",    "weapon_thumper",
+	"weapon_tripwire",     "weapon_cguard",         "weapon_ar1",         "weapon_slam",             "weapon_hl2mp_base",
+	"weapon_sdk_base",     "weapon_basesdkgrenade", "weapon_ifm_base",    "weapon_ifm_base_camera",  "weapon_ifm_steadycam"};
+
+bool inList(std::span<const std::string_view> list, std::string_view name) {
+	return std::any_of(list.begin(), list.end(), [&](std::string_view n) { return iequals(n, name); });
+}
+
+} // namespace
+
+WeaponRole weaponRole(std::string_view className) {
+	if (inList(PLAYER_WEAPONS, className)) return WeaponRole::Player;
+	if (inList(NPC_WEAPONS, className)) return WeaponRole::Npc;
+	if (inList(DEVELOPER_WEAPONS, className)) return WeaponRole::Developer;
+	return WeaponRole::Unknown;
+}
+
+bool isViewModelPath(std::string_view model) {
+	const std::string path = toLower(normalizePath(model));
+	const auto slash = path.find_last_of('/');
+	const std::string_view file = slash == std::string::npos ? std::string_view(path) : std::string_view(path).substr(slash + 1);
+	return path.rfind("models/", 0) == 0 && file.size() > 6 && file.substr(0, 2) == "v_" && file.substr(file.size() - 4) == ".mdl";
+}
+
+bool listedByDefault(const WeaponScript& script, const std::function<bool(std::string_view)>& modelExists) {
+	const WeaponRole role = weaponRole(script.className);
+	if (role != WeaponRole::Player && role != WeaponRole::Unknown) return false;
+	const std::string model = normalizePath(script.viewModel());
+	return isViewModelPath(model) && (!modelExists || modelExists(model));
 }
 
 std::string weaponDisplayName(const WeaponScript& script, const std::function<std::string(std::string_view)>& lookup) {

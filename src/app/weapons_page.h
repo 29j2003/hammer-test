@@ -188,15 +188,20 @@ private:
 	[[nodiscard]] QString baseTextureOf(const QString& material) const;
 	void noteModFile(const std::filesystem::path& file);
 	void message(const QString& text);
+	/// Tells when the model's size is far beyond a weapon's (not a weapon model, broken data).
+	void checkBounds();
 
 	Editor* m_editor;
 	MaterialCache* m_materials;
 	AssetBrowser* m_assets;
 	bool m_dirty = true;   ///< Weapons must be read again (game changed) when the page shows
 
-	std::vector<WeaponScript> m_weapons;
+	std::vector<WeaponScript> m_weapons;      ///< The listed ones (rows of m_list)
 	int m_current = -1;
-	View m_view = View::FirstPerson;
+	View m_view = View::Free;   ///< Free view by default: the model from all sides (Julius, 19.11.2026)
+	bool m_framePending = false;   ///< Frame the camera when the loading model arrives
+	QCheckBox* m_showAll = nullptr;   ///< "Show NPC and developer weapons"
+	QLabel* m_viewNote = nullptr;     ///< Why the view is not what was chosen (no first-person model ...)
 	QString m_model;
 	std::shared_ptr<const ModelGeometry> m_geometry;
 	std::optional<AnimatedModel> m_animated;
