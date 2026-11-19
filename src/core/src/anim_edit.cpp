@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace sme {
 

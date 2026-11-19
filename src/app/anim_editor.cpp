@@ -48,11 +48,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <functional>
 #include <map>
 #include <set>
 
 #ifdef Q_OS_WIN
-#include <windows.h>
+#include <qt_windows.h>
 #endif
 
 namespace sme::app {
