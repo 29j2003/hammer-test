@@ -23,6 +23,7 @@
 #include "maps_panel.h"
 #include "menu_editor.h"
 #include "hud_editor.h"
+#include "chapters_panel.h"
 #include "start_page.h"
 #include "texts_panel.h"
 #include "new_mod_dialog.h"
@@ -621,8 +622,26 @@ void MainWindow::createDocks() {
 	connect(m_mapsPanel, &MapsPanel::openMapRequested, this, openFromProject);
 	m_projectPage->addTab(m_modPage, tr("Overview"));
 	m_projectPage->addTab(m_mapsPanel, tr("Maps"));
+	// Chapters: New Game's chapters with pictures, background maps and loading pictures.
+	auto* chaptersPanel = new ChaptersPanel(m_editor, projectTabs);
+	m_projectPage->addTab(chaptersPanel, tr("Chapters"));
+	connect(chaptersPanel, &ChaptersPanel::playRequested, this, [this](const QString& map) {
+		if (!m_editor->game() || m_compiler.running()) {
+			QMessageBox::information(this, tr("Play chapter"), m_compiler.running() ? tr("A compile is running - wait for it first.") : tr("Choose a game first."));
+			return;
+		}
+		// Only the game step: it starts with "+map <map>" (the map is compiled already).
+		auto options = loadCompileOptions(m_editor->gameKey());
+		options.vbsp = options.vvis = options.vrad = options.copy = options.cubemaps = false;
+		options.run = true;
+		const QString gameDir = fromPath(m_editor->game()->entry.gameDir);
+		raiseDock("Compile");
+		m_compiler.start(QDir(gameDir).filePath("maps/" + map + ".vmf"), gameDir, m_editor->gameSettings(), options);
+	});
 	auto* menuEditor = new MenuEditor(m_editor, projectTabs);
 	m_projectPage->addTab(menuEditor, tr("Menu"));
+	connect(menuEditor, &MenuEditor::editChaptersRequested, this, [this, chaptersPanel] { m_projectPage->setCurrentWidget(chaptersPanel); });
+	connect(chaptersPanel, &ChaptersPanel::saved, menuEditor, [menuEditor] { menuEditor->reloadChapters(); });
 	// Texts: the mod's localization and captions. Chapter titles live in the same file as the
 	// menu's: each tab picks up what the other saved.
 	m_textsPanel = new TextsPanel(m_editor, m_assets, projectTabs);
@@ -631,6 +650,10 @@ void MainWindow::createDocks() {
 	connect(menuEditor, &MenuEditor::saved, m_textsPanel, [this] { m_textsPanel->reloadIfUnchanged(); });
 	// HUD: positions, colours and fonts of the mod's HUD (HudLayout.res, ClientScheme.res).
 	m_projectPage->addTab(new HudEditor(m_editor, projectTabs), tr("HUD"));
+	connect(chaptersPanel, &ChaptersPanel::saved, m_textsPanel, [this] { m_textsPanel->reloadIfUnchanged(); });
+	connect(m_textsPanel, &TextsPanel::saved, chaptersPanel, [chaptersPanel] {
+		if (!chaptersPanel->modified()) chaptersPanel->reload();   // titles edited on the Texts tab
+	});
 	auto* sourceControl = new SourceControlPanel(m_editor, projectTabs);
 	m_projectPage->addTab(sourceControl, tr("Source control"));
 	// Build from source: for people who build the mod themselves (update after a pull, game

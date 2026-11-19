@@ -148,9 +148,9 @@ MenuEditor::MenuEditor(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 	auto* v = new QVBoxLayout(column);
 	v->setContentsMargins(12, 8, 12, 12);
 	v->setSpacing(6);
-	auto* intro = new QLabel(tr("What players see when your mod starts: its title, the chapters of New Game and the menu entries. "
-	                            "Saving writes gameinfo.txt, cfg/chapterN.cfg, resource/<mod>_english.txt, scripts/ChapterBackgrounds.txt "
-	                            "and resource/GameMenu.res in the mod (each replaced file is kept once as .bak)."));
+	auto* intro = new QLabel(tr("What players see when your mod starts: its title and the menu entries. "
+	                            "Saving writes gameinfo.txt and resource/GameMenu.res in the mod (each replaced file is kept once as .bak). "
+	                            "Chapters are edited on the Chapters tab."));
 	intro->setWordWrap(true);
 	intro->setProperty("role", "description");
 	v->addWidget(intro);
@@ -164,10 +164,11 @@ MenuEditor::MenuEditor(Editor* editor, QWidget* parent) : QWidget(parent), m_edi
 	m_chapterList->setContentsMargins(0, 0, 0, 0);
 	m_chapterList->setSpacing(6);
 	v->addWidget(chapterHolder);
-	auto* addChapterButton = new QPushButton(tr("+ Chapter"));
-	addChapterButton->setObjectName("menuAddChapter");
-	connect(addChapterButton, &QPushButton::clicked, this, &MenuEditor::addChapter);
-	v->addWidget(addChapterButton, 0, Qt::AlignLeft);
+	auto* editChapters = new QPushButton(tr("Edit chapters ..."));
+	editChapters->setObjectName("menuEditChapters");
+	editChapters->setToolTip(tr("Chapters, their pictures, background maps and loading pictures are on the Chapters tab"));
+	connect(editChapters, &QPushButton::clicked, this, &MenuEditor::editChaptersRequested);
+	v->addWidget(editChapters, 0, Qt::AlignLeft);
 
 	v->addWidget(sectionHeader(tr("Main menu")));
 	auto* itemHolder = new QWidget;
@@ -286,21 +287,6 @@ void MenuEditor::buildInfoSection(QVBoxLayout* layout) {
 	layout->addWidget(box);
 }
 
-QStringList MenuEditor::mapNames() const {
-	QStringList names;
-	const auto* entry = m_editor->gameEntry();
-	if (!entry) return names;
-	const auto addFrom = [&](const QString& dir, const QString& pattern) {
-		QDirIterator it(dir, {pattern}, QDir::Files);
-		while (it.hasNext()) names << QFileInfo(it.next()).completeBaseName();
-	};
-	addFrom(fromPath(entry->gameDir / "maps"), "*.bsp");
-	addFrom(m_editor->gameSettings().mapDir, "*.vmf");
-	names.removeDuplicates();
-	names.sort(Qt::CaseInsensitive);
-	return names;
-}
-
 QString MenuEditor::displayLabel(const std::string& label) const {
 	if (!label.starts_with('#')) return qs(label);
 	if (auto own = m_menu.localization.get(label); !own.empty()) return qs(own);
@@ -346,11 +332,12 @@ void MenuEditor::refreshTitles() {
 	updatePreview();
 }
 
-void MenuEditor::addChapter() {
-	ChapterInfo chapter;
-	chapter.number = static_cast<int>(m_menu.chapters.size()) + 1;
-	chapter.title = tr("CHAPTER %1").arg(chapter.number).toStdString();
-	m_menu.chapters.push_back(std::move(chapter));
+void MenuEditor::reloadChapters() {
+	const auto* entry = m_editor->gameEntry();
+	if (!entry) return;
+	const ModMenu fresh = loadModMenu(entry->gameDir, m_editor->game() ? &m_editor->game()->files : nullptr);
+	m_menu.chapters = fresh.chapters;
+	m_menu.localization = fresh.localization;
 	rebuildChapters();
 	updatePreview();
 }
@@ -360,84 +347,19 @@ void MenuEditor::rebuildChapters() {
 		delete item->widget();
 		delete item;
 	}
-	for (int i = 0; i < static_cast<int>(m_menu.chapters.size()); ++i) {
-		m_menu.chapters[static_cast<std::size_t>(i)].number = i + 1;
-		m_chapterList->addWidget(makeChapterCard(i));
+	// Read only here: one line per chapter (the Chapters tab edits them).
+	for (const auto& chapter : m_menu.chapters) {
+		auto* row = new QLabel(tr("%1.  %2  -  %3").arg(chapter.number).arg(chapter.title.empty() ? tr("(no title)") : qs(chapter.title),
+		                                                    chapter.map.empty() ? tr("(no map)") : qs(chapter.map)));
+		row->setObjectName("menuChapterRow");
+		m_chapterList->addWidget(row);
 	}
 	if (m_menu.chapters.empty()) {
-		auto* none = new QLabel(tr("No chapters yet - New Game has nothing to offer. Add one and pick the map it starts."));
+		auto* none = new QLabel(tr("No chapters yet - New Game has nothing to offer."));
 		none->setWordWrap(true);
 		none->setProperty("role", "description");
 		m_chapterList->addWidget(none);
 	}
-}
-
-QWidget* MenuEditor::makeChapterCard(int index) {
-	auto& chapter = m_menu.chapters[static_cast<std::size_t>(index)];
-	auto* card = new QFrame;
-	card->setObjectName("chapterCard");
-	card->setProperty("role", "card");
-	auto* v = new QVBoxLayout(card);
-	v->setContentsMargins(10, 6, 6, 8);
-	auto* head = new QHBoxLayout;
-	auto* name = new QLabel(tr("Chapter %1").arg(index + 1));
-	name->setStyleSheet("font-weight: 600;");
-	head->addWidget(name, 1);
-	auto* up = cardButton(QStringLiteral("↑"), tr("Earlier"), "chapterUp");
-	auto* down = cardButton(QStringLiteral("↓"), tr("Later"), "chapterDown");
-	auto* remove = cardButton(QStringLiteral("✕"), tr("Remove this chapter"), "chapterRemove");
-	up->setEnabled(index > 0);
-	down->setEnabled(index + 1 < static_cast<int>(m_menu.chapters.size()));
-	head->addWidget(up);
-	head->addWidget(down);
-	head->addWidget(remove);
-	v->addLayout(head);
-	const auto move = [this, index](int by) {
-		std::swap(m_menu.chapters[static_cast<std::size_t>(index)], m_menu.chapters[static_cast<std::size_t>(index + by)]);
-		QMetaObject::invokeMethod(this, [this] { rebuildChapters(); updatePreview(); }, Qt::QueuedConnection);
-	};
-	connect(up, &QToolButton::clicked, this, [move] { move(-1); });
-	connect(down, &QToolButton::clicked, this, [move] { move(1); });
-	connect(remove, &QToolButton::clicked, this, [this, index] {
-		m_menu.chapters.erase(m_menu.chapters.begin() + index);
-		QMetaObject::invokeMethod(this, [this] { rebuildChapters(); updatePreview(); }, Qt::QueuedConnection);
-	});
-
-	auto* form = new QFormLayout;
-	const QStringList maps = mapNames();
-	const auto mapCombo = [&](const std::string& value, const QString& objectName, const QString& tip) {
-		auto* combo = new QComboBox;
-		combo->setObjectName(objectName);
-		combo->setEditable(true);
-		combo->addItems(maps);
-		combo->setCurrentText(qs(value));
-		combo->setToolTip(tip);
-		combo->completer()->setFilterMode(Qt::MatchContains);
-		return combo;
-	};
-	auto* title = new QLineEdit(qs(chapter.title));
-	title->setObjectName("chapterTitle");
-	title->setToolTip(tr("Shown in New Game (saved as %1 in the mod's localization file)").arg(qs(chapterTitleToken(
-	                      m_editor->gameEntry() ? m_editor->gameEntry()->folder() : std::string("mod"), index + 1))));
-	connect(title, &QLineEdit::textEdited, this, [this, index](const QString& text) {
-		m_menu.chapters[static_cast<std::size_t>(index)].title = text.toStdString();
-	});
-	auto* map = mapCombo(chapter.map, "chapterMap", tr("The map this chapter starts (cfg/chapter%1.cfg)").arg(index + 1));
-	connect(map, &QComboBox::currentTextChanged, this, [this, index](const QString& text) {
-		m_menu.chapters[static_cast<std::size_t>(index)].map = text.trimmed().toStdString();
-	});
-	auto* background = mapCombo(chapter.background, "chapterBackground",
-	                            tr("Map running behind the menu once the player reached this chapter (scripts/ChapterBackgrounds.txt). "
-	                               "Its screenshot materials/console/<map>_widescreen.vtf shows in the preview."));
-	connect(background, &QComboBox::currentTextChanged, this, [this, index](const QString& text) {
-		m_menu.chapters[static_cast<std::size_t>(index)].background = text.trimmed().toStdString();
-		updatePreview();
-	});
-	form->addRow(tr("Title"), title);
-	form->addRow(tr("Map"), map);
-	form->addRow(tr("Background"), background);
-	v->addLayout(form);
-	return card;
 }
 
 void MenuEditor::rebuildItems() {
@@ -568,15 +490,7 @@ bool MenuEditor::save(QString* error) {
 		if (error) *error = tr("No game chosen");
 		return false;
 	}
-	for (const auto& chapter : m_menu.chapters) {
-		if (chapter.map.empty()) {
-			const QString message = tr("Chapter %1 has no map yet.").arg(chapter.number);
-			setStatus(message, true);
-			if (error) *error = message;
-			return false;
-		}
-	}
-	const auto result = saveModMenu(entry->gameDir, m_menu);
+	const auto result = saveModMenu(entry->gameDir, m_menu, "english", false);   // chapters: the Chapters tab
 	if (!result.error.empty()) {
 		setStatus(qs(result.error), true);
 		if (error) *error = qs(result.error);

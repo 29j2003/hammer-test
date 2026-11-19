@@ -7,7 +7,7 @@ nav_order: 9
 {: .no_toc }
 
 The **Project** page in the side bar is about your mod as a whole: its maps, its main menu, its source code and how to
-share it. It has ten tabs: **Overview**, **Features**, **Maps**, **Menu**, **HUD**, **Texts**, **Source control**, **Ship**, **Claude** (see [Claude in Mapsmith](claude.html))
+share it. It has eleven tabs: **Overview**, **Features**, **Maps**, **Chapters**, **Menu**, **HUD**, **Texts**, **Source control**, **Ship**, **Claude** (see [Claude in Mapsmith](claude.html))
 and **Build from source** (only for building the mod from its own code).
 
 ![The Project page](images/project.png)
@@ -83,6 +83,23 @@ game. For an older mod the **Overview** shows a line with **Add missing files**;
 A mod built on Mapbase gets Mapbase's game code with Mapsmith's features at once (see [Features](#features-install-mapbase-fidelity-and-choose-what-it-does)).
 **File > New project** goes one step further: the new mod plus a first map to build on (see the start page).
 
+## Chapters
+
+The **Chapters** tab edits the chapters of **New Game**, one card each.
+
+- **+ Chapter** adds one; drag a card by **⠿** (or **↑**/**↓**) to reorder; **✕** removes it.
+- **Picture ...**: any screenshot; cropped to the frame New Game shows (152×86 inside a 256×128 texture).
+- **Title**: per language - pick it in **Titles in**. An empty title falls back to English.
+- **Starts map**: the map the chapter starts (`cfg/chapterN.cfg`).
+- **Also maps**: the chapter's other maps (or the start of their names). Mapbase unlocks the chapter in New Game when
+  the player reaches one, and saves show the chapter's title (`scripts/chapters.txt`).
+- **Background**: the map behind the main menu once players reached the chapter; **Loading picture ...** sets the
+  picture shown while it loads (`materials/console/<map>` and `<map>_widescreen`).
+- **▶ Play** starts the game at the chapter's map (it must be compiled).
+- **Checks** (below the cards): missing or uncompiled maps, missing titles, no picture, no loading picture.
+- **Save** writes everything; **Restore original** puts back every file Mapsmith changed (copies `<file>.bak`) and
+  removes the ones it made (list in `cfg/mapsmith_chapters.txt`).
+
 ## Menu
 
 The **Menu** tab edits what players see in your mod's main menu. On the left are the settings, on the right a
@@ -103,15 +120,7 @@ Other keys and comments in `gameinfo.txt` stay exactly as they were.
 
 ### Chapters
 
-The chapters of **New Game**. **+ Chapter** adds one. Each chapter has:
-
-- **Title**: shown in New Game (saved in the mod's localization file, `resource/<mod>_english.txt` and so on);
-- **Map**: the map it starts (saved as `cfg/chapterN.cfg`);
-- **Background**: the map shown behind the main menu once players reached this chapter
-  (`scripts/ChapterBackgrounds.txt`);
-- **Earlier** / **Later** to reorder, and a button to remove it.
-
-Without chapters, New Game has nothing to offer.
+Listed here (number, title, map). **Edit chapters ...** opens the **Chapters** tab.
 
 ### Main menu
 
@@ -155,7 +164,7 @@ language the mod has (`<mod>_german.txt` and so on) is a column.
 - Click a cell to edit it in the table or in the field below. **+ Language ...** adds a translation; empty
   translations are marked red, **Only missing translations** shows just those rows.
 - **Used by** tells which tokens the menu uses: chapter titles (`<MOD>_Chapter1_Title` ...) are the same ones the
-  **Menu** tab edits, so a change in either tab shows in the other after saving.
+  **Chapters** tab edits, so a change in either tab shows in the other after saving.
 - **+ File ...** starts a text or caption file if the mod has none yet.
 
 ### Captions
