@@ -1,6 +1,7 @@
 // weapons_page.cpp - The Weapons page (see weapons_page.h).
 
 #include "weapons_page.h"
+#include "model_check_dialog.h"
 
 #include "editor.h"
 #include "effects_panel.h"
@@ -425,7 +426,10 @@ QWidget* WeaponsPage::buildLookTab() {
 	m_enhance = new QPushButton(tr("Enhance textures ..."));
 	m_enhance->setObjectName("weaponEnhance");
 	m_enhance->setToolTip(tr("Sharper, larger textures and bump maps for this weapon's materials"));
-	for (auto* b : {m_editMaterial, m_replaceTexture, m_restoreTexture, m_enhance}) buttons->addWidget(b);
+	m_check = new QPushButton(tr("Check model"));
+	m_check->setObjectName("weaponCheck");
+	m_check->setToolTip(tr("Look for what would break the view model in the game: files, checksums, limits, missing materials, sounds and effects"));
+	for (auto* b : {m_editMaterial, m_replaceTexture, m_restoreTexture, m_enhance, m_check}) buttons->addWidget(b);
 	buttons->addStretch(1);
 	layout->addLayout(buttons);
 	layout->addWidget(noteLabel(tr("A replaced texture keeps the model's mapping: any size works (it is made a power of two, at most 2048).")));
@@ -451,6 +455,9 @@ QWidget* WeaponsPage::buildLookTab() {
 		if (!file.isEmpty()) replaceTexture(material, file);
 	});
 	connect(m_restoreTexture, &QPushButton::clicked, this, [this] { restoreTexture(selectedMaterial()); });
+	connect(m_check, &QPushButton::clicked, this, [this] {
+		if (!m_model.isEmpty()) openModelCheckDialog(m_editor, m_model, this);
+	});
 	connect(m_enhance, &QPushButton::clicked, this, [this] {
 		QStringList materials;
 		for (int i = 0; i < m_materialList->count(); ++i) materials << m_materialList->item(i)->data(Qt::UserRole).toString();
@@ -1478,6 +1485,7 @@ void WeaponsPage::updateButtons() {
 	const QString texture = material.isEmpty() ? QString() : baseTextureOf(material);
 	m_restoreTexture->setEnabled(!texture.isEmpty() && textureReplacement(dir, texture.toStdString()).has_value());
 	m_enhance->setEnabled(m_materialList->count() > 0);
+	m_check->setEnabled(!m_model.isEmpty());
 	m_glow->setEnabled(viewModel && m_geometry && !m_geometry->meshes.empty());
 	m_editAnimation->setEnabled(!m_model.isEmpty() && !currentSequence().isEmpty());
 	m_saveStats->setEnabled(script != nullptr);

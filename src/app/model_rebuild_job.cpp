@@ -9,6 +9,7 @@
 #include "ui_helpers.h"
 
 #include <sme/filesystem.h>
+#include <sme/model_check.h>
 #include <sme/game.h>
 #include <sme/text.h>
 
@@ -65,7 +66,19 @@ bool ModelRebuildJob::start(const QString& model, const ModelRebuildChanges& cha
 		                         .arg(program.isEmpty() ? tr("no SDK tools set") : program));
 		return false;
 	}
+	// The model it starts from must load: missing files or files from different builds give a
+	// broken decompile (only these block; warnings are for the check after the build).
+	{
+		const auto before = checkModel(game->files, normalizePath(model.toStdString()));
+		for (const auto& issue : before) {
+			if (issue.level == ModelIssue::Level::Error && (issue.code == "missing_file" || issue.code == "checksum")) {
+				emit finished(false, tr("The model cannot be built: %1 (Check model lists everything)").arg(qs(issue.message)));
+				return false;
+			}
+		}
+	}
 	m_model = qs(normalizePath(model.toStdString()));
+	m_lastCheck.clear();
 	m_log.clear();
 	m_plan.reset();
 	m_busy = true;
@@ -105,7 +118,12 @@ void ModelRebuildJob::compile() {
 		const bool ok = status == QProcess::NormalExit && code == 0 && finishModelRebuild(*m_plan, entry->gameDir, &error);
 		noteModelFiles(m_model);
 		if (ok) {
-			done(true, tr("Built %1 into the mod").arg(m_model));
+			// The new model is checked at once (files, checksums, limits, materials).
+			if (auto* game = m_editor->game()) m_lastCheck = checkModel(game->files, m_model.toStdString());
+			for (const auto& issue : m_lastCheck) m_log += QStringLiteral("check: %1\n").arg(qs(issue.message));
+			const QString check = hasModelErrors(m_lastCheck) ? tr(" - but the check found: %1").arg(qs(modelCheckSummary(m_lastCheck)))
+			                                                  : m_lastCheck.empty() ? QString() : tr(" (check: %1)").arg(qs(modelCheckSummary(m_lastCheck)));
+			done(true, tr("Built %1 into the mod").arg(m_model) + check);
 		} else {
 			if (!error.empty()) m_log += qs(error) + '\n';
 			done(false, tr("studiomdl failed (exit code %1) - its lines say why").arg(code));

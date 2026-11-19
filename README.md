@@ -315,6 +315,10 @@ memory and lists every key or value that would change.
 - **Game enhancements (mapbase-fidelity)**: liquid in bottles, sway in the wind and water glint are on by default – Mapsmith
   writes the materials into the mod by itself; switch an effect off for the whole mod (*Project › Overview*) or for one
   model (*Object Properties*, *Models* page). Your own materials are never overwritten.
+- **New material from photo**: *Materials* › *...* › *New material from photo ...* – crop, flatten light, make tileable,
+  bump map and gloss, then *Create* (world or model material in the mod; *Imported files ...* removes it).
+- **Check model**: on *Models* and *Weapons* › *Look* – checksums, missing files and materials, bone/vertex limits,
+  unknown sounds/effects. Runs by itself before and after Mapsmith builds a model.
 - **Enhance textures**: sharper, larger textures and new bump maps for the game's materials, without touching the
   game's files. On the *Materials* page right-click materials (or *...* › *Enhance textures of the listed materials*),
   pick *2x* or *4x* and press *Apply*; drag the yellow line in the comparison to see before and after. *AI* uses

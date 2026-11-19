@@ -153,6 +153,7 @@ private:
 	QLabel* m_details;
 	QListWidget* m_materialList;
 	QPushButton* m_glow = nullptr;
+	QPushButton* m_check = nullptr;   ///< "Check model"
 	class EffectsPanel* m_effects = nullptr;
 	class EnhancementSwitches* m_enhancementSwitches;
 	AssetMenuFiller m_menuFiller;

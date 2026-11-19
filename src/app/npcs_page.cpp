@@ -1,6 +1,7 @@
 // npcs_page.cpp - The NPCs page (see npcs_page.h).
 
 #include "npcs_page.h"
+#include "model_check_dialog.h"
 
 #include "editor.h"
 #include "glow_dialog.h"
@@ -280,7 +281,11 @@ QWidget* NpcsPage::buildLookTab() {
 	m_editMaterial = button(tr("Edit material"), "npcEditMaterial", tr("Open it in the Material Editor"));
 	m_enhance = button(tr("Enhance textures ..."), "npcEnhance", tr("Sharper, larger textures and bump maps for this model's materials"));
 	m_glow = button(tr("Glow ..."), "npcGlow", tr("Make parts of the model's materials glow (eyes, lamps, screens)"));
-	for (auto* b : {m_editMaterial, m_enhance, m_glow}) buttons->addWidget(b);
+	auto* check = button(tr("Check model"), "npcCheckModel", tr("Look for problems the game would have with this model: files, materials, limits"));
+	connect(check, &QPushButton::clicked, this, [this] {
+		if (!m_model.isEmpty()) openModelCheckDialog(m_editor, m_model, this);
+	});
+	for (auto* b : {m_editMaterial, m_enhance, m_glow, check}) buttons->addWidget(b);
 	buttons->addStretch(1);
 	layout->addLayout(buttons);
 	connect(m_modelBox, &QComboBox::currentIndexChanged, this, [this] {

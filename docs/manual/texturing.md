@@ -274,3 +274,12 @@ the room. Without any `env_cubemap` shiny faces reflect the sky, as the game doe
 - Faces with `tools/toolsskybox` show the map's sky in the 3D view, as in the game.
 - Use **Used in this map** in the browser to see every material the map uses, and
   [Replace materials](safety-search.html#replace-materials) to swap one for another everywhere.
+
+## New material from a photo
+
+- *Materials* › *...* › *New material from photo ...*, pick a PNG/JPG/TGA/BMP.
+- Sliders: *Crop*, *Seam blend* (tiles meet without a seam), *Flatten light* (one side brighter), *Bump strength* (0 = none), *Gloss* (0 = matte).
+- The 3 × 3 tiles show seams at once; the cube shows bump and shine.
+- *Use on*: *World* (LightmappedGeneric) or *Model* (VertexLitGeneric, gloss = phong).
+- *Create* writes VMT + VTFs into `materials/<folder>/` of the mod. *File* › *Import* › *Imported files ...* removes them.
+

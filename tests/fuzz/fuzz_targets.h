@@ -31,6 +31,7 @@
 #include <sme/localization.h>
 #include <sme/map.h>
 #include <sme/material.h>
+#include <sme/model_check.h>
 #include <sme/model_events.h>
 #include <sme/model_rebuild.h>
 #include <sme/weapons.h>
@@ -96,6 +97,11 @@ inline void studio(const std::uint8_t* data, std::size_t size) {
 		for (const auto& event : seq.events) (void)qcEventLine(event, seq.frames);
 	}
 	(void)readMdlMaterialTable(mdl);
+	// Model check: the header readers it uses on its own.
+	(void)vvdVertexCount(vvd);
+	(void)mdlChecksum(mdl);
+	(void)vvdChecksum(vvd);
+	(void)vtxChecksum(vtx);
 	(void)buildModelGeometry({mdl, vvd, vtx}, 1, nullptr, {}, 3);
 	(void)buildBodyPartGeometry({mdl, vvd, vtx}, 0, 1);
 	if (auto model = AnimatedModel::fromFiles({{"models/fuzz.mdl", mdl, parts[3]}})) {

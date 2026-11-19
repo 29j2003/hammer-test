@@ -56,6 +56,11 @@ struct ImportRecord {
 	bool operator==(const ImportRecord&) const = default;
 };
 
+/// Writes one file of an import: a new file goes to `record.created`; an existing one (only with
+/// `overwrite`) is kept as <file>.mapsmith-backup first and goes to `record.replaced`.
+bool writeImportFile(ImportRecord& record, const std::filesystem::path& file, std::span<const std::byte> data, bool overwrite,
+                     std::string* error = nullptr);
+
 /// Removes the created files and the added lines (a sound script file left without entries goes
 /// too) and puts replaced files back from their backups. Missing files are fine; false (with
 /// `error`) only if a file could not be changed.

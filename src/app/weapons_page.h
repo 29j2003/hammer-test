@@ -252,6 +252,7 @@ private:
 	QPushButton* m_replaceTexture = nullptr;
 	QPushButton* m_restoreTexture = nullptr;
 	QPushButton* m_enhance = nullptr;
+	QPushButton* m_check = nullptr;   ///< "Check model"
 	QFormLayout* m_statsForm = nullptr;
 	QWidget* m_statsBox = nullptr;
 	QLabel* m_statsNote = nullptr;

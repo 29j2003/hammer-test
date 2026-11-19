@@ -501,6 +501,7 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 			for (int row = 0; row < m_materialFilter->rowCount(); ++row) names << m_materialFilter->index(row, 0).data(Qt::UserRole).toString();
 			emit enhanceTexturesRequested(names);
 		})->setObjectName("materialsEnhance");
+		moreMenu->addAction(tr("New material from photo ..."), this, [this] { emit photoMaterialRequested(); })->setObjectName("materialsFromPhoto");
 		moreMenu->addAction(tr("Load material decisions ..."), this, [this] { emit decisionsLoadRequested(); })->setObjectName("materialsLoadDecisions");
 		moreMenu->addAction(tr("Open decisions file"), this, [this] { openMaterialDecisionsFile(m_editor, this); })->setObjectName("materialsOpenDecisions");
 		more->setMenu(moreMenu);

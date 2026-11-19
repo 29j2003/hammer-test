@@ -91,6 +91,7 @@
 #include <sme/samples.h>
 #include <sme/model_import.h>
 #include <sme/asset_import.h>
+#include <sme/model_check.h>
 #include <sme/asset_refs.h>
 #include <sme/brush.h>
 #include <sme/editing.h>
@@ -222,6 +223,8 @@
 #include "viewport.h"
 #include "choreography_panel.h"
 #include "scene_poser.h"
+#include "photo_material_dialog.h"
+#include "model_check_dialog.h"
 #include <sme/choreography.h>
 #include <sme/sound_edit.h>
 
@@ -9732,7 +9735,6 @@ int main(int argc, char** argv) {
 	return strays.strays.isEmpty() ? result : 1;
 }
 
-#include "test_app.moc"
 
 TEST_CASE("round edge: the dialog shows the result live, across two brushes, a too big radius limited") {
 	QTemporaryDir home;
@@ -14080,3 +14082,106 @@ TEST_CASE("chapters tab: cards with picture, title per language, maps and backgr
 	CHECK(panel->chapters().chapters.empty());
 	CHECK_FALSE(panel->findChild<QPushButton*>("chaptersRestore")->isEnabled());
 }
+
+TEST_CASE("material from a photo and model check: dialog, files in the mod, check of a demo model and a broken one") {
+	// Julius, 19.11.2026: "aus einem Foto eine fertige Textur mit Bump-Map, Glanzmaske und VMT" and
+	// "Modell-Pruefung vor dem Bauen: Pruefsummen, fehlende Materialien, zu viele Knochen".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1366, 768);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	CHECK(window.assets()->findChild<QAction*>("materialsFromPhoto"));
+
+	// A photo: stripes under a light gradient.
+	ImageRgba picture;
+	picture.width = 400;
+	picture.height = 300;
+	picture.pixels.resize(400 * 300 * 4);
+	for (unsigned y = 0; y < 300; ++y) {
+		for (unsigned x = 0; x < 400; ++x) {
+			const int v = int((x % 40 < 6 ? 80 : 190) * (1.1 - 0.6 * x / 400.0));
+			auto* p = &picture.pixels[(std::size_t(y) * 400 + x) * 4];
+			p[0] = std::byte(std::uint8_t(v));
+			p[1] = std::byte(std::uint8_t(v * 0.8));
+			p[2] = std::byte(std::uint8_t(v * 0.6));
+			p[3] = std::byte{255};
+		}
+	}
+	const QString photoPath = home.filePath("Old Wood Planks.png");
+	{
+		const auto png = encodePng(picture);
+		QFile file(photoPath);
+		REQUIRE(file.open(QIODevice::WriteOnly));
+		file.write(reinterpret_cast<const char*>(png.data()), qint64(png.size()));
+	}
+	auto* dialog = window.openPhotoMaterialDialog();
+	REQUIRE(dialog);
+	settle();
+	CHECK(dialog->minimumSizeHint().width() <= 1366);
+	CHECK(dialog->minimumSizeHint().height() <= 740);
+	REQUIRE(dialog->loadPhoto(photoPath));
+	CHECK(dialog->findChild<QLineEdit*>("photoName")->text() == "old wood planks");
+	REQUIRE(dialog->preview());
+	CHECK(dialog->preview()->color.width == 256);
+	CHECK(dialog->preview()->surfaceProp == "wood_plank");
+	dialog->findChild<QSlider*>("photoGloss")->setValue(40);
+	QTest::qWait(250);
+	CHECK(dialog->preview()->normal.width == 256);   // bump map with the gloss in its alpha
+	QSignalSpy created(dialog, &PhotoMaterialDialog::created);
+	REQUIRE(dialog->create(false));
+	REQUIRE(created.count() == 1);
+	const QString material = created.first().first().toString();
+	CHECK(material == "custom/old_wood_planks");
+	CHECK(std::filesystem::exists(f.mod / "materials/custom/old_wood_planks.vmt"));
+	CHECK(std::filesystem::exists(f.mod / "materials/custom/old_wood_planks_normal.vtf"));
+	bool listed = false;
+	for (const auto& record : loadImports(f.mod)) listed = listed || record.asset == "custom/old_wood_planks";
+	CHECK(listed);
+	dialog->close();
+	settle();
+
+	// Model check: the demo crate is fine; a crate whose .mdl checksum does not match its .vvd is not.
+	auto* check = openModelCheckDialog(&editor, "models/props_demo/crate01.mdl", &window);
+	REQUIRE(check);
+	QSignalSpy checked(check, &ModelCheckDialog::checked);
+	REQUIRE(checked.wait(10000));
+	CHECK_FALSE(hasModelErrors(check->issues()));
+	check->close();
+	std::filesystem::copy_file(f.mod / "models/props_demo/crate01.vvd", f.mod / "models/props_demo/broken.vvd");
+	std::filesystem::copy_file(f.mod / "models/props_demo/crate01.dx90.vtx", f.mod / "models/props_demo/broken.dx90.vtx");
+	{
+		std::ifstream in(f.mod / "models/props_demo/crate01.mdl", std::ios::binary);
+		std::vector<char> mdl{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+		mdl[8] = char(mdl[8] ^ 0x33);
+		std::ofstream(f.mod / "models/props_demo/broken.mdl", std::ios::binary).write(mdl.data(), std::streamsize(mdl.size()));
+	}
+	for (const char* ext : {".mdl", ".vvd", ".dx90.vtx"}) editor.game()->files.noteWrittenFile(f.mod / (std::string("models/props_demo/broken") + ext));
+	check = openModelCheckDialog(&editor, "models/props_demo/broken.mdl", &window);
+	REQUIRE(check);
+	QSignalSpy checked2(check, &ModelCheckDialog::checked);
+	REQUIRE(checked2.wait(10000));
+	CHECK(hasModelErrors(check->issues()));
+	CHECK(check->findChild<QTreeWidget*>("modelCheckList")->topLevelItemCount() >= 1);
+	CHECK(check->findChild<QLabel*>("modelCheckSummary")->text().contains("error"));
+	check->close();
+	settle();
+
+	// The Models page has the button.
+	window.showPage(MainWindow::Page::Models);
+	settle();
+	CHECK(window.findChild<QPushButton*>("modelCheck"));
+}
+
+#include "test_app.moc"
