@@ -1,5 +1,9 @@
-// anim_editor.h - The Animation editor window: improve an animation of a model, or make a new
-// one, with keys like in Source Filmmaker - no Blender. Work in 3D (orbit, Front/Side/Top, the
+// anim_editor.h - The Animation editor window, in two modes chosen at the top:
+// - Pose (all animations): change how the model holds itself in every animation at once - drag a
+//   hand's grip (the arm follows), bend the fingers with the Curl/Spread sliders, check it on any
+//   animation ("Check on"), Build puts it into the model (a pose layer, anim_edit.h).
+// - Animate (one animation): improve an animation of a model, or make a new
+//   one, with keys like in Source Filmmaker - no Blender. Work in 3D (orbit, Front/Side/Top, the
 // player's view beside it for weapons): drag a hand's or foot's grip and the limb follows (IK),
 // or pick bones and turn them with the rings / move them with the arrows (or type the values).
 // Auto key keys every move at the playhead; Set key (K) does it by hand. Between keys the pose
@@ -20,6 +24,8 @@
 //   After the build the header checksums of .mdl, .vvd, .vtx and .phy are compared - the engine
 //   refuses a model whose files do not belong together.
 // - Save: the keys as a project file (.smanim) below the mod's modelsrc/ to go on later.
+// - Build the pose: every animation of the model with the pose layer on top (and the animations
+//   built from this editor before, so nothing built is lost: <modelsrc>/rebuild.txt records them).
 
 #pragma once
 
@@ -38,11 +44,13 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QProcess;
 class QPushButton;
+class QSlider;
 class QSpinBox;
 class QTimer;
 class QToolButton;
@@ -69,6 +77,17 @@ public:
 	/// sequence's first frame; empty sequence: from the rest pose). A project file saved for that
 	/// model and name is picked up again. Loads in the background (loaded() follows).
 	void openModel(const QString& model, const QString& sequence, bool newAnimation = false);
+	/// Opens a model in Pose mode (hand/arm pose for all its animations); a saved pose is picked up.
+	void openPose(const QString& model);
+	/// Pose (all animations) or Animate (one animation). The other mode's work stays (not saved).
+	void setPoseMode(bool on);
+	[[nodiscard]] bool poseMode() const { return m_pose; }
+	/// Pose mode: the animation the pose is shown on.
+	void setPoseSequence(const QString& sequence);
+	/// Finger sliders of a hand (index into AnimEditor::hands()): curl -0.25 .. 1, spread -1 .. 1.
+	void setHandShape(int hand, float curl, float spread);
+	/// Builds the pose into the model (all animations; see the file comment). False if it cannot start.
+	bool buildPose();
 	/// Opens a project file (.smanim).
 	bool openProject(const QString& path, QString* error = nullptr);
 	/// Whether a model and its clip are loaded.
@@ -162,6 +181,20 @@ private:
 	[[nodiscard]] QString titleText() const;
 	void updateTitle();
 	void finishReplace(int code, bool crashed);
+	/// Takes the model apart with these frames in place and builds it into the mod (see replaceInModel).
+	bool startRebuild(std::map<std::string, SequenceReplacement> replacements);
+	[[nodiscard]] AnimClip defaultClip() const;   ///< Animate mode on the opened animation (or the idle)
+	[[nodiscard]] AnimClip poseClip() const;      ///< The saved pose of the model, or an empty one
+	/// Saved project of a name below the model's modelsrc/ (nullopt if none or broken).
+	[[nodiscard]] std::optional<AnimClip> savedClip(const std::string& name) const;
+	/// What was built into the mod's model by this editor: sequence (lower case) -> project name;
+	/// "#pose" when the pose is in it.
+	[[nodiscard]] std::map<std::string, std::string> rebuildRecord() const;
+	void writeRebuildRecord(const std::map<std::string, std::string>& record) const;
+	void applyMode();        ///< Shows the tools of the mode, its hint
+	void fillHands();        ///< Sliders for the model's hands
+	void refreshHands();     ///< Slider positions from the clip
+	void fillPoseSequences();
 
 	Editor* m_editor;
 	MaterialCache* m_materials;
@@ -170,6 +203,11 @@ private:
 	QString m_sequence;
 	bool m_new = false;
 	std::optional<AnimClip> m_pendingClip;   ///< From a project file, used once the model is loaded
+	bool m_pose = false;                     ///< Pose mode (all animations)
+	bool m_openPose = false;                 ///< Start in Pose mode once loaded
+	std::unique_ptr<AnimEditor> m_parked;    ///< The other mode's clip, kept while switching
+	int m_parkedSavedRevision = 0;
+	std::map<std::string, std::string> m_pendingRecord;   ///< Entries for rebuild.txt once the build succeeds
 	std::shared_ptr<const ModelGeometry> m_geometry;
 	std::optional<AnimatedModel> m_animated;
 	QFutureWatcher<Loaded> m_loader;
@@ -186,6 +224,25 @@ private:
 
 	// Widgets.
 	QLabel* m_title = nullptr;
+	QToolButton* m_modePose = nullptr;
+	QToolButton* m_modeAnimate = nullptr;
+	QWidget* m_animateTools = nullptr;
+	QWidget* m_poseTools = nullptr;
+	QComboBox* m_poseSequence = nullptr;
+	QLabel* m_howTo = nullptr;
+	QWidget* m_bonePanel = nullptr;
+	QWidget* m_clipBox = nullptr;
+	QFormLayout* m_clipForm = nullptr;
+	QWidget* m_handsBox = nullptr;
+	QWidget* m_handsContent = nullptr;
+	struct HandSliders {
+		QSlider* curl = nullptr;
+		QSlider* spread = nullptr;
+		std::vector<QSlider*> fingers;
+		QWidget* fingerBox = nullptr;   ///< The per-finger sliders (under More)
+	};
+	std::vector<HandSliders> m_handSliders;
+	bool m_sliderDrag = false;
 	AnimEditView* m_view = nullptr;
 	AnimEditView* m_playerView = nullptr;
 	QCheckBox* m_split = nullptr;

@@ -964,7 +964,7 @@ void applyPoseLayer(const AnimClip& pose, const std::vector<StudioBone>& bones, 
 	}
 }
 
-std::map<std::string, SequenceReplacement> poseLayerReplacements(const AnimatedModel& model, const AnimClip& pose, const std::vector<AnimClip>& tweaks) {
+std::map<std::string, SequenceReplacement> poseLayerReplacements(const AnimatedModel& model, const AnimClip& pose, const std::map<std::string, AnimClip>& built) {
 	std::map<std::string, SequenceReplacement> out;
 	const auto& bones = model.bones();
 	const bool layered = std::any_of(pose.tracks.begin(), pose.tracks.end(), [](const auto& t) { return !t.second.empty(); });
@@ -974,10 +974,8 @@ std::map<std::string, SequenceReplacement> poseLayerReplacements(const AnimatedM
 	for (std::size_t s = 0; s < sequences.size(); ++s) {
 		const StudioSequence& seq = sequences[s];
 		if (seq.model != 0 || seq.delta) continue;   // borrowed from include models, or adds onto others
-		const AnimClip* tweak = nullptr;
-		for (const auto& t : tweaks) {
-			if (t.mode == AnimClip::Mode::Tweak && iequals(t.baseSequence, seq.name) && !t.tracks.empty()) tweak = &t;
-		}
+		const auto found = built.find(toLower(seq.name));
+		const AnimClip* tweak = found != built.end() && found->second.mode != AnimClip::Mode::Pose ? &found->second : nullptr;
 		if (!layered && !tweak) continue;
 		std::vector<std::vector<std::pair<AnimVec, AnimQuat>>> baked;
 		SequenceReplacement replacement;

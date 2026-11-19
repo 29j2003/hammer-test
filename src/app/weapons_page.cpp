@@ -272,6 +272,10 @@ QWidget* WeaponsPage::buildAnimationsTab() {
 	m_editAnimation->setObjectName("weaponEditAnimation");
 	m_editAnimation->setToolTip(tr("Change the poses of this animation with keyframes"));
 	buttons->addWidget(m_editAnimation);
+	m_handPose = new QPushButton(tr("Change hand pose ..."));
+	m_handPose->setObjectName("weaponHandPose");
+	m_handPose->setToolTip(tr("Hold the weapon differently in every animation: move the hands and arms, bend the fingers"));
+	buttons->addWidget(m_handPose);
 	buttons->addStretch(1);
 	layout->addLayout(buttons);
 	layout->addWidget(noteLabel(tr("Double-click an animation to play it. Its sounds and effects are on the Sounds tab (Animation events).")));
@@ -289,6 +293,9 @@ QWidget* WeaponsPage::buildAnimationsTab() {
 	});
 	connect(m_editAnimation, &QPushButton::clicked, this, [this] {
 		if (!m_model.isEmpty()) emit editAnimationRequested(m_model, currentSequence());
+	});
+	connect(m_handPose, &QPushButton::clicked, this, [this] {
+		if (!m_model.isEmpty()) emit handPoseRequested(m_model);
 	});
 	return page;
 }
@@ -1488,6 +1495,7 @@ void WeaponsPage::updateButtons() {
 	m_check->setEnabled(!m_model.isEmpty());
 	m_glow->setEnabled(viewModel && m_geometry && !m_geometry->meshes.empty());
 	m_editAnimation->setEnabled(!m_model.isEmpty() && !currentSequence().isEmpty());
+	m_handPose->setEnabled(!m_model.isEmpty());
 	m_saveStats->setEnabled(script != nullptr);
 	m_restoreStats->setEnabled(script && weaponScriptSaved(dir, script->file));
 }

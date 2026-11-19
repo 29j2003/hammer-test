@@ -142,6 +142,8 @@ signals:
 	void editSoundRequested(const QString& wave);
 	/// "Edit animation ...": the model and sequence (the animation editor, or the Animations page).
 	void editAnimationRequested(const QString& model, const QString& sequence);
+	/// "Change hand pose ...": the Animation editor in Pose mode on the view model (all its animations).
+	void handPoseRequested(const QString& model);
 	/// "Enhance textures ...": the model's materials.
 	void enhanceTexturesRequested(const QStringList& materials);
 	/// A glow was applied or taken out (the mod's files changed).
@@ -232,6 +234,7 @@ private:
 	QTabWidget* m_tabs = nullptr;
 	QTreeWidget* m_sequences = nullptr;
 	QPushButton* m_editAnimation = nullptr;
+	QPushButton* m_handPose = nullptr;
 	QTreeWidget* m_sounds = nullptr;
 	QPushButton* m_playSound = nullptr;
 	QPushButton* m_replaceSound = nullptr;

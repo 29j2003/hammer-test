@@ -287,11 +287,12 @@ void applyPoseLayer(const AnimClip& pose, const std::vector<StudioBone>& bones, 
 /// Every animation of the model with a pose layer (a Mode::Pose clip) put on top, as replacements
 /// for a rebuild (decompileModel / model_rebuild): the model's own sequences that are not deltas
 /// (gestures add onto others, they keep theirs), sequence name in lower case -> frames. A sequence
-/// with one of `tweaks` (Tweak clips on it, e.g. a reload improved in the editor) gets that clip's
-/// frames (its length, fps and loop) under the layer - so a rebuild always is original + saved
-/// tweaks + pose, whichever was built last. Empty if the layer and the tweaks change nothing.
+/// with a clip in `built` (e.g. a reload improved in the editor and built before) gets that clip's
+/// frames (its length, fps and loop) under the layer - so a rebuild always is original + built
+/// clips + pose, whichever was built last. `built`: sequence name (lower case) -> the clip built in
+/// its place (any mode). Empty if the layer and the built clips change nothing.
 [[nodiscard]] std::map<std::string, SequenceReplacement> poseLayerReplacements(const AnimatedModel& model, const AnimClip& pose,
-                                                                              const std::vector<AnimClip>& tweaks = {});
+                                                                              const std::map<std::string, AnimClip>& built = {});
 /// The file name of a model's pose layer project ("pose_layer").
 inline constexpr const char* POSE_LAYER_NAME = "pose_layer";
 

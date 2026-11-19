@@ -671,6 +671,22 @@ TEST_CASE("anim edit: a pose layer is one change on every frame of every animati
 	CHECK(d == doctest::Approx(1).epsilon(1e-3));
 	// Nothing in the layer: nothing to rebuild.
 	CHECK(poseLayerReplacements(model, poseClip()).empty());
+	// A clip built before in place of "fire" (a longer one) stays under the layer.
+	AnimClip longer;
+	longer.model = "models/weapons/v_hand.mdl";
+	longer.name = "fire_edit";
+	longer.baseSequence = "fire";
+	longer.frames = 20;
+	longer.fps = 24;
+	std::map<std::string, AnimClip> built{{"fire", longer}};
+	const auto both = poseLayerReplacements(model, editor.clip(), built);
+	REQUIRE(both.count("fire") == 1);
+	CHECK(both.at("fire").smd.find("time 19") != std::string::npos);
+	CHECK(both.at("fire").fps == doctest::Approx(24));
+	CHECK(both.at("fire").loop == 0);
+	// Only the built clip, no layer: just that sequence.
+	const auto onlyBuilt = poseLayerReplacements(model, poseClip(), built);
+	CHECK(onlyBuilt.size() == 1);
 }
 
 TEST_CASE("anim edit: a pose layer and its finger sliders in the project file") {
