@@ -1551,7 +1551,7 @@ TEST_CASE("editing with the mouse in the real window") {
 			for (int i = 0; i < sounds->categories()->count(); ++i) categoryTexts << sounds->categories()->item(i)->text();
 			CHECK(categoryTexts.front().startsWith("All sounds"));
 			REQUIRE(categoryTexts.filter("Weapons").size() == 1);
-			CHECK(categoryTexts.filter("Weapons").front().endsWith(" 2"));   // Weapon_Pistol.Single and its file
+			CHECK(categoryTexts.filter("Weapons").front().endsWith(" 6"));   // Weapon_Pistol.Single, .Reload, .Empty and their files
 			CHECK(categoryTexts.filter("Doors and buttons").front().endsWith(" 8"));   // 4 door scripts and their files
 			CHECK(categoryTexts.filter("Voice and dialogue").front().endsWith(" 2"));   // NPC_Citizen.Hello speaks
 			CHECK(categoryTexts.back().startsWith("Soundscapes"));
@@ -1561,7 +1561,11 @@ TEST_CASE("editing with the mouse in the real window") {
 			CHECK(sounds->categories()->currentItem()->text().startsWith("Weapons"));
 			CHECK_FALSE(pistol->isHidden());
 			CHECK(pistol->parent()->text(0) == "weapons/pistol");
-			CHECK(pistol->parent()->child(0)->text(0) == "Weapon_Pistol.Single");
+			{
+				QStringList names;
+				for (int i = 0; i < pistol->parent()->childCount(); ++i) names << pistol->parent()->child(i)->text(0);
+				CHECK(names.contains("Weapon_Pistol.Single"));
+			}
 			// Searching finds things in other categories too.
 			sounds->findChild<QLineEdit*>("soundSearch")->setText("squeak");
 			QTest::qWait(400);
@@ -12668,6 +12672,8 @@ TEST_CASE("weapons page: a weapon in first person, its animations, sounds, event
 	test::Fixture f;
 	test::createFixture(f);
 	test::createDemo(f);
+	// The game's skill values (the fixture's game has none).
+	test::writeText(f.sdkBase / "hl2/cfg/skill.cfg", "sk_plr_dmg_pistol\t\"5\"\nsk_npc_dmg_pistol\t\"3\"\nsk_max_pistol\t\"150\"\n");
 	Editor editor;
 	editor.discover(fromPath(f.steam));
 	MainWindow window(&editor);

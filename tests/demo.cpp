@@ -828,7 +828,7 @@ void createDemo(Fixture& f) {
 		writeWav((f.sdkBase / "hl2") / "sound/weapons/pistol/pistol_empty.wav", impact, std::nullopt);
 	}
 	// A weapon of the game (Weapons page): its script, a first-person model with a reload that
-	// plays sounds and a fire with a muzzle flash, a world model, its material and skill values.
+	// plays sounds and a fire with a muzzle flash, a world model and its material.
 	{
 		writeText((f.sdkBase / "hl2") / "scripts/weapon_pistol.txt",
 		          "WeaponData\n{\n\t\"printname\"\t\"#HL2_Pistol\"\n\t\"viewmodel\"\t\"models/weapons/v_pistol.mdl\"\n"
@@ -836,7 +836,6 @@ void createDemo(Fixture& f) {
 		          "\t\"clip_size\"\t\"18\"\n\t\"primary_ammo\"\t\"Pistol\"\n\t\"secondary_ammo\"\t\"None\"\n\t\"weight\"\t\"2\"\n"
 		          "\tSoundData\n\t{\n\t\t\"reload\"\t\"Weapon_Pistol.Reload\"\n\t\t\"empty\"\t\"Weapon_Pistol.Empty\"\n"
 		          "\t\t\"single_shot\"\t\"Weapon_Pistol.Single\"\n\t}\n}\n");
-		writeText((f.sdkBase / "hl2") / "cfg/skill.cfg", "sk_plr_dmg_pistol\t\"5\"\nsk_npc_dmg_pistol\t\"3\"\nsk_max_pistol\t\"150\"\n");
 		StudioModelSpec gun;
 		// Barrel, slide and grip in front of the eye (the view model's origin), hands below.
 		gun.groups.push_back({"studio", {{"v_pistol", {{14, -2, -9, 26, 2, -5}, {13, -1.5f, -14, 17, 1.5f, -9}, {10, 2, -16, 16, 6, -11}}}}});
