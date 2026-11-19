@@ -1,6 +1,7 @@
 // anim_timeline.h - The animation editor's timeline, like Source Filmmaker's: a ruler with frame
 // numbers, the playhead, and two rows of keys - the chosen bones' and all bones' (diamonds:
-// smooth, squares: linear). Click or drag in the ruler or an empty spot to scrub; drag a key to
+// smooth, squares: linear, square with a bar: step, triangles: ease in / ease out). Frames before
+// the edit-from frame are shaded (they stay as the original). Click or drag in the ruler or an empty spot to scrub; drag a key to
 // move it (Ctrl: copy); right-click a key for its menu. It only draws and reports; the window
 // changes the clip.
 
@@ -28,6 +29,8 @@ public:
 	[[nodiscard]] int frame() const { return m_frame; }
 	/// Keys of the chosen bones (frame -> how the curve leaves it) and of all bones.
 	void setKeys(std::map<int, KeyInterp> selected, std::vector<int> all);
+	/// Frames before this one are locked (shaded).
+	void setEditFrom(int frame);
 
 	/// The x of a frame, and the frame at an x (tests).
 	[[nodiscard]] double frameX(int frame) const;
@@ -59,6 +62,7 @@ private:
 
 	int m_frames = 1;
 	int m_frame = 0;
+	int m_editFrom = 0;
 	std::map<int, KeyInterp> m_selected;
 	std::vector<int> m_all;
 	// Dragging.

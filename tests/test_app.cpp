@@ -12773,6 +12773,174 @@ TEST_CASE("enhance textures: the dialog plans, compares, writes the larger textu
 	settle();
 }
 
+TEST_CASE("animation editor in 3D: place a hand with its grip, auto key, easing, motion path, views, duplicate and edit from a frame") {
+	// Julius, 19.11.2026: "in 3D, from all sides ... place the hand there, keyframe, then there, and whether it is smooth".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	// A model with two arms (upper arm - forearm - hand) and a short animation.
+	{
+		test::StudioModelSpec spec;
+		spec.groups.push_back({"body", {{"body", {{-4, -4, 0, 4, 4, 30}, {-2, 8, 28, 2, 30, 32}, {-2, -30, 28, 2, -8, 32}}}}});
+		spec.bones = {{"ValveBiped.Bip01_Spine", -1, {0, 0, 20}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_L_UpperArm", 0, {0, 8, 10}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_L_Forearm", 1, {0, 12, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_L_Hand", 2, {0, 10, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_UpperArm", 0, {0, -8, 10}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Forearm", 4, {0, -12, 0}, {0, 0, 0}},
+		              {"ValveBiped.Bip01_R_Hand", 5, {0, -10, 0}, {0, 0, 0}}};
+		spec.boxBones = {0, 3, 6};
+		test::StudioModelSpec::Animation wave{"wave", "ACT_IDLE", 30, true, {}};
+		for (int k = 0; k < 21; ++k) {
+			std::vector<std::array<float, 6>> frame;
+			for (const auto& b : spec.bones) frame.push_back({b.pos[0], b.pos[1], b.pos[2], 0, 0, 0});
+			frame[0][2] = 20.f + float(k) * 0.2f;
+			wave.frames.push_back(frame);
+		}
+		spec.animations = {wave};
+		test::writeStudioModel(f.mod / "models/test/arms.mdl", test::makeStudioModel(spec));
+	}
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1400, 900);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	auto* ed = window.openAnimationEditor("models/test/arms.mdl", "wave");
+	REQUIRE(ed);
+	QSignalSpy loaded(ed, &AnimationEditor::loaded);
+	REQUIRE((ed->ready() || loaded.wait(10000)));
+	REQUIRE(QTest::qWaitForWindowExposed(ed));
+	settle();
+	AnimEditor* clip = ed->clipEditor();
+	REQUIRE(clip);
+	// 3D view by default (orbit), a grip on each hand.
+	CHECK(ed->view()->cameraMode() == AnimEditView::CameraMode::Free);
+	CHECK_FALSE(ed->playerView()->isVisible());
+	REQUIRE(clip->ikChains().size() == 2);
+	CHECK(ed->view()->gripCount() == 2);
+	CHECK(ed->findChild<QLabel*>("animHowTo"));
+	CHECK(ed->minimumSizeHint().width() <= 1366);
+	CHECK(ed->minimumSizeHint().height() <= 740);
+
+	const int hand = clip->boneIndex("ValveBiped.Bip01_L_Hand");
+	const int forearm = clip->boneIndex("ValveBiped.Bip01_L_Forearm");
+	const auto handAt = [&](int frame) {
+		const auto& m = clip->boneToModel(float(frame))[std::size_t(hand)].m;
+		return QVector3D(m[0][3], m[1][3], m[2][3]);
+	};
+	const auto send = [&](QEvent::Type type, const QPoint& pos, Qt::MouseButtons buttons) {
+		QMouseEvent event(type, QPointF(pos), ed->view()->mapToGlobal(QPointF(pos)), Qt::LeftButton, buttons, Qt::NoModifier);
+		QApplication::sendEvent(ed->view(), &event);
+	};
+	const auto dragGrip = [&](const QPoint& by) {
+		QPointF grip;
+		REQUIRE(ed->view()->gripOnScreen(hand, grip));
+		send(QEvent::MouseButtonPress, grip.toPoint(), Qt::LeftButton);
+		send(QEvent::MouseMove, grip.toPoint() + by / 2, Qt::LeftButton);
+		send(QEvent::MouseMove, grip.toPoint() + by, Qt::LeftButton);
+		send(QEvent::MouseButtonRelease, grip.toPoint() + by, Qt::NoButton);
+		settle();
+	};
+	// Place the hand at frame 10: the arm follows, keys at 10 (and the anchors at 0), one undo step.
+	ed->setFrame(10);
+	const QVector3D before = handAt(10);
+	dragGrip(QPoint(0, -40));
+	CHECK(ed->selectedBones() == std::vector<int>{hand});
+	CHECK(clip->hasKey(hand, 10));
+	CHECK(clip->hasKey(forearm, 10));
+	CHECK(clip->hasKey(hand, 0));   // the anchor: the motion blends in from the start
+	const QVector3D placed = handAt(10);
+	CHECK((placed - before).length() > 2.f);
+	CHECK((handAt(0) - QVector3D(0, 30, 30)).length() < 0.5f);   // frame 0 is the original
+	// The motion path shows where the hand goes, the key in it.
+	CHECK(ed->view()->motionPathPoints() == std::size_t(clip->clip().frames));
+	auto* undo = ed->findChild<QPushButton*>("animUndo");
+	undo->click();
+	CHECK((handAt(10) - before).length() < 0.01f);
+	ed->findChild<QPushButton*>("animRedo")->click();
+	CHECK((handAt(10) - placed).length() < 0.01f);
+
+	// Auto key off: a move without a key at that frame is taken back; Set key first, then it moves.
+	ed->setAutoKey(false);
+	ed->setFrame(16);
+	const QVector3D at16 = handAt(16);
+	dragGrip(QPoint(30, 0));
+	CHECK_FALSE(clip->hasKey(hand, 16));
+	CHECK((handAt(16) - at16).length() < 0.01f);
+	ed->findChild<QPushButton*>("animKey")->click();
+	CHECK(clip->hasKey(hand, 16));
+	dragGrip(QPoint(30, 0));
+	CHECK((handAt(16) - at16).length() > 0.5f);   // moved (as far as the arm reaches)
+	ed->setAutoKey(true);
+
+	// Easing: Step holds the key until the next one.
+	ed->setFrame(10);
+	auto* interp = ed->findChild<QComboBox*>("animInterpBar");
+	REQUIRE(interp);
+	interp->setCurrentIndex(interp->findData(int(KeyInterp::Step)));
+	emit interp->activated(interp->currentIndex());
+	CHECK(clip->offset(hand, 15).first.w == doctest::Approx(clip->offset(hand, 10).first.w));
+
+	// Views: Front, Side, Top turn the 3D camera; the player's view beside it.
+	auto* camera = ed->findChild<QComboBox*>("animCamera");
+	camera->setCurrentIndex(3);
+	CHECK(ed->view()->yaw() == doctest::Approx(90));
+	camera->setCurrentIndex(4);
+	CHECK(ed->view()->pitch() == doctest::Approx(89));
+	camera->setCurrentIndex(0);
+	ed->setSplitView(true);
+	settle();
+	CHECK(ed->playerView()->isVisible());
+	CHECK(ed->playerView()->cameraMode() == AnimEditView::CameraMode::Viewmodel);
+	ed->setSplitView(false);
+
+	// Change only from frame 12 on: earlier keys go, frames before stay the original.
+	ed->setFrame(12);
+	ed->editFromPlayhead();
+	CHECK(clip->clip().editFrom == 12);
+	CHECK_FALSE(clip->hasKey(hand, 10));
+	CHECK(ed->findChild<QSpinBox*>("animEditFrom")->value() == 12);
+
+	// Duplicate: same keys under a new name, saved in its own file.
+	const int keys = clip->keyCount();
+	ed->duplicateAnimation("wave_copy");
+	clip = ed->clipEditor();
+	CHECK(clip->clip().name == "wave_copy");
+	CHECK(clip->keyCount() == keys);
+	QString error;
+	REQUIRE(ed->save(&error));
+	CHECK(QFileInfo::exists(fromPath(f.mod) + "/modelsrc/test/arms/animations/wave_copy.smanim"));
+	// Cut after frame 15, then a new one from scratch (the rest pose, no keys).
+	ed->setFrame(15);
+	ed->cutAfterPlayhead();
+	CHECK(clip->clip().frames == 16);
+	ed->startFrom(QString(), false, "fresh");
+	clip = ed->clipEditor();
+	CHECK(clip->clip().mode == AnimClip::Mode::New);
+	CHECK(clip->clip().name == "fresh");
+	CHECK(clip->keyCount() == 0);
+	if (const auto shot = qEnvironmentVariable("SME_ANIM_EDITOR_SHOT"); !shot.isEmpty()) {
+		ed->startFrom("wave", true, "wave_shot");
+		clip = ed->clipEditor();
+		ed->selectBones({clip->boneIndex("ValveBiped.Bip01_L_Hand")});
+		ed->setSplitView(true);
+		settle();
+		ed->grab().save(shot + ".3d.png");
+		ed->view()->grabFramebuffer().save(shot + ".3d.view.png");
+	}
+	ed->close();
+}
+
 TEST_CASE("animation editor: improve an animation with keys, preview it and rebuild the model in the mod (studiomdl faked)") {
 	QTemporaryDir home;
 	qputenv("HOME", home.path().toUtf8());

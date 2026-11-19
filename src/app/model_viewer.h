@@ -57,7 +57,12 @@ public:
 	[[nodiscard]] bool firstPerson() const { return m_firstPerson; }
 	/// Orbit angles in degrees and distance in units (for tests and the reset button).
 	[[nodiscard]] float yaw() const { return m_yaw; }
+	[[nodiscard]] float pitch() const { return m_pitch; }
 	[[nodiscard]] float distance() const { return m_distance; }
+	/// Orbit camera from these angles in degrees (presets Front/Side/Top), keeping what it looks at.
+	void setOrbit(float yaw, float pitch);
+	/// Orbit camera around a point, far enough to see a sphere of this radius.
+	void focusOn(const QVector3D& center, float radius);
 
 	/// Glow preview ("Glow ..."): the material is drawn like the game's $selfillum - towards
 	/// tint * base colour where the mask is white (mask: grey picture in the texture's layout).

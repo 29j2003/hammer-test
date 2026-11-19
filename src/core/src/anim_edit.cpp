@@ -152,11 +152,80 @@ std::string cleanName(std::string_view text) {
 	return std::string(trim(out));
 }
 
+AnimVec scale(const AnimVec& a, float s) {
+	return {a.x * s, a.y * s, a.z * s};
+}
+float dot(const AnimVec& a, const AnimVec& b) {
+	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+AnimVec cross(const AnimVec& a, const AnimVec& b) {
+	return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+float length(const AnimVec& a) {
+	return std::sqrt(dot(a, a));
+}
+AnimVec normalized(const AnimVec& a) {
+	const float l = length(a);
+	return l > 1e-6f ? scale(a, 1.f / l) : AnimVec{};
+}
+
+/// The shortest rotation that turns direction a into direction b.
+AnimQuat rotationBetween(const AnimVec& from, const AnimVec& to) {
+	const AnimVec a = normalized(from), b = normalized(to);
+	const float d = dot(a, b);
+	if (d > 0.999999f) return {};
+	if (d < -0.999999f) {
+		// Half a turn about any axis across a.
+		AnimVec axis = cross(a, {1, 0, 0});
+		if (length(axis) < 1e-3f) axis = cross(a, {0, 1, 0});
+		axis = normalized(axis);
+		return {axis.x, axis.y, axis.z, 0};
+	}
+	const AnimVec c = cross(a, b);
+	return qnorm({c.x, c.y, c.z, 1.f + d});
+}
+
+AnimVec translation(const BoneMatrix& m) {
+	return {m.m[0][3], m.m[1][3], m.m[2][3]};
+}
+
 bool isSideToken(std::string_view token) {
 	return token == "L" || token == "R" || token == "l" || token == "r" || startsWithI(token, "left") || startsWithI(token, "right");
 }
 
 } // namespace
+
+// --- Interpolation ---------------------------------------------------------------------------
+
+float easeKey(KeyInterp interp, float t) {
+	t = std::clamp(t, 0.f, 1.f);
+	switch (interp) {
+	case KeyInterp::Linear: return t;
+	case KeyInterp::Step: return t >= 1.f ? 1.f : 0.f;
+	case KeyInterp::EaseIn: return t * t;
+	case KeyInterp::EaseOut: return 1.f - (1.f - t) * (1.f - t);
+	case KeyInterp::Smooth: break;
+	}
+	return t * t * (3.f - 2.f * t);
+}
+
+const char* keyInterpWord(KeyInterp interp) {
+	switch (interp) {
+	case KeyInterp::Linear: return "linear";
+	case KeyInterp::Step: return "step";
+	case KeyInterp::EaseIn: return "easein";
+	case KeyInterp::EaseOut: return "easeout";
+	case KeyInterp::Smooth: break;
+	}
+	return "smooth";
+}
+
+KeyInterp keyInterpFromWord(std::string_view word) {
+	for (const KeyInterp k : {KeyInterp::Linear, KeyInterp::Step, KeyInterp::EaseIn, KeyInterp::EaseOut}) {
+		if (iequals(word, keyInterpWord(k))) return k;
+	}
+	return KeyInterp::Smooth;
+}
 
 // --- Bone names ------------------------------------------------------------------------------
 
@@ -226,10 +295,15 @@ std::string boneGroup(std::string_view boneName) {
 AnimEditor::AnimEditor(const AnimatedModel& model, AnimClip clip) : m_model(&model), m_clip(std::move(clip)) {
 	m_clip.frames = std::clamp(m_clip.frames, 1, ANIM_CLIP_MAX_FRAMES);
 	if (!(m_clip.fps > 0.f) || !std::isfinite(m_clip.fps)) m_clip.fps = 30;
+	m_clip.editFrom = std::clamp(m_clip.editFrom, 0, m_clip.frames - 1);
+	if (!std::isfinite(m_clip.baseStart) || !std::isfinite(m_clip.baseEnd)) m_clip.baseStart = 0, m_clip.baseEnd = 1;
+	m_clip.baseStart = std::clamp(m_clip.baseStart, 0.f, 1.f);
+	m_clip.baseEnd = std::clamp(m_clip.baseEnd, m_clip.baseStart, 1.f);
 	m_base = m_clip.baseSequence.empty() ? -1 : model.findSequence(m_clip.baseSequence);
+	findChains();
 	// Keys of bones the model lacks stay in the clip (saved again), but play no part.
 	for (auto& [bone, keys] : m_clip.tracks) {
-		std::erase_if(keys, [&](const BoneKey& k) { return k.frame < 0 || k.frame >= m_clip.frames; });
+		std::erase_if(keys, [&](const BoneKey& k) { return k.frame < m_clip.editFrom || k.frame >= m_clip.frames; });
 		std::sort(keys.begin(), keys.end(), [](const BoneKey& a, const BoneKey& b) { return a.frame < b.frame; });
 		keys.erase(std::unique(keys.begin(), keys.end(), [](const BoneKey& a, const BoneKey& b) { return a.frame == b.frame; }), keys.end());
 	}
@@ -276,7 +350,8 @@ void AnimEditor::basePose(float frame, std::vector<AnimVec>& pos, std::vector<An
 	}
 	float cycle = 0;
 	if (m_clip.mode == AnimClip::Mode::Tweak) {
-		cycle = m_clip.frames > 1 ? std::clamp(frame, 0.f, float(m_clip.frames - 1)) / float(m_clip.frames - 1) : 0.f;
+		const float t = m_clip.frames > 1 ? std::clamp(frame, 0.f, float(m_clip.frames - 1)) / float(m_clip.frames - 1) : 0.f;
+		cycle = m_clip.baseStart + t * (m_clip.baseEnd - m_clip.baseStart);
 	} else {
 		const int baseFrames = m_model->sequences()[std::size_t(m_base)].frames;
 		cycle = baseFrames > 1 ? float(std::clamp(m_clip.baseFrame, 0, baseFrames - 1)) / float(baseFrames - 1) : 0.f;
@@ -286,15 +361,14 @@ void AnimEditor::basePose(float frame, std::vector<AnimVec>& pos, std::vector<An
 
 std::pair<AnimQuat, AnimVec> AnimEditor::offset(int bone, float frame) const {
 	const auto* keys = track(bone);
-	if (!keys || keys->empty()) return {{}, {}};
+	if (!keys || keys->empty() || frame < float(m_clip.editFrom)) return {{}, {}};
 	const auto& k = *keys;
 	if (frame <= float(k.front().frame)) return {k.front().rot, k.front().pos};
 	if (frame >= float(k.back().frame)) return {k.back().rot, k.back().pos};
 	const auto next = std::upper_bound(k.begin(), k.end(), frame, [](float f, const BoneKey& key) { return f < float(key.frame); });
 	const BoneKey& b = *next;
 	const BoneKey& a = *(next - 1);
-	float t = (frame - float(a.frame)) / float(std::max(1, b.frame - a.frame));
-	if (a.interp == KeyInterp::Smooth) t = t * t * (3.f - 2.f * t);
+	const float t = easeKey(a.interp, (frame - float(a.frame)) / float(std::max(1, b.frame - a.frame)));
 	return {qslerp(a.rot, b.rot, t), {a.pos.x + (b.pos.x - a.pos.x) * t, a.pos.y + (b.pos.y - a.pos.y) * t, a.pos.z + (b.pos.z - a.pos.z) * t}};
 }
 
@@ -365,11 +439,14 @@ void AnimEditor::changed() {
 }
 
 void AnimEditor::putKey(int bone, BoneKey key) {
-	key.frame = std::clamp(key.frame, 0, m_clip.frames - 1);
+	key.frame = std::clamp(key.frame, m_clip.editFrom, m_clip.frames - 1);
 	key.rot = finite(key.rot) ? qnorm(key.rot) : AnimQuat{};
 	if (!finite(key.pos)) key.pos = {};
 	auto* keys = track(bone, true);
 	if (!keys) return;
+	// A bone's first key: an anchor (no change) at the edit-from frame, so the motion blends
+	// from the original into the change instead of jumping there from the start.
+	if (keys->empty() && key.frame > m_clip.editFrom) keys->push_back({m_clip.editFrom, {}, {}, KeyInterp::Smooth});
 	const auto it = std::lower_bound(keys->begin(), keys->end(), key.frame, [](const BoneKey& k, int f) { return k.frame < f; });
 	if (it != keys->end() && it->frame == key.frame) {
 		it->rot = key.rot;
@@ -438,7 +515,7 @@ bool AnimEditor::deleteKeys(const std::vector<int>& list, int frame) {
 }
 
 bool AnimEditor::moveKeys(const std::vector<int>& list, int from, int to, bool copy) {
-	to = std::clamp(to, 0, m_clip.frames - 1);
+	to = std::clamp(to, m_clip.editFrom, m_clip.frames - 1);
 	if (from == to) return false;
 	const auto targets = orAll(list);
 	if (std::none_of(targets.begin(), targets.end(), [&](int b) { return hasKey(b, from); })) return false;
@@ -607,7 +684,152 @@ void AnimEditor::setFrameCount(int frames) {
 		}
 		keys = std::move(moved);
 	}
+	if (old > 1) m_clip.editFrom = int(std::lround(double(m_clip.editFrom) * double(frames - 1) / double(old - 1)));
+	m_clip.editFrom = std::clamp(m_clip.editFrom, 0, frames - 1);
 	m_clip.frames = frames;
+}
+
+bool AnimEditor::trim(int first, int last) {
+	first = std::clamp(first, 0, m_clip.frames - 1);
+	last = std::clamp(last, first, m_clip.frames - 1);
+	if (first == 0 && last == m_clip.frames - 1) return false;
+	changed();
+	const int old = m_clip.frames;
+	if (m_clip.mode == AnimClip::Mode::Tweak && old > 1) {
+		const float span = m_clip.baseEnd - m_clip.baseStart;
+		const float start = m_clip.baseStart + span * float(first) / float(old - 1);
+		const float end = m_clip.baseStart + span * float(last) / float(old - 1);
+		m_clip.baseStart = start;
+		m_clip.baseEnd = end;
+	} else if (m_clip.mode == AnimClip::Mode::New) {
+		m_clip.baseFrame = std::max(0, m_clip.baseFrame);
+	}
+	for (auto& [name, keys] : m_clip.tracks) {
+		std::erase_if(keys, [&](const BoneKey& k) { return k.frame < first || k.frame > last; });
+		for (auto& k : keys) k.frame -= first;
+	}
+	std::erase_if(m_clip.tracks, [](const auto& entry) { return entry.second.empty(); });
+	m_clip.frames = last - first + 1;
+	m_clip.editFrom = std::clamp(m_clip.editFrom - first, 0, m_clip.frames - 1);
+	return true;
+}
+
+void AnimEditor::setEditFrom(int frame) {
+	frame = std::clamp(frame, 0, m_clip.frames - 1);
+	if (frame == m_clip.editFrom) return;
+	changed();
+	m_clip.editFrom = frame;
+	for (auto& [name, keys] : m_clip.tracks) std::erase_if(keys, [frame](const BoneKey& k) { return k.frame < frame; });
+	std::erase_if(m_clip.tracks, [](const auto& entry) { return entry.second.empty(); });
+}
+
+// --- IK --------------------------------------------------------------------------------------
+
+void AnimEditor::findChains() {
+	m_chains.clear();
+	const auto& own = bones();
+	if (own.empty()) return;
+	// Rest positions in model space (for the segment lengths).
+	std::vector<AnimVec> rest(own.size());
+	for (std::size_t i = 0; i < own.size(); ++i) rest[i] = translation(invertRigid(own[i].poseToBone));
+	const auto lower = [&](int b) { return toLower(own[std::size_t(b)].name); };
+	// A twist or helper bone between two joints is skipped on the way up.
+	const auto upFrom = [&](int b) {
+		int p = own[std::size_t(b)].parent;
+		while (p >= 0 && std::size_t(p) < own.size() && (lower(p).find("twist") != std::string::npos || lower(p).find("helper") != std::string::npos)) {
+			p = own[std::size_t(p)].parent;
+		}
+		return p;
+	};
+	for (std::size_t b = 0; b < own.size(); ++b) {
+		const std::string name = lower(int(b));
+		const bool hand = (name.find("hand") != std::string::npos && name.find("handle") == std::string::npos) || name.find("wrist") != std::string::npos;
+		const bool foot = name.find("foot") != std::string::npos || name.find("ankle") != std::string::npos;
+		if (!hand && !foot) continue;
+		if (name.find("finger") != std::string::npos || name.find("thumb") != std::string::npos || name.find("toe") != std::string::npos ||
+		    name.find("twist") != std::string::npos || name.find("ik") == 0 || name.find("_ik") != std::string::npos || name.find("attach") != std::string::npos) {
+			continue;
+		}
+		const int mid = upFrom(int(b));
+		const int root = mid >= 0 ? upFrom(mid) : -1;
+		if (mid < 0 || root < 0) continue;
+		const float l1 = length(sub(rest[std::size_t(mid)], rest[std::size_t(root)]));
+		const float l2 = length(sub(rest[b], rest[std::size_t(mid)]));
+		if (l1 < 0.5f || l2 < 0.5f) continue;
+		IkChain chain{root, mid, int(b), {}};
+		const std::string group = boneGroup(own[b].name);   // "Right hand", "Left leg"
+		const std::string side = startsWithI(group, "left") ? "Left " : startsWithI(group, "right") ? "Right " : "";
+		chain.label = side + (hand ? "hand" : "foot");
+		if (!chain.label.empty()) chain.label[0] = char(std::toupper(static_cast<unsigned char>(chain.label[0])));
+		// One chain per end bone; a second hand bone on the same arm (e.g. a "hand" helper) is left out.
+		if (std::none_of(m_chains.begin(), m_chains.end(), [&](const IkChain& c) { return c.root == root && c.mid == mid; })) m_chains.push_back(chain);
+	}
+}
+
+int AnimEditor::chainOf(int bone) const {
+	for (std::size_t i = 0; i < m_chains.size(); ++i) {
+		if (m_chains[i].end == bone) return int(i);
+	}
+	for (std::size_t i = 0; i < m_chains.size(); ++i) {
+		if (m_chains[i].mid == bone || m_chains[i].root == bone) return int(i);
+	}
+	return -1;
+}
+
+bool AnimEditor::placeEnd(int chainIndex, int frame, const AnimVec& target) {
+	if (chainIndex < 0 || chainIndex >= int(m_chains.size()) || !finite(target)) return false;
+	const IkChain chain = m_chains[std::size_t(chainIndex)];
+	auto world = boneToModel(float(frame));
+	if (std::size_t(std::max({chain.root, chain.mid, chain.end})) >= world.size()) return false;
+	const AnimVec a = translation(world[std::size_t(chain.root)]);
+	const AnimVec b = translation(world[std::size_t(chain.mid)]);
+	const AnimVec c = translation(world[std::size_t(chain.end)]);
+	const AnimQuat endBefore = matrixQuat(world[std::size_t(chain.end)].m);
+	const float l1 = length(sub(b, a)), l2 = length(sub(c, b));
+	if (l1 < 1e-3f || l2 < 1e-3f) return false;
+	AnimVec toTarget = sub(target, a);
+	float d = length(toTarget);
+	const float minReach = std::fabs(l1 - l2) + 1e-3f, maxReach = l1 + l2 - 1e-3f;
+	AnimVec u = d > 1e-5f ? scale(toTarget, 1.f / d) : normalized(sub(c, a));
+	d = std::clamp(d, minReach, maxReach);
+	// The bend direction (where the elbow/knee points) from the current pose.
+	const AnimVec ac = normalized(sub(c, a));
+	AnimVec pole = sub(sub(b, a), scale(ac, dot(sub(b, a), ac)));
+	if (length(pole) < 1e-3f) pole = {0, 0, -1};   // a straight limb: bend downwards
+	AnimVec side = sub(pole, scale(u, dot(pole, u)));
+	if (length(side) < 1e-4f) side = sub(AnimVec{1, 0, 0}, scale(u, u.x));
+	side = normalized(side);
+	const float cosA = std::clamp((l1 * l1 + d * d - l2 * l2) / (2.f * l1 * d), -1.f, 1.f);
+	const float sinA = std::sqrt(std::max(0.f, 1.f - cosA * cosA));
+	const AnimVec newB = add(a, scale(add(scale(u, cosA), scale(side, sinA)), l1));
+	const AnimVec newC = add(a, scale(u, d));
+
+	beginChange();
+	const int revision = m_revision;
+	rotateBone(chain.root, frame, rotationBetween(sub(b, a), sub(newB, a)));
+	world = boneToModel(float(frame));
+	const AnimVec bNow = translation(world[std::size_t(chain.mid)]), cNow = translation(world[std::size_t(chain.end)]);
+	rotateBone(chain.mid, frame, rotationBetween(sub(cNow, bNow), sub(newC, bNow)));
+	// The end keeps its orientation in model space (a hand holding a grip).
+	world = boneToModel(float(frame));
+	const AnimQuat endNow = matrixQuat(world[std::size_t(chain.end)].m);
+	rotateBone(chain.end, frame, qnorm(qmul(endBefore, qconj(endNow))));
+	if (!hasKey(chain.end, frame)) keyBones({chain.end}, frame);
+	endChange();
+	return m_revision != revision;
+}
+
+std::vector<AnimVec> AnimEditor::motionPath(int bone, int maxPoints) const {
+	std::vector<AnimVec> out;
+	if (bone < 0 || bone >= int(bones().size()) || maxPoints < 2) return out;
+	const int frames = m_clip.frames;
+	const int count = std::min(frames, maxPoints);
+	out.reserve(std::size_t(count));
+	for (int i = 0; i < count; ++i) {
+		const float frame = count > 1 ? float(i) * float(frames - 1) / float(count - 1) : 0.f;
+		out.push_back(translation(boneToModel(frame)[std::size_t(bone)]));
+	}
+	return out;
 }
 
 void AnimEditor::setFps(float fps) {
@@ -725,6 +947,11 @@ std::string writeAnimClip(const AnimClip& clip) {
 	main.children.push_back(KvNode::makeValue("base", cleanName(clip.baseSequence)));
 	main.children.push_back(KvNode::makeValue("baseframe", std::to_string(clip.baseFrame)));
 	main.children.push_back(KvNode::makeValue("frames", std::to_string(clip.frames)));
+	if (clip.editFrom > 0) main.children.push_back(KvNode::makeValue("editfrom", std::to_string(clip.editFrom)));
+	if (clip.baseStart > 0.f || clip.baseEnd < 1.f) {
+		main.children.push_back(KvNode::makeValue("basestart", number(clip.baseStart)));
+		main.children.push_back(KvNode::makeValue("baseend", number(clip.baseEnd)));
+	}
 	main.children.push_back(KvNode::makeValue("fps", number(clip.fps)));
 	main.children.push_back(KvNode::makeValue("loop", clip.loop ? "1" : "0"));
 	main.children.push_back(KvNode::makeValue("activity", cleanName(clip.activity)));
@@ -734,7 +961,7 @@ std::string writeAnimClip(const AnimClip& clip) {
 		bone.children.push_back(KvNode::makeValue("name", cleanName(name)));
 		for (const auto& k : keys) {
 			// frame interpolation, rotation x y z w, position x y z
-			bone.children.push_back(KvNode::makeValue("key", std::to_string(k.frame) + (k.interp == KeyInterp::Linear ? " linear " : " smooth ") + number(k.rot.x) + " " +
+			bone.children.push_back(KvNode::makeValue("key", std::to_string(k.frame) + " " + keyInterpWord(k.interp) + " " + number(k.rot.x) + " " +
 			                                                    number(k.rot.y) + " " + number(k.rot.z) + " " + number(k.rot.w) + " " + number(k.pos.x) + " " +
 			                                                    number(k.pos.y) + " " + number(k.pos.z)));
 		}
@@ -768,6 +995,10 @@ std::optional<AnimClip> readAnimClip(std::string_view text, std::string* error) 
 	if (parseInt(main->get("baseframe"), number)) clip.baseFrame = std::clamp(number, 0, ANIM_CLIP_MAX_FRAMES);
 	if (!parseInt(main->get("frames"), number) || number < 1) return fail("no length (frames)");
 	clip.frames = std::min(number, ANIM_CLIP_MAX_FRAMES);
+	if (parseInt(main->get("editfrom"), number)) clip.editFrom = std::clamp(number, 0, clip.frames - 1);
+	float range = 0;
+	if (parseFloat(main->get("basestart"), range)) clip.baseStart = std::clamp(range, 0.f, 1.f);
+	if (parseFloat(main->get("baseend"), range)) clip.baseEnd = std::clamp(range, clip.baseStart, 1.f);
 	float fps = 30;
 	if (parseFloat(main->get("fps"), fps) && fps > 0) clip.fps = std::clamp(fps, 1.f, 1000.f);
 	clip.loop = main->get("loop") == "1";
@@ -786,7 +1017,7 @@ std::optional<AnimClip> readAnimClip(std::string_view text, std::string* error) 
 			BoneKey key;
 			float v[7];
 			if (!parseInt(parts[0], key.frame) || key.frame < 0 || key.frame >= clip.frames) continue;
-			key.interp = iequals(parts[1], "linear") ? KeyInterp::Linear : KeyInterp::Smooth;
+			key.interp = keyInterpFromWord(parts[1]);
 			bool ok = true;
 			for (int i = 0; i < 7 && ok; ++i) ok = parseFloat(parts[std::size_t(i) + 2], v[i]) && std::fabs(v[i]) < 1e6f;
 			if (!ok) continue;

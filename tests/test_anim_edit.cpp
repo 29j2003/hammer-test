@@ -170,7 +170,7 @@ TEST_CASE("anim edit: undo, redo and one step for a whole drag") {
 	CHECK(editor.keyCount() == 0);
 	CHECK_FALSE(editor.canUndo());
 	CHECK(editor.redo());
-	CHECK(editor.keyCount() == 1);
+	CHECK(editor.keyCount() == 2);   // the key and its anchor at the start
 	// A drag that changed nothing leaves no undo step.
 	editor.beginChange();
 	editor.endChange();
@@ -199,7 +199,7 @@ TEST_CASE("anim edit: delete, move and copy keys, copy and paste a pose, reset")
 	CHECK(editor.hasKey(l, 1));
 	editor.resetBones({l}, 9);
 	CHECK(editor.offset(l, 9).first.w == doctest::Approx(1));
-	editor.clearBones({l});
+	editor.clearBones({l, r});
 	CHECK(editor.keyCount() == 0);
 }
 
@@ -211,11 +211,11 @@ TEST_CASE("anim edit: a new length moves the keys and stretches the base") {
 	editor.setKey(hand, 10, axisAngle(0, 0, 1, 0.4f), {});
 	editor.setFrameCount(21);
 	CHECK(editor.clip().frames == 21);
-	CHECK(editor.keyFrames() == std::vector<int>{10, 20});
+	CHECK(editor.keyFrames() == std::vector<int>{0, 10, 20});   // with the anchor at the start
 	CHECK(position(editor.boneToModel(20)[1]).z == doctest::Approx(30));   // the base's end is the clip's end
 	CHECK(position(editor.boneToModel(10)[1]).z == doctest::Approx(25));
 	editor.setFrameCount(2);
-	CHECK(editor.keyFrames() == std::vector<int>{1});   // both met at the end: the later one stays
+	CHECK(editor.keyFrames() == std::vector<int>{0, 1});   // both met at the end: the later one stays
 	editor.setFps(0);   // ignored
 	CHECK(editor.clip().fps == 30);
 	editor.setFps(24);
@@ -272,11 +272,12 @@ TEST_CASE("anim edit: the project file keeps the keys and checks what it reads")
 	CHECK(back->activity == "ACT_VM_RELOAD");
 	CHECK(back->loop);
 	REQUIRE(back->tracks.size() == 1);
-	const auto& key = back->tracks.begin()->second.at(0);
+	REQUIRE(back->tracks.begin()->second.size() == 2);   // the anchor at 0 and the key
+	const auto& key = back->tracks.begin()->second.at(1);
 	CHECK(key.frame == 3);
 	CHECK(key.interp == KeyInterp::Linear);
 	CHECK(key.pos.y == doctest::Approx(2));
-	CHECK(key.rot.z == doctest::Approx(editor.clip().tracks.begin()->second[0].rot.z));
+	CHECK(key.rot.z == doctest::Approx(editor.clip().tracks.begin()->second[1].rot.z));
 
 	CHECK_FALSE(readAnimClip("not { a project", &error));
 	CHECK_FALSE(readAnimClip("\"other\" { }", &error));
@@ -294,6 +295,147 @@ TEST_CASE("anim edit: the project file keeps the keys and checks what it reads")
 	CHECK(odd->tracks.at("a")[0].rot.w == doctest::Approx(1));   // a zero rotation becomes none
 	CHECK(animClipPath("models/weapons/v_smg1.mdl", "Reload Fast") == "modelsrc/weapons/v_smg1/animations/reload_fast.smanim");
 	CHECK(animClipPath("models/../../evil.mdl", "x") == "modelsrc/evil/animations/x.smanim");
+}
+
+TEST_CASE("anim edit: easing modes between keys and their words in the project file") {
+	CHECK(easeKey(KeyInterp::Linear, 0.25f) == doctest::Approx(0.25f));
+	CHECK(easeKey(KeyInterp::Smooth, 0.25f) == doctest::Approx(0.15625f));
+	CHECK(easeKey(KeyInterp::Step, 0.99f) == doctest::Approx(0));
+	CHECK(easeKey(KeyInterp::Step, 1.f) == doctest::Approx(1));
+	CHECK(easeKey(KeyInterp::EaseIn, 0.5f) == doctest::Approx(0.25f));
+	CHECK(easeKey(KeyInterp::EaseOut, 0.5f) == doctest::Approx(0.75f));
+	for (const KeyInterp k : {KeyInterp::Linear, KeyInterp::Smooth, KeyInterp::Step, KeyInterp::EaseIn, KeyInterp::EaseOut}) {
+		CHECK(keyInterpFromWord(keyInterpWord(k)) == k);
+	}
+	CHECK(keyInterpFromWord("whatever") == KeyInterp::Smooth);
+	// Step holds the key until the next one (a cut).
+	const auto model = loadBody();
+	AnimClip clip = tweakClip(model);
+	clip.frames = 21;
+	AnimEditor editor(model, clip);
+	const int hand = editor.boneIndex("ValveBiped.Bip01_R_Hand");
+	editor.setKey(hand, 0, {}, {0, 0, 0});
+	editor.setKey(hand, 20, {}, {0, 0, 8});
+	editor.setInterp({hand}, 0, KeyInterp::Step);
+	CHECK(editor.offset(hand, 19).second.z == doctest::Approx(0));
+	CHECK(editor.offset(hand, 20).second.z == doctest::Approx(8));
+	editor.setInterp({hand}, 0, KeyInterp::EaseOut);
+	CHECK(editor.offset(hand, 10).second.z == doctest::Approx(6));
+	const auto back = readAnimClip(writeAnimClip(editor.clip()));
+	REQUIRE(back);
+	CHECK(back->tracks.begin()->second.front().interp == KeyInterp::EaseOut);
+	// A project from before (only "smooth"/"linear", no edit-from or base range) still loads.
+	const auto old = readAnimClip("\"smanim\" { \"version\" \"1\" \"frames\" \"10\" \"base\" \"wave\" \"bone\" { \"name\" \"a\" "
+	                              "\"key\" \"2 linear 0 0 0 1 0 0 1\" \"key\" \"5 smooth 0 0 0 1 0 0 2\" } }");
+	REQUIRE(old);
+	CHECK(old->editFrom == 0);
+	CHECK(old->baseStart == 0.f);
+	CHECK(old->baseEnd == 1.f);
+	CHECK(old->tracks.at("a")[0].interp == KeyInterp::Linear);
+}
+
+TEST_CASE("anim edit: a first key blends in from the start, edit-from keeps earlier frames as they were") {
+	const auto model = loadBody();
+	AnimClip clip = tweakClip(model);
+	AnimEditor editor(model, clip);
+	const int arm = editor.boneIndex("ValveBiped.Bip01_L_UpperArm");
+	const auto start = editor.boneToModel(0);
+	editor.rotateBone(arm, 8, axisAngle(0, 0, 1, 0.8f));
+	CHECK(editor.keyFrames({arm}) == std::vector<int>{0, 8});   // the anchor
+	CHECK(angleBetween(editor.boneToModel(0)[std::size_t(arm)], start[std::size_t(arm)]) == doctest::Approx(0).epsilon(1e-4));
+	const float halfway = 2.f * std::acos(std::clamp(std::fabs(editor.offset(arm, 4).first.w), 0.f, 1.f));
+	CHECK(halfway > 0.1f);
+	CHECK(halfway < 0.7f);
+	// Edit from frame 5: frames 0-4 are the original, keys there go, new keys start at 5.
+	editor.setEditFrom(5);
+	CHECK(editor.keyFrames({arm}) == std::vector<int>{8});
+	editor.clearBones({arm});
+	editor.rotateBone(arm, 9, axisAngle(0, 0, 1, 0.8f));
+	CHECK(editor.keyFrames({arm}) == std::vector<int>{5, 9});
+	for (int f = 0; f < 5; ++f) {
+		std::vector<AnimVec> pos, basePos;
+		std::vector<AnimQuat> quat, baseQuat;
+		editor.pose(float(f), pos, quat);
+		editor.basePose(float(f), basePos, baseQuat);
+		CHECK(quat[std::size_t(arm)].w == doctest::Approx(baseQuat[std::size_t(arm)].w));
+		CHECK(quat[std::size_t(arm)].z == doctest::Approx(baseQuat[std::size_t(arm)].z));
+	}
+	editor.rotateBone(arm, 2, axisAngle(0, 0, 1, 0.3f));   // before edit-from: the key lands at 5
+	CHECK_FALSE(editor.hasKey(arm, 2));
+	const auto back = readAnimClip(writeAnimClip(editor.clip()));
+	REQUIRE(back);
+	CHECK(back->editFrom == 5);
+}
+
+TEST_CASE("anim edit: trimming keeps part of the animation, base and keys move along") {
+	const auto model = loadBody();
+	AnimEditor editor(model, tweakClip(model));   // 11 frames, the spine rises 20 -> 30
+	const int hand = editor.boneIndex("ValveBiped.Bip01_L_Hand");
+	editor.setKey(hand, 0, {}, {});
+	editor.setKey(hand, 4, {}, {0, 0, 2});
+	editor.setKey(hand, 9, {}, {0, 0, 5});
+	CHECK(editor.trim(2, 8));
+	CHECK(editor.clip().frames == 7);
+	CHECK(editor.keyFrames({hand}) == std::vector<int>{2});   // 4 -> 2; 0 and 9 were outside
+	CHECK(position(editor.boneToModel(0)[1]).z == doctest::Approx(22));   // old frame 2
+	CHECK(position(editor.boneToModel(6)[1]).z == doctest::Approx(28));   // old frame 8
+	const auto back = readAnimClip(writeAnimClip(editor.clip()));
+	REQUIRE(back);
+	CHECK(back->baseStart == doctest::Approx(0.2f));
+	CHECK(back->baseEnd == doctest::Approx(0.8f));
+	CHECK(editor.undo());
+	CHECK(editor.clip().frames == 11);
+	CHECK_FALSE(editor.trim(0, 10));   // nothing to cut
+}
+
+TEST_CASE("anim edit: placing a hand with IK - the arm follows, the hand keeps its turn") {
+	const auto model = loadBody();
+	AnimEditor editor(model, tweakClip(model));
+	// Chains by name: spine -> upper arm -> hand on both sides.
+	REQUIRE(editor.ikChains().size() == 2);
+	const int lHand = editor.boneIndex("ValveBiped.Bip01_L_Hand");
+	const int chain = editor.chainOf(lHand);
+	REQUIRE(chain >= 0);
+	CHECK(editor.ikChains()[std::size_t(chain)].label == "Left hand");
+	CHECK(editor.ikChains()[std::size_t(chain)].mid == editor.boneIndex("ValveBiped.Bip01_L_UpperArm"));
+	CHECK(editor.chainOf(editor.boneIndex("ValveBiped.Bip01_L_UpperArm")) == chain);
+	const auto before = editor.boneToModel(3);
+	const AnimVec root = position(before[std::size_t(editor.ikChains()[std::size_t(chain)].root)]);
+	const AnimVec mid = position(before[std::size_t(editor.ikChains()[std::size_t(chain)].mid)]);
+	const AnimVec hand = position(before[std::size_t(lHand)]);
+	const auto dist = [](const AnimVec& a, const AnimVec& b) { return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z)); };
+	const float l1 = dist(root, mid), l2 = dist(mid, hand);
+	// A point the arm can reach: the hand gets there, the bones keep their lengths.
+	const AnimVec target{hand.x + 4, hand.y - 3, hand.z + 5};
+	CHECK(editor.placeEnd(chain, 3, target));
+	const auto after = editor.boneToModel(3);
+	const AnimVec handNow = position(after[std::size_t(lHand)]), midNow = position(after[std::size_t(editor.ikChains()[std::size_t(chain)].mid)]);
+	CHECK(dist(handNow, target) == doctest::Approx(0).epsilon(0.02));
+	CHECK(dist(root, midNow) == doctest::Approx(l1).epsilon(1e-3));
+	CHECK(dist(midNow, handNow) == doctest::Approx(l2).epsilon(1e-3));
+	CHECK(angleBetween(after[std::size_t(lHand)], before[std::size_t(lHand)]) == doctest::Approx(0).epsilon(1e-3));
+	CHECK(editor.hasKey(lHand, 3));
+	CHECK(editor.hasKey(editor.ikChains()[std::size_t(chain)].mid, 3));
+	// Out of reach: as far as the arm goes, towards the point.
+	CHECK(editor.placeEnd(chain, 3, {root.x + 500, root.y, root.z}));
+	const AnimVec stretched = position(editor.boneToModel(3)[std::size_t(lHand)]);
+	CHECK(dist(root, stretched) == doctest::Approx(l1 + l2).epsilon(0.01));
+	CHECK(stretched.x > root.x + (l1 + l2) * 0.95f);
+	// One undo step for the whole placement.
+	CHECK(editor.undo());
+	CHECK(dist(position(editor.boneToModel(3)[std::size_t(lHand)]), target) == doctest::Approx(0).epsilon(0.02));
+}
+
+TEST_CASE("anim edit: the motion path follows a bone through the animation") {
+	const auto model = loadBody();
+	AnimEditor editor(model, tweakClip(model));
+	const int spine = editor.boneIndex("ValveBiped.Bip01_Spine");
+	const auto path = editor.motionPath(spine);
+	REQUIRE(path.size() == 11);
+	CHECK(path.front().z == doctest::Approx(20));
+	CHECK(path.back().z == doctest::Approx(30));
+	CHECK(editor.motionPath(spine, 4).size() == 4);
+	CHECK(editor.motionPath(-1).empty());
 }
 
 TEST_CASE("anim edit: the baked .smd has every bone in every frame") {

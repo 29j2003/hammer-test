@@ -185,6 +185,18 @@ void ModelViewer::frameModel() {
 	update();
 }
 
+void ModelViewer::setOrbit(float yaw, float pitch) {
+	m_yaw = yaw;
+	m_pitch = std::clamp(pitch, -89.0f, 89.0f);
+	update();
+}
+
+void ModelViewer::focusOn(const QVector3D& center, float radius) {
+	m_center = center;
+	m_distance = std::clamp(std::max(1.0f, radius) / std::sin(float(FOV * 0.5 * M_PI / 180.0)) * 1.05f, 2.0f, 60000.0f);
+	update();
+}
+
 void ModelViewer::initializeGL() {
 	initializeOpenGLFunctions();
 	m_program = std::make_unique<QOpenGLShaderProgram>();

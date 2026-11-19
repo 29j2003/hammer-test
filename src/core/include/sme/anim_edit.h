@@ -9,8 +9,14 @@
 // - New: the base is one still pose (the rest pose, or one frame of a sequence); keys are offsets
 //   on that pose.
 // Offsets: rotation after the base's (final = base * offset, in the bone's own axes), position
-// added to the base's (in the parent's space). A bone without keys follows the base; before its
-// first key and after its last one the nearest key holds.
+// added to the base's (in the parent's space). A bone without keys follows the base. A bone's
+// first key brings an "anchor" key with it (no change, at the clip's edit-from frame): the motion
+// blends from the original into the change, like placing a hand in Source Filmmaker. After a
+// bone's last key that key holds. Frames before the edit-from frame stay exactly as the base.
+//
+// Placing a hand or foot: two-bone IK chains (upper arm - forearm - hand, thigh - calf - foot,
+// found by bone names) - placeEnd() turns the two upper bones so the end reaches a point and
+// keeps the end's own orientation, as SFM's rig handles and Blender's IK do.
 //
 // The clip is baked into plain frames for the preview (AnimatedModel::addKeyframedSequence) and
 // written as an animation .smd with model_export's writer; a project file (.smanim, KeyValues
@@ -32,8 +38,14 @@
 
 namespace sme {
 
-/// How the curve runs from a key to the next one.
-enum class KeyInterp { Linear, Smooth };
+/// How the curve runs from a key to the next one: even speed, eased in and out, holding until the
+/// next key (a cut), or easing only at the start/end.
+enum class KeyInterp { Linear, Smooth, Step, EaseIn, EaseOut };
+/// The eased fraction 0..1 for a fraction t 0..1 between two keys.
+[[nodiscard]] float easeKey(KeyInterp interp, float t);
+/// File word of an interpolation ("smooth", "step", ...) and back (unknown: smooth).
+[[nodiscard]] const char* keyInterpWord(KeyInterp interp);
+[[nodiscard]] KeyInterp keyInterpFromWord(std::string_view word);
 
 /// One key of a bone: offsets on the base pose at a frame.
 struct BoneKey {
@@ -56,6 +68,11 @@ struct AnimClip {
 	std::string baseSequence;   ///< Tweak: what plays underneath; New: the sequence of the start pose (empty: rest pose)
 	int baseFrame = 0;          ///< New: the frame of baseSequence used as the start pose
 	int frames = 30;            ///< Length in frames (at least 1)
+	/// Frames before this one stay exactly as the base (no keys there); a bone's first key adds an
+	/// anchor key here (see the file comment).
+	int editFrom = 0;
+	/// Tweak: the part of the base sequence the clip covers (cycle 0..1; a trimmed clip less).
+	float baseStart = 0, baseEnd = 1;
 	float fps = 30;
 	bool loop = false;
 	std::string activity;       ///< "ACT_VM_RELOAD" or empty
@@ -67,6 +84,12 @@ struct AnimClip {
 /// Limits of a clip (also what reading a project file accepts).
 inline constexpr int ANIM_CLIP_MAX_FRAMES = 10000;
 inline constexpr int ANIM_CLIP_MAX_KEYS = 200000;
+
+/// A two-bone chain for placing its end (a hand, a foot) with IK.
+struct IkChain {
+	int root = -1, mid = -1, end = -1;   ///< Upper arm, forearm, hand (or thigh, calf, foot)
+	std::string label;                   ///< "Right hand", "Left foot"
+};
 
 /// A pose of some bones copied from a frame (Ctrl+C / Ctrl+V): offsets by bone name.
 struct ClipPose {
@@ -120,6 +143,16 @@ public:
 	bool moveKeys(const std::vector<int>& bones, int from, int to, bool copy = false);
 	/// Sets how the curve leaves the keys of these bones (all if empty) at `frame`.
 	void setInterp(const std::vector<int>& bones, int frame, KeyInterp interp);
+	/// Places the end of an IK chain (index into ikChains()) at a model-space point at `frame`: its
+	/// two upper bones turn (the elbow/knee stays on its side), the end keeps its orientation; all
+	/// three are keyed. A point out of reach is placed as far as the chain goes. False if nothing changed.
+	bool placeEnd(int chain, int frame, const AnimVec& target);
+	/// The IK chains of the model (see IkChain), found once.
+	[[nodiscard]] const std::vector<IkChain>& ikChains() const { return m_chains; }
+	/// The chain whose end (or upper bones) is this bone, -1 if none.
+	[[nodiscard]] int chainOf(int bone) const;
+	/// Where a bone is in model space on every frame (the motion path; at most `maxPoints`, evenly spread).
+	[[nodiscard]] std::vector<AnimVec> motionPath(int bone, int maxPoints = 600) const;
 	/// Keys these bones back to the base pose at `frame` (offset identity).
 	void resetBones(const std::vector<int>& bones, int frame);
 	/// Removes every key of these bones.
@@ -137,6 +170,10 @@ public:
 	/// New length: the keys move with it (a key at the last frame stays at the last frame), the
 	/// base sequence is stretched to it - so this also changes the speed.
 	void setFrameCount(int frames);
+	/// Keeps frames first..last only (Tweak: of the base too); keys move along, keys outside go.
+	bool trim(int first, int last);
+	/// Frames before `frame` stay as the base: their keys go. 0: everything may change.
+	void setEditFrom(int frame);
 	void setFps(float fps);
 	void setLoop(bool loop);
 	void setName(std::string name);
@@ -171,8 +208,11 @@ private:
 	void putKey(int bone, BoneKey key);
 	[[nodiscard]] std::vector<int> orAll(const std::vector<int>& bones) const;
 
+	void findChains();
+
 	const AnimatedModel* m_model;
 	AnimClip m_clip;
+	std::vector<IkChain> m_chains;
 	int m_base = -1;
 	std::vector<AnimClip> m_undo, m_redo;
 	std::optional<AnimClip> m_changeStart;

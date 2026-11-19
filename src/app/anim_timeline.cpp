@@ -55,6 +55,12 @@ void AnimTimeline::setKeys(std::map<int, KeyInterp> selected, std::vector<int> a
 	update();
 }
 
+void AnimTimeline::setEditFrom(int frame) {
+	if (frame == m_editFrom) return;
+	m_editFrom = frame;
+	update();
+}
+
 double AnimTimeline::frameX(int frame) const {
 	const double left = LABEL + MARGIN, right = width() - MARGIN;
 	if (m_frames <= 1) return left;
@@ -103,6 +109,13 @@ void AnimTimeline::paintEvent(QPaintEvent*) {
 	p.setPen(pal.color(QPalette::Mid));
 	p.drawLine(0, RULER, width(), RULER);
 	p.drawLine(0, RULER + ROW, width(), RULER + ROW);
+	// Locked frames (before edit-from): they stay as the original.
+	if (m_editFrom > 0 && m_frames > 1) {
+		const double x = frameX(m_editFrom);
+		p.fillRect(QRectF(0, RULER, x, height() - RULER), QColor(0, 0, 0, 70));
+		p.setPen(QPen(QColor(120, 220, 160), 2));
+		p.drawLine(QPointF(x, RULER), QPointF(x, height()));
+	}
 	p.drawLine(0, RULER + 2 * ROW, width(), RULER + 2 * ROW);
 	p.setPen(pal.color(QPalette::Text));
 	QFont small = font();
@@ -135,6 +148,16 @@ void AnimTimeline::paintEvent(QPaintEvent*) {
 		p.setBrush(color);
 		if (interp == KeyInterp::Linear) {
 			p.drawRect(QRectF(x - size * 0.75, y - size * 0.75, size * 1.5, size * 1.5));
+		} else if (interp == KeyInterp::Step) {
+			// A step: a square with a bar (the value holds, then cuts).
+			p.drawRect(QRectF(x - size * 0.75, y - size * 0.75, size * 1.5, size * 1.5));
+			p.drawLine(QPointF(x - size * 0.75, y), QPointF(x + size * 0.75, y));
+		} else if (interp == KeyInterp::EaseIn || interp == KeyInterp::EaseOut) {
+			// A triangle: flat side where the motion is slow.
+			QPolygonF tri;
+			const double s = interp == KeyInterp::EaseIn ? -1 : 1;
+			tri << QPointF(x - s * size, y - size) << QPointF(x - s * size, y + size) << QPointF(x + s * size, y);
+			p.drawPolygon(tri);
 		} else {
 			QPolygonF diamond;
 			diamond << QPointF(x, y - size) << QPointF(x + size, y) << QPointF(x, y + size) << QPointF(x - size, y);
