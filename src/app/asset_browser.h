@@ -202,6 +202,8 @@ signals:
 	void materialPicked(const QString& name);
 	/// The "..." menu: export the materials for review / load the decisions from the chat.
 	void reviewExportRequested();
+	/// "Enhance textures ..." for these materials (the selected ones, or every one listed).
+	void enhanceTexturesRequested(const QStringList& materials);
 	void decisionsLoadRequested();
 
 protected:

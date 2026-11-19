@@ -92,7 +92,8 @@ struct RoadPlan {
 using TextureSizeFn = std::function<std::pair<int, int>(const std::string& material)>;
 
 /// Size of a material's base texture in texels, read from the VTF header (the full size, not a
-/// preview's); 512 x 512 when the material or its texture cannot be read.
+/// preview's), divided by the coordinate scale of an enhanced texture (mappingScale in
+/// texture_enhance.h: the size it shows at on the walls); 512 x 512 when it cannot be read.
 [[nodiscard]] std::pair<int, int> materialTextureSize(const GameFileSystem& fs, std::string_view material);
 
 /// The upward faces (normal at most 60° from straight up) of the selected brushes and brush

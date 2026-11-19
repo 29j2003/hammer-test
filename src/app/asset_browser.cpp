@@ -495,6 +495,12 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 		more->setPopupMode(QToolButton::InstantPopup);
 		auto* moreMenu = new QMenu(more);
 		moreMenu->addAction(tr("Export materials for review ..."), this, [this] { emit reviewExportRequested(); })->setObjectName("materialsExportReview");
+		moreMenu->addAction(tr("Enhance textures of the listed materials ..."), this, [this] {
+			// Every material the search and category show now.
+			QStringList names;
+			for (int row = 0; row < m_materialFilter->rowCount(); ++row) names << m_materialFilter->index(row, 0).data(Qt::UserRole).toString();
+			emit enhanceTexturesRequested(names);
+		})->setObjectName("materialsEnhance");
 		moreMenu->addAction(tr("Load material decisions ..."), this, [this] { emit decisionsLoadRequested(); })->setObjectName("materialsLoadDecisions");
 		moreMenu->addAction(tr("Open decisions file"), this, [this] { openMaterialDecisionsFile(m_editor, this); })->setObjectName("materialsOpenDecisions");
 		more->setMenu(moreMenu);
@@ -561,6 +567,9 @@ AssetBrowser::AssetBrowser(Editor* editor, QWidget* parent)
 			menu.addAction(tr("Copy name"), this, [name] { QApplication::clipboard()->setText(name); });
 			fillParallaxMenu(menu.addMenu(names.size() == 1 ? tr("Parallax") : tr("Parallax for %1 materials").arg(names.size())), m_editor, names);
 			fillBumpMenu(menu.addMenu(names.size() == 1 ? tr("Bump map") : tr("Bump map for %1 materials").arg(names.size())), m_editor, names);
+			menu.addAction(names.size() == 1 ? tr("Enhance textures ...") : tr("Enhance textures of %1 materials ...").arg(names.size()), this,
+			               [this, names] { emit enhanceTexturesRequested(names); })
+			    ->setObjectName("contextEnhanceTextures");
 			if (m_menuFiller) {
 				menu.addSeparator();
 				m_menuFiller(&menu, {AssetKind::Material, name.toStdString()}, m_pageMode ? AssetPlace::MaterialsPage : AssetPlace::AssetBrowser);

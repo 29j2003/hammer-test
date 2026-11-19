@@ -279,6 +279,12 @@ memory and lists every key or value that would change.
 - **Game enhancements (mapbase-fidelity)**: liquid in bottles, sway in the wind and water glint are on by default – Mapsmith
   writes the materials into the mod by itself; switch an effect off for the whole mod (*Project › Overview*) or for one
   model (*Object Properties*, *Models* page). Your own materials are never overwritten.
+- **Enhance textures**: sharper, larger textures and new bump maps for the game's materials, without touching the
+  game's files. On the *Materials* page right-click materials (or *...* › *Enhance textures of the listed materials*),
+  pick *2x* or *4x* and press *Apply*; drag the yellow line in the comparison to see before and after. *AI* uses
+  Real-ESRGAN (ships with Mapsmith, needs a graphics card with Vulkan), *Sharp* is built in and fast. Tiling textures
+  stay seamless and keep their size on your walls. *Remove enhancements* brings the game's textures back. New bump maps
+  on walls show after the maps are compiled again.
 - **Parallax-corrected cubemaps (Mapbase)**: select an env_cubemap and press *Add room box*: the box is fitted to the
   walls around it; drag the squares on its sides in the view to change it. The editor creates and names the
   parallax_obb and links it to the cubemap.

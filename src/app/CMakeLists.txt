@@ -16,6 +16,7 @@ add_library(smeapp STATIC
 	enhancements.cpp
 	material_decision_store.cpp
 	material_review_dialog.cpp
+	texture_enhance_dialog.cpp ai_upscaler.cpp
 	find_dialog.cpp
 	history_panel.cpp
 	main_window.cpp
