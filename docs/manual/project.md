@@ -7,7 +7,7 @@ nav_order: 9
 {: .no_toc }
 
 The **Project** page in the side bar is about your mod as a whole: its maps, its main menu, its source code and how to
-share it. It has nine tabs: **Overview**, **Features**, **Maps**, **Menu**, **Texts**, **Source control**, **Ship**, **Claude** (see [Claude in Mapsmith](claude.html))
+share it. It has ten tabs: **Overview**, **Features**, **Maps**, **Menu**, **HUD**, **Texts**, **Source control**, **Ship**, **Claude** (see [Claude in Mapsmith](claude.html))
 and **Build from source** (only for building the mod from its own code).
 
 ![The Project page](images/project.png)
@@ -126,6 +126,23 @@ The entries of the menu (`resource/GameMenu.res`). **+ Entry** adds one. Each en
 If the mod has no `GameMenu.res` yet, the game's menu is shown, and saving gives the mod its own.
 
 **Save to the mod** writes all changed files; **Reload** reads them again and drops what was not saved.
+
+## HUD
+
+What the game draws over the picture: health, suit, ammo, aux power, crosshair, captions.
+
+- **Screen**: pick a resolution; the preview scales the HUD like the game (numbers are 640 × 480 units, scaled by
+  screen height ÷ 480).
+- **Background ...**: put a screenshot of your game behind the HUD.
+- **Move / resize**: drag an element; drag the yellow corner to resize. **Outlines** shows every element's box.
+- **Selected element**: X and Y with their anchor (*From left / centre / right*), size, *Visible*, text and background
+  colour, number font.
+- **Colours** tab: the scheme's colours (*FgColor* = HUD yellow, *BgColor* = box behind numbers); double-click to change.
+- **Fonts** tab: typeface and size at the chosen resolution (fonts with a resolution range change only that range).
+- **Undo** (Ctrl+Z) steps back; **Save to mod** writes `scripts/HudLayout.res` and `resource/ClientScheme.res` into the
+  mod (a file the mod already had is kept once as `.mapsmith-backup`); **Restore original** puts them back.
+- In the game: restart it, or type `hud_reloadscheme` in the console.
+- Changes touch only the values you change: comments, console variants (`[$X360]`) and unknown keys stay.
 
 ## Texts
 

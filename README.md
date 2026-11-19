@@ -245,6 +245,11 @@ memory and lists every key or value that would change.
   (*As shown during a game* adds Resume and Save). *Save to the mod* writes `gameinfo.txt` (only these keys change),
   `cfg/chapterN.cfg`, `resource/<mod>_english.txt` (chapter titles, UTF-16), `scripts/ChapterBackgrounds.txt` and
   `resource/GameMenu.res`; each file it replaces is kept once as `.bak`.
+- **HUD** (health, ammo and the rest of the screen display):
+  - preview at a chosen resolution (16:9, 4:3 …), over a game-like scene or your own screenshot
+  - drag an element to move it, its corner to resize it; or type position, anchor (left/centre/right), size, visible
+  - text and background colour per element; scheme colours (*FgColor* = the HUD yellow) and fonts (typeface, size)
+  - *Save to mod* writes `scripts/HudLayout.res` / `resource/ClientScheme.res`; *Restore original* undoes it
 - **Texts** (your mod's `resource/<mod>_<language>.txt` and captions): a table of tokens with a column per language,
   missing translations marked, *+ Token*, *Rename*, *Delete*, *+ Language*. For captions: buttons for the caption tags
   (colour, bold, italic, line break, sound effect, length) with a preview, *+ Caption for a sound ...*, and *Compile

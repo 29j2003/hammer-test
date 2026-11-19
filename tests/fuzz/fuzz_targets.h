@@ -25,6 +25,7 @@
 #include <sme/filesystem.h>
 #include <sme/git_status.h>
 #include <sme/hammer_config.h>
+#include <sme/hud_layout.h>
 #include <sme/keyvalues.h>
 #include <sme/localization.h>
 #include <sme/map.h>
@@ -163,7 +164,7 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 	if (size < 1) return;
 	const std::string_view in = text(data + 1, size - 1);
 	try {
-		switch (data[0] % 21) {
+		switch (data[0] % 22) {
 		case 0: (void)parseKeyValues(in); break;
 		case 1: {
 			(void)parseMaterial(in, "fuzz/material");
@@ -295,6 +296,22 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 			}
 			break;
 		}
+		case 21:
+			// HudLayout.res / ClientScheme.res of a mod (HUD editor): elements, colours, fonts and an edit.
+			if (const auto res = parseResFile(in)) {
+				for (const auto& e : hudElements(*res)) {
+					(void)resolveHudRect(e.xpos, e.ypos, e.wide, e.tall, 1920, 1080);
+					if (const auto* block = hudElementBlock(*res, e.name)) (void)parseResFile(withResValue(*res, *block, "xpos", "r10"));
+				}
+				for (const auto& font : schemeFonts(*res)) {
+					if (const auto* entry = pickFontEntry(font, 1080)) (void)fontPixelTall(*entry, 1080);
+				}
+				(void)schemeColors(*res);
+				(void)schemeFontFiles(*res);
+				(void)parseResFile(withResValue(*res, res->root, "fuzz", "1"));
+			}
+			(void)resConditionTrue(in.substr(0, 200));
+			break;
 		}
 	} catch (const std::exception&) {
 		// Some readers report broken syntax as an exception; the editor shows the message.

@@ -187,6 +187,7 @@
 #include "animations_page.h"
 #include "model_rebuild_job.h"
 #include "weapons_page.h"
+#include "hud_editor.h"
 #include <sme/model_rebuild.h>
 #include <sme/sound_edit.h>
 #include <sme/weapons.h>
@@ -13451,4 +13452,192 @@ TEST_CASE("model glow, model effects and the particle editor write into the mod 
 	REQUIRE(particles->editShownSystem());
 	CHECK(particles->particleEditor()->system().name == "demo_fire_small");
 	CHECK(particles->particleEditor()->system().children.size() == 1);   // its smoke column
+}
+
+TEST_CASE("hud editor: the game's HUD at a resolution, drag to move and resize, colours, fonts, save into the mod and restore") {
+	// Julius, 19.11.2026: "HUD-Editor: Schriften, Farben und Positionen, mit Vorschau im Spielbild."
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+	test::Fixture f;
+	test::createFixture(f);
+	// The game's HUD files (the mod has none of its own).
+	test::writeText(f.sdkBase / "hl2/scripts/HudLayout.res", R"("Resource/HudLayout.res"
+{
+	HudHealth [$WIN32]
+	{
+		"fieldName"	"HudHealth"
+		"xpos"	"16"
+		"ypos"	"432"
+		"wide"	"102"
+		"tall"	"36"
+		"visible"	"1"
+		"text_xpos"	"8"
+		"text_ypos"	"20"
+		"digit_xpos"	"50"
+		"digit_ypos"	"2"
+	}
+	HudHealth [$X360]
+	{
+		"xpos"	"48"
+	}
+	HudAmmo
+	{
+		"xpos"	"r150"
+		"ypos"	"432"
+		"wide"	"136"
+		"tall"	"36"
+	}
+	HudCrosshair
+	{
+		"wide"	"640"
+		"tall"	"480"
+	}
+}
+)");
+	test::writeText(f.sdkBase / "hl2/resource/ClientScheme.res", R"(Scheme
+{
+	Colors
+	{
+	}
+	BaseSettings
+	{
+		"FgColor"	"255 220 0 100"
+		"BgColor"	"0 0 0 76"
+	}
+	Fonts
+	{
+		Default
+		{
+			"1"
+			{
+				"name"	"Verdana"
+				"tall"	"9"
+			}
+		}
+		HudNumbers
+		{
+			"1"
+			{
+				"name"	"HalfLife2"
+				"tall"	"32"
+				"additive"	"1"
+				"custom"	"1"
+			}
+		}
+	}
+	CustomFontFiles
+	{
+		"1"	"resource/HALFLIFE2.ttf"
+	}
+}
+)");
+	std::filesystem::remove(f.mod / "scripts/HudLayout.res");
+	std::filesystem::remove(f.mod / "resource/ClientScheme.res");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1366, 768);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	auto* hud = window.findChild<HudEditor*>();
+	REQUIRE(hud);
+	window.showPage(MainWindow::Page::Project);
+	window.projectTabs()->setCurrentWidget(hud);
+	settle();
+	REQUIRE(hud->layout());
+	REQUIRE(hud->scheme());
+	CHECK(hud->minimumSizeHint().width() <= 1200);
+	auto* list = hud->findChild<QListWidget*>("hudElements");
+	REQUIRE(list);
+	CHECK(list->count() == 3);   // the PC HudHealth once, HudAmmo, HudCrosshair
+	auto* resolution = hud->findChild<QComboBox*>("hudResolution");
+	REQUIRE(resolution);
+	resolution->setCurrentIndex(1);
+	resolution->setCurrentIndex(0);   // 1920 x 1080
+	settle();
+	auto* preview = hud->preview();
+	CHECK(preview->screen() == QSize(1920, 1080));
+	// HudHealth at 16,432 in 640x480 units -> 36,972 on 1080 lines.
+	const auto healthItem = [&] {
+		for (const auto& item : preview->items()) {
+			if (item.name == "HudHealth") return item;
+		}
+		return HudPreviewItem{};
+	};
+	CHECK(healthItem().rect == QRect(36, 972, 229, 81));
+	CHECK(healthItem().sample == "100");
+
+	// Click selects; drag moves (the anchor stays: from the left).
+	QRect r = preview->widgetRect("HudHealth");
+	REQUIRE(r.isValid());
+	QTest::mouseClick(preview, Qt::LeftButton, {}, r.center());
+	settle();
+	CHECK(hud->selectedElement() == "HudHealth");
+	QTest::mousePress(preview, Qt::LeftButton, {}, r.center());
+	QTest::mouseMove(preview, r.center() + QPoint(40, -30));
+	QTest::mouseRelease(preview, Qt::LeftButton, {}, r.center() + QPoint(40, -30));
+	settle();
+	const auto* block = hudElementBlock(*hud->layout(), "HudHealth");
+	REQUIRE(block);
+	CHECK(block->get("xpos") != "16");
+	CHECK(hudAnchor(block->get("xpos")) == HudAnchor::Start);
+	CHECK(std::atoi(block->get("ypos").c_str()) < 432);
+	CHECK(hud->dirty());
+	// The console variant was not touched.
+	CHECK(hud->layout()->text.find("\"xpos\"\t\"48\"") != std::string::npos);
+	// Undo puts it back.
+	hud->undo();
+	CHECK(hudElementBlock(*hud->layout(), "HudHealth")->get("xpos") == "16");
+
+	// The grip at the bottom-right corner resizes.
+	r = preview->widgetRect("HudHealth");
+	QTest::mousePress(preview, Qt::LeftButton, {}, r.bottomRight());
+	QTest::mouseMove(preview, r.bottomRight() + QPoint(30, 10));
+	QTest::mouseRelease(preview, Qt::LeftButton, {}, r.bottomRight() + QPoint(30, 10));
+	settle();
+	block = hudElementBlock(*hud->layout(), "HudHealth");
+	CHECK(std::atoi(block->get("wide").c_str()) > 102);
+	CHECK(block->get("xpos") == "16");
+
+	// Fields: a right-anchored position for HudAmmo.
+	hud->selectElement("HudAmmo");
+	auto* x = hud->findChild<QSpinBox*>("hudX");
+	REQUIRE(x);
+	CHECK(x->value() == 150);
+	CHECK(hud->findChild<QComboBox*>("hudAnchorX")->currentIndex() == 2);
+	x->setValue(200);
+	CHECK(hudElementBlock(*hud->layout(), "HudAmmo")->get("xpos") == "r200");
+	hud->findChild<QCheckBox*>("hudVisible")->setChecked(false);
+	CHECK(hudElementBlock(*hud->layout(), "HudAmmo")->get("visible") == "0");
+
+	// Colours and fonts of the scheme.
+	auto* colors = hud->findChild<QTreeWidget*>("hudColors");
+	REQUIRE(colors);
+	CHECK(colors->topLevelItemCount() == 2);
+	hud->setSchemeColor("FgColor", QColor(255, 0, 0, 200));
+	CHECK(resolveSchemeColor(*hud->scheme(), "FgColor") == HudColor{255, 0, 0, 200});
+	CHECK(healthItem().text == QColor(255, 0, 0, 200));
+	hud->setFontSize("HudNumbers", 90);   // 90 px on 1080 lines = 40 units
+	CHECK(schemeFonts(*hud->scheme())[1].entries[0].tall == 40);
+	CHECK(healthItem().numberFont.pixelSize() == 90);
+
+	// Save: both files go into the mod; Restore takes them out again.
+	QString error;
+	REQUIRE(hud->save(&error));
+	CHECK_FALSE(hud->dirty());
+	const auto modLayout = f.mod / "scripts/HudLayout.res";
+	REQUIRE(std::filesystem::exists(modLayout));
+	REQUIRE(std::filesystem::exists(f.mod / "resource/ClientScheme.res"));
+	CHECK(hudFilesChanged(f.mod));
+	CHECK(hud->findChild<QPushButton*>("hudRestore")->isEnabled());
+	REQUIRE(hud->restoreOriginal(&error));
+	CHECK_FALSE(std::filesystem::exists(modLayout));
+	CHECK_FALSE(hudFilesChanged(f.mod));
+	CHECK(hudElementBlock(*hud->layout(), "HudHealth")->get("wide") == "102");   // read from the game again
+	CHECK(resolveSchemeColor(*hud->scheme(), "FgColor") == HudColor{255, 220, 0, 100});
 }
