@@ -5,6 +5,7 @@
 #include "asset_browser.h"
 #include "dialog_fit.h"
 #include "editor.h"
+#include "model_rebuild_job.h"
 #include "model_viewer.h"
 
 #include <sme/filesystem.h>
@@ -22,6 +23,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -255,13 +258,27 @@ EffectsPanel::EffectsPanel(Editor* editor, AssetBrowser* assets, QWidget* parent
 	row->addWidget(m_editButton);
 	row->addWidget(m_remove);
 	row->addStretch(1);
-	row->addWidget(copy);
-	row->addWidget(m_compile);
 	v->addLayout(row);
+	auto* buildRow = new QHBoxLayout;
+	m_restore = new QPushButton(tr("Restore model"));
+	m_restore->setObjectName("effectsRestore");
+	m_restore->setToolTip(tr("Take the rebuilt model out of the mod: the game's model counts again (also its changed sounds)"));
+	buildRow->addWidget(copy);
+	buildRow->addStretch(1);
+	buildRow->addWidget(m_compile);
+	buildRow->addWidget(m_restore);
+	v->addLayout(buildRow);
 	m_note = new QLabel;
+	m_note->setObjectName("effectsNote");
 	m_note->setProperty("role", "description");
 	m_note->setWordWrap(true);
 	v->addWidget(m_note);
+	m_log = new QPlainTextEdit;
+	m_log->setObjectName("effectsLog");
+	m_log->setReadOnly(true);
+	m_log->setMaximumHeight(90);
+	m_log->setVisible(false);
+	v->addWidget(m_log);
 
 	connect(m_add, &QPushButton::clicked, this, [this] { edit(-1); });
 	connect(m_editButton, &QPushButton::clicked, this, [this] { edit(m_list->currentRow()); });
@@ -274,8 +291,13 @@ EffectsPanel::EffectsPanel(Editor* editor, AssetBrowser* assets, QWidget* parent
 		refresh();
 	});
 	connect(copy, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(qcText()); });
-	connect(m_compile, &QPushButton::clicked, this, [this] {
-		emit compileRequested(m_model, effectEvents(m_effects), QString::fromStdString(effectKeyValues(m_effects)));
+	connect(m_compile, &QPushButton::clicked, this, [this] { compile(); });
+	connect(m_restore, &QPushButton::clicked, this, [this] {
+		if (QMessageBox::question(this, tr("Restore model"),
+		                          tr("Take the rebuilt %1 out of the mod? Its effects stay in the list, its changed sounds are forgotten.").arg(m_model)) ==
+		    QMessageBox::Yes) {
+			restoreModel();
+		}
 	});
 	connect(m_list, &QListWidget::currentRowChanged, this, [this] {
 		const bool picked = m_list->currentRow() >= 0;
@@ -285,7 +307,93 @@ EffectsPanel::EffectsPanel(Editor* editor, AssetBrowser* assets, QWidget* parent
 	refresh();
 }
 
+void EffectsPanel::setRebuildJob(ModelRebuildJob* job) {
+	if (m_job) disconnect(m_job, nullptr, this, nullptr);
+	m_job = job;
+	if (m_job) {
+		connect(m_job, &ModelRebuildJob::output, this, [this](const QString& line) {
+			if (m_building) m_log->appendPlainText(line);
+		});
+		connect(m_job, &ModelRebuildJob::finished, this, [this](bool ok, const QString& text) {
+			if (!m_building) {
+				// Started elsewhere (Build model on the Weapons page): only the buttons change.
+				updateButtons();
+				return;
+			}
+			m_building = false;
+			m_log->appendPlainText(text);
+			m_result = ok ? tr("Built into the model: %1").arg(text) : tr("Not built: %1").arg(text);
+			showNote(m_result);
+			updateButtons();
+		});
+	}
+	updateButtons();
+}
+
+ModelRebuildChanges EffectsPanel::compileChanges() const {
+	SequenceFrames frames;
+	for (const auto& [name, count] : m_sequences) frames.emplace(toLower(name), std::max(1, count));
+	ModelRebuildChanges changes;
+	changes.effects = effectChanges(m_effects, frames);
+	return changes;
+}
+
+bool EffectsPanel::compile() {
+	if (m_model.isEmpty()) return false;
+	m_log->clear();
+	m_log->setVisible(true);
+	m_log->appendPlainText(tr("Building %1 with its effects ...").arg(m_model));
+	m_result = tr("Building ...");
+	showNote(m_result);
+	m_building = true;
+	emit compileRequested(m_model, compileChanges());
+	updateButtons();
+	return true;
+}
+
+bool EffectsPanel::restoreModel() {
+	if (!m_job || m_model.isEmpty()) return false;
+	QString error;
+	if (!m_job->restore(m_model, &error)) {
+		showNote(tr("Could not restore %1: %2").arg(m_model, error));
+		return false;
+	}
+	m_result = tr("%1 is the game's model again.").arg(m_model);
+	showNote(m_result);
+	updateButtons();
+	emit modelRestored(m_model);
+	return true;
+}
+
+QString EffectsPanel::note() const {
+	return m_note->text();
+}
+
+void EffectsPanel::showNote(const QString& text) {
+	m_note->setText(text);
+}
+
+void EffectsPanel::updateButtons() {
+	const bool haveModel = !m_model.isEmpty();
+	const bool busy = m_job && m_job->busy();
+	const bool rebuilt = haveModel && m_job && m_job->rebuilt(m_model);
+	bool storedEffects = false;
+	if (rebuilt) {
+		const auto stored = m_job->storedChanges(m_model).effects;
+		storedEffects = stored && !stored->empty();
+	}
+	// Compiling an empty list takes earlier effects out of the model again.
+	m_compile->setEnabled(haveModel && !busy && (!m_effects.empty() || storedEffects));
+	m_restore->setEnabled(rebuilt && !busy);
+	m_restore->setVisible(m_job != nullptr);
+}
+
 void EffectsPanel::setModel(const QString& modelPath, ModelViewer* viewer) {
+	if (modelPath.compare(m_model, Qt::CaseInsensitive) != 0) {
+		m_result.clear();
+		m_log->clear();
+		m_log->setVisible(false);
+	}
 	m_model = modelPath;
 	m_viewer = viewer;
 	m_effects.clear();
@@ -316,12 +424,13 @@ void EffectsPanel::setEffects(std::vector<ModelEffect> effects) {
 }
 
 QString EffectsPanel::qcText() const {
-	std::map<std::string, std::vector<SequenceEvent>> bySequence;
-	for (const auto& e : effectEvents(m_effects)) bySequence[e.sequence].push_back(e);
 	QString out;
-	for (const auto& [sequence, events] : bySequence) {
-		out += QStringLiteral("// in $sequence \"%1\" { ... }:\n").arg(QString::fromStdString(sequence));
-		for (const auto& e : events) out += QStringLiteral("\t%1\n").arg(QString::fromStdString(qcEventLine(e)));
+	for (const auto& [name, frames] : m_sequences) {
+		const auto all = effectEvents(m_effects, SequenceFrames{{toLower(name), std::max(1, frames)}});
+		const auto it = all.find(toLower(name));
+		if (it == all.end()) continue;
+		out += QStringLiteral("// in $sequence \"%1\" { ... }:\n").arg(QString::fromStdString(name));
+		for (const auto& e : it->second) out += QStringLiteral("\t%1\n").arg(QString::fromStdString(qcEventLine(e, std::max(1, frames))));
 	}
 	const auto kv = effectKeyValues(m_effects);
 	if (!kv.empty()) out += QStringLiteral("// in $keyvalues { ... }:\n") + QString::fromStdString(kv);
@@ -335,9 +444,14 @@ void EffectsPanel::refresh() {
 	m_add->setEnabled(haveModel && m_editor->gameEntry());
 	m_editButton->setEnabled(false);
 	m_remove->setEnabled(false);
-	m_compile->setEnabled(haveModel && !m_effects.empty());
-	m_note->setText(m_effects.empty() ? tr("None yet. Add one: e.g. a glow sprite on the muzzle only while reloading.")
-	                                  : tr("Kept in the mod until the model is compiled with them."));
+	updateButtons();
+	if (!m_result.isEmpty()) {
+		showNote(m_result);
+	} else if (m_effects.empty()) {
+		showNote(tr("None yet. Add one: e.g. a glow sprite on the muzzle only while reloading."));
+	} else {
+		showNote(tr("Kept in the mod; \"Compile into model ...\" builds the model with them (its own events and sounds stay)."));
+	}
 }
 
 void EffectsPanel::save() {

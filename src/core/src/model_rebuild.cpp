@@ -67,7 +67,48 @@ std::string smdFileName(const std::string& sequence) {
 void ModelRebuildChanges::merge(const ModelRebuildChanges& newer) {
 	for (const auto& [key, list] : newer.events) events[key] = list;
 	for (const auto& [key, r] : newer.replacements) replacements[key] = r;
+	if (newer.effects) effects = newer.effects;
 }
+
+namespace {
+
+KvNode eventsNode(const std::vector<ModelEvent>& list) {
+	KvNode events = KvNode::makeBlock("events");
+	for (const auto& e : list) {
+		KvNode event = KvNode::makeBlock("event");
+		event.set("id", e.id());
+		event.set("cycle", number(e.cycle));
+		event.set("options", cleanEventOptions(e.options));
+		events.children.push_back(std::move(event));
+	}
+	return events;
+}
+
+std::vector<ModelEvent> readEvents(const KvNode& events) {
+	std::vector<ModelEvent> list;
+	for (const auto& node : events.children) {
+		if (!node.block || !iequals(node.key, "event") || list.size() >= 1024) continue;
+		ModelEvent e;
+		if (!setEventId(e, node.get("id"))) continue;
+		e.cycle = std::clamp(toFloat(node.get("cycle"), 0.f), 0.f, 1.f);
+		e.options = cleanEventOptions(node.get("options"));
+		list.push_back(std::move(e));
+	}
+	return list;
+}
+
+/// A word of a keyvalue written into the .qc: no quotes, braces, spaces or control characters.
+std::string kvWord(std::string_view text) {
+	std::string out;
+	for (const char c : trim(text)) {
+		const auto u = static_cast<unsigned char>(c);
+		if (u < 33 || u == 127 || c == '"' || c == '{' || c == '}' || c == '\\') continue;
+		out += c;
+	}
+	return out.substr(0, 128);
+}
+
+} // namespace
 
 std::string writeModelChanges(const StoredModelChanges& stored, std::map<std::string, std::string>* smdFiles) {
 	KvNode root;
@@ -83,17 +124,7 @@ std::string writeModelChanges(const StoredModelChanges& stored, std::map<std::st
 	for (const auto& name : names) {
 		KvNode seq = KvNode::makeBlock("sequence");
 		seq.set("name", name);
-		if (const auto it = stored.changes.events.find(name); it != stored.changes.events.end()) {
-			KvNode events = KvNode::makeBlock("events");
-			for (const auto& e : it->second) {
-				KvNode event = KvNode::makeBlock("event");
-				event.set("id", e.id());
-				event.set("cycle", number(e.cycle));
-				event.set("options", cleanEventOptions(e.options));
-				events.children.push_back(std::move(event));
-			}
-			seq.children.push_back(std::move(events));
-		}
+		if (const auto it = stored.changes.events.find(name); it != stored.changes.events.end()) seq.children.push_back(eventsNode(it->second));
 		if (const auto it = stored.changes.replacements.find(name); it != stored.changes.replacements.end()) {
 			const auto& r = it->second;
 			const std::string file = smdFileName(name);
@@ -107,8 +138,26 @@ std::string writeModelChanges(const StoredModelChanges& stored, std::map<std::st
 		}
 		block.children.push_back(std::move(seq));
 	}
+	if (const auto& effects = stored.changes.effects) {
+		// Effects (Models/Weapons page, Effects): added on top of each sequence's events.
+		KvNode node = KvNode::makeBlock("effects");
+		for (const auto& [name, list] : effects->events) {
+			KvNode seq = KvNode::makeBlock("sequence");
+			seq.set("name", name);
+			seq.children.push_back(eventsNode(list));
+			node.children.push_back(std::move(seq));
+		}
+		for (const auto& p : effects->particles) {
+			KvNode particle = KvNode::makeBlock("particle");
+			particle.set("name", kvWord(p.name));
+			particle.set("attachment_type", kvWord(p.attachType));
+			particle.set("attachment_point", kvWord(p.attachment));
+			node.children.push_back(std::move(particle));
+		}
+		block.children.push_back(std::move(node));
+	}
 	root.children.push_back(std::move(block));
-	return "// What Mapsmith changed in this model (Weapons page, animation editor). Rebuilt from the original each time.\n" + writeKeyValues(root);
+	return "// What Mapsmith changed in this model (Weapons page, animation editor, effects). Rebuilt from the original each time.\n" + writeKeyValues(root);
 }
 
 std::optional<StoredModelChanges> readModelChanges(std::string_view text, const std::function<std::string(std::string_view)>& readSmd) {
@@ -123,21 +172,30 @@ std::optional<StoredModelChanges> readModelChanges(std::string_view text, const 
 	StoredModelChanges out;
 	out.model = normalizePath(block->get("model"));
 	out.base = iequals(block->get("base"), "mod") ? "mod" : "game";
+	if (const KvNode* effects = block->find("effects"); effects && effects->block) {
+		AddedModelEffects added;
+		for (const auto& node : effects->children) {
+			if (!node.block) continue;
+			if (iequals(node.key, "sequence")) {
+				const std::string name = toLower(node.get("name"));
+				const KvNode* events = node.find("events");
+				if (name.empty() || !events || !events->block || added.events.size() >= 1024) continue;
+				added.events[name] = readEvents(*events);
+			} else if (iequals(node.key, "particle") && added.particles.size() < 256) {
+				ModelParticle p;
+				p.name = kvWord(node.get("name"));
+				p.attachType = kvWord(node.get("attachment_type", "follow_attachment"));
+				p.attachment = kvWord(node.get("attachment_point"));
+				if (!p.name.empty()) added.particles.push_back(std::move(p));
+			}
+		}
+		out.changes.effects = std::move(added);
+	}
 	for (const auto& seq : block->children) {
 		if (!seq.block || !iequals(seq.key, "sequence")) continue;
 		const std::string name = toLower(seq.get("name"));
 		if (name.empty()) continue;
-		if (const KvNode* events = seq.find("events"); events && events->block) {
-			auto& list = out.changes.events[name];
-			for (const auto& node : events->children) {
-				if (!node.block || !iequals(node.key, "event")) continue;
-				ModelEvent e;
-				if (!setEventId(e, node.get("id"))) continue;
-				e.cycle = std::clamp(toFloat(node.get("cycle"), 0.f), 0.f, 1.f);
-				e.options = cleanEventOptions(node.get("options"));
-				list.push_back(std::move(e));
-			}
-		}
+		if (const KvNode* events = seq.find("events"); events && events->block) out.changes.events[name] = readEvents(*events);
 		if (const KvNode* frames = seq.find("frames"); frames && frames->block) {
 			const std::string file = normalizePath(frames->get("smd"));
 			if (!isSafeGamePath(file)) continue;
@@ -250,6 +308,7 @@ std::optional<ModelRebuildPlan> prepareModelRebuild(const GameFileSystem& gameFs
 	options.pictures = false;
 	options.events = stored.changes.events;
 	options.replacements = stored.changes.replacements;
+	options.effects = stored.changes.effects;
 	std::string why;
 	auto exported = decompileModel(source, model, options, &why, progress);
 	if (!exported) return fail(why);

@@ -202,34 +202,53 @@ TEST_CASE("effects: events for an animation, keyvalues for always, and back") {
 	reload.sequence = "reload";
 	reload.startFrame = 5;
 	reload.endFrame = 30;
-	const auto events = effectEvents(reload);
+	const auto events = effectEvents(reload, 41);
 	REQUIRE(events.size() == 2);
-	CHECK(events[0].event == "AE_CL_CREATE_PARTICLE_EFFECT");
-	CHECK(events[0].frame == 5);
+	CHECK(events[0].name == "AE_CL_CREATE_PARTICLE_EFFECT");
+	CHECK(events[0].frame(41) == 5);
 	CHECK(events[0].options == "gun_glow follow_attachment muzzle");
-	CHECK(events[1].event == "AE_CL_STOP_PARTICLE_EFFECT");
-	CHECK(events[1].frame == 30);
+	CHECK(events[1].name == "AE_CL_STOP_PARTICLE_EFFECT");
+	CHECK(events[1].frame(41) == 30);
 	CHECK(events[1].options == "gun_glow");
-	CHECK(qcEventLine(events[0]) == "{ event AE_CL_CREATE_PARTICLE_EFFECT 5 \"gun_glow follow_attachment muzzle\" }");
+	CHECK(qcEventLine(events[0], 41) == "{ event AE_CL_CREATE_PARTICLE_EFFECT 5 \"gun_glow follow_attachment muzzle\" }");
 
 	ModelEffect evil = reload;
 	evil.particle = "a\" }\n$sequence x";
-	CHECK(effectEvents(evil)[0].options.find('"') == std::string::npos);
-	CHECK(qcEventLine({"s", 1, "AE_X", "a\"b\nc"}) == "{ event AE_X 1 \"abc\" }");
+	CHECK(effectEvents(evil, 41)[0].options.find('"') == std::string::npos);
+	ModelEvent raw;
+	raw.name = "AE_X";
+	raw.options = "a\"b\nc";
+	raw.setFrame(1, 3);
+	CHECK(qcEventLine(raw, 3) == "{ event AE_X 1 \"abc\" }");
 
 	ModelEffect always;
 	always.when = ModelEffect::When::Always;
 	always.particle = "lamp_glow";
 	always.attachment = "light";
-	CHECK(effectEvents(always).empty());
+	CHECK(effectEvents(always, 41).empty());
 	const auto kv = effectKeyValues({always, reload});
 	CHECK(kv.find("particles") != std::string::npos);
-	CHECK(kv.find("name \"lamp_glow\"") != std::string::npos);
-	CHECK(kv.find("attachment_point \"light\"") != std::string::npos);
+	CHECK(kv.find("mapsmith_effect") != std::string::npos);
+	CHECK(kv.find("\"name\" \"lamp_glow\"") != std::string::npos);
+	CHECK(kv.find("\"attachment_point\" \"light\"") != std::string::npos);
 	CHECK(kv.find("gun_glow") == std::string::npos);
 	CHECK(effectKeyValues({reload}).empty());
 
-	const auto back = effectsFromModel(effectEvents({reload}), "mdlkeyvalue\n{\n" + kv + "}\n");
+	// Per sequence (lower case), only for sequences the model has.
+	const auto bySequence = effectEvents({reload, always}, SequenceFrames{{"reload", 41}});
+	REQUIRE(bySequence.size() == 1);
+	CHECK(bySequence.at("reload") == events);
+	CHECK(effectEvents({reload}, SequenceFrames{{"idle", 10}}).empty());
+	const auto changes = effectChanges({reload, always}, SequenceFrames{{"reload", 41}});
+	CHECK(changes.events == bySequence);
+	REQUIRE(changes.particles.size() == 1);
+	CHECK(changes.particles[0] == ModelParticle{"lamp_glow", "follow_attachment", "light"});
+
+	SequenceEvents reloadEvents;
+	reloadEvents.sequence = "reload";
+	reloadEvents.frames = 41;
+	reloadEvents.events = events;
+	const auto back = effectsFromModel({reloadEvents}, "mdlkeyvalue\n{\n" + kv + "}\n");
 	REQUIRE(back.size() == 2);
 	CHECK(back[0] == reload);
 	CHECK(back[1].when == ModelEffect::When::Always);
@@ -247,6 +266,15 @@ TEST_CASE("effects: events for an animation, keyvalues for always, and back") {
 	CHECK(saved[0] == reload);
 	CHECK(saved[1] == always);
 	CHECK(readEffectsText("garbage {{").empty());
+	// A file written by the first version still loads (same keys; missing ones take defaults).
+	const auto old = readEffectsText("// Effects Mapsmith adds to this model when it compiles it (Models page, Effects).\n"
+	                                 "\"mapsmith_effects\"\n{\n\t\"effect\"\n\t{\n\t\t\"particle\"\t\"gun_glow\"\n\t\t\"attach\"\t\"follow_attachment\"\n"
+	                                 "\t\t\"attachment\"\t\"muzzle\"\n\t\t\"when\"\t\"animation\"\n\t\t\"sequence\"\t\"reload\"\n\t\t\"start\"\t\"5\"\n"
+	                                 "\t\t\"end\"\t\"30\"\n\t\t\"instantly\"\t\"0\"\n\t}\n\t\"effect\"\n\t{\n\t\t\"particle\"\t\"lamp_glow\"\n\t\t\"when\"\t\"always\"\n\t}\n}\n");
+	REQUIRE(old.size() == 2);
+	CHECK(old[0] == reload);
+	CHECK(old[1].when == ModelEffect::When::Always);
+	CHECK(old[1].attach == EffectAttach::FollowAttachment);
 	CHECK(modelEffectsFile("/mod", "models/weapons/v_smg1.mdl") == std::filesystem::path("/mod/modelsrc/weapons/v_smg1/mapsmith_effects.txt"));
 	CHECK(modelEffectsFile("/mod", "models/../../x.mdl").empty());
 	CHECK(modelEffectsFile("/mod", "materials/x.vmt").empty());

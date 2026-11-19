@@ -437,6 +437,97 @@ std::string sequenceSmd(const AnimatedModel& model, int sequence) {
 	return poseFramesSmd(model.bones(), poses);
 }
 
+bool AddedModelEffects::empty() const {
+	return particles.empty() && std::all_of(events.begin(), events.end(), [](const auto& entry) { return entry.second.empty(); });
+}
+
+bool isAddedEvent(const ModelEvent& event, const std::vector<ModelEvent>& added) {
+	return std::any_of(added.begin(), added.end(), [&](const ModelEvent& a) {
+		return iequals(a.id(), event.id()) && a.options == event.options && std::abs(a.cycle - event.cycle) < 1e-3f;
+	});
+}
+
+std::vector<ModelEvent> withAddedEvents(std::vector<ModelEvent> own, const std::vector<ModelEvent>& added) {
+	if (added.empty()) return own;
+	std::erase_if(own, [&](const ModelEvent& e) { return isAddedEvent(e, added); });
+	own.insert(own.end(), added.begin(), added.end());
+	std::stable_sort(own.begin(), own.end(), [](const ModelEvent& a, const ModelEvent& b) { return a.cycle < b.cycle; });
+	return own;
+}
+
+void removeAddedEvents(std::vector<SequenceEvents>& sequences, const AddedModelEffects& added) {
+	for (auto& seq : sequences) {
+		const auto it = added.events.find(toLower(seq.sequence));
+		if (it == added.events.end() || it->second.empty()) continue;
+		std::erase_if(seq.events, [&](const ModelEvent& e) { return isAddedEvent(e, it->second); });
+	}
+}
+
+std::string qcKeyValues(std::string_view text, const std::vector<ModelParticle>* particles) {
+	const auto particleNodes = [&] {
+		std::vector<KvNode> out;
+		if (!particles) return out;
+		for (const auto& p : *particles) {
+			if (p.name.empty()) continue;
+			KvNode node = KvNode::makeBlock(std::string(MAPSMITH_PARTICLE_BLOCK));
+			node.set("name", p.name);
+			node.set("attachment_type", p.attachType.empty() ? std::string("follow_attachment") : p.attachType);
+			if (!p.attachment.empty()) node.set("attachment_point", p.attachment);
+			out.push_back(std::move(node));
+		}
+		return out;
+	};
+	KvNode root;
+	try {
+		root = parseKeyValues(text);
+	} catch (const std::exception&) {
+		// Text the reader does not understand stays as it is; Mapsmith's entries go in a block of their own.
+		std::string out(trim(text));
+		auto nodes = particleNodes();
+		if (!nodes.empty()) {
+			KvNode extra;
+			KvNode block = KvNode::makeBlock("particles");
+			block.children = std::move(nodes);
+			extra.children.push_back(std::move(block));
+			out += (out.empty() ? "" : "\n") + writeKeyValues(extra);
+		}
+		return out;
+	}
+	// studiomdl's wrapper: the keys inside it.
+	const bool wrapped = !root.children.empty() && std::all_of(root.children.begin(), root.children.end(), [](const KvNode& n) {
+		return n.block && iequals(n.key, "mdlkeyvalue");
+	});
+	if (wrapped) {
+		KvNode inner;
+		for (auto& block : root.children) {
+			for (auto& child : block.children) inner.children.push_back(std::move(child));
+		}
+		root = std::move(inner);
+	}
+	if (!particles) return wrapped ? writeKeyValues(root) : std::string(trim(text));
+	for (auto& node : root.children) {
+		if (node.block && iequals(node.key, "particles")) {
+			std::erase_if(node.children, [](const KvNode& n) { return n.block && iequals(n.key, MAPSMITH_PARTICLE_BLOCK); });
+		}
+	}
+	if (auto nodes = particleNodes(); !nodes.empty()) {
+		KvNode* block = nullptr;
+		for (auto& node : root.children) {
+			if (node.block && iequals(node.key, "particles")) {
+				block = &node;
+				break;
+			}
+		}
+		if (!block) {
+			root.children.push_back(KvNode::makeBlock("particles"));
+			block = &root.children.back();
+		}
+		for (auto& n : nodes) block->children.push_back(std::move(n));
+	}
+	std::erase_if(root.children, [](const KvNode& n) { return n.block && iequals(n.key, "particles") && n.children.empty(); });
+	return root.children.empty() ? std::string() : writeKeyValues(root);
+}
+
 std::optional<ModelExport> decompileModel(const GameFileSystem& fs, std::string_view modelPath, const ModelExportOptions& options, std::string* error,
                                           const std::function<bool(int, int)>& progress) {
 	const auto fail = [&](const std::string& message) -> std::optional<ModelExport> {
@@ -584,6 +675,9 @@ std::optional<ModelExport> decompileModel(const GameFileSystem& fs, std::string_
 		} else if (const auto found = eventsByName.find(key); found != eventsByName.end()) {
 			events = found->second.events;
 		}
+		if (options.effects) {
+			if (const auto it = options.effects->events.find(key); it != options.effects->events.end()) events = withAddedEvents(std::move(events), it->second);
+		}
 		if (const auto replaced = options.replacements.find(key); replaced != options.replacements.end() && !replaced->second.smd.empty()) {
 			const auto& r = replaced->second;
 			writeSequence(seq.name, r.smd, r.fps > 0 ? r.fps : seq.fps, r.loop < 0 ? seq.looping : r.loop == 1, seq.delta,
@@ -597,7 +691,11 @@ std::optional<ModelExport> decompileModel(const GameFileSystem& fs, std::string_
 	for (const auto& [key, r] : options.replacements) {
 		if (written.count(key) || r.smd.empty()) continue;
 		const auto evIt = options.events.find(key);
-		writeSequence(key, r.smd, r.fps, r.loop == 1, false, r.activity, evIt != options.events.end() ? evIt->second : std::vector<ModelEvent>{});
+		auto events = evIt != options.events.end() ? evIt->second : std::vector<ModelEvent>{};
+		if (options.effects) {
+			if (const auto it = options.effects->events.find(key); it != options.effects->events.end()) events = withAddedEvents(std::move(events), it->second);
+		}
+		writeSequence(key, r.smd, r.fps, r.loop == 1, false, r.activity, events);
 	}
 
 	// The physics model.
@@ -682,7 +780,8 @@ std::optional<ModelExport> decompileModel(const GameFileSystem& fs, std::string_
 			qc += "}\n";
 		}
 	}
-	if (!info->keyValues.empty()) qc += "\n$keyvalues\n{\n" + info->keyValues + "\n}\n";
+	const std::string keyValues = qcKeyValues(info->keyValues, options.effects ? &options.effects->particles : nullptr);
+	if (!keyValues.empty()) qc += "\n$keyvalues\n{\n" + keyValues + "\n}\n";
 	if (!info->includeModels.empty()) qc += "\n";
 	for (auto include : info->includeModels) {
 		include = normalizePath(include);

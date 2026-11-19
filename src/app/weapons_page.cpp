@@ -3,6 +3,8 @@
 #include "weapons_page.h"
 
 #include "editor.h"
+#include "effects_panel.h"
+#include "glow_dialog.h"
 #include "import_dialog.h"
 #include "material_cache.h"
 #include "model_cache.h"
@@ -72,8 +74,8 @@ std::optional<std::vector<std::byte>> readFileBytes(const QString& path) {
 
 } // namespace
 
-WeaponsPage::WeaponsPage(Editor* editor, MaterialCache* materials, QWidget* parent)
-	: QWidget(parent), m_editor(editor), m_materials(materials), m_job(new ModelRebuildJob(editor, this)), m_player(new SoundPlayer(this)) {
+WeaponsPage::WeaponsPage(Editor* editor, MaterialCache* materials, AssetBrowser* assets, QWidget* parent)
+	: QWidget(parent), m_editor(editor), m_materials(materials), m_assets(assets), m_job(new ModelRebuildJob(editor, this)), m_player(new SoundPlayer(this)) {
 	setObjectName("weaponsPage");
 	m_loader.setParent(this);
 	m_scriptLoader.setParent(this);
@@ -215,6 +217,7 @@ void WeaponsPage::buildUi() {
 	m_tabs->addTab(buildSoundsTab(), tr("Sounds"));
 	m_tabs->addTab(buildLookTab(), tr("Look"));
 	m_tabs->addTab(buildStatsTab(), tr("Stats"));
+	m_tabs->addTab(buildEffectsTab(), tr("Effects"));
 	m_tabs->setMinimumWidth(320);
 	splitter->addWidget(m_tabs);
 	splitter->setStretchFactor(0, 0);
@@ -437,6 +440,63 @@ QWidget* WeaponsPage::buildLookTab() {
 	return page;
 }
 
+QWidget* WeaponsPage::buildEffectsTab() {
+	auto* page = new QWidget;
+	auto* layout = new QVBoxLayout(page);
+	auto* glowRow = new QHBoxLayout;
+	auto* glowText = new QLabel(tr("Glow: parts of the view model's materials light up (sights, screens, a hot barrel) - always or only during animations"));
+	glowText->setWordWrap(true);
+	glowRow->addWidget(glowText, 1);
+	m_glow = new QPushButton(tr("Glow ..."));
+	m_glow->setObjectName("weaponGlow");
+	m_glow->setToolTip(tr("Make parts of the view model's materials glow, steady or pulsing, always or while an animation plays"));
+	glowRow->addWidget(m_glow);
+	layout->addLayout(glowRow);
+	m_effects = new EffectsPanel(m_editor, m_assets);
+	m_effects->setRebuildJob(m_job);
+	layout->addWidget(m_effects);
+	layout->addStretch(1);
+	layout->addWidget(noteLabel(tr("Compile into model builds the view model with these effects, keeping its sounds and your sound changes from the Sounds tab.")));
+	connect(m_glow, &QPushButton::clicked, this, [this] { openGlow(); });
+	connect(m_effects, &EffectsPanel::compileRequested, this, &WeaponsPage::compileEffects);
+	connect(m_effects, &EffectsPanel::modelRestored, this, [this] {
+		m_pendingEvents.clear();
+		loadModel();
+		updateButtons();
+	});
+	return page;
+}
+
+bool WeaponsPage::compileEffects(const QString& model, const ModelRebuildChanges& effects) {
+	ModelRebuildChanges changes = effects;
+	changes.events = m_pendingEvents;   // Sound edits waiting for Build model go in the same build
+	m_buildLog->clear();
+	m_buildLog->appendPlainText(tr("Building %1 with its effects ...").arg(model));
+	const bool started = m_job->start(model, changes);
+	updateButtons();
+	return started;
+}
+
+GlowDialog* WeaponsPage::openGlow(const QString& material) {
+	const auto* script = currentScript();
+	if (!script || script->viewModel().empty()) return nullptr;
+	if (m_view == View::World) setView(View::FirstPerson);
+	if (!m_geometry) return nullptr;
+	QStringList materials;
+	for (const auto& mesh : m_geometry->meshes) materials << qs(mesh.material);
+	materials.removeDuplicates();
+	std::vector<std::pair<std::string, std::string>> animations;
+	if (m_animated) {
+		for (const auto& seq : m_animated->sequences()) animations.emplace_back(seq.name, seq.activity);
+	}
+	auto* dialog = new GlowDialog(m_editor, m_viewer, qs(normalizePath(script->viewModel())), materials, std::move(animations), this);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	connect(dialog, &GlowDialog::modChanged, this, &WeaponsPage::modChanged);
+	if (!material.isEmpty()) dialog->selectMaterial(material);
+	dialog->show();
+	return dialog;
+}
+
 QWidget* WeaponsPage::buildStatsTab() {
 	auto* page = new QWidget;
 	auto* layout = new QVBoxLayout(page);
@@ -612,6 +672,7 @@ void WeaponsPage::loadModel() {
 		m_geometry.reset();
 		m_viewer->setModel(nullptr);
 		m_viewer->setMessage(script ? tr("The script names no model") : QString());
+		if (m_effects) m_effects->setModel({}, nullptr);
 		showSequences();
 		showSounds();
 		showLook();
@@ -624,6 +685,8 @@ void WeaponsPage::loadModel() {
 	if (auto* game = m_editor->game()) {
 		if (const auto mdl = game->files.read(path)) {
 			m_modelEvents = readSequenceEvents(*mdl);
+			// A model rebuilt with effects has their events: they belong to the Effects tab.
+			if (const auto effects = m_job->storedChanges(model).effects) removeAddedEvents(m_modelEvents, *effects);
 			const auto skins = readSkinFamilies(*mdl);
 			QSignalBlocker block(m_skin);
 			for (int i = 0; i < std::max<int>(1, int(skins.size())); ++i) m_skin->addItem(tr("Skin %1").arg(i), i);
@@ -631,6 +694,12 @@ void WeaponsPage::loadModel() {
 		const GameFileSystem* fs = &game->files;
 		m_loader.setProperty("generation", m_generation);
 		m_loader.setFuture(QtConcurrent::run([fs, path] { return AnimatedModel::load(*fs, path); }));
+	}
+	if (m_effects) {
+		const QString viewModel = script ? qs(normalizePath(script->viewModel())) : QString();
+		if (viewModel.compare(m_effects->model(), Qt::CaseInsensitive) != 0 || viewModel == model) {
+			m_effects->setModel(viewModel, viewModel == model ? m_viewer : nullptr);
+		}
 	}
 	showSequences();
 	showSounds();
@@ -1342,6 +1411,7 @@ void WeaponsPage::updateButtons() {
 	const QString texture = material.isEmpty() ? QString() : baseTextureOf(material);
 	m_restoreTexture->setEnabled(!texture.isEmpty() && textureReplacement(dir, texture.toStdString()).has_value());
 	m_enhance->setEnabled(m_materialList->count() > 0);
+	m_glow->setEnabled(viewModel && m_geometry && !m_geometry->meshes.empty());
 	m_editAnimation->setEnabled(!m_model.isEmpty() && !currentSequence().isEmpty());
 	m_saveStats->setEnabled(script != nullptr);
 	m_restoreStats->setEnabled(script && weaponScriptSaved(dir, script->file));

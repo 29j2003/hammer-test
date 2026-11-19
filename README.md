@@ -219,7 +219,8 @@ memory and lists every key or value that would change.
   model), all its animations, its sounds - play, **Replace ...** with your own file, **Edit ...**, **Restore**, or let a
   slot use another sound - and the sounds and effects its animations trigger (change, move, add, then **Build model**
   rebuilds it into the mod with `studiomdl`), its materials (**Edit material**, **Replace texture ...**, **Enhance
-  textures ...**) and its stats (magazine, ammo, HUD slot, damage and most ammo carried). Everything goes into the mod
+  textures ...**), a **Glow ...** and particle effects during e.g. the reload (**Effects**, **Compile into model ...**,
+  keeping its sounds) and its stats (magazine, ammo, HUD slot, damage and most ammo carried). Everything goes into the mod
   as its own copy and can be restored.
 - **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Weapons*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*

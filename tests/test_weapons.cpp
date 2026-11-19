@@ -1,12 +1,13 @@
 // test_weapons.cpp - Animation events (read from a .mdl, written into the .qc), rebuilding a
-// model in place in the mod (changes, backups, restore), weapon scripts, skill values and
-// sounds replaced at the same path.
+// model in place in the mod (changes, backups, restore; effects on top of the sound events and
+// in $keyvalues), weapon scripts, skill values and sounds replaced at the same path.
 
 #include "fixture.h"
 
 #include <sme/asset_import.h>
 #include <sme/audio.h>
 #include <sme/filesystem.h>
+#include <sme/model_effects.h>
 #include <sme/model_events.h>
 #include <sme/model_export.h>
 #include <sme/model_rebuild.h>
@@ -48,6 +49,12 @@ void writeBytes(const fs::path& path, const std::vector<std::byte>& data) {
 std::string readAll(const fs::path& path) {
 	std::ifstream in(path, std::ios::binary);
 	return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+std::size_t occurrences(const std::string& text, std::string_view what) {
+	std::size_t n = 0;
+	for (auto at = text.find(what); at != std::string::npos; at = text.find(what, at + what.size())) ++n;
+	return n;
 }
 
 DecodedAudio tone(int rate, int channels, std::size_t frames) {
@@ -275,6 +282,160 @@ TEST_CASE("model rebuild: sources from the game's copy, backups of the mod's own
 	CHECK_FALSE(fs::exists(mod / "models/weapons/v_gun.mdl.mapsmith-backup"));
 
 	CHECK_FALSE(prepareModelRebuild(files, mod, "models/../../evil.mdl", {}, &error));
+}
+
+TEST_CASE("model events: effects added on top of a sequence's own, recognised when read back") {
+	ModelEvent sound;
+	sound.name = "AE_CL_PLAYSOUND";
+	sound.options = "Weapon_Gun.ClipOut";
+	sound.setFrame(6, 11);
+	ModelEvent create;
+	create.name = "AE_CL_CREATE_PARTICLE_EFFECT";
+	create.options = "gun_glow follow_rootbone";
+	create.setFrame(2, 11);
+	ModelEvent stop;
+	stop.name = "AE_CL_STOP_PARTICLE_EFFECT";
+	stop.options = "gun_glow";
+	stop.setFrame(8, 11);
+	const std::vector<ModelEvent> added{create, stop};
+	const auto merged = withAddedEvents({sound}, added);
+	REQUIRE(merged.size() == 3);
+	CHECK(merged[0] == create);   // sorted by cycle
+	CHECK(merged[1] == sound);
+	CHECK(merged[2] == stop);
+	// A list read back from a model built with them: the copies are replaced, not doubled.
+	CHECK(withAddedEvents(merged, added) == merged);
+	CHECK(isAddedEvent(create, added));
+	CHECK_FALSE(isAddedEvent(sound, added));
+	ModelEvent elsewhere = create;
+	elsewhere.setFrame(5, 11);
+	CHECK_FALSE(isAddedEvent(elsewhere, added));   // the game's own event at another frame stays
+	std::vector<SequenceEvents> read{{"Reload", 11, 30, merged}, {"fire", 2, 30, {create}}};
+	AddedModelEffects effects;
+	effects.events["reload"] = added;
+	removeAddedEvents(read, effects);
+	CHECK(read[0].events == std::vector<ModelEvent>{sound});
+	CHECK(read[1].events.size() == 1);   // not added to the fire: its own
+
+	// $keyvalues: studiomdl's wrapper comes off, Mapsmith's particles entries are replaced, the rest stays.
+	const std::string mdl = "mdlkeyvalue\n{\nprop_data\n{\nbase Metal.Small\n}\nparticles\n{\neffect\n{\nname game_glow\nattachment_type follow_origin\n}\n"
+	                        "mapsmith_effect\n{\nname old_glow\n}\n}\n}\n";
+	const auto plain = qcKeyValues(mdl);
+	CHECK(plain.find("mdlkeyvalue") == std::string::npos);
+	CHECK(plain.find("Metal.Small") != std::string::npos);
+	CHECK(plain.find("old_glow") != std::string::npos);
+	const std::vector<ModelParticle> lamp{{"lamp_glow", "follow_attachment", "light"}};
+	const auto withLamp = qcKeyValues(mdl, &lamp);
+	CHECK(withLamp.find("Metal.Small") != std::string::npos);
+	CHECK(withLamp.find("game_glow") != std::string::npos);
+	CHECK(withLamp.find("old_glow") == std::string::npos);
+	CHECK(withLamp.find("\"attachment_point\" \"light\"") != std::string::npos);
+	CHECK(occurrences(withLamp, "particles") == 1);
+	const std::vector<ModelParticle> none;
+	CHECK(qcKeyValues("mdlkeyvalue { particles { mapsmith_effect { name x } } }", &none).empty());
+	CHECK(qcKeyValues("\"prop_data\" { \"base\" \"Wooden.Medium\" }") == "\"prop_data\" { \"base\" \"Wooden.Medium\" }");   // not wrapped: as it is
+	CHECK(qcKeyValues("broken { {", &lamp).find("lamp_glow") != std::string::npos);
+	CHECK(qcKeyValues("").empty());
+}
+
+TEST_CASE("model rebuild: effects and sound events go through the same stored changes") {
+	test::Fixture f;
+	test::createFixture(f);
+	const auto game = f.root / "effects/hl2";
+	const auto mod = f.root / "effects/mymod";
+	auto spec = viewModel();
+	spec.keyValues = "mdlkeyvalue\n{\nprop_data\n{\nbase Metal.Small\n}\nparticles\n{\neffect\n{\nname game_glow\nattachment_type follow_origin\n}\n}\n}\n";
+	test::writeStudioModel(game / "models/weapons/v_gun.mdl", test::makeStudioModel(spec));
+	fs::create_directories(mod);
+	GameFileSystem files;
+	files.addDirectory(mod, {"game", "mod"});
+	files.addDirectory(game, {"game"});
+	std::string error;
+
+	// A sound edit first (Weapons page).
+	ModelRebuildChanges sounds;
+	ModelEvent e;
+	e.name = "AE_CL_PLAYSOUND";
+	e.options = "Weapon_Mine.Reload";
+	e.setFrame(3, 11);
+	sounds.events["reload"] = {e};
+	REQUIRE_MESSAGE(prepareModelRebuild(files, mod, "models/weapons/v_gun.mdl", sounds, &error), error);
+
+	// Then effects: a glow during the reload and one always; the sound edit stays.
+	ModelEffect glow;
+	glow.particle = "gun_glow";
+	glow.attach = EffectAttach::FollowRootBone;
+	glow.sequence = "reload";
+	glow.startFrame = 2;
+	glow.endFrame = 8;
+	ModelEffect lamp;
+	lamp.when = ModelEffect::When::Always;
+	lamp.particle = "lamp_glow";
+	lamp.attachment = "light";
+	ModelRebuildChanges effects;
+	effects.effects = effectChanges({glow, lamp}, SequenceFrames{{"reload", 11}, {"idle", 1}, {"fire", 2}});
+	auto plan = prepareModelRebuild(files, mod, "models/weapons/v_gun.mdl", effects, &error);
+	REQUIRE_MESSAGE(plan, error);
+	std::string qc = readAll(plan->qc);
+	CHECK(qc.find("{ event AE_CL_PLAYSOUND 3 \"Weapon_Mine.Reload\" }") != std::string::npos);
+	CHECK(qc.find("{ event AE_CL_CREATE_PARTICLE_EFFECT 2 \"gun_glow follow_rootbone\" }") != std::string::npos);
+	CHECK(qc.find("{ event AE_CL_STOP_PARTICLE_EFFECT 8 \"gun_glow\" }") != std::string::npos);
+	CHECK(qc.find("{ event 5001 0 \"1\" }") != std::string::npos);   // other sequences keep theirs
+	CHECK(qc.find("mdlkeyvalue") == std::string::npos);
+	CHECK(qc.find("Metal.Small") != std::string::npos);
+	CHECK(qc.find("game_glow") != std::string::npos);
+	CHECK(qc.find("lamp_glow") != std::string::npos);
+	const auto stored = loadModelChanges(mod, "models/weapons/v_gun.mdl");
+	REQUIRE(stored);
+	CHECK(stored->changes.events.at("reload") == std::vector<ModelEvent>{e});
+	REQUIRE(stored->changes.effects);
+	CHECK(*stored->changes.effects == *effects.effects);
+
+	// Another sound edit with a list read back from the built model (effects in it): not doubled,
+	// and the effects stay.
+	ModelRebuildChanges again;
+	ModelEvent more = e;
+	more.options = "Weapon_Mine.Other";
+	again.events["reload"] = withAddedEvents({e, more}, effects.effects->events.at("reload"));
+	std::vector<SequenceEvents> readBack{{"reload", 11, 30, again.events["reload"]}};
+	removeAddedEvents(readBack, *stored->changes.effects);
+	again.events["reload"] = readBack[0].events;
+	auto third = prepareModelRebuild(files, mod, "models/weapons/v_gun.mdl", again, &error);
+	REQUIRE_MESSAGE(third, error);
+	qc = readAll(third->qc);
+	CHECK(occurrences(qc, "AE_CL_CREATE_PARTICLE_EFFECT") == 1);
+	CHECK(qc.find("Weapon_Mine.Other") != std::string::npos);
+	CHECK(qc.find("lamp_glow") != std::string::npos);
+
+	// No effects any more: their events and entries go, the sounds and the game's entry stay.
+	ModelRebuildChanges cleared;
+	cleared.effects = AddedModelEffects{};
+	auto fourth = prepareModelRebuild(files, mod, "models/weapons/v_gun.mdl", cleared, &error);
+	REQUIRE_MESSAGE(fourth, error);
+	qc = readAll(fourth->qc);
+	CHECK(qc.find("PARTICLE_EFFECT") == std::string::npos);
+	CHECK(qc.find("lamp_glow") == std::string::npos);
+	CHECK(qc.find("game_glow") != std::string::npos);
+	CHECK(qc.find("Weapon_Mine.Other") != std::string::npos);
+
+	// The stored effects round-trip through changes.txt (an empty set too).
+	StoredModelChanges withEffects;
+	withEffects.model = "models/weapons/v_gun.mdl";
+	withEffects.changes = effects;
+	const auto back = readModelChanges(writeModelChanges(withEffects, nullptr), {});
+	REQUIRE(back);
+	CHECK(back->changes == effects);
+	withEffects.changes = cleared;
+	CHECK(readModelChanges(writeModelChanges(withEffects, nullptr), {})->changes == cleared);
+	// Older changes.txt without effects: none.
+	CHECK_FALSE(readModelChanges("ModelRebuild { model models/weapons/v_gun.mdl sequence { name reload events { } } }", {})->changes.effects);
+	// merge: effects replace as a whole, sequences' own events stay.
+	ModelRebuildChanges merged = sounds;
+	merged.merge(effects);
+	CHECK(merged.events == sounds.events);
+	CHECK(merged.effects == effects.effects);
+	merged.merge(sounds);
+	CHECK(merged.effects == effects.effects);
 }
 
 TEST_CASE("weapons: scripts found, read, written back and saved as the mod's copy") {

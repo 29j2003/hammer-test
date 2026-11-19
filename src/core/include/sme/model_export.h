@@ -16,7 +16,13 @@
 // untrusted: every offset and count is checked.
 //
 // Changes for a rebuild (model_rebuild.h): ModelExportOptions can replace the events of a
-// sequence, replace a sequence's frames with another animation .smd, or add new sequences.
+// sequence, replace a sequence's frames with another animation .smd, or add new sequences, and
+// add what effects on the model need (model_effects.h): events on top of a sequence's own and
+// entries of the $keyvalues "particles" block. Those are kept apart from the sequence's own
+// events, so a sound edit (Weapons page) and an effect edit never overwrite each other.
+//
+// $keyvalues: studiomdl stores the block wrapped as `mdlkeyvalue { ... }` and the game reads the
+// keys inside it; the .qc gets the inside again (a recompile would wrap it twice otherwise).
 
 #pragma once
 
@@ -97,6 +103,45 @@ struct SequenceReplacement {
 	bool operator==(const SequenceReplacement&) const = default;
 };
 
+/// A particle system the model starts when it appears: an entry of its $keyvalues "particles"
+/// block (C_BaseAnimating::DelayedInitModelEffects reads name, attachment_type, attachment_point).
+struct ModelParticle {
+	std::string name;                              ///< Particle system
+	std::string attachType = "follow_attachment";  ///< The game's attach type name
+	std::string attachment;                        ///< Attachment name (empty for the origin types)
+	bool operator==(const ModelParticle&) const = default;
+};
+
+/// What effects on a model add to it (built by model_effects.h effectChanges).
+struct AddedModelEffects {
+	/// Per sequence (lower case): events added to the sequence's own (or to its changed list).
+	std::map<std::string, std::vector<ModelEvent>> events;
+	/// Mapsmith's entries of the "particles" block (written as "mapsmith_effect" blocks, so a
+	/// later build recognises and replaces them; the model's other entries stay).
+	std::vector<ModelParticle> particles;
+	bool operator==(const AddedModelEffects&) const = default;
+	[[nodiscard]] bool empty() const;
+};
+
+/// Name of the blocks Mapsmith writes into the "particles" block of $keyvalues.
+inline constexpr std::string_view MAPSMITH_PARTICLE_BLOCK = "mapsmith_effect";
+
+/// Whether `event` is one of `added` (same id, options and cycle): a copy of an added event in a
+/// list read back from a model built with it.
+[[nodiscard]] bool isAddedEvent(const ModelEvent& event, const std::vector<ModelEvent>& added);
+/// A sequence's events with `added`: copies of them already in `own` are taken out first (a list
+/// read back from a model built with them), then all are sorted by cycle (stable).
+[[nodiscard]] std::vector<ModelEvent> withAddedEvents(std::vector<ModelEvent> own, const std::vector<ModelEvent>& added);
+/// The events of a model read back without the ones `added` put there (per sequence).
+void removeAddedEvents(std::vector<SequenceEvents>& sequences, const AddedModelEffects& added);
+
+/// The inside of a model's $keyvalues for the .qc: the text as the .mdl has it without studiomdl's
+/// `mdlkeyvalue { }` wrapper; with `particles`, earlier Mapsmith entries of the "particles" block
+/// are taken out and these added (the block is made if needed, dropped when it ends up empty).
+/// Other keys and entries are kept; text that cannot be read is kept as it is (with `particles`
+/// a block of its own is appended). Empty when nothing is left.
+[[nodiscard]] std::string qcKeyValues(std::string_view mdlKeyValues, const std::vector<ModelParticle>* particles = nullptr);
+
 /// Frames in an animation .smd (the "time" lines of its skeleton block), at least 1.
 [[nodiscard]] int smdFrameCount(std::string_view smd);
 
@@ -114,6 +159,9 @@ struct ModelExportOptions {
 	/// Frames that replace a sequence's own (key: sequence name in lower case). A name the model
 	/// has no sequence for is added as a new sequence.
 	std::map<std::string, SequenceReplacement> replacements;
+	/// Effects on the model: events on top of each sequence's and the particles block's entries
+	/// (nullopt: the model's own $keyvalues as they are).
+	std::optional<AddedModelEffects> effects;
 };
 
 /// The export as file contents, before anything is written (paths relative to the export folder).

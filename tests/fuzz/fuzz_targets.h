@@ -268,9 +268,27 @@ inline void textFormats(const std::uint8_t* data, std::size_t size) {
 			// Model effects kept in the mod, a glow read back from a material, effects of a model's
 			// events and $keyvalues.
 			const auto effects = readEffectsText(in);
-			(void)effectEvents(effects);
+			(void)effectChanges(effects, SequenceFrames{{"reload", 3}, {"idle", 1}});
 			(void)effectKeyValues(effects);
-			(void)effectsFromModel({{"reload", 3, "AE_CL_CREATE_PARTICLE_EFFECT", std::string(in.substr(0, 200))}}, in);
+			{
+				SequenceEvents seq;
+				seq.sequence = "reload";
+				seq.frames = 3;
+				ModelEvent create;
+				create.name = "AE_CL_CREATE_PARTICLE_EFFECT";
+				create.options = std::string(in.substr(0, 200));
+				create.cycle = 0.5f;
+				ModelEvent stop = create;
+				stop.name = "AE_CL_STOP_PARTICLE_EFFECT";
+				seq.events = {create, stop};
+				(void)effectsFromModel({seq}, in);
+			}
+			// A model's $keyvalues with Mapsmith's particles entries (written into the .qc).
+			(void)qcKeyValues(in);
+			{
+				const std::vector<ModelParticle> particles{{"fuzz", "follow_attachment", "muzzle"}};
+				(void)qcKeyValues(in, &particles);
+			}
 			if (const auto material = parseMaterial(in, "fuzz/material")) {
 				(void)readGlowSettings(*material);
 				(void)glowMaterialText(in, "models/fuzz", GlowSettings{});

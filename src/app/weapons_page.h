@@ -12,6 +12,13 @@
 //   Stats      - the script's values (magazine, ammo, HUD slot, Mapbase view model FOV and
 //                sway ...) and the skill values of its ammo (damage, most ammo carried), saved
 //                as the mod's own copies; Restore original takes them out again.
+//   Effects    - "Glow ..." (GlowDialog for the view model's materials: always or only during
+//                animations) and the view model's particle effects (EffectsPanel, e.g. sparks
+//                during the reload). "Compile into model ..." rebuilds the view model with the
+//                same job as Build model and the pending sound edits: both are kept in the
+//                model's stored ModelRebuildChanges (sound events per sequence, effects apart),
+//                so neither overwrites the other. Effect events in a rebuilt model are not
+//                listed on the Sounds tab (removeAddedEvents).
 // Everything is read when the page is shown (the game's file system in the background where it
 // takes time); nothing runs while the page is hidden.
 
@@ -31,6 +38,7 @@
 #include <sme/assets.h>
 #include <sme/localization.h>
 #include <sme/model_events.h>
+#include <sme/model_rebuild.h>
 #include <sme/studio_anim.h>
 #include <sme/studio_model.h>
 #include <sme/weapons.h>
@@ -52,7 +60,10 @@ class QTreeWidgetItem;
 
 namespace sme::app {
 
+class AssetBrowser;
 class Editor;
+class EffectsPanel;
+class GlowDialog;
 class MaterialCache;
 class ModelRebuildJob;
 class ModelViewer;
@@ -67,7 +78,8 @@ public:
 	/// Kinds of rows in the sound tree (Qt::UserRole + 1).
 	enum SoundRow { SlotRow = 1, WaveRow, EventRow };
 
-	WeaponsPage(Editor* editor, MaterialCache* materials, QWidget* parent = nullptr);
+	/// `assets` (may be null) gives the particle systems for the Effects tab.
+	WeaponsPage(Editor* editor, MaterialCache* materials, AssetBrowser* assets = nullptr, QWidget* parent = nullptr);
 	~WeaponsPage() override;
 
 	/// Reads the weapons again (also when the page is shown after the game changed).
@@ -94,6 +106,10 @@ public:
 	[[nodiscard]] QTreeWidget* soundTree() const { return m_sounds; }
 	[[nodiscard]] QListWidget* materialList() const { return m_materialList; }
 	[[nodiscard]] ModelRebuildJob* rebuildJob() const { return m_job; }
+	/// The Effects tab's list of the view model's particle effects.
+	[[nodiscard]] EffectsPanel* effectsPanel() const { return m_effects; }
+	/// "Glow ...": the glow dialog for the view model's materials (nullptr while it is not shown).
+	GlowDialog* openGlow(const QString& material = {});
 	/// The editor of a Stats field (script key or skill value name), or nullptr.
 	[[nodiscard]] QWidget* statEditor(const QString& key) const { return m_statEditors.value(key); }
 	/// Writes the changed Stats values into the mod (script copy, skill.cfg). False with a message.
@@ -128,6 +144,8 @@ signals:
 	void editAnimationRequested(const QString& model, const QString& sequence);
 	/// "Enhance textures ...": the model's materials.
 	void enhanceTexturesRequested(const QStringList& materials);
+	/// A glow was applied or taken out (the mod's files changed).
+	void modChanged();
 
 protected:
 	void showEvent(QShowEvent* event) override;
@@ -139,6 +157,9 @@ private:
 	QWidget* buildSoundsTab();
 	QWidget* buildLookTab();
 	QWidget* buildStatsTab();
+	QWidget* buildEffectsTab();
+	/// The view model with the effects on top: starts the rebuild with the pending sound edits.
+	bool compileEffects(const QString& model, const ModelRebuildChanges& effects);
 	void showWeapon();
 	void loadModel();
 	void showSequences();
@@ -170,6 +191,7 @@ private:
 
 	Editor* m_editor;
 	MaterialCache* m_materials;
+	AssetBrowser* m_assets;
 	bool m_dirty = true;   ///< Weapons must be read again (game changed) when the page shows
 
 	std::vector<WeaponScript> m_weapons;
@@ -230,6 +252,8 @@ private:
 	QLabel* m_statsNote = nullptr;
 	QPushButton* m_saveStats = nullptr;
 	QPushButton* m_restoreStats = nullptr;
+	QPushButton* m_glow = nullptr;
+	EffectsPanel* m_effects = nullptr;
 	QHash<QString, QWidget*> m_statEditors;
 	QHash<QString, QString> m_statShown;   ///< Value each editor showed when filled (only changed ones are written)
 	ModelRebuildJob* m_job = nullptr;
