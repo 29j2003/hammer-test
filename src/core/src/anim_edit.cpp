@@ -189,6 +189,15 @@ AnimVec translation(const BoneMatrix& m) {
 	return {m.m[0][3], m.m[1][3], m.m[2][3]};
 }
 
+AnimQuat axisAngle(const AnimVec& axis, float radians) {
+	const AnimVec a = normalized(axis);
+	if (length(a) < 0.5f || !std::isfinite(radians)) return {};
+	const float s = std::sin(radians * 0.5f);
+	return qnorm({a.x * s, a.y * s, a.z * s, std::cos(radians * 0.5f)});
+}
+
+constexpr float DEG = 3.14159265f / 180.f;
+
 bool isSideToken(std::string_view token) {
 	return token == "L" || token == "R" || token == "l" || token == "r" || startsWithI(token, "left") || startsWithI(token, "right");
 }
@@ -299,8 +308,10 @@ AnimEditor::AnimEditor(const AnimatedModel& model, AnimClip clip) : m_model(&mod
 	if (!std::isfinite(m_clip.baseStart) || !std::isfinite(m_clip.baseEnd)) m_clip.baseStart = 0, m_clip.baseEnd = 1;
 	m_clip.baseStart = std::clamp(m_clip.baseStart, 0.f, 1.f);
 	m_clip.baseEnd = std::clamp(m_clip.baseEnd, m_clip.baseStart, 1.f);
+	if (m_clip.mode == AnimClip::Mode::Pose) m_clip.editFrom = 0;
 	m_base = m_clip.baseSequence.empty() ? -1 : model.findSequence(m_clip.baseSequence);
 	findChains();
+	m_hands = findHands(model.bones());
 	// Keys of bones the model lacks stay in the clip (saved again), but play no part.
 	for (auto& [bone, keys] : m_clip.tracks) {
 		std::erase_if(keys, [&](const BoneKey& k) { return k.frame < m_clip.editFrom || k.frame >= m_clip.frames; });
@@ -349,7 +360,7 @@ void AnimEditor::basePose(float frame, std::vector<AnimVec>& pos, std::vector<An
 		return;
 	}
 	float cycle = 0;
-	if (m_clip.mode == AnimClip::Mode::Tweak) {
+	if (m_clip.mode != AnimClip::Mode::New) {
 		const float t = m_clip.frames > 1 ? std::clamp(frame, 0.f, float(m_clip.frames - 1)) / float(m_clip.frames - 1) : 0.f;
 		cycle = m_clip.baseStart + t * (m_clip.baseEnd - m_clip.baseStart);
 	} else {
@@ -361,6 +372,7 @@ void AnimEditor::basePose(float frame, std::vector<AnimVec>& pos, std::vector<An
 
 std::pair<AnimQuat, AnimVec> AnimEditor::offset(int bone, float frame) const {
 	const auto* keys = track(bone);
+	if (keys && !keys->empty() && m_clip.mode == AnimClip::Mode::Pose) return {keys->front().rot, keys->front().pos};   // one change for all frames
 	if (!keys || keys->empty() || frame < float(m_clip.editFrom)) return {{}, {}};
 	const auto& k = *keys;
 	if (frame <= float(k.front().frame)) return {k.front().rot, k.front().pos};
@@ -439,14 +451,14 @@ void AnimEditor::changed() {
 }
 
 void AnimEditor::putKey(int bone, BoneKey key) {
-	key.frame = std::clamp(key.frame, m_clip.editFrom, m_clip.frames - 1);
+	key.frame = m_clip.mode == AnimClip::Mode::Pose ? 0 : std::clamp(key.frame, m_clip.editFrom, m_clip.frames - 1);
 	key.rot = finite(key.rot) ? qnorm(key.rot) : AnimQuat{};
 	if (!finite(key.pos)) key.pos = {};
 	auto* keys = track(bone, true);
 	if (!keys) return;
 	// A bone's first key: an anchor (no change) at the edit-from frame, so the motion blends
 	// from the original into the change instead of jumping there from the start.
-	if (keys->empty() && key.frame > m_clip.editFrom) keys->push_back({m_clip.editFrom, {}, {}, KeyInterp::Smooth});
+	if (keys->empty() && key.frame > m_clip.editFrom && m_clip.mode != AnimClip::Mode::Pose) keys->push_back({m_clip.editFrom, {}, {}, KeyInterp::Smooth});
 	const auto it = std::lower_bound(keys->begin(), keys->end(), key.frame, [](const BoneKey& k, int f) { return k.frame < f; });
 	if (it != keys->end() && it->frame == key.frame) {
 		it->rot = key.rot;
@@ -671,7 +683,7 @@ int AnimEditor::mirrorPose(const std::vector<int>& list, int frame) {
 
 void AnimEditor::setFrameCount(int frames) {
 	frames = std::clamp(frames, 1, ANIM_CLIP_MAX_FRAMES);
-	if (frames == m_clip.frames) return;
+	if (frames == m_clip.frames || m_clip.mode == AnimClip::Mode::Pose) return;   // a layer has no length of its own
 	changed();
 	const int old = m_clip.frames;
 	for (auto& [name, keys] : m_clip.tracks) {
@@ -692,7 +704,7 @@ void AnimEditor::setFrameCount(int frames) {
 bool AnimEditor::trim(int first, int last) {
 	first = std::clamp(first, 0, m_clip.frames - 1);
 	last = std::clamp(last, first, m_clip.frames - 1);
-	if (first == 0 && last == m_clip.frames - 1) return false;
+	if ((first == 0 && last == m_clip.frames - 1) || m_clip.mode == AnimClip::Mode::Pose) return false;
 	changed();
 	const int old = m_clip.frames;
 	if (m_clip.mode == AnimClip::Mode::Tweak && old > 1) {
@@ -716,11 +728,279 @@ bool AnimEditor::trim(int first, int last) {
 
 void AnimEditor::setEditFrom(int frame) {
 	frame = std::clamp(frame, 0, m_clip.frames - 1);
-	if (frame == m_clip.editFrom) return;
+	if (frame == m_clip.editFrom || m_clip.mode == AnimClip::Mode::Pose) return;
 	changed();
 	m_clip.editFrom = frame;
 	for (auto& [name, keys] : m_clip.tracks) std::erase_if(keys, [frame](const BoneKey& k) { return k.frame < frame; });
 	std::erase_if(m_clip.tracks, [](const auto& entry) { return entry.second.empty(); });
+}
+
+// --- Hands and the pose layer ----------------------------------------------------------------
+
+void AnimEditor::setPreviewSequence(const std::string& sequence) {
+	const int index = sequence.empty() ? -1 : m_model->findSequence(sequence);
+	m_clip.baseSequence = index >= 0 ? m_model->sequences()[std::size_t(index)].name : std::string();
+	m_base = index;
+	if (m_clip.mode == AnimClip::Mode::Pose) {
+		const StudioSequence* seq = index >= 0 ? &m_model->sequences()[std::size_t(index)] : nullptr;
+		m_clip.frames = seq ? std::clamp(seq->frames, 1, ANIM_CLIP_MAX_FRAMES) : 1;
+		m_clip.fps = seq && seq->fps > 0 ? seq->fps : 30.f;
+		m_clip.loop = seq && seq->looping;
+		m_clip.baseStart = 0;
+		m_clip.baseEnd = 1;
+	}
+	++m_revision;
+}
+
+void AnimEditor::setHandShape(int hand, const HandShape& input, int frame) {
+	if (hand < 0 || hand >= int(m_hands.size())) return;
+	const HandRig& rig = m_hands[std::size_t(hand)];
+	HandShape shape = input;
+	shape.curl = std::isfinite(shape.curl) ? std::clamp(shape.curl, -0.25f, 1.f) : 0.f;
+	shape.spread = std::isfinite(shape.spread) ? std::clamp(shape.spread, -1.f, 1.f) : 0.f;
+	for (auto it = shape.fingers.begin(); it != shape.fingers.end();) {
+		if (!std::isfinite(it->second) || std::fabs(it->second) < 1e-4f) {
+			it = shape.fingers.erase(it);
+		} else {
+			it->second = std::clamp(it->second, -1.f, 1.f);
+			++it;
+		}
+	}
+	changed();
+	// Bend per segment: fingers 70/95/70 degrees, the thumb less (it bends across the palm).
+	static constexpr float FINGER_BEND[4] = {70, 95, 70, 60};
+	static constexpr float THUMB_BEND[4] = {25, 40, 40, 30};
+	for (std::size_t f = 0; f < rig.fingers.size(); ++f) {
+		const FingerChain& finger = rig.fingers[f];
+		if (finger.segments.empty()) continue;
+		const std::string& rootName = bones()[std::size_t(finger.segments.front())].name;
+		float curl = shape.curl;
+		for (const auto& [name, extra] : shape.fingers) {
+			if (iequals(name, rootName)) curl += extra;
+		}
+		curl = std::clamp(curl, -0.4f, 1.2f);
+		for (std::size_t k = 0; k < finger.segments.size(); ++k) {
+			const int bone = finger.segments[k];
+			const float degrees = (finger.thumb ? THUMB_BEND : FINGER_BEND)[std::min<std::size_t>(k, 3)];
+			AnimQuat q = axisAngle(rig.curlAxes[f][k], curl * degrees * DEG);
+			if (k == 0 && rig.spreadSign[f] != 0.f) {
+				const float spread = shape.spread * rig.spreadSign[f] * (finger.thumb ? 20.f : 12.f) * DEG;
+				q = qnorm(qmul(axisAngle(rig.spreadAxes[f], spread), q));
+			}
+			putKey(bone, {frame, q, offset(bone, float(frame)).second, KeyInterp::Smooth});
+		}
+	}
+	const std::string& handName = bones()[std::size_t(rig.bone)].name;
+	if (shape.curl == 0.f && shape.spread == 0.f && shape.fingers.empty()) m_clip.hands.erase(handName);
+	else m_clip.hands[handName] = shape;
+}
+
+HandShape AnimEditor::handShape(int hand) const {
+	if (hand < 0 || hand >= int(m_hands.size())) return {};
+	const std::string& name = bones()[std::size_t(m_hands[std::size_t(hand)].bone)].name;
+	for (const auto& [bone, shape] : m_clip.hands) {
+		if (iequals(bone, name)) return shape;
+	}
+	return {};
+}
+
+std::vector<HandRig> findHands(const std::vector<StudioBone>& bones) {
+	std::vector<HandRig> out;
+	if (bones.empty()) return out;
+	std::vector<std::string> lower(bones.size());
+	for (std::size_t i = 0; i < bones.size(); ++i) lower[i] = toLower(bones[i].name);
+	const auto has = [](const std::string& text, std::initializer_list<const char*> parts) {
+		return std::any_of(parts.begin(), parts.end(), [&](const char* p) { return text.find(p) != std::string::npos; });
+	};
+	const auto fingerish = [&](std::size_t b) { return has(lower[b], {"finger", "thumb", "index", "middle", "ring", "pinky", "pinkie", "digit"}); };
+	// Rest pose in model space.
+	std::vector<AnimVec> at(bones.size());
+	std::vector<AnimQuat> rot(bones.size());
+	for (std::size_t i = 0; i < bones.size(); ++i) {
+		const BoneMatrix world = invertRigid(bones[i].poseToBone);
+		at[i] = translation(world);
+		rot[i] = matrixQuat(world.m);
+	}
+	std::vector<std::vector<int>> children(bones.size());
+	for (std::size_t i = 0; i < bones.size(); ++i) {
+		if (bones[i].parent >= 0 && std::size_t(bones[i].parent) < bones.size()) children[std::size_t(bones[i].parent)].push_back(int(i));
+	}
+	for (std::size_t h = 0; h < bones.size(); ++h) {
+		const std::string& name = lower[h];
+		if (!(has(name, {"hand", "wrist"}) && name.find("handle") == std::string::npos) || fingerish(h)) continue;
+		HandRig rig;
+		rig.bone = int(h);
+		const std::string group = boneGroup(bones[h].name);
+		rig.label = startsWithI(group, "left") ? "Left hand" : startsWithI(group, "right") ? "Right hand" : "Hand";
+		// Finger roots: finger bones below the hand (palm/metacarpal bones in between are passed).
+		std::vector<int> roots;
+		std::vector<std::pair<int, int>> stack;   // bone, depth
+		for (const int c : children[h]) stack.push_back({c, 1});
+		while (!stack.empty()) {
+			const auto [b, depth] = stack.back();
+			stack.pop_back();
+			if (fingerish(std::size_t(b))) {
+				roots.push_back(b);
+				continue;
+			}
+			if (depth < 3 && !has(lower[std::size_t(b)], {"hand", "wrist"})) {
+				for (const int c : children[std::size_t(b)]) stack.push_back({c, depth + 1});
+			}
+		}
+		for (const int r : roots) {
+			FingerChain finger;
+			int b = r;
+			while (b >= 0 && finger.segments.size() < 4) {
+				finger.segments.push_back(b);
+				int next = -1;
+				for (const int c : children[std::size_t(b)]) {
+					if (fingerish(std::size_t(c))) {
+						next = c;
+						break;
+					}
+				}
+				b = next;
+			}
+			const std::string& rn = lower[std::size_t(r)];
+			// ValveBiped: Finger0 is the thumb, Finger1..4 index to pinky.
+			finger.thumb = rn.find("thumb") != std::string::npos || (rn.size() >= 7 && rn.compare(rn.size() - 7, 7, "finger0") == 0);
+			rig.fingers.push_back(std::move(finger));
+		}
+		std::sort(rig.fingers.begin(), rig.fingers.end(), [&](const FingerChain& a, const FingerChain& b) {
+			if (a.thumb != b.thumb) return a.thumb;
+			return lower[std::size_t(a.segments.front())] < lower[std::size_t(b.segments.front())];
+		});
+		if (rig.fingers.size() < 2) continue;
+		std::vector<std::size_t> plain;
+		for (std::size_t f = 0; f < rig.fingers.size(); ++f) {
+			if (!rig.fingers[f].thumb) plain.push_back(f);
+		}
+		static constexpr const char* NAMES[4] = {"Index", "Middle", "Ring", "Pinky"};
+		for (std::size_t i = 0; i < plain.size(); ++i) {
+			const std::string& rn = lower[std::size_t(rig.fingers[plain[i]].segments.front())];
+			std::string label;
+			for (const char* n : {"index", "middle", "ring", "pinky"}) {
+				if (rn.find(n) != std::string::npos) label = std::string(1, char(std::toupper(static_cast<unsigned char>(n[0])))) + (n + 1);
+			}
+			if (label.empty()) label = plain.size() == 4 ? NAMES[i] : "Finger " + std::to_string(i + 1);
+			rig.fingers[plain[i]].label = label;
+		}
+		for (auto& finger : rig.fingers) {
+			if (finger.thumb) finger.label = "Thumb";
+		}
+		// The palm's normal (towards where the fingers curl).
+		const AnimVec handAt = at[h];
+		AnimVec normal;
+		if (plain.size() >= 2) {
+			const AnimVec first = sub(at[std::size_t(rig.fingers[plain.front()].segments.front())], handAt);
+			const AnimVec last = sub(at[std::size_t(rig.fingers[plain.back()].segments.front())], handAt);
+			normal = normalized(cross(first, last));
+		}
+		if (length(normal) < 0.5f) {
+			const AnimVec along = normalized(sub(at[std::size_t(rig.fingers.back().segments.front())], handAt));
+			normal = normalized(cross(along, sub(at[std::size_t(rig.fingers.front().segments.front())], handAt)));
+		}
+		if (length(normal) < 0.5f) continue;
+		// Which side is the palm: rest poses hold the fingers a little bent towards it, and the
+		// thumb's root sits in front of the palm.
+		float score = 0;
+		for (const std::size_t f : plain) {
+			const auto& seg = rig.fingers[f].segments;
+			if (seg.size() < 3) continue;
+			const AnimVec d0 = normalized(sub(at[std::size_t(seg[1])], at[std::size_t(seg[0])]));
+			const AnimVec tip = sub(at[std::size_t(seg.back())], at[std::size_t(seg[0])]);
+			const AnimVec dev = sub(tip, scale(d0, dot(tip, d0)));
+			score += dot(dev, normal) / std::max(1e-3f, length(tip));
+		}
+		for (const auto& finger : rig.fingers) {
+			if (finger.thumb) score += 0.5f * dot(normalized(sub(at[std::size_t(finger.segments.front())], handAt)), normal);
+		}
+		if (score < 0) normal = scale(normal, -1.f);
+		// Axes per segment, in the bone's own axes.
+		AnimVec centre;
+		for (const std::size_t f : plain) centre = add(centre, at[std::size_t(rig.fingers[f].segments.front())]);
+		if (!plain.empty()) centre = scale(centre, 1.f / float(plain.size()));
+		const AnimVec indexAt = plain.empty() ? handAt : at[std::size_t(rig.fingers[plain.front()].segments.front())];
+		for (const auto& finger : rig.fingers) {
+			std::vector<AnimVec> axes;
+			AnimVec dir = normalized(sub(at[std::size_t(finger.segments.front())], handAt));
+			for (std::size_t k = 0; k < finger.segments.size(); ++k) {
+				const std::size_t b = std::size_t(finger.segments[k]);
+				if (k + 1 < finger.segments.size()) {
+					const AnimVec next = sub(at[std::size_t(finger.segments[k + 1])], at[b]);
+					if (length(next) > 1e-3f) dir = normalized(next);
+				}
+				axes.push_back(qrotate(qconj(rot[b]), normalized(cross(dir, normal))));
+			}
+			rig.curlAxes.push_back(std::move(axes));
+			const std::size_t root = std::size_t(finger.segments.front());
+			rig.spreadAxes.push_back(qrotate(qconj(rot[root]), normal));
+			// Spread turns each finger away from the middle (the thumb away from the index finger).
+			const AnimVec rootDir = finger.segments.size() > 1 ? normalized(sub(at[std::size_t(finger.segments[1])], at[root])) : normalized(sub(at[root], handAt));
+			const AnimVec moves = cross(normal, rootDir);
+			const AnimVec away = finger.thumb ? sub(at[root], indexAt) : sub(at[root], centre);
+			const float d = dot(moves, away);
+			rig.spreadSign.push_back(length(away) < 1e-3f || std::fabs(d) < 1e-4f ? 0.f : (d > 0 ? 1.f : -1.f));
+		}
+		out.push_back(std::move(rig));
+	}
+	return out;
+}
+
+void applyPoseLayer(const AnimClip& pose, const std::vector<StudioBone>& bones, std::vector<std::vector<std::pair<AnimVec, AnimQuat>>>& frames) {
+	std::vector<std::optional<std::pair<AnimQuat, AnimVec>>> layer(bones.size());
+	for (const auto& [name, keys] : pose.tracks) {
+		if (keys.empty()) continue;
+		for (std::size_t i = 0; i < bones.size(); ++i) {
+			if (!iequals(bones[i].name, name)) continue;
+			const AnimQuat r = finite(keys.front().rot) ? qnorm(keys.front().rot) : AnimQuat{};
+			layer[i] = std::pair<AnimQuat, AnimVec>{r, finite(keys.front().pos) ? keys.front().pos : AnimVec{}};
+		}
+	}
+	for (auto& frame : frames) {
+		for (std::size_t i = 0; i < frame.size() && i < layer.size(); ++i) {
+			if (layer[i]) frame[i] = {add(frame[i].first, layer[i]->second), qnorm(qmul(frame[i].second, layer[i]->first))};
+		}
+	}
+}
+
+std::map<std::string, SequenceReplacement> poseLayerReplacements(const AnimatedModel& model, const AnimClip& pose, const std::vector<AnimClip>& tweaks) {
+	std::map<std::string, SequenceReplacement> out;
+	const auto& bones = model.bones();
+	const bool layered = std::any_of(pose.tracks.begin(), pose.tracks.end(), [](const auto& t) { return !t.second.empty(); });
+	std::vector<AnimVec> pos;
+	std::vector<AnimQuat> quat;
+	const auto& sequences = model.sequences();
+	for (std::size_t s = 0; s < sequences.size(); ++s) {
+		const StudioSequence& seq = sequences[s];
+		if (seq.model != 0 || seq.delta) continue;   // borrowed from include models, or adds onto others
+		const AnimClip* tweak = nullptr;
+		for (const auto& t : tweaks) {
+			if (t.mode == AnimClip::Mode::Tweak && iequals(t.baseSequence, seq.name) && !t.tracks.empty()) tweak = &t;
+		}
+		if (!layered && !tweak) continue;
+		std::vector<std::vector<std::pair<AnimVec, AnimQuat>>> baked;
+		SequenceReplacement replacement;
+		if (tweak) {
+			const AnimEditor editor(model, *tweak);
+			baked = editor.bake();
+			replacement.fps = editor.clip().fps;
+			replacement.loop = editor.clip().loop ? 1 : 0;
+		} else {
+			const int frames = std::clamp(seq.frames, 1, ANIM_CLIP_MAX_FRAMES);
+			baked.resize(static_cast<std::size_t>(frames));
+			for (int f = 0; f < frames; ++f) {
+				model.localPose(int(s), frames > 1 ? float(f) / float(frames - 1) : 0.f, pos, quat, false);
+				auto& frame = baked[std::size_t(f)];
+				frame.resize(std::min({pos.size(), quat.size(), bones.size()}));
+				for (std::size_t i = 0; i < frame.size(); ++i) frame[i] = {pos[i], quat[i]};
+			}
+		}
+		if (layered) applyPoseLayer(pose, bones, baked);
+		replacement.smd = poseFramesSmd(bones, baked);
+		out[toLower(seq.name)] = std::move(replacement);
+	}
+	return out;
 }
 
 // --- IK --------------------------------------------------------------------------------------
@@ -943,7 +1223,7 @@ std::string writeAnimClip(const AnimClip& clip) {
 	main.children.push_back(KvNode::makeValue("version", "1"));
 	main.children.push_back(KvNode::makeValue("model", cleanName(clip.model)));
 	main.children.push_back(KvNode::makeValue("name", cleanName(clip.name)));
-	main.children.push_back(KvNode::makeValue("mode", clip.mode == AnimClip::Mode::Tweak ? "tweak" : "new"));
+	main.children.push_back(KvNode::makeValue("mode", clip.mode == AnimClip::Mode::Tweak ? "tweak" : clip.mode == AnimClip::Mode::Pose ? "pose" : "new"));
 	main.children.push_back(KvNode::makeValue("base", cleanName(clip.baseSequence)));
 	main.children.push_back(KvNode::makeValue("baseframe", std::to_string(clip.baseFrame)));
 	main.children.push_back(KvNode::makeValue("frames", std::to_string(clip.frames)));
@@ -967,6 +1247,14 @@ std::string writeAnimClip(const AnimClip& clip) {
 		}
 		main.children.push_back(std::move(bone));
 	}
+	for (const auto& [name, shape] : clip.hands) {
+		KvNode hand = KvNode::makeBlock("hand");
+		hand.children.push_back(KvNode::makeValue("bone", cleanName(name)));
+		hand.children.push_back(KvNode::makeValue("curl", number(shape.curl)));
+		hand.children.push_back(KvNode::makeValue("spread", number(shape.spread)));
+		for (const auto& [finger, extra] : shape.fingers) hand.children.push_back(KvNode::makeValue("finger", cleanName(finger) + " " + number(extra)));
+		main.children.push_back(std::move(hand));
+	}
 	root.children.push_back(std::move(main));
 	return "// Mapsmith animation project: keys on top of the base animation (Animation editor)\n" + writeKeyValues(root);
 }
@@ -989,7 +1277,7 @@ std::optional<AnimClip> readAnimClip(std::string_view text, std::string* error) 
 	clip.model = normalizePath(cleanName(main->get("model")));
 	clip.name = cleanName(main->get("name"));
 	if (!clip.name.empty()) clip.name = sequenceNameFromFile(clip.name);
-	clip.mode = iequals(main->get("mode"), "new") ? AnimClip::Mode::New : AnimClip::Mode::Tweak;
+	clip.mode = iequals(main->get("mode"), "new") ? AnimClip::Mode::New : iequals(main->get("mode"), "pose") ? AnimClip::Mode::Pose : AnimClip::Mode::Tweak;
 	clip.baseSequence = cleanName(main->get("base"));
 	int number = 0;
 	if (parseInt(main->get("baseframe"), number)) clip.baseFrame = std::clamp(number, 0, ANIM_CLIP_MAX_FRAMES);
@@ -1004,6 +1292,21 @@ std::optional<AnimClip> readAnimClip(std::string_view text, std::string* error) 
 	clip.loop = main->get("loop") == "1";
 	clip.activity = cleanName(main->get("activity"));
 	int keyCount = 0;
+	for (const auto& node : main->children) {
+		if (!node.block || !iequals(node.key, "hand") || clip.hands.size() >= 16) continue;
+		const std::string bone = cleanName(node.get("bone"));
+		if (bone.empty()) continue;
+		HandShape shape;
+		float v = 0;
+		if (parseFloat(node.get("curl"), v)) shape.curl = std::clamp(v, -0.25f, 1.f);
+		if (parseFloat(node.get("spread"), v)) shape.spread = std::clamp(v, -1.f, 1.f);
+		for (const auto& child : node.children) {
+			if (child.block || !iequals(child.key, "finger") || shape.fingers.size() >= 8) continue;
+			const auto parts = words(child.value);
+			if (parts.size() == 2 && parseFloat(parts[1], v)) shape.fingers[cleanName(parts[0])] = std::clamp(v, -1.f, 1.f);
+		}
+		clip.hands[bone] = shape;
+	}
 	for (const auto& node : main->children) {
 		if (!node.block || !iequals(node.key, "bone")) continue;
 		const std::string name = cleanName(node.get("name"));
