@@ -96,6 +96,7 @@ The **Effects** tab makes the view model light up or spark.
   found automatically, a picture of your own, or all of it), colour and strength, steady or pulsing, and whether it
   glows **always** or **only during an animation** (the reload, say). The view shows it at once; **Apply** writes it
   into your mod, **Restore original** takes it out again.
+  - With mapbase-fidelity the glow also lights the world – during an animation only while it plays, fading in and out.
 - **Effects** lists particle systems on the weapon. **Add ...** asks for the effect (a particle system of the game or
   your own from the Particles page), where it sits (an attachment such as the muzzle, or the model's origin or root
   bone) and when it runs: always, or during an animation from one frame to another - sparks on the slide while

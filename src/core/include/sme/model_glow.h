@@ -13,16 +13,19 @@
 // Pulsing uses the stock math proxies of the client (functionproxy.cpp, mathproxy.cpp): "Sine"
 // writes 0..1 into a helper vector, "Multiply" multiplies the colour with it into $selfillumtint
 // (a float result on a vector variable sets every component, CResultProxy::SetFloatResult).
-// "Only during an animation" needs to know what the model plays, which no stock proxy does;
-// Mapbase's "VScriptProxy" (vscript_client.cpp) runs a small script on every draw with the drawn
+// "Only during an animation" needs to know what the model plays, which no stock proxy does.
+// With mapbase-fidelity (GlowProxy::Fidelity) Mapsmith writes its C++ proxy "FidelityAnimGlow"
+// (fidelity_animglow.cpp in the mod): it reads $mapsmith_glowsettings, sets $selfillumtint per draw,
+// and the mod's glow light follows the same amount - real light only while the animation plays.
+// Otherwise (GlowProxy::VScript) Mapbase's "VScriptProxy" (vscript_client.cpp) runs a small script on every draw with the drawn
 // entity, and C_BaseAnimating offers GetSequence, GetSequenceActivityName, GetSequenceName and
 // GetCycle to scripts - Mapsmith writes that script to scripts/vscripts/mapsmith/glow/. Without
 // Mapbase (or with scripting off) the proxy does nothing and the material keeps its tint of 0:
 // no glow, never a wrong one.
 //
 // mapbase-fidelity's glow lights (fidelity_glow.cpp) read $selfillum, $selfillummask and
-// $selfillumtint once per model, so a steady glow also lights the surroundings; the tint that a
-// proxy changes at runtime is not followed by those lights (that would need mod code).
+// $selfillumtint once per model, so a steady glow also lights the surroundings; a glow during
+// animations lights them only with the Fidelity proxy (the VScript one changes the tint only).
 //
 // The files go into the mod at the material's own path (a copy of the VMT that overrides the one
 // in the game's VPKs) with a mask texture next to it; an existing file in the mod is kept as
@@ -74,6 +77,10 @@ struct GlowSettings {
 /// Share of the mask that glows (0..1, weighted by brightness).
 [[nodiscard]] double glowCoverage(const ImageRgba& mask);
 
+/// Which proxy drives a glow during animations: Mapbase's VScriptProxy with a script, or
+/// mapbase-fidelity's C++ proxy "FidelityAnimGlow" (no script, real light; needs the mod's client.dll).
+enum class GlowProxy { VScript, Fidelity };
+
 /// "models/weapons/v_smg1/smg1" -> "models/weapons/v_smg1/smg1_glowmask".
 [[nodiscard]] std::string glowMaskName(std::string_view material);
 /// The script for DuringAnimation, relative to scripts/vscripts ("mapsmith/glow/models_weapons_v_smg1_smg1.nut").
@@ -83,7 +90,8 @@ struct GlowSettings {
 /// pulse and animation proxies plus Mapsmith's own keys ($mapsmith_glow...) that readGlowSettings
 /// reads back. A glow Mapsmith wrote before is replaced, not stacked. Other keys and proxies stay.
 /// Throws std::runtime_error on broken VMT syntax.
-[[nodiscard]] std::string glowMaterialText(std::string_view vmt, std::string_view material, const GlowSettings& settings);
+[[nodiscard]] std::string glowMaterialText(std::string_view vmt, std::string_view material, const GlowSettings& settings,
+                                           GlowProxy proxy = GlowProxy::VScript);
 /// The VScript (Squirrel) for DuringAnimation: sets var0 ($selfillumtint) to the colour while the
 /// drawn entity plays one of the animations in the cycle range, with the soft edges and the pulse.
 [[nodiscard]] std::string glowScriptText(const GlowSettings& settings);
@@ -96,7 +104,7 @@ struct GlowFiles {
 	std::string material;       ///< "models/weapons/v_smg1/smg1"
 	std::string vmtText;        ///< -> materials/<material>.vmt
 	std::vector<std::byte> maskVtf;   ///< -> materials/<glowMaskName>.vtf
-	std::string scriptText;     ///< -> scripts/vscripts/<glowScriptName> (DuringAnimation only)
+	std::string scriptText;     ///< -> scripts/vscripts/<glowScriptName> (DuringAnimation with GlowProxy::VScript only)
 	double coverage = 0;        ///< glowCoverage of the mask
 };
 
@@ -105,7 +113,8 @@ struct GlowFiles {
 /// cannot be read, has no base texture, is no model material (VertexLitGeneric and friends) or
 /// the mask cannot be made.
 [[nodiscard]] std::optional<GlowFiles> planGlow(const GameFileSystem& fs, std::string_view material, const GlowSettings& settings,
-                                                const ImageRgba* picture = nullptr, std::string* error = nullptr);
+                                                const ImageRgba* picture = nullptr, std::string* error = nullptr,
+                                                GlowProxy proxy = GlowProxy::VScript);
 /// Writes the files into the mod (existing ones kept as <file>.mapsmith-backup, the first time
 /// only) and returns what was changed (kind "glow"); undoImport takes it back.
 [[nodiscard]] std::optional<ImportRecord> applyGlow(const std::filesystem::path& modDir, const GlowFiles& files, std::string* error = nullptr);

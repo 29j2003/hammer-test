@@ -59,7 +59,7 @@ GlowDialog::GlowDialog(Editor* editor, ModelViewer* viewer, QString model, QStri
 	setAttribute(Qt::WA_DeleteOnClose);
 	auto* v = new QVBoxLayout(this);
 	auto* intro = new QLabel(tr("Parts of the material light up like lamps, screens or sights - in the texture's own colour, tinted. "
-	                            "With mapbase-fidelity a steady glow also lights the surroundings."));
+	                            "With mapbase-fidelity the glow also lights the surroundings - always, or only during the chosen animations."));
 	intro->setWordWrap(true);
 	intro->setProperty("role", "description");
 	v->addWidget(intro);
@@ -171,7 +171,10 @@ GlowDialog::GlowDialog(Editor* editor, ModelViewer* viewer, QString model, QStri
 	rangeRow->addWidget(new QLabel(tr("of the animation")));
 	rangeRow->addStretch(1);
 	whenLayout->addLayout(rangeRow);
-	auto* whenNote = new QLabel(tr("Needs Mapbase (its VScript material proxy). The light of mapbase-fidelity stays with steady glows."));
+	auto* whenNote = new QLabel(m_editor->hasFidelity()
+	                                ? tr("With mapbase-fidelity: the glow and its light on the surroundings come and go with the animation.")
+	                                : tr("Needs Mapbase (its VScript material proxy): the part glows, but gives no light. "
+	                                     "With mapbase-fidelity it also lights the surroundings."));
 	whenNote->setWordWrap(true);
 	whenNote->setProperty("role", "description");
 	whenLayout->addWidget(whenNote);
@@ -378,7 +381,10 @@ bool GlowDialog::apply() {
 		for (const auto& file : earlier->replaced) m_editor->game()->files.noteWrittenFile(file);
 	}
 	std::string error;
-	const auto files = planGlow(game->files, m_material->currentText().toStdString(), s, m_pictureImage ? &*m_pictureImage : nullptr, &error);
+	// With mapbase-fidelity its own proxy drives the glow during animations and lights the world;
+	// other mods get Mapbase's VScript proxy (the glow only).
+	const GlowProxy proxy = m_editor->hasFidelity() ? GlowProxy::Fidelity : GlowProxy::VScript;
+	const auto files = planGlow(game->files, m_material->currentText().toStdString(), s, m_pictureImage ? &*m_pictureImage : nullptr, &error, proxy);
 	const auto record = files ? applyGlow(entry->gameDir, *files, &error) : std::nullopt;
 	if (!record) {
 		m_info->setText(tr("Could not apply: %1").arg(QString::fromStdString(error)));
