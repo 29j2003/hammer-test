@@ -92,7 +92,7 @@ add_library(smecore STATIC
 	src/shapes.cpp
 	src/snapping.cpp
 	src/steam.cpp
-	src/studio_model.cpp src/studio_anim.cpp src/animation_use.cpp src/animation_import.cpp src/model_export.cpp src/model_events.cpp src/model_rebuild.cpp src/weapons.cpp src/anim_edit.cpp src/npc_scripts.cpp src/choreography.cpp src/choreo_logic.cpp
+	src/studio_model.cpp src/studio_anim.cpp src/animation_use.cpp src/animation_import.cpp src/model_export.cpp src/model_events.cpp src/model_rebuild.cpp src/weapons.cpp src/npcs.cpp src/anim_edit.cpp src/npc_scripts.cpp src/choreography.cpp src/choreo_logic.cpp
 	src/text.cpp
 	src/texture.cpp
 	src/version.cpp)

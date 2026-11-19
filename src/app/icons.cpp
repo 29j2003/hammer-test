@@ -147,6 +147,20 @@ void drawPageIcon(QPainter& p, const QString& name, const QColor& line, const QC
 		p.drawLine(QPointF(50, 31), QPointF(56, 36));
 		return;
 	}
+	if (name == "page:npcs") {
+		// A soldier's head and shoulders, the eye visor in the accent colour.
+		p.setPen(pen(line, w));
+		p.setBrush(Qt::NoBrush);
+		p.drawEllipse(QRectF(22, 10, 20, 22));                    // head
+		QPainterPath body;
+		body.moveTo(10, 56);
+		body.cubicTo(10, 40, 20, 36, 32, 36);
+		body.cubicTo(44, 36, 54, 40, 54, 56);
+		p.drawPath(body);                                          // shoulders
+		p.setPen(pen(accent, w));
+		p.drawLine(QPointF(26, 20), QPointF(38, 20));               // visor
+		return;
+	}
 	if (name == "page:sounds") {
 		// Waveform bars.
 		const double heights[] = {12, 26, 40, 22, 32, 14};

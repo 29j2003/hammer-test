@@ -257,7 +257,7 @@ int main(int argc, char** argv) {
 		}
 		if (parser.isSet("page")) {
 			static const QMap<QString, MainWindow::Page> PAGES = {{"map", MainWindow::Page::Map}, {"materials", MainWindow::Page::Materials}, {"models", MainWindow::Page::Models},
-				{"animations", MainWindow::Page::Animations}, {"weapons", MainWindow::Page::Weapons}, {"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles},
+				{"animations", MainWindow::Page::Animations}, {"weapons", MainWindow::Page::Weapons}, {"npcs", MainWindow::Page::Npcs}, {"sounds", MainWindow::Page::Sounds}, {"particles", MainWindow::Page::Particles},
 				{"mod", MainWindow::Page::Project}, {"project", MainWindow::Page::Project}};
 			// "project:features": a tab of the Project page by its title (case and spaces do not matter).
 			const QString page = parser.value("page").section(':', 0, 0).toLower();

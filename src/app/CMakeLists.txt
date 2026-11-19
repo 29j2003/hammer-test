@@ -39,7 +39,7 @@ add_library(smeapp STATIC
 	scene_poser.cpp
 	choreography_panel.cpp
 	choreography_panel_logic.cpp
-	models_page.cpp animations_page.cpp weapons_page.cpp model_rebuild_job.cpp
+	models_page.cpp animations_page.cpp weapons_page.cpp npcs_page.cpp model_rebuild_job.cpp
 	panels.cpp
 	particle_browser.cpp
 	particle_editor.cpp

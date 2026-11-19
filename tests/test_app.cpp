@@ -187,6 +187,7 @@
 #include "animations_page.h"
 #include "model_rebuild_job.h"
 #include "weapons_page.h"
+#include "npcs_page.h"
 #include <sme/model_rebuild.h>
 #include <sme/sound_edit.h>
 #include <sme/weapons.h>
@@ -2634,7 +2635,7 @@ TEST_CASE("view: frame limit, hiding tools and triggers, the Materials page list
 		}
 		return width;
 	};
-	for (const auto page : {MainWindow::Page::Map, MainWindow::Page::Materials, MainWindow::Page::Models, MainWindow::Page::Weapons, MainWindow::Page::Sounds,
+	for (const auto page : {MainWindow::Page::Map, MainWindow::Page::Materials, MainWindow::Page::Models, MainWindow::Page::Weapons, MainWindow::Page::Npcs, MainWindow::Page::Sounds,
 	                        MainWindow::Page::Particles, MainWindow::Page::Project}) {
 		window.showPage(page);
 		settle();
@@ -13451,4 +13452,110 @@ TEST_CASE("model glow, model effects and the particle editor write into the mod 
 	REQUIRE(particles->editShownSystem());
 	CHECK(particles->particleEditor()->system().name == "demo_fire_small");
 	CHECK(particles->particleEditor()->system().children.size() == 1);   // its smoke column
+}
+
+TEST_CASE("npcs page: only NPCs with a model, free 3D view, stats into skill.cfg and back, weapon for placing, sounds, animations") {
+	// Julius, 19.11.2026: "NPC-Editor: Gesundheit und Schaden, Waffen, Modell und Skins, Sounds, mit 3D-Vorschau".
+	QTemporaryDir home;
+	qputenv("HOME", home.path().toUtf8());
+	QSettings::setDefaultFormat(QSettings::IniFormat);
+	QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
+	QSettings().clear();
+
+	test::Fixture f;
+	test::createFixture(f);
+	test::createDemo(f);
+	test::writeText(f.sdkBase / "hl2/cfg/skill.cfg", "sk_citizen_health\t\"40\"\nsk_citizen_heal_player\t\"25\"\nsk_npc_dmg_smg1\t\"3\"\nsk_zombie_health\t\"50\"\n");
+	Editor editor;
+	editor.discover(fromPath(f.steam));
+	MainWindow window(&editor);
+	window.selectGame("sourcemods/mymod");
+	REQUIRE(editor.game());
+	window.resize(1366, 768);
+	window.show();
+	REQUIRE(QTest::qWaitForWindowExposed(&window));
+	settle();
+	const auto waitFor = [](const std::function<bool()>& done, int ms = 5000) {
+		for (int i = 0; i < ms / 20 && !done(); ++i) QTest::qWait(20);
+		return done();
+	};
+
+	// The side bar has the page after Weapons.
+	QAction* pageAction = nullptr;
+	for (auto* a : window.findChildren<QAction*>()) {
+		if (a->objectName() == "page:NPCs") pageAction = a;
+	}
+	REQUIRE(pageAction);
+	pageAction->trigger();
+	settle();
+	CHECK(window.currentPage() == MainWindow::Page::Npcs);
+	auto* page = window.npcsPage();
+	REQUIRE(page);
+	CHECK(page->isVisible());
+
+	// Only the citizen: the demo has its head; no zombie (no model), no helpers. One group header.
+	QStringList classes;
+	for (int i = 0; i < page->npcList()->count(); ++i) {
+		const QString cls = page->npcList()->item(i)->data(Qt::UserRole).toString();
+		if (!cls.isEmpty()) classes << cls;
+	}
+	CHECK(classes == QStringList{"npc_citizen"});
+	CHECK(page->currentNpc() == "npc_citizen");
+	CHECK(page->currentModel() == "models/humans/group01/male_07.mdl");
+	CHECK_FALSE(page->viewer()->firstPerson());   // free around the NPC
+	REQUIRE(waitFor([&] { return page->sequenceTree()->topLevelItemCount() > 0; }));
+	CHECK_FALSE(page->currentSequence().isEmpty());
+	page->setPlaying(true);
+	QTest::qWait(120);
+	CHECK(page->playing());
+	page->setPlaying(false);
+
+	// Stats: health from the game's skill.cfg, saved into the mod's, restored.
+	auto* health = qobject_cast<QLineEdit*>(page->statEditor("sk_citizen_health"));
+	REQUIRE(health);
+	CHECK(health->text() == "40");
+	CHECK(page->statEditor("sk_citizen_heal_player"));
+	CHECK(page->statEditor("sk_npc_dmg_smg1"));   // the damage of a weapon it carries
+	CHECK_FALSE(page->statEditor("sk_zombie_health"));
+	health->setText("80");
+	REQUIRE(page->saveStats());
+	const auto modSkill = f.mod / "cfg" / "skill.cfg";
+	REQUIRE(std::filesystem::exists(modSkill));
+	CHECK(readSkillValues(*readFileText(modSkill)).at("sk_citizen_health") == "80");
+	REQUIRE(page->restoreStats());
+	CHECK(readSkillValues(*readFileText(modSkill)).at("sk_citizen_health") == "40");
+
+	// Weapons: the chosen weapon and head go into the entity it places.
+	page->tabs()->setCurrentIndex(1);
+	REQUIRE(page->selectWeapon("weapon_smg1"));
+	page->placeInMap();
+	settle();
+	CHECK(window.currentPage() == MainWindow::Page::Map);
+	CHECK(editor.currentEntityClass() == "npc_citizen");
+	const auto& keys = editor.currentEntityKeys();
+	CHECK(std::find(keys.begin(), keys.end(), std::pair<std::string, std::string>{"additionalequipment", "weapon_smg1"}) != keys.end());
+	CHECK(std::find(keys.begin(), keys.end(), std::pair<std::string, std::string>{"model", "models/humans/group01/male_07.mdl"}) != keys.end());
+
+	// Sounds named after it, down to the wave.
+	window.showPage(MainWindow::Page::Npcs);
+	page->tabs()->setCurrentIndex(3);
+	settle();
+	const auto findRow = [&](const QString& text) {
+		const auto found = page->soundTree()->findItems(text, Qt::MatchContains | Qt::MatchRecursive);
+		return found.isEmpty() ? nullptr : found.front();
+	};
+	REQUIRE(waitFor([&] { return findRow("NPC_Citizen.Hello") != nullptr; }));
+	CHECK(findRow("vo/hello.wav"));
+	CHECK_FALSE(findRow("Weapon_Pistol.Single"));
+
+	// Look: the model's materials; Animations: Edit animation opens the editor on the NPC.
+	page->tabs()->setCurrentIndex(2);
+	REQUIRE(waitFor([&] { return page->materialList()->count() > 0; }));
+	page->tabs()->setCurrentIndex(4);
+	settle();
+	page->findChild<QPushButton*>("npcEditAnimation")->click();
+	settle();
+	REQUIRE(window.animationEditor());
+	CHECK(window.animationEditor()->model() == "models/humans/group01/male_07.mdl");
+	window.animationEditor()->close();
 }

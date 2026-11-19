@@ -70,6 +70,7 @@ Each button fills the window with one page:
 | **Materials** | Every material of the game on the left; click one to edit it. See [Texturing and materials](texturing.html#the-material-editor). |
 | **Models** | Every model in 3D, with skins and body groups. See [Models](entities.html#the-models-page). |
 | **Weapons** | The mod's weapons: first-person model, animations, sounds and events, look and stats. See [Weapons](weapons.html). |
+| **NPCs** | The game's NPCs in 3D: health and damage, weapons, model and skins, sounds, animations. See [NPCs](npcs.html). |
 | **Sounds** | Sounds, sound scripts and soundscapes. See [Sounds](sounds-particles.html). |
 | **Particles** | The particle viewer. See [Particles](sounds-particles.html#particles). |
 | **Project** | Your mod: *Overview*, *Maps*, *Menu*, *Source control* and *Ship*. See [The Project page](project.html). |
