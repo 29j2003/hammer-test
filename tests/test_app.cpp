@@ -12931,10 +12931,12 @@ TEST_CASE("animation editor in 3D: place a hand with its grip, auto key, easing,
 	CHECK(clip->keyCount() == 0);
 	if (const auto shot = qEnvironmentVariable("SME_ANIM_EDITOR_SHOT"); !shot.isEmpty()) {
 		ed->startFrom("wave", true, "wave_shot");
+		clip = ed->clipEditor();
 		ed->selectBones({clip->boneIndex("ValveBiped.Bip01_L_Hand")});
 		ed->setSplitView(true);
 		settle();
 		ed->grab().save(shot + ".3d.png");
+		ed->view()->grabFramebuffer().save(shot + ".3d.view.png");
 	}
 	ed->close();
 }
