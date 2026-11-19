@@ -61,15 +61,6 @@ bool contains(const std::vector<std::string>& list, std::string_view name) {
 
 } // namespace
 
-std::string qcEventLine(const SequenceEvent& event) {
-	std::string options;
-	for (const char c : event.options) {
-		const auto u = static_cast<unsigned char>(c);
-		if (u >= 32 && c != '"' && u != 127) options += c;
-	}
-	return "{ event " + cleanWord(event.event) + " " + std::to_string(std::max(0, event.frame)) + " \"" + options + "\" }";
-}
-
 std::string_view effectAttachName(EffectAttach attach) {
 	for (const auto& [a, name] : ATTACH_NAMES) {
 		if (a == attach) return name;
@@ -105,8 +96,8 @@ std::vector<std::string> effectProblems(const ModelEffect& effect, const std::ve
 	return out;
 }
 
-std::vector<SequenceEvent> effectEvents(const ModelEffect& effect) {
-	std::vector<SequenceEvent> out;
+std::vector<ModelEvent> effectEvents(const ModelEffect& effect, int frames) {
+	std::vector<ModelEvent> out;
 	if (effect.when != ModelEffect::When::DuringAnimation) return out;
 	const std::string particle = cleanWord(effect.particle);
 	const std::string sequence = cleanWord(effect.sequence);
@@ -117,72 +108,99 @@ std::vector<SequenceEvent> effectEvents(const ModelEffect& effect) {
 		if (attachment.empty()) return out;
 		options += " " + attachment;
 	}
-	out.push_back({sequence, std::max(0, effect.startFrame), std::string(CREATE), options});
+	ModelEvent create;
+	create.name = std::string(CREATE);
+	create.options = cleanEventOptions(options);
+	create.setFrame(std::max(0, effect.startFrame), frames);
+	out.push_back(std::move(create));
 	if (effect.endFrame >= 0) {
-		out.push_back({sequence, std::max(effect.endFrame, std::max(0, effect.startFrame)), std::string(STOP), particle + (effect.stopInstantly ? " instantly" : "")});
+		ModelEvent stop;
+		stop.name = std::string(STOP);
+		stop.options = cleanEventOptions(particle + (effect.stopInstantly ? " instantly" : ""));
+		stop.setFrame(std::max(effect.endFrame, std::max(0, effect.startFrame)), frames);
+		out.push_back(std::move(stop));
 	}
 	return out;
 }
 
-std::vector<SequenceEvent> effectEvents(const std::vector<ModelEffect>& effects) {
-	std::vector<SequenceEvent> out;
+std::map<std::string, std::vector<ModelEvent>> effectEvents(const std::vector<ModelEffect>& effects, const SequenceFrames& frames) {
+	std::map<std::string, std::vector<ModelEvent>> out;
 	for (const auto& effect : effects) {
-		auto events = effectEvents(effect);
-		out.insert(out.end(), events.begin(), events.end());
+		const std::string key = toLower(cleanWord(effect.sequence));
+		const auto it = frames.find(key);
+		if (it == frames.end()) continue;
+		auto events = effectEvents(effect, it->second);
+		if (events.empty()) continue;
+		auto& list = out[key];
+		list.insert(list.end(), events.begin(), events.end());
 	}
-	std::stable_sort(out.begin(), out.end(), [](const SequenceEvent& a, const SequenceEvent& b) {
-		const auto la = toLower(a.sequence), lb = toLower(b.sequence);
-		return la != lb ? la < lb : a.frame < b.frame;
-	});
+	for (auto& [key, list] : out) {
+		std::stable_sort(list.begin(), list.end(), [](const ModelEvent& a, const ModelEvent& b) { return a.cycle < b.cycle; });
+	}
+	return out;
+}
+
+std::vector<ModelParticle> effectParticles(const std::vector<ModelEffect>& effects) {
+	std::vector<ModelParticle> out;
+	for (const auto& effect : effects) {
+		if (effect.when != ModelEffect::When::Always) continue;
+		ModelParticle p;
+		p.name = cleanWord(effect.particle);
+		if (p.name.empty()) continue;
+		p.attachType = std::string(effectAttachName(effect.attach));
+		if (needsAttachment(effect.attach)) p.attachment = cleanWord(effect.attachment);
+		out.push_back(std::move(p));
+	}
+	return out;
+}
+
+AddedModelEffects effectChanges(const std::vector<ModelEffect>& effects, const SequenceFrames& frames) {
+	AddedModelEffects out;
+	out.events = effectEvents(effects, frames);
+	out.particles = effectParticles(effects);
 	return out;
 }
 
 std::string effectKeyValues(const std::vector<ModelEffect>& effects) {
-	std::string body;
-	for (const auto& effect : effects) {
-		if (effect.when != ModelEffect::When::Always) continue;
-		const std::string particle = cleanWord(effect.particle);
-		if (particle.empty()) continue;
-		body += "\t\teffect\n\t\t{\n";
-		body += "\t\t\tname \"" + particle + "\"\n";
-		body += "\t\t\tattachment_type \"" + std::string(effectAttachName(effect.attach)) + "\"\n";
-		const std::string attachment = needsAttachment(effect.attach) ? cleanWord(effect.attachment) : std::string();
-		if (!attachment.empty()) body += "\t\t\tattachment_point \"" + attachment + "\"\n";
-		body += "\t\t}\n";
-	}
-	if (body.empty()) return {};
-	return "\tparticles\n\t{\n" + body + "\t}\n";
+	const auto particles = effectParticles(effects);
+	if (particles.empty()) return {};
+	return qcKeyValues({}, &particles);
 }
 
-std::vector<ModelEffect> effectsFromModel(const std::vector<SequenceEvent>& events, std::string_view keyValues) {
+std::vector<ModelEffect> effectsFromModel(const std::vector<SequenceEvents>& sequences, std::string_view keyValues) {
 	std::vector<ModelEffect> out;
 	// Creates first (in order), then each stop closes the newest open create of its system in
 	// the same sequence.
-	for (const auto& e : events) {
-		if (!iequals(e.event, CREATE)) continue;
-		const auto w = words(e.options);
-		if (w.empty()) continue;
-		ModelEffect effect;
-		effect.particle = w[0];
-		effect.when = ModelEffect::When::DuringAnimation;
-		effect.sequence = e.sequence;
-		effect.startFrame = e.frame;
-		if (w.size() > 1) effect.attach = effectAttachFromName(w[1]).value_or(EffectAttach::FollowAttachment);
-		if (w.size() > 2) effect.attachment = w[2];
-		out.push_back(std::move(effect));
-	}
-	for (const auto& e : events) {
-		if (!iequals(e.event, STOP)) continue;
-		const auto w = words(e.options);
-		if (w.empty()) continue;
-		ModelEffect* best = nullptr;
-		for (auto& effect : out) {
-			if (effect.endFrame >= 0 || !iequals(effect.particle, w[0]) || !iequals(effect.sequence, e.sequence) || effect.startFrame > e.frame) continue;
-			if (!best || effect.startFrame > best->startFrame) best = &effect;
+	for (const auto& seq : sequences) {
+		for (const auto& e : seq.events) {
+			if (!iequals(e.name, CREATE)) continue;
+			const auto w = words(e.options);
+			if (w.empty()) continue;
+			ModelEffect effect;
+			effect.particle = w[0];
+			effect.when = ModelEffect::When::DuringAnimation;
+			effect.sequence = seq.sequence;
+			effect.startFrame = e.frame(seq.frames);
+			if (w.size() > 1) effect.attach = effectAttachFromName(w[1]).value_or(EffectAttach::FollowAttachment);
+			if (w.size() > 2) effect.attachment = w[2];
+			out.push_back(std::move(effect));
 		}
-		if (best) {
-			best->endFrame = e.frame;
-			best->stopInstantly = w.size() > 1 && iequals(w[1], "instantly");
+	}
+	for (const auto& seq : sequences) {
+		for (const auto& e : seq.events) {
+			if (!iequals(e.name, STOP)) continue;
+			const auto w = words(e.options);
+			if (w.empty()) continue;
+			const int frame = e.frame(seq.frames);
+			ModelEffect* best = nullptr;
+			for (auto& effect : out) {
+				if (effect.endFrame >= 0 || !iequals(effect.particle, w[0]) || !iequals(effect.sequence, seq.sequence) || effect.startFrame > frame) continue;
+				if (!best || effect.startFrame > best->startFrame) best = &effect;
+			}
+			if (best) {
+				best->endFrame = frame;
+				best->stopInstantly = w.size() > 1 && iequals(w[1], "instantly");
+			}
 		}
 	}
 	if (!trim(keyValues).empty()) {

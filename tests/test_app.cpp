@@ -13185,6 +13185,78 @@ TEST_CASE("weapons page: a weapon in first person, its animations, sounds, event
 	REQUIRE(page->restoreModel());
 	CHECK_FALSE(std::filesystem::exists(f.mod / "models/weapons/v_pistol.mdl"));
 
+	// Effects tab: sparks on the view model during the reload, built together with a pending sound
+	// edit; the model's own sound events stay. A later sound build keeps the effects.
+	page->tabs()->setCurrentIndex(4);
+	settle();
+	CHECK(page->tabs()->tabText(4) == "Effects");
+	auto* effects = page->effectsPanel();
+	REQUIRE(effects);
+	CHECK(effects->model() == "models/weapons/v_pistol.mdl");
+	ModelEffect sparks;
+	sparks.particle = "demo_sparks";
+	sparks.attach = EffectAttach::FollowRootBone;
+	sparks.sequence = "reload";
+	sparks.startFrame = 4;
+	sparks.endFrame = 20;
+	effects->setEffects({sparks});
+	auto soundEdit = page->eventsOf("reload");
+	REQUIRE(soundEdit.size() == 2);
+	soundEdit[0].options = "Weapon_Pistol.Single";
+	page->setEvents("reload", soundEdit);
+	const auto readQc = [&] {
+		QFile qc(fromPath(modelRebuildFolder(f.mod, "models/weapons/v_pistol.mdl") / "v_pistol.qc"));
+		return qc.open(QIODevice::ReadOnly) ? QString::fromUtf8(qc.readAll()) : QString();
+	};
+	auto* compile = effects->findChild<QPushButton*>("effectsCompile");
+	REQUIRE(compile);
+	CHECK(compile->isEnabled());
+	compile->click();
+	REQUIRE(built.wait(15000));
+	CHECK(built.takeFirst().at(0).toBool());
+	CHECK(effects->note().contains("Built"));
+	CHECK(page->pendingEventSequences() == 0);
+	{
+		const QString text = readQc();
+		CHECK(text.contains("{ event AE_CL_PLAYSOUND 6 \"Weapon_Pistol.Single\" }"));     // the pending sound edit
+		CHECK(text.contains("{ event 5004 24 \"Weapon_Pistol.Empty\" }"));                // the model's own sound
+		CHECK(text.contains("{ event AE_CL_CREATE_PARTICLE_EFFECT 4 \"demo_sparks follow_rootbone\" }"));
+		CHECK(text.contains("{ event AE_CL_STOP_PARTICLE_EFFECT 20 \"demo_sparks\" }"));
+		CHECK(text.contains("{ event 5001 0 \"1\" }"));
+	}
+	// Effect events are not listed with the sounds.
+	for (const auto& e : page->eventsOf("reload")) CHECK(e.name.find("PARTICLE") == std::string::npos);
+	soundEdit = page->eventsOf("reload");
+	REQUIRE(soundEdit.size() == 2);
+	soundEdit.pop_back();
+	page->setEvents("reload", soundEdit);
+	REQUIRE(page->buildModel());
+	REQUIRE(built.wait(15000));
+	CHECK(built.takeFirst().at(0).toBool());
+	{
+		const QString text = readQc();
+		CHECK_FALSE(text.contains("Weapon_Pistol.Empty"));
+		CHECK(text.contains("{ event AE_CL_CREATE_PARTICLE_EFFECT 4 \"demo_sparks follow_rootbone\" }"));
+		CHECK(text.count("AE_CL_CREATE_PARTICLE_EFFECT") == 1);
+	}
+	// Restore model (Effects tab): the game's model again; the effects stay in the list.
+	CHECK(effects->findChild<QPushButton*>("effectsRestore")->isEnabled());
+	REQUIRE(effects->restoreModel());
+	CHECK_FALSE(std::filesystem::exists(f.mod / "models/weapons/v_pistol.mdl"));
+	CHECK_FALSE(page->rebuildJob()->rebuilt("models/weapons/v_pistol.mdl"));
+	CHECK(effects->effects().size() == 1);
+	REQUIRE(page->eventsOf("reload").size() == 2);
+	effects->setEffects({});
+	// Glow ... opens the glow dialog for the view model's materials.
+	REQUIRE(waitFor([&] { return page->findChild<QPushButton*>("weaponGlow")->isEnabled(); }));
+	auto* glow = page->openGlow();
+	REQUIRE(glow);
+	settle();
+	CHECK(glow->isVisible());
+	CHECK(glow->frameGeometry().height() <= 768);
+	glow->close();
+	settle();
+
 	// Look: the model's material with its picture; a replaced texture and back.
 	page->tabs()->setCurrentIndex(2);
 	settle();
@@ -13318,11 +13390,18 @@ TEST_CASE("model glow, model effects and the particle editor write into the mod 
 	ModelEffect sparks;
 	sparks.particle = "demo_sparks";
 	sparks.attach = EffectAttach::FollowRootBone;
-	sparks.sequence = "idle";
-	sparks.startFrame = 2;
+	sparks.sequence = "idle_subtle";
+	sparks.startFrame = 1;
 	effects->setEffects({sparks});
-	CHECK(effects->qcText().contains("{ event AE_CL_CREATE_PARTICLE_EFFECT 2 \"demo_sparks follow_rootbone\" }"));
+	CHECK(effects->qcText().contains("{ event AE_CL_CREATE_PARTICLE_EFFECT 1 \"demo_sparks follow_rootbone\" }"));
 	CHECK(std::filesystem::exists(modelEffectsFile(f.mod, "models/humans/group01/male_07.mdl")));
+	// "Compile into model ..." goes to the Models page's rebuild job (the fixture has no studiomdl).
+	REQUIRE(effects->rebuildJob());
+	REQUIRE(effects->compileChanges().effects);
+	CHECK(effects->compileChanges().effects->events.at("idle_subtle").size() == 1);
+	CHECK(effects->compile());
+	CHECK(effects->note().contains("Not built"));
+	CHECK(effects->note().contains("studiomdl"));
 	page->selectModel("models/props_demo/supply_crate.mdl");
 	for (int i = 0; i < 200 && !effects->effects().empty(); ++i) QTest::qWait(20);
 	CHECK(effects->effects().empty());

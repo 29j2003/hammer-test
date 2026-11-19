@@ -88,10 +88,31 @@ your mod's `cfg/skill.cfg` sets at every map start.
   them.
 - **Restore original** takes your copy of the script out and sets the damage and ammo values back to the game's.
 
+## Effects and glow
+
+The **Effects** tab makes the view model light up or spark.
+
+- **Glow ...** opens the glow dialog for the view model's materials: pick a material, where it glows (its bright parts
+  found automatically, a picture of your own, or all of it), colour and strength, steady or pulsing, and whether it
+  glows **always** or **only during an animation** (the reload, say). The view shows it at once; **Apply** writes it
+  into your mod, **Restore original** takes it out again.
+- **Effects** lists particle systems on the weapon. **Add ...** asks for the effect (a particle system of the game or
+  your own from the Particles page), where it sits (an attachment such as the muzzle, or the model's origin or root
+  bone) and when it runs: always, or during an animation from one frame to another - sparks on the slide while
+  reloading, smoke from the barrel after the last shot.
+
+The effects become events and settings inside the model, so **Compile into model ...** rebuilds the view model into
+your mod, like **Build model** on the Sounds tab. Both are kept together: the effects go on top of the animation's own
+sounds and of your sound changes, and a later **Build model** keeps the effects. Changes on the Sounds tab that are
+not built yet go into the same build. The result and `studiomdl`'s messages appear under the buttons; **Restore model**
+takes the rebuilt model out again (the list of effects stays, so you can compile it again later).
+
 ## What is not tested yet
 
 The Weapons page was tested with generated test weapons, not with the real Half-Life 2 weapons in the game. Please
 tell us if something does not work as described. In particular:
 
 - the rebuilt view models were not compiled with the real `studiomdl` and played in the game;
+- particle effects and glow on a view model were not checked in the game (where the particles appear on the weapon,
+  whether they stop on time);
 - a replaced sound might keep playing the old version until the game is restarted (the game keeps a sound cache).

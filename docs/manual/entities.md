@@ -256,8 +256,10 @@ A material can be shared by several models (hands, for example). Its glow then s
 system - make your own on the Particles page, e.g. **New ... › Glow**), **where** (an attachment, shown as points in
 the 3D view, or the model's origin) and **when** (always, or during an animation from one frame to another). The list
 is kept in the mod (`modelsrc/<model>/mapsmith_effects.txt`). They take effect when the model is compiled with them:
-**Copy .qc lines** gives the lines for the model's `.qc` (the event lines go inside its `$sequence`, the
-`particles` block inside `$keyvalues`).
+**Compile into model ...** rebuilds the model with the game's `studiomdl` into your mod at the same path (its own
+events and sounds stay; **Restore model** takes the rebuild out again). For a `.qc` of your own, **Copy .qc lines**
+gives the lines (the event lines go inside its `$sequence`, the `particles` block inside `$keyvalues`). Weapons have
+the same list on the Weapons page, tab **Effects**.
 
 ### Exporting a model for editing
 

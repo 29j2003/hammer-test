@@ -17,6 +17,8 @@
 #include "animations_page.h"
 #include "weapons_page.h"
 #include "models_page.h"
+#include "effects_panel.h"
+#include "model_rebuild_job.h"
 #include "maps_panel.h"
 #include "menu_editor.h"
 #include "start_page.h"
@@ -551,7 +553,16 @@ void MainWindow::createDocks() {
 	        [this](const QString& model, const QString& sequence, bool newAnimation) { openAnimationEditor(model, sequence, newAnimation); });
 	connect(m_modelsPage, &ModelsPage::animateRequested, this, [this](const QString& model) { openAnimationEditor(model, {}, true); });
 	// Weapons page: scripts, first-person models, sounds and events, look, stats.
-	m_weaponsPage = new WeaponsPage(m_editor, m_materials);
+	// Effects of a model ("Compile into model ..."): rebuilt into the mod with its own events and
+	// the changes stored for it (sound edits of the Weapons page) by a job of the Models page.
+	{
+		auto* effects = m_modelsPage->effectsPanel();
+		auto* job = new ModelRebuildJob(m_editor, m_modelsPage);
+		job->setObjectName("modelsRebuildJob");
+		effects->setRebuildJob(job);
+		connect(effects, &EffectsPanel::compileRequested, job, [job](const QString& model, const ModelRebuildChanges& changes) { job->start(model, changes); });
+	}
+	m_weaponsPage = new WeaponsPage(m_editor, m_materials, m_assets);
 	m_pages->addWidget(m_weaponsPage);
 	connect(m_weaponsPage, &WeaponsPage::openMaterialRequested, this, [this](const QString& name) {
 		m_materialEditor->openMaterial(name);
@@ -559,6 +570,7 @@ void MainWindow::createDocks() {
 	});
 	connect(m_weaponsPage, &WeaponsPage::editAnimationRequested, this,
 	        [this](const QString& model, const QString& sequence) { openAnimationEditor(model, sequence); });
+	connect(m_weaponsPage, &WeaponsPage::modChanged, this, &MainWindow::reloadGameSoon);
 	connect(m_weaponsPage, &WeaponsPage::enhanceTexturesRequested, this,
 	        [this](const QStringList& materials) { openTextureEnhanceDialog(m_editor, materials, this); });
 	connect(m_modelsPage, &ModelsPage::placeRequested, this, [this](const QString& classname, const std::vector<std::pair<std::string, std::string>>& keys) {

@@ -2,9 +2,12 @@
 // particle systems at an attachment, always or during part of an animation (a glow sprite while
 // reloading, sparks when a part snaps shut ...). Add/Edit opens a small assistant: Effect ->
 // Where (attachment, shown as points in the model view) -> When. The list is kept in the mod
-// (sme/model_effects.h: modelsrc/<model>/mapsmith_effects.txt); compiling the model takes the
-// events and the $keyvalues block from effectEvents/effectKeyValues ("Compile into model"
-// emits compileRequested with them).
+// (sme/model_effects.h: modelsrc/<model>/mapsmith_effects.txt). "Compile into model ..."
+// emits compileRequested with ModelRebuildChanges whose `effects` are the list's events and
+// particles entries (effectChanges); the page starts its ModelRebuildJob with them (Models page:
+// MainWindow; Weapons page: its own job, together with its pending sound edits), so the effects
+// land on top of the model's own events and the sound edits stored for it. setRebuildJob() shows
+// that job's progress and result here, "Restore model" takes the rebuild out again.
 
 #pragma once
 
@@ -17,11 +20,13 @@
 
 #include <sme/animation_import.h>
 #include <sme/model_effects.h>
+#include <sme/model_rebuild.h>
 
 class QCheckBox;
 class QComboBox;
 class QLabel;
 class QListWidget;
+class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
 
@@ -29,6 +34,7 @@ namespace sme::app {
 
 class AssetBrowser;
 class Editor;
+class ModelRebuildJob;
 class ModelViewer;
 
 /// A model's attachment with its place at rest (for the markers).
@@ -83,15 +89,30 @@ public:
 	void setEffects(std::vector<ModelEffect> effects);
 	/// The .qc text the effects become: event lines per sequence and the $keyvalues block.
 	[[nodiscard]] QString qcText() const;
+	/// What compiling adds to the model: changes with only `effects` set (the whole list).
+	[[nodiscard]] ModelRebuildChanges compileChanges() const;
+	/// The job that builds the model (its progress and result are shown here; Restore model uses it).
+	void setRebuildJob(ModelRebuildJob* job);
+	[[nodiscard]] ModelRebuildJob* rebuildJob() const { return m_job; }
+	/// "Compile into model ..." (emits compileRequested). False if there is no model.
+	bool compile();
+	/// "Restore model": takes the model's rebuild out of the mod (sound edits too). False with a message.
+	bool restoreModel();
+	/// The line under the buttons (state, result of the last build).
+	[[nodiscard]] QString note() const;
 
 signals:
-	/// "Compile into model": the events and the particles block for the model's .qc.
-	void compileRequested(const QString& modelPath, const std::vector<SequenceEvent>& events, const QString& keyValues);
+	/// "Compile into model": the changes for the model's rebuild (effects set, see compileChanges).
+	void compileRequested(const QString& modelPath, const sme::ModelRebuildChanges& changes);
+	/// "Restore model" took the rebuild out of the mod.
+	void modelRestored(const QString& modelPath);
 
 private:
 	void refresh();
 	void save();
 	void edit(int index);
+	void updateButtons();
+	void showNote(const QString& text);
 
 	Editor* m_editor;
 	AssetBrowser* m_assets;
@@ -105,7 +126,12 @@ private:
 	QPushButton* m_editButton;
 	QPushButton* m_remove;
 	QPushButton* m_compile;
+	QPushButton* m_restore;
 	QLabel* m_note;
+	QPlainTextEdit* m_log;
+	ModelRebuildJob* m_job = nullptr;
+	QString m_result;   ///< The last build's result for m_model (shown instead of the hint)
+	bool m_building = false;   ///< The job's current build was started here
 };
 
 } // namespace sme::app

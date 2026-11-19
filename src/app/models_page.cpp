@@ -234,14 +234,7 @@ ModelsPage::ModelsPage(Editor* editor, AssetBrowser* assets, MaterialCache* mate
 	m_effects = new EffectsPanel(editor, assets, right);
 	rightLayout->addWidget(m_effects);
 	connect(m_glow, &QPushButton::clicked, this, [this] { openGlow(); });
-	connect(m_effects, &EffectsPanel::compileRequested, this, [this](const QString& model, const std::vector<SequenceEvent>&, const QString&) {
-		// Compiling a model with new events goes through its .qc and studiomdl (model_export);
-		// until that is wired up here the .qc lines can be copied.
-		QMessageBox::information(this, tr("Compile into model"),
-		                         tr("Compiling %1 with its effects is not available on this page yet. Use \"Copy .qc lines\" and add them to the "
-		                            "model's .qc (Export for editing ... writes one), then compile it with studiomdl.")
-		                             .arg(model));
-	});
+	// "Compile into model ..." is wired to a ModelRebuildJob by the main window.
 	m_enhancementSwitches = new EnhancementSwitches(editor->enhancements(), right);
 	rightLayout->addWidget(m_enhancementSwitches);
 	m_enhancementSwitches->setModel({});

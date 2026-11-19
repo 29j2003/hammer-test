@@ -44,9 +44,13 @@ class GameFileSystem;
 struct ModelRebuildChanges {
 	std::map<std::string, std::vector<ModelEvent>> events;          ///< A sequence's whole event list
 	std::map<std::string, SequenceReplacement> replacements;        ///< A sequence's frames (or a new sequence)
+	/// What the model's effects add (events on top of each sequence's, particles entries;
+	/// model_effects.h effectChanges). Always the whole set: nullopt keeps the stored one.
+	std::optional<AddedModelEffects> effects;
 	bool operator==(const ModelRebuildChanges&) const = default;
-	[[nodiscard]] bool empty() const { return events.empty() && replacements.empty(); }
-	/// Adds `newer` on top: its sequences replace these' (events and frames separately).
+	[[nodiscard]] bool empty() const { return events.empty() && replacements.empty() && !effects; }
+	/// Adds `newer` on top: its sequences replace these' (events and frames separately), its
+	/// effects (if it has any) replace these' as a whole.
 	void merge(const ModelRebuildChanges& newer);
 };
 

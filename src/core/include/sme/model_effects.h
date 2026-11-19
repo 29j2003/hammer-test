@@ -24,28 +24,27 @@
 // Event numbers: named events (AE_*) are stored by name in the model (studiomdl's new-style
 // events) and looked up by the game's event list (game/shared/eventlist.cpp); the numbers below
 // are those of SDK 2013's eventlist.h for showing old models whose events carry numbers.
+//
+// The events are model_events.h's ModelEvent (cycle, name, options), the same the Weapons page
+// edits. Compiling (model_rebuild.h) takes effectChanges(): events per sequence and particles
+// entries, stored apart from the sequence's own events and added on top of them on every
+// rebuild, so sound events and effects never overwrite each other. A model built with them is
+// read back without them (removeAddedEvents) by comparing with the stored set; the particles
+// entries carry the block name "mapsmith_effect".
 
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <sme/model_events.h>
+#include <sme/model_export.h>
+
 namespace sme {
-
-/// One event of a sequence as the .qc writes it: { event <name> <frame> "<options>" }.
-struct SequenceEvent {
-	std::string sequence;   ///< Sequence name in the model ("reload")
-	int frame = 0;          ///< Frame of the sequence (0 = first)
-	std::string event;      ///< "AE_CL_CREATE_PARTICLE_EFFECT" (or a number as text for old events)
-	std::string options;    ///< "muzzle_glow follow_attachment muzzle"
-	bool operator==(const SequenceEvent&) const = default;
-};
-
-/// The .qc line of an event (inside $sequence's braces).
-[[nodiscard]] std::string qcEventLine(const SequenceEvent& event);
 
 /// Where a particle system sits on the model.
 enum class EffectAttach { FollowAttachment, StartAtAttachment, FollowOrigin, StartAtOrigin, FollowRootBone };
@@ -74,24 +73,35 @@ struct ModelEffect {
 [[nodiscard]] std::vector<std::string> effectProblems(const ModelEffect& effect, const std::vector<std::string>& attachments,
                                                       const std::vector<std::string>& sequences, int frames = 0);
 
-/// The events a DuringAnimation effect needs: create at startFrame and, with an endFrame, stop
-/// there (Mapbase's AE_CL_STOP_PARTICLE_EFFECT). An Always effect gives none (see effectKeyValues).
-[[nodiscard]] std::vector<SequenceEvent> effectEvents(const ModelEffect& effect);
-/// All events of the effects, sorted by sequence and frame.
-[[nodiscard]] std::vector<SequenceEvent> effectEvents(const std::vector<ModelEffect>& effects);
-/// The $keyvalues "particles" block for the Always effects ("" when there are none):
-///   particles { effect { name "x" attachment_type "follow_attachment" attachment_point "muzzle" } }
+/// The events a DuringAnimation effect needs in a sequence of `frames` frames: create at
+/// startFrame and, with an endFrame, stop there (Mapbase's AE_CL_STOP_PARTICLE_EFFECT). An
+/// Always effect gives none (see effectParticles).
+[[nodiscard]] std::vector<ModelEvent> effectEvents(const ModelEffect& effect, int frames);
+/// Frames of the model's sequences (key: name in lower case).
+using SequenceFrames = std::map<std::string, int>;
+/// All events of the effects per sequence (lower case), sorted by cycle. Effects on a sequence
+/// `frames` does not name are left out (effectProblems reports them).
+[[nodiscard]] std::map<std::string, std::vector<ModelEvent>> effectEvents(const std::vector<ModelEffect>& effects, const SequenceFrames& frames);
+/// The Always effects as entries of the $keyvalues "particles" block.
+[[nodiscard]] std::vector<ModelParticle> effectParticles(const std::vector<ModelEffect>& effects);
+/// What compiling the effects into the model adds (for ModelRebuildChanges::effects).
+[[nodiscard]] AddedModelEffects effectChanges(const std::vector<ModelEffect>& effects, const SequenceFrames& frames);
+/// The $keyvalues "particles" block for the Always effects ("" when there are none), as the
+/// .qc gets it (for copying into a .qc of one's own):
+///   particles { mapsmith_effect { name "x" attachment_type "follow_attachment" attachment_point "muzzle" } }
 [[nodiscard]] std::string effectKeyValues(const std::vector<ModelEffect>& effects);
 
 /// The effects that events and a $keyvalues text describe again (a model compiled by Mapsmith,
 /// or one of the game's): create/stop pairs of the same system in one sequence become one effect,
 /// the particles block gives the Always ones. Other events are left out. `keyValues` is the text
 /// of the model's $keyvalues (may be empty; broken text gives no Always effects).
-[[nodiscard]] std::vector<ModelEffect> effectsFromModel(const std::vector<SequenceEvent>& events, std::string_view keyValues);
+[[nodiscard]] std::vector<ModelEffect> effectsFromModel(const std::vector<SequenceEvents>& events, std::string_view keyValues);
 
 /// The effects a mapper set up for a model, kept in the mod until the model is compiled with
 /// them: <mod>/modelsrc/<model path without .mdl>/mapsmith_effects.txt (KeyValues text; the
-/// folder model export writes to). Empty path for a model path that is not safe.
+/// folder model export writes to). Empty path for a model path that is not safe. The format is
+/// the same since the first version (effect { particle attach attachment when sequence start end
+/// instantly }); unknown keys are ignored, missing ones take their defaults.
 [[nodiscard]] std::filesystem::path modelEffectsFile(const std::filesystem::path& modDir, std::string_view modelPath);
 [[nodiscard]] std::string writeEffectsText(const std::vector<ModelEffect>& effects);
 /// Reads the text back (untrusted: broken text or values give fewer effects, never more than 256).
