@@ -223,7 +223,12 @@ memory and lists every key or value that would change.
   textures ...**), a **Glow ...** and particle effects during e.g. the reload (**Effects**, **Compile into model ...**,
   keeping its sounds) and its stats (magazine, ammo, HUD slot, damage and most ammo carried). Everything goes into the mod
   as its own copy and can be restored.
-- **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Weapons*, *Sounds*, *Particles* and *Project* each fill
+- **NPCs**: every NPC the game has a model for, in 3D from all sides, with its animations.
+  - **Stats**: health and damage (skill values) into the mod's `cfg/skill.cfg`, **Restore original**.
+  - **Weapons**: pick the weapon it holds, **Place in map**.
+  - **Look**: model (citizen heads), skin, materials, **Enhance textures ...**, **Glow ...**.
+  - **Sounds**: play, **Replace ...**, **Edit ...**, **Restore**. **Animations**: **Edit animation ...**.
+- **Side bar**: on the far left *Map*, *Materials*, *Models*, *Animations*, *Weapons*, *NPCs*, *Sounds*, *Particles* and *Project* each fill
   the window. *Sounds* and *Particles* are also docks under the map while you build (drag them into the map). *Project*
   has the tabs *Overview*, *Features*, *Maps*, *Menu*, *Texts*, *Source control*, *Ship* and *Build from source* (below). *Overview* shows the chosen game or
   mod: its folder, the maps in its map folder (double-click opens one), the search paths of `gameinfo.txt` with what
