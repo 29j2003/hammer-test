@@ -1,8 +1,13 @@
 // anim_editor.h - The Animation editor window: improve an animation of a model, or make a new
-// one, with keys like in Source Filmmaker - no Blender. Pick bones in the 3D view or the bone
-// list, turn them with the rings or move them with the arrows (or type the values), and set keys
-// on the timeline; the pose between keys is filled in. A Tweak keeps the original animation
-// underneath (keys are changes on top of it); a New animation starts from one still pose.
+// one, with keys like in Source Filmmaker - no Blender. Work in 3D (orbit, Front/Side/Top, the
+// player's view beside it for weapons): drag a hand's or foot's grip and the limb follows (IK),
+// or pick bones and turn them with the rings / move them with the arrows (or type the values).
+// Auto key keys every move at the playhead; Set key (K) does it by hand. Between keys the pose
+// is filled in: Smooth, Linear, Step, Ease in, Ease out per key; the motion path shows where the
+// chosen bone goes. A Tweak keeps the original animation underneath (keys are changes on top of
+// it); a New animation starts from one still pose. "Animation" menu: duplicate, start from
+// another animation (copy and change it, or from its first pose), new from scratch, change only
+// from the playhead on (earlier frames stay the original), cut before/after the playhead.
 //
 // Results (see anim_edit.h):
 // - Preview in Mapsmith: the animation plays on the Animations page at once.
@@ -88,6 +93,24 @@ public:
 	void copyPose();
 	void pastePose();
 	void mirrorSelection();
+	/// How the motion leaves the keys of the chosen bones (all bones if none) at the playhead.
+	void setInterpolation(KeyInterp interp);
+	/// Auto key: a move keys at the playhead by itself; off: a move only changes a key that is there.
+	void setAutoKey(bool on);
+	[[nodiscard]] bool autoKey() const;
+	/// The same animation under a new name (its own project file); the original stays.
+	void duplicateAnimation(const QString& name);
+	/// Starts over from a sequence of the model: copy it and change it (Tweak), or from its first
+	/// pose (New); an empty sequence: from the rest pose.
+	void startFrom(const QString& sequence, bool copyMotion, const QString& name);
+	/// Frames before the playhead stay the original (keys there go).
+	void editFromPlayhead();
+	/// Cuts the frames before / after the playhead.
+	void cutBeforePlayhead();
+	void cutAfterPlayhead();
+	/// Player's view of a weapon beside the 3D view.
+	void setSplitView(bool on);
+	[[nodiscard]] AnimEditView* playerView() const { return m_playerView; }
 	bool save(QString* error = nullptr);
 	[[nodiscard]] QString projectPath() const;
 	/// Writes the animation .smd and shows it on the Animations page (`build`: and builds it into
@@ -128,6 +151,10 @@ private:
 	void applyFields();      ///< The typed values become the active bone's key
 	void tick();
 	void showKeyMenu(int frame, bool allBones, const QPoint& at);
+	void startClip(AnimClip clip);   ///< A new clip on the loaded model
+	void showStartFromDialog(bool fromScratch);
+	/// After a drag: without Auto key a move where the bone had no key is taken back.
+	void finishDrag();
 	void setMessage(const QString& text);
 	[[nodiscard]] QString studiomdlProgram() const;
 	[[nodiscard]] QString modDir() const;
@@ -160,6 +187,19 @@ private:
 	// Widgets.
 	QLabel* m_title = nullptr;
 	AnimEditView* m_view = nullptr;
+	AnimEditView* m_playerView = nullptr;
+	QCheckBox* m_split = nullptr;
+	QCheckBox* m_autoKeyBox = nullptr;
+	QCheckBox* m_pathBox = nullptr;
+	QComboBox* m_interpBar = nullptr;
+	QSpinBox* m_editFromBox = nullptr;
+	QWidget* m_moreBox = nullptr;
+	QToolButton* m_moreButton = nullptr;
+	int m_dragBone = -1;           ///< The bone a drag changes (for Auto key off)
+	bool m_dragHadKey = false;
+	int m_pathRevision = -1;       ///< The motion path is recomputed when the clip or selection changes
+	int m_pathBone = -1;
+	std::vector<AnimVec> m_pathPoints;
 	AnimTimeline* m_timeline = nullptr;
 	QTreeWidget* m_bones = nullptr;
 	QLineEdit* m_boneSearch = nullptr;

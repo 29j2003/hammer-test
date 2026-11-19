@@ -1,8 +1,10 @@
 // anim_edit_view.h - The 3D view of the animation editor: the posed model (ModelViewer) with its
 // skeleton on top, bones to click (Ctrl adds), and a gizmo on the chosen bone - rings to turn it
 // in its own axes (and an outer ring about the view direction), or arrows to move it along the
-// model's axes. Two cameras: free (orbit like the Models page) and Viewmodel, the player's view
-// in the game (eye at the model's origin looking along +X, viewmodel_fov 54 at 4:3 as in
+// model's axes. Grips (orange squares) on hands and feet: drag one and the limb follows (IK, in
+// the window). The motion path of the chosen bone shows where it goes over the whole animation.
+// Two cameras: free (orbit around the model, presets Front/Side/Top) and Viewmodel, the player's
+// view in the game (eye at the model's origin looking along +X, viewmodel_fov 54 at 4:3 as in
 // view.cpp) for weapons. The view only says what the mouse did; the window turns that into keys.
 
 #pragma once
@@ -39,9 +41,27 @@ public:
 	void setCameraMode(CameraMode mode);
 	[[nodiscard]] CameraMode cameraMode() const { return m_cameraMode; }
 	void setSkeletonVisible(bool on);
+	/// Grips to drag (IK chain ends: a bone and its label, "Right hand").
+	struct Grip {
+		int bone = -1;
+		QString label;
+	};
+	void setGrips(std::vector<Grip> grips);
+	/// The chosen bone's path over the animation (model space), which points are keys, and the
+	/// point of the current frame (-1: none). Empty: no path.
+	void setMotionPath(std::vector<AnimVec> points, std::vector<bool> keyed, int current);
+	[[nodiscard]] std::size_t motionPathPoints() const { return m_path.size(); }
+	[[nodiscard]] std::size_t gripCount() const { return m_grips.size(); }
+	/// Camera presets for the free view.
+	enum class Preset { Perspective, Front, Side, Top };
+	void setPreset(Preset preset);
+	/// Puts the free camera around a bone (F), or the whole model for -1.
+	void focusBone(int bone);
 
 	/// Where a bone is on screen (widget pixels); false if behind the camera (tests).
 	bool boneOnScreen(int bone, QPointF& at) const;
+	/// Where a grip is on screen (tests).
+	bool gripOnScreen(int bone, QPointF& at) const { return boneOnScreen(bone, at); }
 	/// A point on the gizmo's ring/arrow for an axis (0 x, 1 y, 2 z, 3 view ring) to drag (tests).
 	bool gizmoHandle(int axis, QPointF& at) const;
 
@@ -52,6 +72,8 @@ signals:
 	void dragStarted();
 	void rotateDragged(const sme::AnimQuat& rotation);
 	void moveDragged(const sme::AnimVec& offset);
+	/// A grip is dragged: where its bone should be now (model space).
+	void gripDragged(int bone, const sme::AnimVec& target);
 	void dragFinished();
 
 protected:
@@ -74,6 +96,8 @@ private:
 	/// Which handle is under the mouse (-1: none).
 	[[nodiscard]] int pickHandle(const QPointF& at) const;
 	[[nodiscard]] int pickBone(const QPointF& at) const;
+	/// The grip under the mouse: its bone, -1 if none.
+	[[nodiscard]] int pickGrip(const QPointF& at) const;
 	[[nodiscard]] QVector3D handleAxis(int axis) const;
 
 	const std::vector<StudioBone>* m_bones = nullptr;
@@ -85,6 +109,14 @@ private:
 	Gizmo m_gizmo = Gizmo::Rotate;
 	CameraMode m_cameraMode = CameraMode::Free;
 	bool m_showSkeleton = true;
+	std::vector<Grip> m_grips;
+	std::vector<AnimVec> m_path;
+	std::vector<bool> m_pathKeyed;
+	int m_pathCurrent = -1;
+	// A grip drag: the grip's bone, where it started (model space) and the plane's screen axes.
+	int m_gripDrag = -1;
+	QVector3D m_gripStart, m_gripRight, m_gripUp;
+	float m_gripWorldPerPixel = 1;
 	// A gizmo drag.
 	int m_dragHandle = -1;
 	int m_hoverHandle = -1;

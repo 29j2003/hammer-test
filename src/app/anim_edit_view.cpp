@@ -39,8 +39,9 @@ double segmentDistance(const QPointF& p, const QPointF& a, const QPointF& b) {
 
 AnimEditView::AnimEditView(MaterialCache* materials, QWidget* parent) : ModelViewer(materials, parent) {
 	setMouseTracking(true);
-	setToolTip(tr("Click a bone to choose it (Ctrl: add more) - drag a ring to turn it, an arrow to move it.\n"
-	              "Left drag elsewhere turns the view, right drag moves it, the wheel zooms."));
+	setToolTip(tr("Drag an orange grip to place a hand or foot - the arm or leg follows.\n"
+	              "Click a bone to choose it (Ctrl: add more) - drag a ring to turn it, an arrow to move it.\n"
+	              "Left drag elsewhere turns the view, right drag moves it, the wheel zooms, F frames the chosen bone."));
 }
 
 void AnimEditView::setSkeleton(const std::vector<StudioBone>* bones, std::vector<BoneMatrix> placement) {
@@ -78,6 +79,52 @@ void AnimEditView::setCameraMode(CameraMode mode) {
 void AnimEditView::setSkeletonVisible(bool on) {
 	m_showSkeleton = on;
 	update();
+}
+
+void AnimEditView::setGrips(std::vector<Grip> grips) {
+	m_grips = std::move(grips);
+	update();
+}
+
+void AnimEditView::setMotionPath(std::vector<AnimVec> points, std::vector<bool> keyed, int current) {
+	m_path = std::move(points);
+	m_pathKeyed = std::move(keyed);
+	m_pathCurrent = current;
+	update();
+}
+
+void AnimEditView::setPreset(Preset preset) {
+	// The model looks along +X with Z up (Source): "Front" looks at its face from +X.
+	switch (preset) {
+	case Preset::Front: setOrbit(0, 0); break;
+	case Preset::Side: setOrbit(90, 0); break;
+	case Preset::Top: setOrbit(0, 89); break;
+	case Preset::Perspective: setOrbit(35, 18); break;
+	}
+}
+
+void AnimEditView::focusBone(int bone) {
+	if (bone < 0 || bone >= int(m_placement.size())) {
+		frameModel();
+		return;
+	}
+	focusOn(bonePosition(bone), 12);
+}
+
+int AnimEditView::pickGrip(const QPointF& at) const {
+	const QMatrix4x4 viewProj = viewProjection();
+	int best = -1;
+	double bestDistance = 11;
+	for (const auto& grip : m_grips) {
+		QPointF s;
+		if (grip.bone < 0 || !project(viewProj, bonePosition(grip.bone), s)) continue;
+		const double d = std::max(std::fabs(s.x() - at.x()), std::fabs(s.y() - at.y()));
+		if (d < bestDistance) {
+			bestDistance = d;
+			best = grip.bone;
+		}
+	}
+	return best;
 }
 
 ModelViewer::Camera AnimEditView::camera() const {
@@ -264,6 +311,36 @@ void AnimEditView::paintOverlay(QPainter& painter, const QMatrix4x4& viewProj) {
 			painter.drawEllipse(screen[b], r, r);
 		}
 	}
+	// The motion path: a line through every frame, dots on keys, the current frame white.
+	if (m_path.size() > 1) {
+		std::vector<QPointF> points(m_path.size());
+		std::vector<bool> shown(m_path.size(), false);
+		for (std::size_t i = 0; i < m_path.size(); ++i) shown[i] = project(viewProj, {m_path[i].x, m_path[i].y, m_path[i].z}, points[i]);
+		painter.setPen(QPen(QColor(120, 220, 160, 200), 1.6));
+		for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+			if (shown[i] && shown[i + 1]) painter.drawLine(points[i], points[i + 1]);
+		}
+		painter.setPen(Qt::NoPen);
+		for (std::size_t i = 0; i < points.size(); ++i) {
+			if (!shown[i]) continue;
+			const bool key = i < m_pathKeyed.size() && m_pathKeyed[i];
+			const bool current = int(i) == m_pathCurrent;
+			painter.setBrush(current ? QColor(255, 255, 255) : key ? QColor(255, 150, 50) : QColor(120, 220, 160, 170));
+			const double r = current ? 4.0 : key ? 3.6 : 1.6;
+			painter.drawEllipse(points[i], r, r);
+		}
+	}
+	// Grips on hands and feet: orange squares to drag.
+	for (const auto& grip : m_grips) {
+		QPointF s;
+		if (grip.bone < 0 || grip.bone >= int(m_placement.size()) || !project(viewProj, bonePosition(grip.bone), s)) continue;
+		const bool hot = grip.bone == m_gripDrag || grip.bone == m_active;
+		painter.setPen(QPen(QColor(20, 22, 26), 1.5));
+		painter.setBrush(hot ? QColor(255, 214, 90) : QColor(255, 150, 50));
+		painter.drawRect(QRectF(s.x() - 6, s.y() - 6, 12, 12));
+		painter.setPen(QColor(255, 200, 140));
+		painter.drawText(s + QPointF(10, -8), grip.label);
+	}
 	// The gizmo on the active bone.
 	if (m_active >= 0 && m_active < int(m_placement.size())) {
 		for (int axis = 3; axis >= 0; --axis) {
@@ -304,6 +381,21 @@ void AnimEditView::mousePressEvent(QMouseEvent* event) {
 	m_moved = false;
 	m_orbiting = false;
 	if (event->button() == Qt::LeftButton) {
+		// A grip first: drag the hand or foot, the limb follows.
+		if (const int grip = pickGrip(event->position()); grip >= 0) {
+			m_gripDrag = grip;
+			m_gripStart = bonePosition(grip);
+			const Camera view = camera();
+			const QVector3D forward = (view.center - view.eye).normalized();
+			m_gripRight = QVector3D::crossProduct(forward, view.up).normalized();
+			m_gripUp = QVector3D::crossProduct(m_gripRight, forward).normalized();
+			const float depth = std::max(0.5f, QVector3D::dotProduct(m_gripStart - view.eye, forward));
+			m_gripWorldPerPixel = 2.f * depth * std::tan(qDegreesToRadians(view.fov * 0.5f)) / float(std::max(1, height()));
+			emit boneClicked(grip, false);
+			emit dragStarted();
+			update();
+			return;
+		}
 		const int handle = pickHandle(event->position());
 		if (handle >= 0) {
 			m_dragHandle = handle;
@@ -348,6 +440,12 @@ void AnimEditView::mousePressEvent(QMouseEvent* event) {
 void AnimEditView::mouseMoveEvent(QMouseEvent* event) {
 	const QPointF delta = event->position() - m_pressAt;
 	if (std::hypot(delta.x(), delta.y()) > 3) m_moved = true;
+	if (m_gripDrag >= 0) {
+		// In the plane through the grip facing the camera.
+		const QVector3D target = m_gripStart + (m_gripRight * float(delta.x()) - m_gripUp * float(delta.y())) * m_gripWorldPerPixel;
+		emit gripDragged(m_gripDrag, {target.x(), target.y(), target.z()});
+		return;
+	}
 	if (m_dragHandle >= 0) {
 		if (m_gizmo == Gizmo::Move) {
 			const double len2 = QPointF::dotProduct(m_dragScreenAxis, m_dragScreenAxis);
@@ -375,6 +473,12 @@ void AnimEditView::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void AnimEditView::mouseReleaseEvent(QMouseEvent* event) {
+	if (m_gripDrag >= 0) {
+		m_gripDrag = -1;
+		emit dragFinished();
+		update();
+		return;
+	}
 	if (m_dragHandle >= 0) {
 		m_dragHandle = -1;
 		emit dragFinished();

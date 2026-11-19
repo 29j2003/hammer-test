@@ -209,12 +209,12 @@ memory and lists every key or value that would change.
   scrub, speed, loop - see which entities of the map use them and put one on the selected prop, NPC or
   `scripted_sequence`. **Add animation ...** brings an `.smd` onto the model's skeleton and builds it into the mod
   with the game's `studiomdl`.
-- **Animation editor** (*Edit animation ...* / *New animation ...* on the Animations page, *Animate ...* on the Models
-  page): improve an animation or make a new one with keys, like in Source Filmmaker - click a bone, turn it with the
-  rings or move it with the arrows, press K, the motion between keys is filled in. The original keeps playing under your
-  changes. A player's view shows weapon models as in the game. *Preview in Mapsmith* plays it at once; *Build ...* makes
-  it a new animation or replaces the animation in the model itself (a weapon's reload), with the old model kept to
-  restore.
+- **Animation editor** (*Edit animation ...* / *New animation ...* / *Animate ...*): keys like in Source Filmmaker.
+  - Work in 3D (orbit, Front/Side/Top, player's view beside it for weapons).
+  - Drag a hand or foot grip, the limb follows (IK); or turn bones with rings.
+  - Auto key, *Set key (K)*; Smooth, Linear, Step, Ease in/out; motion path; ghosts.
+  - Duplicate, start from another animation, new from scratch, change only from a frame on, cut.
+  - *Build ...*: as a new animation or replace it in the model (with restore).
 - **Weapons**: every weapon of the game and mod with its first-person model in 3D as the game shows it (or the world
   model), all its animations, its sounds - play, **Replace ...** with your own file, **Edit ...**, **Restore**, or let a
   slot use another sound - and the sounds and effects its animations trigger (change, move, add, then **Build model**
