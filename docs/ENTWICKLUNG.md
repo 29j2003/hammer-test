@@ -1053,13 +1053,15 @@ Belege aus Mapbase (`/sp/src` des Mod-Repos):
   `GetSequenceActivityName`, `GetSequenceName`, `GetCycle`. Mapsmith schreibt dieses Skript nach
   `scripts/vscripts/mapsmith/glow/` (Pfad-Regel `VScriptRunScript`: ohne Endung wird `.nut` angehängt). Ohne
   Skripting bleibt `$selfillumtint` 0 – kein Leuchten statt falschem.
-- **Echtes Licht:** mapbase-fidelity (`game/client/fidelity/fidelity_glow.cpp`) macht aus `$selfillum` +
-  `$selfillummask` + `$selfillumtint` von selbst dynamisches Licht, liest die Werte aber einmal je Modell (Analyse) –
-  ein per Proxy geänderter Farbton während einer Animation wird nicht verfolgt; winzige Leuchtflächen an Waffen geben
-  absichtlich kein Licht. **Vorschlag fürs Mod-Repo (nicht gebaut):** in `fidelity_glow.cpp` die aktuelle
-  `$selfillumtint` pro Frame lesen (oder `$mapsmith_glowsettings` auswerten: Animationen + Zyklusbereich), dann
-  leuchtet das Licht nur während z. B. des Reloads. `env_`-Entities gehen am Viewmodel nicht; Partikel haben in der
-  SDK-2013-Bibliothek keinen Licht-Operator.
+- **Real light** (mod: `fidelity_glow.cpp`, `fidelity_animglow.cpp`):
+  - `fidelity_glow` turns `$selfillum` + mask + tint into dynamic light (analysed once per model).
+  - Mapsmith glows (`$mapsmith_glow 1`) always light, also small parts on weapons (`GLOW_MAPSMITH_STRENGTH`).
+  - During animations: Mapsmith writes the C++ proxy `FidelityAnimGlow` when `Editor::hasFidelity()`
+    (`GlowProxy::Fidelity`, no script). It reads `$mapsmith_glowcolor` + `$mapsmith_glowsettings` and sets
+    `$selfillumtint` per draw; `fidelity_glow` scales the light by the same amount (like the AR2 reload flare).
+  - Other mods: `GlowProxy::VScript` (glow only, no light).
+  - Contract on the mod side: `fidelity/tests/test_animglow.py` (keys, settings names, proxy name).
+  - `env_` entities don't work on view models; SDK 2013 particles have no light operator.
 - **Schreiben in die Mod:** VMT-Kopie am selben Pfad (überdeckt VPK), Masken-VTF `<material>_glowmask` (DXT, ≤ 1024),
   vorhandene Mod-Dateien einmal als `.mapsmith-backup`; Buchführung als `ImportRecord` (Art „glow“/„particles“) in
   `cfg/mapsmith_imports.txt`, „Restore original“ = `undoImport`. Ein erneutes Apply nimmt erst das alte zurück.

@@ -241,11 +241,15 @@ lights up parts of a material - a lamp, a screen, a sight, a weapon's energy cel
 - **Colour** and **Brightness**: the glow keeps the texture's own colour, tinted; above 100 % it is brighter than the
   texture. **Pulse** makes it go up and down.
 - **When**: **Always**, or **Only during these animations** (for example the reload), optionally only for a part of
-  it (from ... to ... %). This needs Mapbase: the material gets a small script that watches the animation.
+  it (from ... to ... %).
+  - With mapbase-fidelity: its material proxy follows the animation; glow **and** light come and go with it.
+  - Without it (other Mapbase mods): a small VScript follows the animation; the part glows, but gives no light.
 
 **Apply** writes a copy of the material and a mask texture into the mod at the material's own path (the game uses it
-instead of its own); **Restore original** takes them out again. With mapbase-fidelity a steady glow also lights the
-surroundings; a glow that waits for an animation does not light them (only the surface glows).
+instead of its own); **Restore original** takes them out again.
+
+- Light with mapbase-fidelity: every Mapsmith glow lights the surroundings, also small parts on weapons.
+- Not tested in the game yet.
 
 {: .note }
 A material can be shared by several models (hands, for example). Its glow then shows on all of them.

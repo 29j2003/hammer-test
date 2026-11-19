@@ -130,6 +130,7 @@ KvNode* materialBlock(KvNode& root) {
 bool ownProxy(const KvNode& proxy) {
 	if (iequals(proxy.key, "Sine")) return iequals(proxy.get("resultVar"), KEY_PULSE);
 	if (iequals(proxy.key, "Multiply")) return iequals(proxy.get("srcVar1"), KEY_COLOR);
+	if (iequals(proxy.key, "FidelityAnimGlow")) return true;   // only Mapsmith writes it
 	if (iequals(proxy.key, "VScriptProxy")) return startsWithI(toLower(normalizePath(proxy.get("scriptfile"))), "mapsmith/glow/");
 	return false;
 }
@@ -272,7 +273,7 @@ std::string glowScriptName(std::string_view material) {
 	return "mapsmith/glow/" + name + ".nut";
 }
 
-std::string glowMaterialText(std::string_view vmt, std::string_view material, const GlowSettings& input) {
+std::string glowMaterialText(std::string_view vmt, std::string_view material, const GlowSettings& input, GlowProxy proxyKind) {
 	const GlowSettings s = clamped(input);
 	KvNode root = parseKeyValues(vmt);
 	KvNode* block = materialBlock(root);
@@ -309,7 +310,10 @@ std::string glowMaterialText(std::string_view vmt, std::string_view material, co
 		}
 		proxies->children.push_back(std::move(proxy));
 	};
-	if (animated) {
+	if (animated && proxyKind == GlowProxy::Fidelity) {
+		// mapbase-fidelity's proxy reads $mapsmith_glowcolor and $mapsmith_glowsettings itself.
+		addProxy(KvNode::makeBlock("FidelityAnimGlow"));
+	} else if (animated) {
 		KvNode script = KvNode::makeBlock("VScriptProxy");
 		script.set("scriptfile", glowScriptName(material));
 		script.set("var0", "$selfillumtint");
@@ -426,7 +430,7 @@ std::optional<GlowSettings> readGlowSettings(const Material& material) {
 }
 
 std::optional<GlowFiles> planGlow(const GameFileSystem& fs, std::string_view materialName, const GlowSettings& input, const ImageRgba* picture,
-                                  std::string* error) {
+                                  std::string* error, GlowProxy proxy) {
 	const auto fail = [&](std::string message) -> std::optional<GlowFiles> {
 		if (error) *error = std::move(message);
 		return std::nullopt;
@@ -465,7 +469,7 @@ std::optional<GlowFiles> planGlow(const GameFileSystem& fs, std::string_view mat
 	files.material = name;
 	files.coverage = glowCoverage(mask);
 	try {
-		files.vmtText = glowMaterialText(*vmt, name, settings);
+		files.vmtText = glowMaterialText(*vmt, name, settings, proxy);
 	} catch (const std::exception& e) {
 		return fail(std::string("cannot change the material: ") + e.what());
 	}
@@ -473,7 +477,7 @@ std::optional<GlowFiles> planGlow(const GameFileSystem& fs, std::string_view mat
 	auto encoded = encodeVtf(mask, true, false, MAX_MASK_SIZE, &encodeError);
 	if (!encoded) return fail("cannot write the mask texture: " + encodeError);
 	files.maskVtf = std::move(*encoded);
-	if (settings.when == GlowSettings::When::DuringAnimation) files.scriptText = glowScriptText(settings);
+	if (settings.when == GlowSettings::When::DuringAnimation && proxy == GlowProxy::VScript) files.scriptText = glowScriptText(settings);
 	return files;
 }
 

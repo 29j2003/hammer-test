@@ -183,7 +183,8 @@ memory and lists every key or value that would change.
   particle file and particle list.
 - **Glow and effects on models**: **Glow ...** on the Models page makes parts of a material glow (found automatically,
   from a picture or the whole material; colour, brightness, pulse; always or only during animations such as the
-  reload), shown in the 3D view at once and written into the mod with *Restore original*. **Effects** puts particle
+  reload; with mapbase-fidelity it also lights the surroundings, during animations only then), shown in the 3D view
+  at once and written into the mod with *Restore original*. **Effects** puts particle
   systems on a model's attachments, always or during part of an animation.
 - **Sounds**: sounds are sorted into categories (weapons, NPCs, ambient, physics, player, vehicles, doors, music,
   interface, voice), each by folder, with sound script entries next to their files; search looks through all of them.

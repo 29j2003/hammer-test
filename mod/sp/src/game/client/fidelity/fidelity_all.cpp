@@ -40,6 +40,8 @@
 #include "tier0/memdbgoff.h"
 #include "fidelity_wind.cpp"
 #include "tier0/memdbgoff.h"
+#include "fidelity_animglow.cpp"
+#include "tier0/memdbgoff.h"
 #include "fidelity_glow.cpp"
 #include "tier0/memdbgoff.h"
 #include "fidelity_sky.cpp"

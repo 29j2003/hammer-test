@@ -133,6 +133,26 @@ TEST_CASE("glow: material text, pulse, animation script, read back") {
 	CHECK(script.find("GetSequenceActivityName") != std::string::npos);
 	CHECK_FALSE(readGlowSettings(*parseMaterial(vmt, "x")));
 	CHECK(glowScriptName("models\\Weapons/V_Gun/gun.vmt") == "mapsmith/glow/models_weapons_v_gun_gun.nut");
+
+	// With mapbase-fidelity: its C++ proxy instead of the script; it reads Mapsmith's keys
+	// (fidelity_animglow.cpp: $mapsmith_glowcolor, $mapsmith_glowsettings "when=animation;anims=...").
+	const auto fidelity = glowMaterialText(animated, "models/weapons/v_gun/gun", reload, GlowProxy::Fidelity);
+	CHECK(fidelity.find("FidelityAnimGlow") != std::string::npos);
+	CHECK(fidelity.find("VScriptProxy") == std::string::npos);   // the earlier script proxy went
+	CHECK(fidelity.find("AnimatedTexture") != std::string::npos);   // other proxies stay
+	const auto fm = parseMaterial(fidelity, "x");
+	REQUIRE(fm);
+	CHECK(fm->param("$selfillumtint") == "[0 0 0]");
+	CHECK(fm->param("$mapsmith_glowcolor") == "[1 1 1]");
+	const std::string encoded = fm->param("$mapsmith_glowsettings");
+	CHECK(encoded.find("when=animation") != std::string::npos);
+	CHECK(encoded.find("anims=ACT_VM_RELOAD,reloadbad") != std::string::npos);
+	CHECK(encoded.find("from=0.2") != std::string::npos);
+	CHECK(encoded.find("to=0.8") != std::string::npos);
+	// and back to VScript: the Fidelity proxy goes again (no doubled proxies)
+	const auto again = glowMaterialText(fidelity, "models/weapons/v_gun/gun", reload);
+	CHECK(again.find("FidelityAnimGlow") == std::string::npos);
+	CHECK(again.find("VScriptProxy") != std::string::npos);
 }
 
 TEST_CASE("glow: plan from the game's files, apply into the mod, take it back") {
@@ -169,6 +189,11 @@ TEST_CASE("glow: plan from the game's files, apply into the mod, take it back") 
 	REQUIRE_MESSAGE(files, error);
 	CHECK(files->coverage > 0.05);
 	CHECK_FALSE(files->scriptText.empty());
+	// The Fidelity proxy needs no script
+	const auto fidelityFiles = planGlow(fs, "models/weapons/v_gun/gun", reload, nullptr, &error, GlowProxy::Fidelity);
+	REQUIRE_MESSAGE(fidelityFiles, error);
+	CHECK(fidelityFiles->scriptText.empty());
+	CHECK(fidelityFiles->vmtText.find("FidelityAnimGlow") != std::string::npos);
 	const auto record = applyGlow(mod, *files, &error);
 	REQUIRE_MESSAGE(record, error);
 	CHECK(record->kind == "glow");
