@@ -296,7 +296,13 @@ std::string glowMaterialText(std::string_view vmt, std::string_view material, co
 	block->set(std::string(KEY_COLOR), vector3(r, g, b));
 	block->set(std::string(KEY_SETTINGS), encodeSettings(s));
 
+	// The Proxies block is looked up again for each proxy: setting a key above adds to the
+	// block's children and may move them (a pointer kept from before would dangle).
 	const auto addProxy = [&](KvNode proxy) {
+		proxies = nullptr;
+		for (auto& child : block->children) {
+			if (child.block && iequals(child.key, "Proxies")) proxies = &child;
+		}
 		if (!proxies) {
 			block->children.push_back(KvNode::makeBlock("Proxies"));
 			proxies = &block->children.back();
