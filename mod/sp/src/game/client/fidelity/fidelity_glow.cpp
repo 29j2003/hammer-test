@@ -65,6 +65,10 @@
 // r_fidelity_glow_debug 1 shows every light in the world (kind, brightness,
 // radius) and prints the list once a second, with the engine lights in use.
 //
+// Glows made with Mapsmith ("$mapsmith_glow" "1") always light, even when the
+// glowing part is small; one that glows only during some animations (proxy
+// FidelityAnimGlow, fidelity_animglow.cpp) lights only then, as much as it glows.
+//
 // A material can steer it with its own keys:
 //   "$fidelityglow"       "0"            no light for this material
 //   "$fidelityglowcolor"  "[1 0.5 0.1]"  this colour instead of the computed one
@@ -84,6 +88,7 @@
 
 #include "cbase.h"
 #include "fidelity_glow.h"
+#include "fidelity_animglow.h"
 #include "fidelity_audio.h"
 #include "fidelity_effects.h"
 #include "fidelity_texture.h"
@@ -176,6 +181,9 @@ ConVar r_fidelity_muzzlelight_brightness( "r_fidelity_muzzlelight_brightness", "
 // (charger lights, gravity gun core).
 #define GLOW_SHARE_MIN			0.004f
 #define GLOW_SHARE_FULL			0.025f
+// A glow made with Mapsmith ("$mapsmith_glow" "1") was chosen on purpose: it
+// lights even when its part is small (a weapon's glowing coil)
+#define GLOW_MAPSMITH_STRENGTH	0.6f
 #define GLOW_DEBUG_POINTS		24
 #define GLOW_MAX_BONES			4		// bones the glowing part hangs on (the heaviest)
 // Reach of model glows: from the model's size, but never so small that walls
@@ -266,6 +274,7 @@ struct FidelityGlowSkin_t
 	float m_flRadius;		// light radius before r_fidelity_glow_radius
 	float m_flStrength;		// 0..1 by the size of the glowing part
 	int m_nColorOverride;	// index into s_GlowColors (by model name), -1 = none
+	int m_nAnimGlow;		// glows only during some animations (fidelity_animglow.h), -1 = always
 	Vector m_vecDebugPoints[ GLOW_DEBUG_POINTS ];	// some glowing vertices (bone space), for r_fidelity_glow_debug
 	int m_nDebugBone[ GLOW_DEBUG_POINTS ];
 	int m_nDebugPoints;
@@ -627,6 +636,8 @@ struct FidelityGlowMaterial_t
 	bool m_bAdditive;					// glows where bright (no mask)
 	const CFidelityImage *m_pBase;		// NULL if it can not be read
 	const CFidelityImage *m_pMask;		// selfillum mask, NULL: base alpha (or none readable)
+	bool m_bMapsmith;					// made with Mapsmith's "Glow ..." ($mapsmith_glow)
+	int m_nAnimGlow;					// only during some animations (fidelity_animglow.h), -1 = always
 };
 
 static const CFidelityImage *Fidelity_MaterialImage( IMaterial *pMaterial, const char *pszVar )
@@ -645,6 +656,8 @@ static bool Fidelity_MaterialGlows( IMaterial *pMaterial, FidelityGlowMaterial_t
 	info.m_bOverride = false;
 	info.m_bAdditive = false;
 	info.m_pBase = info.m_pMask = NULL;
+	info.m_bMapsmith = false;
+	info.m_nAnimGlow = -1;
 	if ( !pMaterial || pMaterial->IsErrorMaterial() )
 		return false;
 	// Plants never glow (grass3 lit the ground around it - seen in game)
@@ -670,6 +683,8 @@ static bool Fidelity_MaterialGlows( IMaterial *pMaterial, FidelityGlowMaterial_t
 
 	info.m_bAdditive = !bSelfIllum;
 	info.m_pBase = Fidelity_MaterialImage( pMaterial, "$basetexture" );
+	pVar = pMaterial->FindVar( "$mapsmith_glow", &bFound, false );
+	info.m_bMapsmith = bFound && pVar->GetIntValue() == 1;
 	if ( bSelfIllum )
 		info.m_pMask = Fidelity_MaterialImage( pMaterial, "$selfillummask" );
 
@@ -678,6 +693,14 @@ static bool Fidelity_MaterialGlows( IMaterial *pMaterial, FidelityGlowMaterial_t
 	{
 		pVar->GetVecValue( info.m_vecTint.Base(), 3 );
 		info.m_bOverride = true;
+		return true;
+	}
+	// A glow tied to animations: its proxy changes $selfillumtint while drawing
+	// (0 between the animations), so its colour comes from Mapsmith's key.
+	info.m_nAnimGlow = info.m_bMapsmith ? Fidelity_AnimGlowOf( pMaterial ) : -1;
+	if ( info.m_nAnimGlow >= 0 )
+	{
+		info.m_vecTint = Fidelity_AnimGlowColor( info.m_nAnimGlow );
 		return true;
 	}
 	pVar = pMaterial->FindVar( "$selfillumtint", &bFound, false );
@@ -729,6 +752,7 @@ static void Fidelity_AnalyseSkin( const model_t *pModel, studiohdr_t *pStudioHdr
 	skin.m_flStrength = 0.0f;
 	skin.m_nDebugPoints = 0;
 	skin.m_nBones = 0;
+	skin.m_nAnimGlow = -1;
 
 	if ( pStudioHdr->numbones <= 0 )
 		return;	// a broken model (every studio model has a root bone)
@@ -742,6 +766,7 @@ static void Fidelity_AnalyseSkin( const model_t *pModel, studiohdr_t *pStudioHdr
 	Vector vecOverride( 0, 0, 0 );
 	int nOverrides = 0;
 	bool bAny = false;
+	bool bMapsmith = false;
 	const int nRefs = MIN( pStudioHdr->numskinref, MAXSTUDIOSKINS );
 	for ( int i = 0; i < nRefs; i++ )
 	{
@@ -751,6 +776,13 @@ static void Fidelity_AnalyseSkin( const model_t *pModel, studiohdr_t *pStudioHdr
 			continue;
 		bGlows[ i ] = Fidelity_MaterialGlows( lod.ppMaterials[ nTexture ], infos[ i ] );
 		bAny |= bGlows[ i ];
+		if ( bGlows[ i ] )
+		{
+			bMapsmith |= infos[ i ].m_bMapsmith;
+			// The light of a skin follows one animation glow (the first; a model has one in practice)
+			if ( skin.m_nAnimGlow < 0 )
+				skin.m_nAnimGlow = infos[ i ].m_nAnimGlow;
+		}
 		if ( bGlows[ i ] && infos[ i ].m_bOverride )
 		{
 			vecOverride += infos[ i ].m_vecTint;
@@ -895,6 +927,8 @@ static void Fidelity_AnalyseSkin( const model_t *pModel, studiohdr_t *pStudioHdr
 	// Too small a glowing part (a sight, a dot) lights nothing; a few percent of the model, full light.
 	const float flShare = nAll > 0 ? (float)nGlowing / nAll : 0.0f;
 	skin.m_flStrength = clamp( ( flShare - GLOW_SHARE_MIN ) / ( GLOW_SHARE_FULL - GLOW_SHARE_MIN ), 0.0f, 1.0f );
+	if ( bMapsmith && nGlowing > 0 )
+		skin.m_flStrength = MAX( skin.m_flStrength, GLOW_MAPSMITH_STRENGTH );
 	if ( r_fidelity_glow_debug.GetBool() )
 	{
 		bool bReadable = true;
@@ -1888,11 +1922,16 @@ bool CFidelityGlow::LightModel( C_BaseEntity *pEntity, int nKey, float flBase, c
 	const float flCharge = pAnimating ? Fidelity_ChargeLeft( pAnimating, LookUpModel( pEntity->GetModel() ) ) : 1.0f;
 	if ( flCharge <= 0.0f )
 		return false;
+	// A glow only during some animations (Mapsmith): the light follows its amount
+	// and fades out between them like any other light.
+	const float flAnimGlow = pGlow->m_nAnimGlow >= 0 ? Fidelity_AnimGlowAmount( pGlow->m_nAnimGlow, pAnimating ) : 1.0f;
+	if ( flAnimGlow <= 0.0f )
+		return false;
 	FidelityGlowLight_t &light = Light( pEntity, nKey, false );
 	Fidelity_GlowOrigin( pEntity, *pGlow, light.m_vecOrigin );
 	light.m_vecColor = pGlow->m_vecColor;
 	light.m_flRadius = pGlow->m_flRadius;
-	light.m_flTarget = flBase * pGlow->m_flStrength * flCharge;
+	light.m_flTarget = flBase * pGlow->m_flStrength * flCharge * flAnimGlow;
 	if ( pGlow->m_flStrength <= 0.0f )
 	{
 		// Only a tiny glowing part: eyes and lenses of Combine soldiers, lamps of a console
