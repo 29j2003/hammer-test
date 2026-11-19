@@ -49,10 +49,11 @@ Aufbau, Rezepte, Tests, offene Punkte: `docs/ENTWICKLUNG.md` (bei neuen Baustein
   kein Port, kein Netzwerk aus Mapsmith; Claude erreicht nur die Werkzeuge in `claude_tools.cpp`, jede Prüfung in `claude_scope`.
   Der Probe-Bericht maskiert Benutzernamen und Home-Ordner.
 - Keine Valve-Dateien im Repo (Texturen/Modelle/FGDs) – Testdaten werden erzeugt.
-- Commits als `Claude <noreply@anthropic.com>` (von Julius so gewünscht; seine eigene Adresse nie verwenden), deutsche
-  Commit-Nachrichten; keine E-Mail-Adressen in Dateien (`tools/check_privacy.py`, CI-Job `checks`). GitHub Actions nur mit Commit-SHA pinnen, `permissions: contents: read`.
-- Doku: `README.md` (Nutzer, Englisch, aktueller Stand, kurz), Handbuch `docs/manual/` (Englisch, GitHub Pages, ausführlich,
-  inkl. Mapping-Grundlagen) und `docs/ENTWICKLUNG.md` (Entwickler, Deutsch). XBLAH's Modding Tool nur in der README als Inspiration nennen
+- Commits als `Claude <noreply@anthropic.com>` (von Julius so gewünscht; seine eigene Adresse nie verwenden),
+  **englische** Commit-Nachrichten (Julius, 19.11.2026: Doku, GitHub, Changelogs auf Englisch, kurz, Stichpunkte); keine E-Mail-Adressen in Dateien (`tools/check_privacy.py`, CI-Job `checks`). GitHub Actions nur mit Commit-SHA pinnen, `permissions: contents: read`.
+- Doku: alles **Englisch, kurz, Stichpunkte** (Julius, 19.11.2026) – `README.md` (Nutzer, aktueller Stand), Handbuch
+  `docs/manual/` (GitHub Pages, inkl. Mapping-Grundlagen), `docs/ENTWICKLUNG.md` (Entwickler; neuer Text Englisch,
+  Bestand wird übersetzt), Release-Texte, PR-Texte, Changelogs. XBLAH's Modding Tool nur in der README als Inspiration nennen
   („inspired by“), sonst nirgends (Ausnahme: das erzeugte `mod/` spiegelt die Bau-Hinweise des Mod-Repos); nichts übernehmen. Valves Hammer/Source 2 als Verhaltens-Referenz in Kommentaren ist ok.
 - Leistung zählt: nichts pro Frame neu aufbauen, was sich nicht geändert hat; Auswahl ändert nur Flags, nicht die Geometrie; Widgets dort bauen, wo sie bleiben (Rezept „Neues Panel“ in docs/ENTWICKLUNG.md).
 - Nicht im Spiel/auf Windows getestet heißt nicht getestet: im Bericht ausdrücklich so nennen.
